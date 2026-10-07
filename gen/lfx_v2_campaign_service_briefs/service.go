@@ -62,15 +62,20 @@ type Service interface {
 	// live campaign on that platform / that campaign is already bound to another
 	// brief (in any project, since several foundations share one upstream ad
 	// account) / the platform reports the campaign under a different ad account
-	// than the project's connection / the brief lost approval during the read /
-	// the project has no ad-platform connection of its own, and 400 when the
-	// platform has no adoption capability wired or platform_campaign_id is
-	// malformed for that platform (checked before any connection work). An adopted
-	// campaign behaves like any other campaign row on every per-campaign endpoint
-	// - the metrics read and the settings readback (on the platforms that support
-	// them), delete and pause all work on it; activation is the one exception, and
-	// is refused because adoption does not verify the targeting the activate guard
-	// requires.
+	// than the project's connection / the campaign is of a type that platform's
+	// slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost
+	// approval during the read / the project has no ad-platform connection of its
+	// own, and 400 when the platform has no adoption capability wired or
+	// platform_campaign_id is malformed for that platform (checked before any
+	// connection work). An adopted campaign records only the campaign itself (id,
+	// name, account), never its children. The metrics read and the settings
+	// readback (on the platforms that support them), delete and pause work on it;
+	// activation is refused on every platform because adoption does not verify the
+	// targeting the activate guard requires; the bid lever is refused on
+	// Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line
+	// item the row does not record); the budget lever is refused on Meta (its
+	// budget lives on the ad set) and works on Microsoft, Reddit and X, where the
+	// budget is the campaign's own.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)

@@ -20,8 +20,9 @@
 // The Google Ads client applies the same three guards to its adoption read
 // (internal/platform/googleads/campaign_lookup.go: hasDuplicateKeys,
 // hasUnpairedSurrogateEscape). They are reproduced here, rather than imported, because those
-// helpers are unexported in a package whose owners did not take on this change; the two should
-// converge on this package when that file next moves.
+// helpers are unexported in a package whose owners did not take on this change. Convergence —
+// internal/platform/googleads importing this package and deleting its copies — is a follow-up
+// for the Google Ads owner; until then the two must be kept in step by hand.
 package identityjson
 
 import (

@@ -128,7 +128,7 @@ func adopterCases() []adopterCase {
 			isLookup:        func(r *http.Request) bool { return strings.HasSuffix(r.URL.Path, "/Campaigns/QueryByIds") },
 			validID:         "321",
 			malformed:       []string{"007", "0", "abc", " 321", "9223372036854775808"},
-			found:           `{"Campaigns":[{"Id":321,"Name":"KubeCon — Search","Status":"Paused"}],"PartialErrors":[]}`,
+			found:           `{"Campaigns":[{"Id":321,"Name":"KubeCon — Search","Status":"Paused","CampaignType":"Search"}],"PartialErrors":[]}`,
 			absent:          [2]any{http.StatusOK, `{"Campaigns":[null],"PartialErrors":[{"Code":1100,"ErrorCode":"CampaignServiceInvalidCampaignId","Index":0}]}`},
 			mutation:        `{"PartialErrors":[]}`,
 			creationAccount: microsoftCreationAccountID, wantAccount: "1234567", wantName: "KubeCon — Search",
@@ -242,6 +242,26 @@ func TestAdopters_FoundCampaignIsBoundWithProvenanceOnly(t *testing.T) {
 			if len(mutations) != 1 {
 				t.Errorf("PAUSE sent %q, want exactly one campaign-level mutation", mutations)
 			}
+
+			// The BID lever lives on a child entity on all four platforms (ad group, ad set,
+			// line item), which an adopted row never records: refused before any request, and
+			// the refusal names adoption.
+			before = len(stub.apiRequests())
+			berr := d.(service.BidWriter).WriteBid(context.Background(), "cncf", tc.provider, row, model.BidChange{Amount: 1, Type: model.BidTypeCPC})
+			if !errors.Is(berr, domain.ErrBidUnwritable) || !strings.Contains(berr.Error(), "ADOPTED") {
+				t.Errorf("WriteBid on an adopted row = %v, want ErrBidUnwritable naming adoption", berr)
+			}
+			// Meta keeps the BUDGET on the ad set too, so its budget lever is refused the same way;
+			// Microsoft, Reddit and X budget the campaign itself and are not refused here.
+			if tc.provider == model.ProviderMetaAds {
+				uerr := d.(service.BudgetWriter).WriteBudget(context.Background(), "cncf", tc.provider, row, model.BudgetChange{Amount: 10, Type: model.BudgetDaily})
+				if !errors.Is(uerr, domain.ErrCampaignNotProvisioned) || !strings.Contains(uerr.Error(), "ADOPTED") {
+					t.Errorf("Meta WriteBudget on an adopted row = %v, want ErrCampaignNotProvisioned naming adoption", uerr)
+				}
+			}
+			if got := stub.apiRequests(); len(got) != before {
+				t.Errorf("a refused lever reached the platform: %q", got[before:])
+			}
 		})
 	}
 }
@@ -349,6 +369,21 @@ func TestAdopters_ForeignAccountIsAMismatchNotAnAbsence(t *testing.T) {
 	}
 }
 
+// A live Microsoft campaign that is not Search is a DEFINITE refusal with its own sentinel (409):
+// never absent, never adopted into the Search slot.
+func TestMicrosoftAdopter_NonSearchCampaignIsRefusedDefinitely(t *testing.T) {
+	tc := adopterCases()[0]
+	d, stub, _ := newAdopter(t, tc)
+	stub.set(http.StatusOK, `{"Campaigns":[{"Id":321,"Name":"KubeCon — Audience","Status":"Active","CampaignType":"Audience"}],"PartialErrors":[]}`)
+	ref, err := d.LookupCampaign(context.Background(), "cncf", tc.provider, tc.validID)
+	if !errors.Is(err, domain.ErrAdoptionCampaignTypeUnsupported) || ref != nil {
+		t.Fatalf("got %+v, %v; want ErrAdoptionCampaignTypeUnsupported", ref, err)
+	}
+	if errors.Is(err, domain.ErrPlatformCampaignAbsent) {
+		t.Errorf("a live non-Search campaign must never read as absent")
+	}
+}
+
 // Everything the read could not verify is an ERROR carrying no sentinel — the service's 503
 // "could not be verified" — never an absence and never a binding.
 func TestAdopters_UnverifiableAnswersAreErrors(t *testing.T) {
@@ -371,7 +406,8 @@ func TestAdopters_UnverifiableAnswersAreErrors(t *testing.T) {
 						t.Fatalf("want an error, got %+v, %v", ref, err)
 					}
 					for _, sentinel := range []error{domain.ErrInvalidPlatformCampaignID, domain.ErrAdoptionRequiresOwnConnection,
-						domain.ErrConnectionNotUsable, domain.ErrCampaignAccountMismatch, domain.ErrPlatformCampaignAbsent} {
+						domain.ErrConnectionNotUsable, domain.ErrCampaignAccountMismatch, domain.ErrPlatformCampaignAbsent,
+						domain.ErrAdoptionCampaignTypeUnsupported} {
 						if errors.Is(err, sentinel) {
 							t.Errorf("an unverifiable answer carries %v, which the service answers as something other than 503", sentinel)
 						}

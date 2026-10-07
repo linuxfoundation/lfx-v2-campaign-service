@@ -22,7 +22,7 @@ func TestGetCampaign_ReadsOneCampaignUnderTheClientsAccount(t *testing.T) {
 	c := newAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotAcct.Store(r.Header.Get("CustomerAccountId"))
 		rec.record(r)
-		_, _ = io.WriteString(w, `{"Campaigns":[{"Id":321,"Name":"KubeCon EU — Search","Status":"BudgetPaused"}],"PartialErrors":[]}`)
+		_, _ = io.WriteString(w, `{"Campaigns":[{"Id":321,"Name":"KubeCon EU — Search","Status":"BudgetPaused","CampaignType":"Search"}],"PartialErrors":[]}`)
 	})
 	ref, err := c.GetCampaign(context.Background(), "321")
 	if err != nil {
@@ -35,11 +35,28 @@ func TestGetCampaign_ReadsOneCampaignUnderTheClientsAccount(t *testing.T) {
 	if len(reqs) != 1 || reqs[0].method != http.MethodPost || !strings.HasSuffix(reqs[0].path, "/Campaigns/QueryByIds") {
 		t.Fatalf("want exactly one POST .../Campaigns/QueryByIds, got %+v", reqs)
 	}
-	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"Search"}`; reqs[0].body != want {
+	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App"}`; reqs[0].body != want {
 		t.Errorf("body = %s, want %s", reqs[0].body, want)
 	}
 	if got, _ := gotAcct.Load().(string); got != "1234567" {
 		t.Errorf("CustomerAccountId = %q, want the client's own account", got)
+	}
+}
+
+// The read asks for EVERY campaign type, so a live non-Search campaign comes back and is refused
+// DEFINITELY — never read as absent (a duplicate of a live campaign would follow) and never
+// adopted into the Search slot.
+func TestGetCampaign_NonSearchCampaignIsADefiniteRefusal(t *testing.T) {
+	for _, typ := range []string{"Audience", "PerformanceMax", "Shopping", "DynamicSearchAds"} {
+		t.Run(typ, func(t *testing.T) {
+			c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"Campaigns":[{"Id":321,"Name":"n","Status":"Active","CampaignType":"`+typ+`"}]}`)
+			})
+			ref, err := c.GetCampaign(context.Background(), "321")
+			if !errors.Is(err, ErrNotSearchCampaign) || ref != nil {
+				t.Fatalf("got %+v, %v; want ErrNotSearchCampaign", ref, err)
+			}
+		})
 	}
 }
 
@@ -51,23 +68,25 @@ func TestGetCampaign_Outcomes(t *testing.T) {
 		absent  bool
 		wantErr bool
 	}{
-		{name: "every live status is adoptable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Suspended"}]}`},
+		{name: "every live status is adoptable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Suspended","CampaignType":"Search"}]}`},
+		{name: "a deleted non-Search campaign is still absent", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Deleted","CampaignType":"Audience"}]}`, absent: true},
+		{name: "missing CampaignType is unverifiable, not assumed Search", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Active"}]}`, wantErr: true},
 		{name: "no such campaign, as a PartialError", status: 200, body: `{"Campaigns":[null],"PartialErrors":[{"Code":1100,"ErrorCode":"CampaignServiceInvalidCampaignId","Index":0}]}`, absent: true},
 		// A campaign in ANOTHER account is answered exactly like a missing one: the read is
 		// account-scoped, so this is the "wrong account" outcome.
 		{name: "no such campaign in this account, as a fault", status: 400, body: `{"Errors":[{"Code":1100,"ErrorCode":"CampaignServiceInvalidCampaignId"}]}`, absent: true},
-		{name: "deleted is absent", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Deleted"}]}`, absent: true},
-		{name: "unknown status is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Archived"}]}`, wantErr: true},
-		{name: "missing status is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n"}]}`, wantErr: true},
-		{name: "non-string status is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":7}]}`, wantErr: true},
-		{name: "missing name is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Status":"Active"}]}`, wantErr: true},
-		{name: "blank name is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"  ","Status":"Active"}]}`, wantErr: true},
-		{name: "another campaign's slot is unverifiable", status: 200, body: `{"Campaigns":[{"Id":999,"Name":"n","Status":"Active"}]}`, wantErr: true},
+		{name: "deleted is absent", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Deleted","CampaignType":"Search"}]}`, absent: true},
+		{name: "unknown status is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":"Archived","CampaignType":"Search"}]}`, wantErr: true},
+		{name: "missing status is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","CampaignType":"Search"}]}`, wantErr: true},
+		{name: "non-string status is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"n","Status":7,"CampaignType":"Search"}]}`, wantErr: true},
+		{name: "missing name is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Status":"Active","CampaignType":"Search"}]}`, wantErr: true},
+		{name: "blank name is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"  ","Status":"Active","CampaignType":"Search"}]}`, wantErr: true},
+		{name: "another campaign's slot is unverifiable", status: 200, body: `{"Campaigns":[{"Id":999,"Name":"n","Status":"Active","CampaignType":"Search"}]}`, wantErr: true},
 		{name: "an unexplained null slot is unverifiable", status: 200, body: `{"Campaigns":[null]}`, wantErr: true},
 		{name: "an omitted Campaigns field is unverifiable", status: 200, body: `{}`, wantErr: true},
 		{name: "a malformed body is unverifiable", status: 200, body: `{"Campaigns":[`, wantErr: true},
-		{name: "a duplicated Id is unverifiable", status: 200, body: `{"Campaigns":[{"Id":999,"Id":321,"Name":"n","Status":"Active"}]}`, wantErr: true},
-		{name: "a substituted name is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"bad\uD800name","Status":"Active"}]}`, wantErr: true},
+		{name: "a duplicated Id is unverifiable", status: 200, body: `{"Campaigns":[{"Id":999,"Id":321,"Name":"n","Status":"Active","CampaignType":"Search"}]}`, wantErr: true},
+		{name: "a substituted name is unverifiable", status: 200, body: `{"Campaigns":[{"Id":321,"Name":"bad\uD800name","Status":"Active","CampaignType":"Search"}]}`, wantErr: true},
 		{name: "another PartialError is unverifiable", status: 200, body: `{"Campaigns":[null],"PartialErrors":[{"Code":105,"ErrorCode":"InvalidCredentials","Index":0}]}`, wantErr: true},
 		{name: "5xx is unverifiable", status: 503, body: `{}`, wantErr: true},
 		{name: "a 401 is unverifiable, not absent", status: 401, body: `{"Errors":[{"Code":105,"ErrorCode":"AuthenticationTokenExpired"}]}`, wantErr: true},

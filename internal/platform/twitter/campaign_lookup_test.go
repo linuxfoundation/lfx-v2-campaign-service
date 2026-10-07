@@ -50,6 +50,10 @@ func TestXGetCampaign_Outcomes(t *testing.T) {
 		{name: "another campaign is unverifiable", status: 200, body: `{"data":{"id":"cmp2","name":"n","entity_status":"ACTIVE"}}`, wantErr: true},
 		{name: "a duplicated id is unverifiable", status: 200, body: `{"data":{"id":"cmp2","id":"cmp1","name":"n","entity_status":"ACTIVE"}}`, wantErr: true},
 		{name: "a substituted name is unverifiable", status: 200, body: `{"data":{"id":"cmp1","name":"bad\uDC00","entity_status":"ACTIVE"}}`, wantErr: true},
+		// The ENVELOPE is guarded, not only the decoded data: a duplicated "data" is resolved
+		// last-wins before GetCampaign ever sees Data.
+		{name: "a duplicated data key is unverifiable", status: 200, body: `{"data":{"id":"cmp2","name":"x","entity_status":"ACTIVE"},"data":{"id":"cmp1","name":"n","entity_status":"ACTIVE"}}`, wantErr: true},
+		{name: "data beside Data is unverifiable", status: 200, body: `{"Data":{"id":"cmp2","name":"x","entity_status":"ACTIVE"},"data":{"id":"cmp1","name":"n","entity_status":"ACTIVE"}}`, wantErr: true},
 		{name: "no data is unverifiable", status: 200, body: `{"data":null}`, wantErr: true},
 		{name: "a malformed body is unverifiable", status: 200, body: `{"data":{`, wantErr: true},
 		{name: "401 is unverifiable, not absent", status: 401, body: `{}`, wantErr: true},

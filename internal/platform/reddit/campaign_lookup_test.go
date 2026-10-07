@@ -47,6 +47,10 @@ func TestRedditGetCampaign_Outcomes(t *testing.T) {
 		{name: "missing name is unverifiable", status: 200, body: `{"data":{"id":"t3_camp","configured_status":"ACTIVE"}}`, wantErr: true},
 		{name: "another campaign is unverifiable", status: 200, body: `{"data":{"id":"t3_other","name":"n","configured_status":"ACTIVE"}}`, wantErr: true},
 		{name: "a duplicated id is unverifiable", status: 200, body: `{"data":{"id":"t3_other","id":"t3_camp","name":"n","configured_status":"ACTIVE"}}`, wantErr: true},
+		// The ENVELOPE is guarded, not only the decoded data: a duplicated "data" is resolved
+		// last-wins before GetCampaign ever sees Data.
+		{name: "a duplicated data key is unverifiable", status: 200, body: `{"data":{"id":"t3_other","name":"x","configured_status":"ACTIVE"},"data":{"id":"t3_camp","name":"n","configured_status":"ACTIVE"}}`, wantErr: true},
+		{name: "data beside Data is unverifiable", status: 200, body: `{"Data":{"id":"t3_other","name":"x","configured_status":"ACTIVE"},"data":{"id":"t3_camp","name":"n","configured_status":"ACTIVE"}}`, wantErr: true},
 		{name: "no data is unverifiable", status: 200, body: `{"data":null}`, wantErr: true},
 		{name: "a malformed body is unverifiable", status: 200, body: `{"data":{"id":`, wantErr: true},
 		{name: "a non-object campaign is unverifiable", status: 200, body: `{"data":[1]}`, wantErr: true},

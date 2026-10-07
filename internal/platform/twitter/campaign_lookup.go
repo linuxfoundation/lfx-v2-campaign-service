@@ -72,6 +72,12 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	resp, err := c.request(ctx, http.MethodGet, path)
 	if err != nil {
 		var ae *apiError
+		// A bare 404, judged on the status alone. That is also how X may answer a path
+		// whose AD ACCOUNT is inaccessible or revoked, which would then read as "absent" too.
+		// The harm is low: the connection's own account is in the path, so any dispatch to it
+		// — the duplicate a false absence could invite — would fail the same way rather than
+		// create a campaign. If X ever documents a structured error code that tells "no
+		// such campaign" from "no such account", match on that code instead of the status.
 		if errors.As(err, &ae) && ae.StatusCode == http.StatusNotFound {
 			return nil, nil
 		}
@@ -80,7 +86,10 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
 		return nil, fmt.Errorf("x ads campaign lookup for %s: the response carried no campaign", campaignID)
 	}
-	if err := identityjson.Check(resp.Data); err != nil {
+	// The guard runs over the RAW response body, not resp.Data: the envelope has already been
+	// decoded, and a duplicated "data" key (or "data" beside "Data") was resolved last-wins on
+	// the way into Data — invisible to a check of Data alone.
+	if err := identityjson.Check(resp.raw); err != nil {
 		return nil, fmt.Errorf("x ads campaign lookup for %s: %w", campaignID, err)
 	}
 	var wire campaignLookupWire

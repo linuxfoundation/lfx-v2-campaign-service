@@ -34,5 +34,6 @@ and the error text is this package's own sentence, never a byte of the response.
 The Google Ads adoption read applies the same three guards with its own unexported helpers
 (`internal/platform/googleads/campaign_lookup.go`: `hasDuplicateKeys`,
 `hasUnpairedSurrogateEscape`); they were reproduced rather than imported because that file was out
-of scope for the change that added this package, and the two should converge here when it next
-moves.
+of scope for the change that added this package. **Convergence is a follow-up for the Google Ads
+owner:** `internal/platform/googleads` should import this package and delete its copies; until it
+does, a fix to either copy must be made to both.

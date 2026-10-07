@@ -47,7 +47,7 @@ func (d *MetaDispatcher) WriteBid(ctx context.Context, projectID string, platfor
 	}
 	adSetID := strings.TrimSpace(metaAdSetID(campaign))
 	if adSetID == "" {
-		return fmt.Errorf("write meta campaign bid: campaign %s records no ad set created by this service, so there is no ad set whose bid this endpoint may set; change the bid in Meta Ads Manager: %w",
+		return fmt.Errorf("write meta campaign bid: campaign %s records no ad set created by this service — either it was never provisioned, or the campaign was ADOPTED, which records none — so there is no ad set whose bid this endpoint may set; change the bid in Meta Ads Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBidUnwritable)
 	}
 

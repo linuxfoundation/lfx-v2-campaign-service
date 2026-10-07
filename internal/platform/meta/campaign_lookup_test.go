@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,30 @@ func TestMetaGetCampaign_ReadsTheNodeWithTheAdoptionFields(t *testing.T) {
 	want := "GET /120200000000001?fields=id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("requests = %q, want exactly [%q]", got, want)
+	}
+}
+
+// The campaign-only fields are what make Graph refuse an ad set or ad id read through this path;
+// dropping them would make a non-campaign node adoptable. See adoptCampaignFields.
+func TestMetaGetCampaign_RequestsCampaignOnlyFields(t *testing.T) {
+	c, seen := lookupTestClient(t, http.StatusOK, metaLookupBody)
+	if _, err := c.GetCampaign(context.Background(), "120200000000001"); err != nil {
+		t.Fatalf("GetCampaign: %v", err)
+	}
+	got := seen()
+	if len(got) != 1 {
+		t.Fatalf("requests = %q", got)
+	}
+	fields := map[string]bool{}
+	if i := strings.Index(got[0], "fields="); i >= 0 {
+		for _, f := range strings.Split(got[0][i+len("fields="):], ",") {
+			fields[f] = true
+		}
+	}
+	for _, f := range []string{"objective", "daily_budget", "lifetime_budget", "bid_strategy"} {
+		if !fields[f] {
+			t.Errorf("the adoption read does not request the campaign-only field %q (%s)", f, got[0])
+		}
 	}
 }
 

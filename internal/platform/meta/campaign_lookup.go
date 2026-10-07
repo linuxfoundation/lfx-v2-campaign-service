@@ -31,8 +31,12 @@ const (
 )
 
 // adoptCampaignFields is exactly the field set the adoption read asks for. Only id, name, status
-// and account_id decide anything; the rest are read so the response is the campaign's full
-// identity at the moment it was bound, and are not interpreted.
+// and account_id are interpreted — but the CAMPAIGN-ONLY fields (objective, daily_budget,
+// lifetime_budget, bid_strategy) are LOAD-BEARING all the same. GET /{id} accepts ANY node id, and
+// an ad set or ad also has id, name, status and account_id; asking for a field only a campaign
+// has is what makes Graph refuse a non-campaign node (code 100 without subcode 33, "nonexisting
+// field" — an unverifiable 503 here). Trimming them would make an ad set or ad id adoptable as a
+// campaign. TestMetaGetCampaign_RequestsCampaignOnlyFields pins that they are sent.
 const adoptCampaignFields = "id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy"
 
 // CampaignRef is what the adoption read learns about one campaign.

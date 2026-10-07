@@ -223,6 +223,27 @@ func TestAdoptCampaign_ForeignAccountIs409NotAbsentAndPersistsNothing(t *testing
 	}
 }
 
+// A live campaign of a type the platform's slot cannot hold is a definite 409 with its own message
+// — never the 404 that would invite a duplicate of a live campaign, never a retryable 503.
+func TestAdoptCampaign_UnsupportedCampaignTypeIs409(t *testing.T) {
+	disp := &adopterDispatcher{err: fmt.Errorf("adopt: %w", domain.ErrAdoptionCampaignTypeUnsupported)}
+	s, camps := newAdoptService(t, model.ProviderMicrosoftAds, disp)
+	p := adoptPayload()
+	p.Platform = string(model.ProviderMicrosoftAds)
+
+	_, err := s.AdoptCampaign(context.Background(), p)
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)
+	}
+	if !strings.Contains(conflict.Message, "Microsoft Search campaigns only") {
+		t.Errorf("409 message %q does not name the supported type", conflict.Message)
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("persisted a binding for a campaign of an unsupported type")
+	}
+}
+
 // An id-less ref, treated as success, writes a row every reader takes as provisioned.
 func TestAdoptCampaign_RefWithNoIDIsNotSuccess(t *testing.T) {
 	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "  ", Name: "n"}}

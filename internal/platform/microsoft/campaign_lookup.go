@@ -24,6 +24,20 @@ const (
 	StatusDeleted               = "Deleted"
 )
 
+// allCampaignTypes is every value of the v13 CampaignType flags enum
+// (https://learn.microsoft.com/en-us/advertising/campaign-management-service/campaigntype), sent
+// by the adoption lookup so a campaign of ANY type is returned rather than filtered out. Filtering
+// to Search left a non-Search campaign's answer resting on undocumented behaviour — a null slot
+// (unverifiable) or, worse, an InvalidCampaignId PartialError that would read as "absent" and
+// invite a duplicate of a live campaign. Comma-separated, as the REST JSON surface renders a
+// flags enum.
+const allCampaignTypes = "Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App"
+
+// ErrNotSearchCampaign reports a DEFINITE answer: the campaign exists in this account, but it is
+// not a Search campaign, the only type this service creates and so the only one with a slot to
+// adopt into. The dispatcher maps it to domain.ErrAdoptionCampaignTypeUnsupported (409).
+var ErrNotSearchCampaign = errors.New("microsoft-ads: the campaign exists but is not a Search campaign")
+
 // ErrNotACampaignID reports that the caller's id could not name a Microsoft Advertising campaign
 // at all, so no request was sent. A PERMANENT input fault: the adopt handler maps it to 400.
 var ErrNotACampaignID = errors.New("microsoft-ads: not a campaign id")
@@ -77,15 +91,15 @@ type CampaignRef struct {
 // the provenance check; the client's AccountID is the connection's own (see
 // MicrosoftDispatcher.LookupCampaign).
 //
-// CAMPAIGN TYPE. The read asks for CampaignType "Search", the only type this service creates, so
-// the adopted row's single slot is a Search slot. A campaign of another type is not returned in
-// the slot; queryCampaignByID reports that as an unexplained null slot, i.e. unverifiable — the
-// same verdict Google's adoption gives a campaign type it has no slot for.
+// CAMPAIGN TYPE. The read asks for EVERY documented CampaignType (allCampaignTypes), so a live
+// campaign is returned whatever its type, and then only Search — the one type this service
+// creates, and so the one with a slot — is adoptable. Any other type is ErrNotSearchCampaign: a
+// definite refusal, never an absence and never an adoption.
 func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignRef, error) {
 	if err := ValidateCampaignID(campaignID); err != nil {
 		return nil, err
 	}
-	camp, id, err := c.queryCampaignByIDGuarded(ctx, campaignID, "identity", "", identityjson.Check)
+	camp, id, err := c.queryCampaignByIDGuarded(ctx, campaignID, "identity", allCampaignTypes, "", identityjson.Check)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign lookup: %w", err)
 	}
@@ -100,9 +114,10 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	if !ok {
 		return nil, fmt.Errorf("microsoft-ads campaign lookup: campaign %s was returned without a readable Status", id)
 	}
+	var ref *CampaignRef
 	switch status {
 	case StatusActive, StatusPaused, StatusBudgetPaused, StatusBudgetAndManualPaused, StatusSuspended:
-		return &CampaignRef{ID: id, Name: name, Status: status}, nil
+		ref = &CampaignRef{ID: id, Name: name, Status: status}
 	case StatusDeleted:
 		// The id names a real record, but not one a brief can be bound to — the verdict Google's
 		// lookup reaches for a REMOVED campaign. A deleted campaign cannot spend, so reporting it
@@ -111,6 +126,18 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	default:
 		return nil, fmt.Errorf("microsoft-ads campaign lookup: campaign %s reports a Status this client does not recognise, so whether it exists as a live campaign cannot be established", id)
 	}
+	// TYPE, decided after liveness so a deleted campaign of any type stays an absence. The read
+	// asked for every type, so a non-Search answer is a DEFINITE fact about a live campaign —
+	// refused distinctly, never reported absent and never adopted into the Search slot. An
+	// absent or non-string CampaignType is unverifiable, not assumed to be Search.
+	campaignType, ok := rawString(camp.CampaignType)
+	if !ok || strings.TrimSpace(campaignType) == "" {
+		return nil, fmt.Errorf("microsoft-ads campaign lookup: campaign %s was returned without a readable CampaignType, so whether it can be adopted cannot be established", id)
+	}
+	if campaignType != campaignTypeSearch {
+		return nil, fmt.Errorf("microsoft-ads campaign lookup: campaign %s: %w", id, ErrNotSearchCampaign)
+	}
+	return ref, nil
 }
 
 // rawString decodes a raw JSON value that must be a string. Absent, null, or any other kind is

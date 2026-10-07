@@ -53,6 +53,9 @@ func (d *MicrosoftDispatcher) LookupCampaign(ctx context.Context, projectID stri
 		if errors.Is(err, microsoft.ErrNotACampaignID) {
 			return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
 		}
+		if errors.Is(err, microsoft.ErrNotSearchCampaign) {
+			return nil, fmt.Errorf("%w: %w", domain.ErrAdoptionCampaignTypeUnsupported, err)
+		}
 		return nil, fmt.Errorf("look up microsoft campaign: %w", err)
 	}
 	if ref == nil {

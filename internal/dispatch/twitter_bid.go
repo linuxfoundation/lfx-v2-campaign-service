@@ -46,7 +46,7 @@ func (d *TwitterDispatcher) WriteBid(ctx context.Context, projectID string, plat
 	}
 	lineItemID := strings.TrimSpace(twitterChildIDs(campaign))
 	if lineItemID == "" {
-		return fmt.Errorf("write x campaign bid: campaign %s records no line item created by this service, so there is no line item whose bid this endpoint may set; change the bid in X Ads Manager: %w",
+		return fmt.Errorf("write x campaign bid: campaign %s records no line item created by this service — either it was never provisioned, or the campaign was ADOPTED, which records none — so there is no line item whose bid this endpoint may set; change the bid in X Ads Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBidUnwritable)
 	}
 

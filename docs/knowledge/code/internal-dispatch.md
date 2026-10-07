@@ -3138,9 +3138,17 @@ order is the safety argument:
    `ErrConnectionNotUsable` + `ErrProviderConfigInvalid` (409, `adoptionAccountIDUnusable`), never
    an unverifiable 503.
 3. **One read by id** under that connection: Microsoft `GetCampaignsByIds` (the existing
-   `Campaigns/QueryByIds` read, account-scoped by body and header), Meta
+   `Campaigns/QueryByIds` read, account-scoped by body and header, asking for EVERY campaign type
+   so a live non-Search campaign is refused DEFINITELY — `domain.ErrAdoptionCampaignTypeUnsupported`,
+   409 — rather than read as absent), Meta
    `GET /{campaign_id}?fields=id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy`,
    Reddit `GET /ad_accounts/{account}/campaigns/{id}`, X `GET accounts/:account_id/campaigns/:id`.
+   Meta's campaign-only fields (`objective`, the budget fields, `bid_strategy`) are load-bearing:
+   they make Graph refuse an ad set or ad id read through the same `GET /{id}`. Reddit and X run
+   `identityjson.Check` over the RAW response body (`apiResponse.raw`), not the decoded `data`, so a
+   duplicated `data` envelope key is refused rather than resolved last-wins; their bare-404 absence
+   is judged on the status alone (a revoked account would also read absent — low harm, since any
+   dispatch to that account fails the same way).
 4. **Prove provenance.** Microsoft's read is account-scoped and its Campaign object carries no
    account id, so — as on Google — the request's scope is the proof and a foreign campaign is
    answered absent. Meta's node read is NOT account-scoped (one token reaches many accounts), so the
@@ -3156,7 +3164,14 @@ order is the safety argument:
    `metaCreationAccountID`, `redditCreationAccountID`, `twitterCreationAccountID`) holds every later
    read, toggle and lever on the row to the verified account, and each toggle refuses ACTIVATE
    (`ErrCampaignNotProvisioned`, now naming adoption in the message as Google's gate does) while
-   PAUSE addresses the campaign alone. The variant is `VariantDefault`: every platform but Google
+   PAUSE addresses the campaign alone. The LEVERS follow from the same missing children: the bid
+   writer is refused on all four (`ErrBidUnwritable` — the manual bid lives on the ad group, ad set
+   or line item), and the budget writer is refused on Meta (`ErrCampaignNotProvisioned` — the
+   budget lives on the ad set) but WORKS on Microsoft, Reddit and X, whose budget is the campaign's
+   own, so the write changes the adopted campaign's live budget behind the usual provenance and
+   shared-budget/pacing guards. Every one of those refusals names adoption. So "an adopted row is
+   an ordinary row" holds for the reads, delete and pause — not for activation or the child-level
+   levers. The variant is `VariantDefault`: every platform but Google
    has one slot per brief (`model.AdoptableVariants`).
 
 Definite vs unverifiable, per client (`GetCampaign` in each `campaign_lookup.go`): **absent

@@ -869,6 +869,18 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
 				"platform_campaign_id", platformCampaignID)
 			return nil, &briefs.ConflictError{Code: "409", Message: "that campaign belongs to a different ad account than this project's connection; adoption can only bind a campaign in the project's own connected ad account"}
+		case errors.Is(lerr, domain.ErrAdoptionCampaignTypeUnsupported):
+			// Definite and permanent: the campaign exists, live, in the project's own account,
+			// and is a type this service has no slot for. Never 404 (a duplicate of a live
+			// campaign would follow) and never 503 (nothing a retry can change).
+			slog.WarnContext(ctx, "campaign adoption refused: the campaign is of a type this service cannot adopt",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"platform_campaign_id", platformCampaignID)
+			msg := "that campaign is of a type this service cannot adopt on this platform"
+			if platform == model.ProviderMicrosoftAds {
+				msg = "adoption supports Microsoft Search campaigns only; that campaign is of another type"
+			}
+			return nil, &briefs.ConflictError{Code: "409", Message: msg}
 		case errors.Is(lerr, domain.ErrServiceDefect):
 			// ABOVE every connection arm below, for the reason given on the metrics branch:
 			// the fault is in a request THIS SERVICE constructed, so "repair the connection"
