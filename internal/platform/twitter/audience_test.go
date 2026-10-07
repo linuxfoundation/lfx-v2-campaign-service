@@ -757,3 +757,73 @@ func TestGetAudienceInsights_PacerBacklogRefusesBeforeAnyPost(t *testing.T) {
 		t.Error("the refusal waited on the pacer instead of being decided up front")
 	}
 }
+
+// A batch's pacer slots are reserved atomically: writers pacing concurrently with (and after)
+// the reservation are admitted only after the batch's last slot, never between its POSTs, so
+// they cannot push the batch past its deadline and leave a partial job set.
+func TestReserveStatsJobSlots_ConcurrentWritersCannotInterleave(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{AccountID: "account123"}, WithWriteDelay(20*time.Millisecond))
+	var mu sync.Mutex
+	var paced []time.Time
+	c.onAdmit = func(_ context.Context, at time.Time) {
+		mu.Lock()
+		paced = append(paced, at)
+		mu.Unlock()
+	}
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = c.pace(context.Background())
+		}()
+	}
+	close(start)
+	slots, err := c.reserveStatsJobSlots(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	wg.Wait()
+	for i := 1; i < len(slots); i++ {
+		if got := slots[i].Sub(slots[i-1]); got != c.writeDelay {
+			t.Errorf("slot %d is %s after the previous, want exactly one write delay", i, got)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paced) != 4+len(slots) {
+		t.Fatalf("%d admissions, want %d", len(paced), 4+len(slots))
+	}
+	reserved := map[time.Time]bool{}
+	for _, s := range slots {
+		reserved[s] = true
+	}
+	for _, at := range paced {
+		if reserved[at] {
+			continue
+		}
+		if !at.Before(slots[0]) && !at.After(slots[len(slots)-1]) {
+			t.Errorf("a concurrent writer was admitted at %s, inside the batch [%s, %s]", at, slots[0], slots[len(slots)-1])
+		}
+	}
+	// And a writer arriving after the reservation waits for the whole batch.
+	if next := c.nextWriteAt(); next.Before(slots[len(slots)-1].Add(c.writeDelay)) {
+		t.Errorf("next write %s is before the batch ends", next)
+	}
+}
+
+// A batch that cannot fit its deadline reserves nothing.
+func TestReserveStatsJobSlots_RefusalReservesNothing(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{AccountID: "account123"}, WithWriteDelay(time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	before := c.nextWriteAt()
+	if _, err := c.reserveStatsJobSlots(ctx, 6); !errors.Is(err, ErrStatsJobBudget) {
+		t.Fatalf("err = %v, want ErrStatsJobBudget", err)
+	}
+	if !c.nextWriteAt().Equal(before) {
+		t.Error("a refused batch moved the pacer")
+	}
+}

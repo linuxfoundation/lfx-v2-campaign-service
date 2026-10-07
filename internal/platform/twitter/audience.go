@@ -193,20 +193,34 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 		return nil, err
 	}
 	nJobs := len(audienceSegmentations) * len(batches)
-	if err := c.statsJobsFitBudget(ctx, nJobs); err != nil {
+	slots, err := c.reserveStatsJobSlots(ctx, nJobs)
+	if err != nil {
 		return nil, err
 	}
 
 	jobs := make([]audienceJob, 0, nJobs)
 	seenJobs := make(map[string]struct{}, nJobs)
+	// abandoned reports a failure that leaves the jobs created so far running on X.
+	abandoned := func(err error) error {
+		if len(jobs) == 0 {
+			return err
+		}
+		ids := make([]string, 0, len(jobs))
+		for _, j := range jobs {
+			ids = append(ids, j.id)
+		}
+		return &AudienceJobsAbandonedError{JobIDs: ids, Err: err}
+	}
 	for _, seg := range audienceSegmentations {
 		for _, batch := range batches {
-			id, jerr := c.createAudienceJob(ctx, batch, start, end, seg.segmentation)
+			id, jerr := c.createAudienceJob(ctx, batch, start, end, seg.segmentation, slots.at(len(jobs)))
 			if jerr != nil {
-				return nil, fmt.Errorf("get x audience insights (%s): %w", seg.dimension, jerr)
+				// A failed create may itself have committed on X (an ambiguous 5xx or 429); its id
+				// is unknown, so only the jobs already confirmed are reported.
+				return nil, abandoned(fmt.Errorf("get x audience insights (%s): %w", seg.dimension, jerr))
 			}
 			if _, dup := seenJobs[id]; dup {
-				return nil, errors.New("get x audience insights: x returned the same stats job id for two jobs")
+				return nil, abandoned(errors.New("get x audience insights: x returned the same stats job id for two jobs"))
 			}
 			seenJobs[id] = struct{}{}
 			scope := make(map[string]struct{}, len(batch))
@@ -219,7 +233,10 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 
 	urls, err := c.awaitAudienceJobs(ctx, jobs)
 	if err != nil {
-		return nil, fmt.Errorf("get x audience insights: %w", err)
+		// Not every job reached SUCCESS (still building, failed, or unreadable): report them all
+		// as possibly running. A failed job no longer holds a slot, but RunningStatsJobs sorts
+		// that out on the caller's next check.
+		return nil, abandoned(fmt.Errorf("get x audience insights: %w", err))
 	}
 
 	fold := newAudienceFold()
@@ -236,6 +253,85 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 		Window: w, Currency: currency, WindowStart: start, WindowEnd: end, Location: loc,
 		AllCountersNull: fold.allNull(), Buckets: fold.finish(),
 	}, nil
+}
+
+// AudienceJobsAbandonedError wraps a GetAudienceInsights failure that left stats jobs on X which
+// this read will never collect: they keep running — each holding one of the account's 100
+// concurrent-job slots — until they finish or X expires them. JobIDs are the jobs X confirmed.
+// The caller (the dispatcher's guard) counts them against the account until RunningStatsJobs
+// reports them done. Unwrap keeps every sentinel in Err matchable.
+type AudienceJobsAbandonedError struct {
+	JobIDs []string
+	Err    error
+}
+
+func (e *AudienceJobsAbandonedError) Error() string { return e.Err.Error() }
+func (e *AudienceJobsAbandonedError) Unwrap() error { return e.Err }
+
+// RunningStatsJobs reports which of ids X does not yet list as finished (SUCCESS, FAILED/FAILURE,
+// CANCELLED) — queued, processing, unlisted and unrecognised are all read conservatively as still
+// running — with ONE status read (job_ids accepts
+// up to 200 ids; at most maxRunningJobsQuery are asked). Any failure, or an untrustworthy body,
+// is an error and the caller keeps counting every id.
+func (c *Client) RunningStatsJobs(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if len(ids) > maxRunningJobsQuery {
+		return nil, fmt.Errorf("read x stats jobs: %d ids, at most %d per status read", len(ids), maxRunningJobsQuery)
+	}
+	for _, id := range ids {
+		if !validStatsJobID(id) {
+			return nil, errors.New("read x stats jobs: not a stats job id")
+		}
+	}
+	if err := ValidateMonitorAccountID(c.account.AccountID); err != nil {
+		return nil, err
+	}
+	resp, err := c.doRequestAbs(ctx, http.MethodGet, c.statsJobsURL(), "stats/jobs",
+		map[string]string{"job_ids": strings.Join(ids, ",")}, true /* idempotent: read */)
+	if err != nil {
+		return nil, fmt.Errorf("read x stats jobs: %w", err)
+	}
+	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
+		return nil, errors.New("read x stats jobs: 2xx response carried no data field")
+	}
+	if err := identityjson.Check(resp.raw); err != nil {
+		return nil, fmt.Errorf("read x stats jobs: %w", err)
+	}
+	var els []statsJobElement
+	if err := json.Unmarshal(resp.Data, &els); err != nil {
+		return nil, errors.New("read x stats jobs: data is not a list of jobs")
+	}
+	status := make(map[string]string, len(els))
+	for _, el := range els {
+		status[el.IDStr] = strings.ToUpper(strings.TrimSpace(el.Status))
+	}
+	running := make([]string, 0, len(ids))
+	for _, id := range ids {
+		// Only a TERMINAL status releases a job; queued, processing, absent or unrecognised all
+		// still count against the account.
+		switch status[id] {
+		case jobStatusSuccess, jobStatusFailed, jobStatusFailure, jobStatusCancelled:
+		default:
+			running = append(running, id)
+		}
+	}
+	return running, nil
+}
+
+// maxRunningJobsQuery bounds RunningStatsJobs' id list: X's documented job_ids cap.
+const maxRunningJobsQuery = 200
+
+// AudienceJobCount is how many stats jobs GetAudienceInsights would create for campaignIDs: one
+// per segmentation per batch of up to statsJobMaxEntities distinct ids. Invalid ids are counted
+// as given; GetAudienceInsights refuses them before creating anything.
+func AudienceJobCount(campaignIDs []string) int {
+	seen := make(map[string]struct{}, len(campaignIDs))
+	for _, id := range campaignIDs {
+		seen[id] = struct{}{}
+	}
+	return len(audienceSegmentations) * ((len(seen) + statsJobMaxEntities - 1) / statsJobMaxEntities)
 }
 
 // audienceBatches validates and deduplicates the scope and splits it into job-sized batches.
@@ -341,8 +437,8 @@ func (c *Client) readAudienceAccount(ctx context.Context) (*time.Location, strin
 
 // createAudienceJob creates one segmented stats job and returns its id_str, refusing a response
 // identityjson would not trust.
-func (c *Client) createAudienceJob(ctx context.Context, campaignIDs []string, start, end time.Time, segmentation string) (string, error) {
-	resp, err := c.postStatsJob(ctx, campaignIDs, start, end, segmentation)
+func (c *Client) createAudienceJob(ctx context.Context, campaignIDs []string, start, end time.Time, segmentation string, slot time.Time) (string, error) {
+	resp, err := c.postStatsJob(ctx, campaignIDs, start, end, segmentation, slot)
 	if err != nil {
 		return "", err
 	}

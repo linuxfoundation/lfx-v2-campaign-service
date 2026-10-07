@@ -1163,10 +1163,12 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   `days`. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
-  pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the
-  context deadline's remaining time (wall-clock `time.Until`) with `jobs × writeDelay +
-  statsJobSubmitMargin` (2s) and returns `ErrStatsJobBudget` — no job created — when it cannot
-  fit, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
+  pacer and never retried on a 429. Before the first POST, `reserveStatsJobSlots` reserves the
+  whole batch's consecutive pacer slots atomically under `writeMu` (so no concurrent writer can
+  interleave and push the batch past its deadline), refusing — nothing reserved, no job created —
+  with `ErrStatsJobBudget` when the last slot (after any backlog already queued) plus
+  `statsJobSubmitMargin` (2s) does not fit the context deadline's remaining time (wall-clock
+  `time.Until`); each POST then waits for its own slot, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
   (the dispatcher wraps it as `domain.ErrAccountReportBudgetTooShort`). Returns ONE composite id — the jobs' `id_str`s
   comma-joined — or `NoActiveCampaignsReportID` (`"none"`) when nothing was active, which
   Check answers as a finished empty report without a request. More than
@@ -1310,7 +1312,7 @@ line item only leaves `LineItem` nil; a line item of another campaign is
 over the project's own campaigns. X serves segmentation only through the ASYNCHRONOUS stats-jobs
 API (the synchronous `stats/accounts/:account_id` takes no `segmentation_type`), so one call:
 `GET accounts/:account_id` (timezone required; `currency` optional, ISO 4217 when present; id
-must echo the account; `identityjson.Check` on the raw body) → `statsJobsFitBudget` → one paced
+must echo the account; `identityjson.Check` on the raw body) → `reserveStatsJobSlots` → one slotted
 `POST stats/jobs/accounts/:account_id` per segmentation per batch of ≤20 ids (`postStatsJob`,
 shared with the monitor's `createStatsJob`: `entity=CAMPAIGN`, `granularity=TOTAL`,
 `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`, plus `segmentation_type`) → one
@@ -1339,8 +1341,12 @@ counter (`audienceCounter` reports `measured`; a literal 0 counts): X's forum re
 jobs that succeed with every metric null, and that is indistinguishable from an idle campaign set
 (this package reads X's null as "no activity" — `statsFold`, `firstOrZero` — and X does not
 document idle entities as omitted), so failing closed would 503 every idle project; the flag
-keeps the zeros from passing as a measurement instead. `statsJobsFitBudget` (shared with the
-monitor) now adds the pacer's backlog (`nextWriteAt` − now) to the paced POSTs, so a read queued
-behind other writes on the client refuses (`ErrStatsJobBudget`) before its first job POST rather
-than abandoning jobs mid-loop. UNVERIFIED against a live account: the segmented file shape and
+keeps the zeros from passing as a measurement instead. Job POSTs use `reserveStatsJobSlots`
+(shared with the monitor; see above), so a read never starts a batch it cannot finish in its
+budget and no concurrent writer can split the batch. A failure that leaves jobs running on X —
+any failure while creating or awaiting them — is `*AudienceJobsAbandonedError` carrying the job
+ids X confirmed (Unwrap keeps the sentinels); `RunningStatsJobs(ctx, ids)` answers which of them
+X still lists as not finished (one status read, `identityjson`-checked; queued, processing,
+unlisted and unrecognised all count as running), and `AudienceJobCount(ids)` is how many jobs a
+read would create — both for the dispatcher's per-account job budget. UNVERIFIED against a live account: the segmented file shape and
 `segment_name` vocabulary.

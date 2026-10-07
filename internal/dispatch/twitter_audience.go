@@ -93,7 +93,8 @@ func (d *TwitterDispatcher) ReadTwitterAudienceInsights(ctx context.Context, pro
 	if now == nil {
 		now = time.Now
 	}
-	ai, err := d.audience.read(ctx, accountID, twitterAudienceKey(accountID, xWindow, campaignIDs), now,
+	ai, err := d.audience.read(ctx, accountID, twitterAudienceKey(accountID, xWindow, campaignIDs),
+		twitter.AudienceJobCount(campaignIDs), now, client.RunningStatsJobs,
 		func(callCtx context.Context) (*twitter.AudienceInsights, error) {
 			return client.GetAudienceInsights(callCtx, xWindow, campaignIDs)
 		})

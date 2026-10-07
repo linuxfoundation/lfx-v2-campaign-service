@@ -1460,7 +1460,8 @@ lesson). The 2xx echo is checked like Reddit's: another campaign id or another a
 UNCONFIRMED.
 
 **Not gated.** X campaign writes (create, toggle) are already ungated; the budget PUT uses the same
-client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the account monitor.
+client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the two stats-job
+features (the account monitor and the audience read).
 
 **Unverified against a live X account**: which `budget_optimization` value a campaign this
 service creates actually reads back as, whether the single-campaign GET returns `deleted`
@@ -2080,12 +2081,23 @@ concurrent identical read; any other failure is shared, never retried); a SUCCES
 entries; failures never cached) while `twitter.AudienceWindowBounds` at the dispatcher clock
 (`audienceNow`) still gives the result's own instants, so "today" is never served across the
 account's midnight; and a per-account slot (`twitterAudienceAccountConcurrency` = 1) runs one read
-at a time, a waiter giving up with its context (503). The scope in the key means a cached result
+at a time, a waiter giving up with its context (503); the slot entry is deleted when nobody holds
+or awaits it, so `slots` does not grow with accounts. A joined SUCCESS whose window no longer
+`windowCurrent` (a "today" joined across the account's midnight) is re-led, like a
+leader-cancelled one. Jobs a failed read leaves running (`twitter.AudienceJobsAbandonedError`)
+are counted per account for `twitterAudienceAbandonedJobHold` (60 minutes — the monitor's
+`accountReportAbandonAfter`, as X documents no job lifetime) or until `RunningStatsJobs` reports
+them finished; `admitJobs`, run by the slot holder, refuses (503) a read whose
+`twitter.AudienceJobCount` would take the account past `twitterAudienceOutstandingJobBudget`
+(12 — two full reads, leaving most of X's 100 concurrent jobs per account to the account monitor),
+asking X first only when over budget. The scope in the key means a cached result
 is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
 (N callers → one set of jobs, a second account read refused while the first runs, cache hit
 creates no jobs and expires by TTL and by account-local day, failures not cached) and
 `twitter_audience_guard_test.go` (leader cancelled during fetch or slot wait → joiner re-leads;
-joiner's own cancellation is its own error; an upstream failure is shared, fetched once).
+joiner's own cancellation is its own error; an upstream failure is shared, fetched once; a joined
+result across midnight re-leads; the abandoned-job budget, X's answer and the hold; slots do not
+grow with accounts).
 
 ## Account discovery (optional capability)
 
