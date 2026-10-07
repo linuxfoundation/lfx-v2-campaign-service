@@ -3023,36 +3023,25 @@ func (o *Orchestrator) ReadAudienceInsights(ctx context.Context, projectID strin
 	if err != nil {
 		return nil, err
 	}
-	campaignIDs, err := o.projectCampaignScope(ctx, projectID, platform)
-	if err != nil {
-		return nil, err
-	}
 	// Same early return as ReadKeywordPerformance, and for the same reason — see the comment
 	// there. Both endpoints need it or the exposure simply moves to the other one.
-	if len(campaignIDs) == 0 {
-		return &model.AudienceInsights{Window: window, Buckets: []model.AudienceBucket{}}, nil
-	}
-	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
-	defer cancel()
-	start := time.Now()
-	ai, rerr := reader.ReadAudienceInsights(callCtx, projectID, platform, window, campaignIDs)
-	o.recordUpstream(ctx, platform, opReadAudience, start, rerr)
-	if rerr != nil {
-		return nil, rerr
-	}
-	if ai == nil {
-		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
-	}
-	if ai.Buckets == nil {
-		ai.Buckets = []model.AudienceBucket{}
-	}
-	return ai, nil
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
+			return reader.ReadAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.AudienceInsights {
+			return &model.AudienceInsights{Window: window, Buckets: []model.AudienceBucket{}}
+		},
+		func(ai *model.AudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.AudienceBucket{}
+			}
+		})
 }
 
 // ReadMetaAudienceInsights reads Meta audience breakdowns across the project's OWN campaigns.
-// Same shape as ReadAudienceInsights: capability check, scope from this service's own rows, an
-// empty scope answered WITHOUT contacting the platform (an unscoped Insights read on the shared
-// ad account would expose every other project's audience), and the nil-result guards.
+// Same shape as ReadAudienceInsights — capability check, then readScopedAudience — only the
+// capability and the result type differ.
 func (o *Orchestrator) ReadMetaAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.MetaAudienceInsights, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
@@ -3062,28 +3051,53 @@ func (o *Orchestrator) ReadMetaAudienceInsights(ctx context.Context, projectID s
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
 	}
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.MetaAudienceInsights, error) {
+			return reader.ReadMetaAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.MetaAudienceInsights {
+			return &model.MetaAudienceInsights{Window: window, Buckets: []model.MetaAudienceBucket{}}
+		},
+		func(ai *model.MetaAudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.MetaAudienceBucket{}
+			}
+		})
+}
+
+// readScopedAudience is the scope-then-read sequence both audience reads share, after their
+// capability check:
+//
+//   - the scope comes from this service's own rows (projectCampaignScope), and a lookup failure
+//     fails the read rather than widening it;
+//   - an EMPTY scope answers empty() WITHOUT contacting the platform — an unscoped read on a
+//     shared ad account would expose every other project's audience (see
+//     ReadKeywordPerformance);
+//   - the call runs under metricsCallTimeout and is recorded as read_audience;
+//   - (nil, nil) is a contract violation, and normalise() turns nil slices into empty ones so
+//     the wire shape is [] rather than null.
+func readScopedAudience[T any](ctx context.Context, o *Orchestrator, projectID string, platform model.Provider,
+	read func(context.Context, []model.ProjectCampaignScope) (*T, error), empty func() *T, normalise func(*T)) (*T, error) {
 	scope, err := o.projectCampaignScope(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
 	if len(scope) == 0 {
-		return &model.MetaAudienceInsights{Window: window, Buckets: []model.MetaAudienceBucket{}}, nil
+		return empty(), nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	ai, rerr := reader.ReadMetaAudienceInsights(callCtx, projectID, platform, window, scope)
+	out, rerr := read(callCtx, scope)
 	o.recordUpstream(ctx, platform, opReadAudience, start, rerr)
 	if rerr != nil {
 		return nil, rerr
 	}
-	if ai == nil {
+	if out == nil {
 		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
 	}
-	if ai.Buckets == nil {
-		ai.Buckets = []model.MetaAudienceBucket{}
-	}
-	return ai, nil
+	normalise(out)
+	return out, nil
 }
 
 // ApplyKeywordActions pauses or removes keywords on one campaign.

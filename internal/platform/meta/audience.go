@@ -370,10 +370,13 @@ func audienceSortKey(b AudienceBucket) string {
 	return b.Age + "\x00" + b.Gender + "\x00" + b.PublisherPlatform + "\x00" + b.PlatformPosition
 }
 
-// rejectDuplicateKeys refuses a row object that repeats a top-level key. encoding/json keeps
-// the LAST occurrence silently, so `{"campaign_id":"<ours>",…,"campaign_id":"<theirs>"}` would
-// pass the scope check on one value while the row's provenance is genuinely ambiguous. Nested
-// values are skipped whole; only this row's own keys matter.
+// rejectDuplicateKeys refuses a row object that repeats a top-level key UNDER THE DECODER'S
+// NOTION OF SAMENESS. encoding/json matches object keys to struct fields case-insensitively
+// (including Go's Unicode folds — KELVIN SIGN onto 'k', LONG S onto 's') and keeps the LAST
+// match silently, so both `{"campaign_id":"<theirs>","campaign_id":"<ours>"}` and
+// `{"Campaign_ID":"<theirs>","campaign_id":"<ours>"}` would pass the scope check on one value
+// while the row's provenance is genuinely ambiguous. Keys are therefore compared with
+// strings.EqualFold, not ==. Nested values are skipped whole; only this row's own keys matter.
 func rejectDuplicateKeys(raw json.RawMessage) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	tok, err := dec.Token()
@@ -383,7 +386,7 @@ func rejectDuplicateKeys(raw json.RawMessage) error {
 	if d, ok := tok.(json.Delim); !ok || d != '{' {
 		return fmt.Errorf("row is not a JSON object")
 	}
-	seen := map[string]struct{}{}
+	var seen []string
 	for dec.More() {
 		keyTok, kerr := dec.Token()
 		if kerr != nil {
@@ -393,11 +396,13 @@ func rejectDuplicateKeys(raw json.RawMessage) error {
 		if !ok {
 			return fmt.Errorf("row is not valid JSON")
 		}
-		if _, dup := seen[key]; dup {
-			// The key is a JSON object key Meta sent; bounded by its length only.
-			return fmt.Errorf("row repeats a key (%d bytes)", len(key))
+		for _, prev := range seen {
+			if strings.EqualFold(prev, key) {
+				// The key is a JSON object key Meta sent; bounded by its length only.
+				return fmt.Errorf("row repeats a key, up to case folding (%d bytes)", len(key))
+			}
 		}
-		seen[key] = struct{}{}
+		seen = append(seen, key)
 		var skip json.RawMessage
 		if derr := dec.Decode(&skip); derr != nil {
 			return fmt.Errorf("row is not valid JSON")

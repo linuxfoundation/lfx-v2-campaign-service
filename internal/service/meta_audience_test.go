@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -194,5 +195,19 @@ func TestOrchestratorReadMetaAudience_NilResultAndNilSlice(t *testing.T) {
 	}
 	if ai.Buckets == nil {
 		t.Error("Buckets is nil; it must be an empty slice so the wire shape is [] not null")
+	}
+}
+
+// The account-mismatch 409 is shared by every insights read, including this one, which has no
+// keywords — so its fixed text must not name keywords.
+func TestGetMetaAdsAudience_MismatchMessageIsRouteNeutral(t *testing.T) {
+	svc := metaAudienceService(t, &metaAudienceDispatcher{err: domain.ErrCampaignAccountMismatch}, "555")
+	_, err := svc.GetMetaAdsAudience(context.Background(), &conn.GetMetaAdsAudiencePayload{ProjectID: "cncf"})
+	ce, ok := err.(*conn.ConflictError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *conn.ConflictError", err, err)
+	}
+	if strings.Contains(ce.Message, "keyword") {
+		t.Errorf("the audience read's 409 names keywords: %q", ce.Message)
 	}
 }

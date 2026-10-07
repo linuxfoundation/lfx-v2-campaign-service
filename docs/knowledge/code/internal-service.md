@@ -1994,7 +1994,7 @@ result / normalises nil buckets. Errors go through `classifyInsightsErrorFor` wi
 `metaAdsAudienceInsights` descriptor; two arms were added there for the Meta-only sentinels
 `domain.ErrAudienceScopeTooLarge` and `ErrAudienceScopeInvalid` (409, fixed text). Upstream
 failures (transport, 5xx, 429 after retry, 401/403, malformed rows) take the default 503 arm.
-Buckets carry `dimension` (`age_gender` | `placement`) plus only that dimension's value fields
+Both audience reads share `readScopedAudience`, a small generic helper holding the scope, empty-scope, timeout, metrics, nil-result and normalise steps; only the capability assertion differs. The account-mismatch 409 text is route-neutral ("…to read this data…") since it is reached by the keyword, Google audience and Meta audience reads alike. Upstream calls run under `metricsCallTimeout` (20s). Buckets carry `dimension` (`age_gender` | `placement`) plus only that dimension's value fields
 (others absent via `optionalString`), and the envelope adds `account_currency`. Tests:
 `meta_audience_test.go`.
 

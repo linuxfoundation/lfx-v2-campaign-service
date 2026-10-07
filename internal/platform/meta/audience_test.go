@@ -371,7 +371,11 @@ func TestGetAudienceInsights_MalformedRowsFailTheWholeRead(t *testing.T) {
 		"mixed currencies":           audiencePage("", ageRow("111", "25-34", "male", 1, 0, ""), strings.Replace(ageRow("111", "35-44", "male", 1, 0, ""), `"EUR"`, `"USD"`, 1)),
 		"duplicate json key":         audiencePage("", `{"campaign_id":"111","campaign_id":"999","age":"25-34","gender":"male","impressions":"1","clicks":"0","spend":"","account_currency":"EUR"}`),
 		"duplicate campaign+segment": audiencePage("", ageRow("111", "25-34", "male", 1, 0, ""), ageRow("111", "25-34", "male", 1, 0, "")),
-		"truncated json":             `{"data":[{"campaign_id":"111"`,
+		// Case-variant repeats: encoding/json would keep the LAST (in-scope, plausible) value.
+		"case-variant campaign id": audiencePage("", `{"Campaign_ID":"999","campaign_id":"111","age":"25-34","gender":"male","impressions":"1","clicks":"0","spend":"","account_currency":"EUR"}`),
+		"case-variant spend":       audiencePage("", `{"campaign_id":"111","age":"25-34","gender":"male","impressions":"1","clicks":"0","Spend":"999","spend":"1","account_currency":"EUR"}`),
+		"long-s spend":             audiencePage("", "{\"campaign_id\":\"111\",\"age\":\"25-34\",\"gender\":\"male\",\"impressions\":\"1\",\"clicks\":\"0\",\"\u017fpend\":\"999\",\"spend\":\"1\",\"account_currency\":\"EUR\"}"),
+		"truncated json":           `{"data":[{"campaign_id":"111"`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, page))
@@ -394,6 +398,14 @@ func TestRejectDuplicateKeys(t *testing.T) {
 		`{"a":"1","a":"2"}`:               true,
 		`["a"]`:                           true,
 		`{"a":`:                           true,
+		// encoding/json matches keys case-insensitively and keeps the last, so a case-variant
+		// repeat is as ambiguous as an exact one.
+		`{"Campaign_ID":"999","campaign_id":"111"}`: true,
+		`{"Spend":"9","spend":"1"}`:                 true,
+		// KELVIN SIGN and LONG S fold onto k and s in the decoder, written raw and \u-escaped.
+		"{\"\u212a\":\"1\",\"k\":\"2\"}":         true,
+		"{\"\\u212a\":\"1\",\"k\":\"2\"}":        true,
+		"{\"\u017fpend\":\"1\",\"spend\":\"2\"}": true,
 	} {
 		if err := rejectDuplicateKeys(json.RawMessage(raw)); (err != nil) != wantErr {
 			t.Errorf("%s: err = %v, wantErr %v", raw, err, wantErr)

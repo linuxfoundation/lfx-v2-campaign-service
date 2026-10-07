@@ -561,6 +561,13 @@ now shares). Rows are summed per segment across campaigns with an overflow check
 after aggregation; order is impressions descending then values. Any failure — including either
 breakdown's — returns no rows. No conversions: Meta has no scalar conversions metric.
 
+The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both breakdowns, up to
+2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
+large project can 503 consistently on timeout. Row keys are compared for duplicates with
+`strings.EqualFold`, because encoding/json matches keys to struct fields case-insensitively
+(KELVIN SIGN → `k`, LONG S → `s` included) and keeps the last match: `{"Campaign_ID":…,"campaign_id":…}`
+is as ambiguous as an exact repeat.
+
 ## Credential scrubbing on error bodies
 
 When an error response is NOT a Graph diagnostic — a proxy page, a WAF block, a
