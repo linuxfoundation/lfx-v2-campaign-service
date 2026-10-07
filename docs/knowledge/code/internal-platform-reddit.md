@@ -655,3 +655,15 @@ first attempt could overwrite an operator's later change to another dimension an
 final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at once; otherwise
 the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
 definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Adoption read (`campaign_lookup.go`, LFXV2-2665)
+
+`GetCampaign` is the read `RedditDispatcher.LookupCampaign` makes to adopt an existing campaign:
+one `GET /ad_accounts/{account}/campaigns/{id}` — the resource the budget read and the toggle
+address — through `request()`, so a 429 is retried and an exhausted one is an error.
+`ValidateCampaignID` (letters/digits/underscore, ≤64, no padding) runs first and returns
+`ErrInvalidCampaignID` with no request. A 404 and a `configured_status` of `DELETED` or `ARCHIVED`
+are `(nil, nil)`; `ACTIVE`/`PAUSED` is a ref; any other status, a missing name, an id echo that
+differs, an empty `data`, a 401/403, and a body `identityjson.Check` refuses or that does not decode
+are errors. The read is path-scoped; `ad_account_id` is returned when present for the dispatcher to
+compare, and an unreported one is left to the path scoping.

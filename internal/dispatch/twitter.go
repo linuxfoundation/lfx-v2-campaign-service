@@ -548,7 +548,7 @@ func (d *TwitterDispatcher) ToggleStatus(ctx context.Context, projectID string, 
 	}
 	lineItemID := twitterChildIDs(campaign)
 	if twitterStatus == twitter.StatusActive && strings.TrimSpace(lineItemID) == "" {
-		return fmt.Errorf("%w: twitter campaign %s cannot be activated because its line item is not known, so nothing would serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		return fmt.Errorf("%w: twitter campaign %s cannot be activated because its line item is not known, so nothing would serve — either it was never provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to X Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, lineItemID, twitterStatus); uerr != nil {
 		// An ambiguous outcome (transport/5xx/mutating-3xx/mutating-429) may have applied

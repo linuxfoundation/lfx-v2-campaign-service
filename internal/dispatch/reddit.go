@@ -404,7 +404,7 @@ func (d *RedditDispatcher) ToggleStatus(ctx context.Context, projectID string, p
 	// classifies it as a 409 state error (the platform is never called), not a 503. Pausing
 	// needs no child ids — pausing the parent already stops delivery.
 	if redditStatus == reddit.StatusActive && (strings.TrimSpace(adGroupID) == "" || strings.TrimSpace(adID) == "") {
-		return fmt.Errorf("%w: reddit campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		return fmt.Errorf("%w: reddit campaign %s cannot be activated because this service has no record of a fully-created ad group + ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to Reddit Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adGroupID, adID, redditStatus); uerr != nil {
 		// An UNCONFIRMED outcome (transport/5xx/3xx-mutating) means the PATCH MAY have

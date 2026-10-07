@@ -1284,3 +1284,20 @@ and an arm calling it would assert a match that can never happen. The classifica
 either way — the default is inconclusive too — only the claim would be false.
 `TestProbeInconclusive_PreSendDialErrorIsNotClaimed` keeps that note executable, and fails if the
 pre-send shape ever changes.
+
+## Adoption read (`campaign_lookup.go`, LFXV2-2665)
+
+`GetCampaign` is the read `MicrosoftDispatcher.LookupCampaign` makes to adopt an existing campaign.
+It rides the budget read's `GetCampaignsByIds` (`queryCampaignByIDGuarded`, `Campaigns/QueryByIds`,
+`CampaignType` Search, AccountId in the body and `CustomerAccountId` on the request), so it inherits
+every answer rule that read applies, plus `identityjson.Check` over the raw 200 body before it is
+decoded — the budget and bid reads pass no guard and are unchanged. `Name` and `Status` were added
+to `msCampaignBudgetRead` as RAW fields so a shape this package does not expect in either can fail
+only the adoption read. `ValidateCampaignID` (canonical positive int64, no padding) runs first and
+returns `ErrNotACampaignID` with no request. `CampaignServiceInvalidCampaignId` (fault or
+PartialError) and status `Deleted` are `(nil, nil)`; Active, Paused, BudgetPaused,
+BudgetAndManualPaused and Suspended are a ref; any other status, a missing or blank Name, and every
+error the shared read raises are errors. The read is account-scoped and the Campaign object carries
+no account id, so the request's scope IS the provenance check — a campaign in another account is
+answered absent, as on Google. A non-Search campaign comes back as an unexplained null slot and is
+therefore unverifiable rather than adopted into the Search slot.
