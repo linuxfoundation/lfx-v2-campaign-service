@@ -37,8 +37,9 @@ type EmailMonitorReader interface {
 
 // hubspotMonitorMaxCampaigns is how many of a project's recorded HubSpot campaigns one monitor
 // read checks — the most recently recorded ones. Each costs one or two statistics requests (its
-// email and any A/B variant), so this bounds the read at 100 requests plus one token-info call,
-// inside the 20s budget. A project with more is answered rather than refused: the newest emails are
+// email and any A/B variant), so a read is at most 101 logical calls (100 emails plus token-info);
+// each is retried at most 3 times on a 429 by the client, so at most 404 HTTP attempts, all inside
+// the 20s budget. A project with more is answered rather than refused: the newest emails are
 // the ones a trailing window of at most 90 days is about, and Truncated says so when an unchecked
 // row could plausibly have been sent inside the window (see ReadHubSpotEmailMonitor).
 const hubspotMonitorMaxCampaigns = 50

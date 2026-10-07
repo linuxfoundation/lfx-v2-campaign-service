@@ -227,6 +227,46 @@ func TestHubSpotEmailMonitor_DuplicateEmailIsReadOnce(t *testing.T) {
 	}
 }
 
+// HubSpot email ids are unique only within a portal. A NEWER row recorded against another portal
+// (or with a malformed id) carrying the same number must not suppress the older attributable row,
+// and must itself be counted unattributable — in either order.
+func TestHubSpotEmailMonitor_AttributionIsDecidedBeforeDedupe(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rows  []*model.Campaign
+		wantC string
+	}{
+		{"foreign newer, attributable older", []*model.Campaign{
+			recordedEmail("foreign", "801", "999999", nil), recordedEmail("ours", "801", testPortalID, nil)}, "ours"},
+		{"attributable newer, foreign older", []*model.Campaign{
+			recordedEmail("ours", "801", testPortalID, nil), recordedEmail("foreign", "801", "999999", nil)}, "ours"},
+		{"unrecorded-portal newer, attributable older", []*model.Campaign{
+			recordedEmail("legacy", "801", "", nil), recordedEmail("ours", "801", testPortalID, nil)}, "ours"},
+		{"malformed variant newer, attributable older", []*model.Campaign{
+			recordedEmail("bad", "0801", testPortalID, nil), recordedEmail("ours", "801", testPortalID, nil)}, "ours"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, rec := monitorServer(t, monitorServerOpts{byID: map[string]string{
+				"801": monitorStats("801", `{"sent":10,"delivered":10}`),
+			}})
+			d := newMonitorDispatcher(srv, fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)})
+			read, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot, tc.rows, 30)
+			if err != nil {
+				t.Fatalf("ReadEmailMonitor: %v", err)
+			}
+			if len(read.Emails) != 1 || read.Emails[0].CampaignID != tc.wantC {
+				t.Errorf("emails = %+v, want one row under %q", read.Emails, tc.wantC)
+			}
+			if read.EmailsUnattributable != 1 {
+				t.Errorf("unattributable = %d, want 1 (the other row)", read.EmailsUnattributable)
+			}
+			if got := rec.ids(); len(got) != 1 || got[0] != "801" {
+				t.Errorf("statistics requested for %v, want 801 once", got)
+			}
+		})
+	}
+}
+
 // DEFINITE OR NOTHING: one email's failure fails the read, whatever the others returned.
 func TestHubSpotEmailMonitor_AnyUpstreamFailureFailsTheWholeRead(t *testing.T) {
 	for _, tc := range []struct {

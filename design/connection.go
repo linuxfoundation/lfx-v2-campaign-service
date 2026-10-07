@@ -1194,6 +1194,15 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	Attribute("issue", String, "What the rule engine flagged.", func() { Example("Underspending: 42% of expected spend") })
 	Attribute("action", String, "The suggested remedy.", func() { Example("Increase daily budget or check for delivery limits") })
 	Required("priority", "issue", "action")
+	// TYPE-LEVEL example, and it is an AD-monitor finding with no email_id: composed from the
+	// attribute examples alone, Goa would put the HubSpot-only email_id beside a Google campaign
+	// id and an underspend issue — a finding no monitor can produce. monitor-hubspot-account's
+	// action_items attribute carries its own example, with email_id.
+	Example(map[string]any{
+		"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
+		"issue":  "Underspending: 42% of expected spend",
+		"action": "Increase daily budget or check for delivery limits",
+	})
 })
 
 // AccountMonitorTotals is the account-wide aggregate reported next to the per-campaign rows —

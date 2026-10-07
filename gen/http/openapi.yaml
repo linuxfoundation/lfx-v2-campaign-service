@@ -10795,15 +10795,23 @@ definitions:
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
-                      email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
-                      priority: LOW
+                      priority: MED
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
-                      email_id: "112233445566"
                       issue: 'Underspending: 42% of expected spend'
-                      priority: LOW
+                      priority: MED
+                    - action: Increase daily budget or check for delivery limits
+                      campaign_id: "24183781329"
+                      campaign_name: KubeCon NA 2026 - Search
+                      issue: 'Underspending: 42% of expected spend'
+                      priority: MED
+                    - action: Increase daily budget or check for delivery limits
+                      campaign_id: "24183781329"
+                      campaign_name: KubeCon NA 2026 - Search
+                      issue: 'Underspending: 42% of expected spend'
+                      priority: MED
             campaigns:
                 type: array
                 items:
@@ -10878,40 +10886,19 @@ definitions:
                 - action: Increase daily budget or check for delivery limits
                   campaign_id: "24183781329"
                   campaign_name: KubeCon NA 2026 - Search
-                  email_id: "112233445566"
                   issue: 'Underspending: 42% of expected spend'
-                  priority: LOW
+                  priority: MED
                 - action: Increase daily budget or check for delivery limits
                   campaign_id: "24183781329"
                   campaign_name: KubeCon NA 2026 - Search
-                  email_id: "112233445566"
                   issue: 'Underspending: 42% of expected spend'
-                  priority: LOW
+                  priority: MED
                 - action: Increase daily budget or check for delivery limits
                   campaign_id: "24183781329"
                   campaign_name: KubeCon NA 2026 - Search
-                  email_id: "112233445566"
                   issue: 'Underspending: 42% of expected spend'
-                  priority: LOW
+                  priority: MED
             campaigns:
-                - budget_day: 150
-                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                  clicks: 3110
-                  conversions: 12.5
-                  ctr: 6.45
-                  end_date: "2026-11-30"
-                  fetch_failed: false
-                  impressions: 48200
-                  is_search_channel: true
-                  name: KubeCon NA 2026 - Search
-                  pacing_label: underspending
-                  pacing_pct: 87
-                  pacing_unknown: false
-                  platform_campaign_id: "24183781329"
-                  spend: 482.13
-                  start_date: "2026-08-01"
-                  status: ENABLED
-                  total_budget: 5000
                 - budget_day: 150
                   campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
                   clicks: 3110
@@ -11001,9 +10988,8 @@ definitions:
             action: Increase daily budget or check for delivery limits
             campaign_id: "24183781329"
             campaign_name: KubeCon NA 2026 - Search
-            email_id: "112233445566"
             issue: 'Underspending: 42% of expected spend'
-            priority: LOW
+            priority: MED
         required:
             - priority
             - issue
@@ -11212,7 +11198,7 @@ definitions:
             id:
                 type: string
                 description: Audience UUID
-                example: Et enim sit magnam nobis.
+                example: Rem et enim sit magnam nobis.
             include_list_ids:
                 type: array
                 items:
@@ -15664,14 +15650,15 @@ definitions:
                 $ref: '#/definitions/AudienceInput'
         example:
             audience:
-                inclusion_summary: Voluptatibus nihil nisi.
+                inclusion_summary: Nisi repudiandae.
                 platform: hubspot
-                platform_master_list_id: Velit sunt molestiae eius.
-                status: building
+                platform_master_list_id: Quidem velit.
+                status: built
                 suppression_list_ids:
-                    - Nobis hic eos magni eos voluptatem.
-                    - Hic ut sapiente harum aliquam sunt eum.
-                    - Eaque occaecati.
+                    - Eius in reprehenderit nobis hic eos.
+                    - Eos voluptatem sint hic.
+                    - Sapiente harum aliquam sunt eum rerum eaque.
+                    - Facere voluptatibus.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:

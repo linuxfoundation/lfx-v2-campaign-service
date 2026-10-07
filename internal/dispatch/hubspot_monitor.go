@@ -18,8 +18,10 @@ import (
 
 // hubspotMonitorConcurrency bounds how many statistics reads the email account monitor has in
 // flight at once. The statistics endpoint answers for one email per request here (the client
-// filters to exactly one id and proves it), so a read is bounded at 101 requests (100 emails plus
-// token-info). Nothing here proves that fits a private app's burst allowance: HubSpot's limits
+// filters to exactly one id and proves it), so a read is at most 101 LOGICAL calls (100 emails
+// plus token-info). Each is idempotent, so the client retries a 429 up to 3 times (retryMax), and
+// a read can therefore send up to 404 HTTP attempts. Nothing here proves that fits a private
+// app's burst allowance: HubSpot's limits
 // are per app and shared with every other caller of the same token (100 requests per 10s on the
 // lowest tiers). Two at a time keeps this read's own share modest; under contention a request can
 // still be throttled past the client's retries, and the read then fails as a whole (503) rather
@@ -151,8 +153,15 @@ func (d *HubSpotDispatcher) ReadEmailMonitor(ctx context.Context, projectID stri
 
 // hubspotMonitorTargets turns the project's recorded campaigns into the emails to read, in the
 // campaigns' order (each campaign's own email, then its A/B variant), and counts the recorded
-// emails that cannot be read safely. An email id seen twice is read once, under its first
-// (newest) row. Every decision here is local; nothing is sent.
+// emails that cannot be read safely. Every decision here is local; nothing is sent.
+//
+// Attribution is decided BEFORE de-duplication, and only attributable emails are de-duplicated.
+// A HubSpot email id is unique only within its portal, so the same number on a row recorded
+// against another portal (or a malformed one) is a DIFFERENT email: letting it mark the id as
+// seen would suppress an older, attributable row with that number, and a foreign row met after
+// an attributable one would escape the unattributable count. Every attributable email is in the
+// current portal, so the dedupe key is portal+id; an id seen twice there is read once, under its
+// first (newest) row.
 func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([]hubspotMonitorTarget, int) {
 	targets := make([]hubspotMonitorTarget, 0, len(campaigns))
 	seen := map[string]struct{}{}
@@ -172,16 +181,18 @@ func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([
 				name: rec.ABTestVariant.Name, abVariant: true,
 			})
 		}
-		attributable := strings.TrimSpace(rec.PortalID) != "" && strings.TrimSpace(rec.PortalID) == currentPortal
+		portal := strings.TrimSpace(rec.PortalID)
+		attributable := portal != "" && portal == currentPortal
 		for _, t := range candidates {
-			if _, dup := seen[t.emailID]; dup {
-				continue
-			}
-			seen[t.emailID] = struct{}{}
 			if !attributable || hubspot.ValidateEmailID(t.emailID) != nil {
 				unattributable++
 				continue
 			}
+			key := portal + "/" + t.emailID
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
 			targets = append(targets, t)
 		}
 	}

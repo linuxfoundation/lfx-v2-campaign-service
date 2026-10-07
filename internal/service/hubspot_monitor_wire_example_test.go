@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,6 +228,40 @@ func TestPublishedHubSpotMonitorExamplesArePossible(t *testing.T) {
 			// Guard against the walk silently finding nothing (a renamed field, a moved spec).
 			if !sawRow || !sawTotals || !sawEnvelope {
 				t.Fatalf("found row=%v totals=%v envelope=%v HubSpot monitor examples; want all three", sawRow, sawTotals, sawEnvelope)
+			}
+		})
+	}
+}
+
+// TestPublishedAdMonitorActionItemExamplesCarryNoEmailID pins that no published example of an
+// AD-monitor finding carries email_id, which only monitor-hubspot-account sets: a Google-style
+// campaign id and underspend issue beside an email id is a finding no monitor can produce. Goa
+// clones attribute examples into the shared type's example, so this lived in the generated spec.
+func TestPublishedAdMonitorActionItemExamplesCarryNoEmailID(t *testing.T) {
+	for _, rel := range hubspotMonitorSpecs {
+		t.Run(rel, func(t *testing.T) {
+			sawAd, sawHubSpot := false, false
+			for path, ex := range hubspotMonitorSpecExamples(t, rel) {
+				hubspotMonitorVisit(ex, func(v any) {
+					n, ok := v.(map[string]any)
+					if !ok || n["priority"] == nil || n["issue"] == nil {
+						return
+					}
+					_, hasEmail := n["email_id"]
+					hubspotFinding := strings.Contains(fmt.Sprint(n["issue"]), "Bounce rate") ||
+						strings.Contains(fmt.Sprint(n["issue"]), "delivered")
+					if hubspotFinding {
+						sawHubSpot = true
+						return
+					}
+					sawAd = true
+					if hasEmail {
+						t.Errorf("%s: ad-monitor finding %v carries email_id", path, n)
+					}
+				})
+			}
+			if !sawAd || !sawHubSpot {
+				t.Fatalf("found ad=%v hubspot=%v action-item examples; want both", sawAd, sawHubSpot)
 			}
 		})
 	}

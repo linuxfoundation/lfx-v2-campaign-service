@@ -4137,7 +4137,11 @@ check, not the resolver, is the boundary; neither row → `ErrNotFound`); `Monit
 token's portal via `AuthenticatedPortalID` on its own `portalLookupTimeout`; then
 `hubspotMonitorTargets` turns the campaigns the orchestrator passed into emails — each row's own
 email then its recorded `Result.abTestVariant`, deduplicated by email id (first, newest row
-wins) — counting as unattributable any whose row records no `portalId`, another portal, or a
+wins, see below) — counting as unattributable any whose row records no `portalId`, another portal, or a
 non-canonical id; those are never sent upstream. One `GetEmailCounters` per email through an
-`errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read). `ErrNoSentEmailInWindow` is counted
+`errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read).
+Attribution is decided BEFORE de-duplication and only attributable emails are de-duplicated,
+keyed portal+id: an id is unique only within its portal, so a foreign-portal or malformed row
+with the same number must neither suppress an attributable row nor escape the unattributable
+count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.

@@ -762,7 +762,9 @@ differs, and why:
   endTimestamp&emailIds=<one id>` — the endpoint the per-campaign metrics read already uses,
   through the same `readEmailCounters` guards (filter must cover exactly that id, recognised
   counter vocabulary, rename signature, no negative). At most two in flight
-  (`hubspotMonitorConcurrency`), inside `accountsCallTimeout` (20s), bounded at 101 requests.
+  (`hubspotMonitorConcurrency`), inside `accountsCallTimeout` (20s), at most 101 logical
+  calls (100 emails + token-info), each retried at most 3 times on a 429 (`retryMax`), so at most
+  404 HTTP attempts.
   Nothing proves that fits a private app's burst allowance — HubSpot limits are per app and
   shared with every caller of the token (100 per 10s on the lowest tiers) — so a throttled
   portal, a 429 outlasting the client's retries, answers 503 with no partial result. The client

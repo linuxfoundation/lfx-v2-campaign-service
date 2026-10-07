@@ -88,7 +88,11 @@ type HubSpotEmailMonitorRead struct {
 	// project's token now reaches (an email id is meaningful only inside its portal), or carries
 	// a malformed id. They are not read at all.
 	EmailsUnattributable int
-	// Truncated is true when the project has recorded more HubSpot campaigns than the monitor
-	// reads; only the most recently recorded ones were checked.
+	// Truncated is CONDITIONAL. The monitor checks only the most recently recorded campaigns;
+	// when there were more, the orchestrator sets Truncated only if the oldest CHECKED row was
+	// recorded on or after SpanStart — otherwise every unchecked row predates the window and is
+	// presumed not sent in it. So false does NOT prove nothing was capped: an unchecked email
+	// recorded before the window but sent inside it (a draft sent late) is the unflagged residual
+	// (see docs/api-catalog.md and Orchestrator.ReadHubSpotEmailMonitor).
 	Truncated bool
 }
