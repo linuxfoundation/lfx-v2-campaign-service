@@ -1986,7 +1986,10 @@ before refresh and merge, so a report from before a day or month rollover is res
 never served as the new period (#289 review). `supersedeOtherPeriodPending` (run before the
 collect step) does the same for a report still PENDING for another period: it clears it via the
 `fail` compare-and-set ("superseded: …"), so `refreshInsightReport` submits the current period's
-report on the same read; losing the CAS re-reads and adopts the pending half instead (#292 review).
+report on the same read; losing the CAS re-reads and adopts the whole snapshot (ready half too) and
+re-validates its pending half, superseding another old-period report at most
+`maxSupersedeAttempts` (3) times, and a store error, failed re-read or exhausted bound returns an
+error instead of continuing with the stale snapshot (#292 and #294 review).
 
 ## Report-backed age/gender audience read (`audience_report.go`, LFXV2-2665)
 
