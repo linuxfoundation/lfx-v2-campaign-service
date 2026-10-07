@@ -1352,3 +1352,18 @@ unrequested job or one job twice is an error, so a malformed answer never releas
 processing, unlisted and unrecognised all count as running), and `AudienceJobCount(ids)` is how many jobs a
 read would create — both for the dispatcher's per-account job budget. UNVERIFIED against a live account: the segmented file shape and
 `segment_name` vocabulary.
+
+## Account-keyed write pacer (`pacer.go`, LFXV2-2665)
+
+`AccountPacers` hands out one `writePacer` (mutex + next-write instant) per X ad account (keyed by
+base URL + account id); a client built `WithAccountPacers(reg)` paces and reserves stats-job
+batches (`pace`, `reserveStatsJobSlots`) against its account's pacer, so two projects'
+connections to the shared LF account — or a cache replacement — cannot interleave writes or
+split a batch. A client without a registry, or without an account id (discovery), paces
+privately. The dispatcher owns the registry, so the scope is the PROCESS; replicas do not share
+it, which is why the chart refuses more than one replica while `TWITTER_METRICS_ENABLED` is on.
+`createAudienceJob` reports `maybeCreated` for a failed create that may have committed
+(`createOutcomeAmbiguous`, or any unusable 2xx), and `GetAudienceInsights` counts those as
+`AudienceJobsAbandonedError.Unknown` — also when no job was created before — so the dispatcher
+can charge them. Tests: `TestAccountPacers_ClientsForOneAccountShareReservations`,
+`TestGetAudienceInsights_AmbiguousCreatesAreCharged`.

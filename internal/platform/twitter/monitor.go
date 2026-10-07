@@ -774,10 +774,10 @@ func (s statsJobSlots) at(i int) time.Time {
 }
 
 // reserveStatsJobSlots reserves `jobs` CONSECUTIVE write-pacer slots for one batch of stats-job
-// POSTs, atomically under writeMu, and returns their instants; each POST then waits for its own
+// POSTs, atomically under pacer.mu, and returns their instants; each POST then waits for its own
 // slot (postStatsJob) instead of calling pace.
 //
-// Atomic because a snapshot is not enough: checking the backlog (nextWrite) and then pacing each
+// Atomic because a snapshot is not enough: checking the backlog (pacer.next) and then pacing each
 // POST separately lets another writer on the shared client reserve slots between the check and
 // the POSTs, pushing this batch past its deadline and abandoning the jobs already created — a
 // partial job set. Reserving the whole batch first means nothing can slip in.
@@ -799,8 +799,8 @@ func (c *Client) reserveStatsJobSlots(ctx context.Context, jobs int) (statsJobSl
 		}
 		return nil, nil
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+	c.pacer.mu.Lock()
+	defer c.pacer.mu.Unlock()
 	// Re-check cancellation under the lock, as pace does: sync.Mutex.Lock is not context-aware, so
 	// a caller can wait here behind other writers and have its context end meanwhile. Reserving a
 	// whole batch for a caller that will never POST would push every live writer back.
@@ -809,8 +809,8 @@ func (c *Client) reserveStatsJobSlots(ctx context.Context, jobs int) (statsJobSl
 	}
 	now := c.timeFn()
 	first := now
-	if c.nextWrite.After(now) {
-		first = c.nextWrite
+	if c.pacer.next.After(now) {
+		first = c.pacer.next
 	}
 	slots := make(statsJobSlots, jobs)
 	for i := range slots {
@@ -822,7 +822,7 @@ func (c *Client) reserveStatsJobSlots(ctx context.Context, jobs int) (statsJobSl
 			return nil, fmt.Errorf("%w: %d jobs need about %s, %s left", ErrStatsJobBudget, jobs, need, left.Truncate(time.Millisecond))
 		}
 	}
-	c.nextWrite = slots[jobs-1].Add(c.writeDelay)
+	c.pacer.next = slots[jobs-1].Add(c.writeDelay)
 	// Each reserved slot is one pacer admission, reported to the test hook as pace reports its own.
 	if c.onAdmit != nil {
 		for _, at := range slots {

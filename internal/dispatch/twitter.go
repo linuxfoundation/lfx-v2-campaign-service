@@ -93,6 +93,10 @@ type TwitterDispatcher struct {
 
 // NewTwitterDispatcher builds the adapter from the connection repo + encryptor.
 func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter.Option) *TwitterDispatcher {
+	// ONE account-keyed pacer registry for every client this dispatcher builds, appended after
+	// the caller's options: two projects whose connections point at one ad account then pace
+	// (and reserve stats-job batches) against the same state. See twitter.AccountPacers.
+	opts = append(opts[:len(opts):len(opts)], twitter.WithAccountPacers(twitter.NewAccountPacers()))
 	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newTwitterAudienceGuard()}
 }
 

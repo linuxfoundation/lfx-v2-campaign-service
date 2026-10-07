@@ -85,6 +85,9 @@ type twitterAudienceSlot struct {
 	users int
 }
 
+// twitterAudienceAbandonedJob is one job a failed read left on X. id is "" for an ANONYMOUS job —
+// a create that may have committed with no usable id — which X cannot be asked about, so it only
+// expires.
 type twitterAudienceAbandonedJob struct {
 	id    string
 	until time.Time
@@ -255,7 +258,7 @@ func (g *twitterAudienceGuard) readOnce(ctx context.Context, accountID, key stri
 	call.ai, call.err = fetch(ctx)
 	var ab *twitter.AudienceJobsAbandonedError
 	if errors.As(call.err, &ab) {
-		g.recordAbandoned(accountID, ab.JobIDs, now().Add(twitterAudienceAbandonedJobHold))
+		g.recordAbandoned(accountID, ab.JobIDs, ab.Unknown, now().Add(twitterAudienceAbandonedJobHold))
 	}
 	// The leader's own error is returned untagged (the tag is added in the deferred close, after
 	// these values are taken), so a caller never sees leaderContextError for its own context.
@@ -279,14 +282,16 @@ func (g *twitterAudienceGuard) admitJobs(ctx context.Context, accountID string, 
 	g.setAbandoned(accountID, kept)
 	ids := make([]string, 0, len(kept))
 	for _, j := range kept {
-		ids = append(ids, j.id)
+		if j.id != "" {
+			ids = append(ids, j.id)
+		}
 	}
+	outstanding := len(kept)
 	g.mu.Unlock()
-	if len(ids)+planned <= twitterAudienceOutstandingJobBudget {
+	if outstanding+planned <= twitterAudienceOutstandingJobBudget {
 		return nil
 	}
-	outstanding := len(ids)
-	if running != nil {
+	if running != nil && len(ids) > 0 {
 		if still, err := running(ctx, ids); err == nil {
 			keep := make(map[string]bool, len(still))
 			for _, id := range still {
@@ -295,7 +300,8 @@ func (g *twitterAudienceGuard) admitJobs(ctx context.Context, accountID string, 
 			g.mu.Lock()
 			left := g.abandoned[accountID][:0]
 			for _, j := range g.abandoned[accountID] {
-				if keep[j.id] {
+				// Anonymous jobs were not asked about: they stay until their hold expires.
+				if j.id == "" || keep[j.id] {
 					left = append(left, j)
 				}
 			}
@@ -311,13 +317,17 @@ func (g *twitterAudienceGuard) admitJobs(ctx context.Context, accountID string, 
 	return nil
 }
 
-// recordAbandoned counts ids against accountID until they are reported finished or until passes.
-func (g *twitterAudienceGuard) recordAbandoned(accountID string, ids []string, until time.Time) {
+// recordAbandoned counts ids, and `unknown` anonymous jobs, against accountID until they are
+// reported finished (named ids only) or until passes.
+func (g *twitterAudienceGuard) recordAbandoned(accountID string, ids []string, unknown int, until time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	list := g.abandoned[accountID]
 	for _, id := range ids {
 		list = append(list, twitterAudienceAbandonedJob{id: id, until: until})
+	}
+	for i := 0; i < unknown; i++ {
+		list = append(list, twitterAudienceAbandonedJob{until: until})
 	}
 	g.setAbandoned(accountID, list)
 }
