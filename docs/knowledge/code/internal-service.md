@@ -1976,6 +1976,29 @@ Google path's `classifyInsightsError` now delegates to it unchanged, and the one
 (`ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid` → 409) are unreachable from Google. See
 [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md).
 
+The collect/refresh steps are now one generic implementation over both saved-report kinds
+(`insight_report.go`: `insightReportDriver[R]`, `collectPendingInsightReport`,
+`refreshInsightReport`), with the keyword read's log text, permanence rule and ordering unchanged;
+both reads take `now` from `Orchestrator.SetInsightReportClock` (nil = `time.Now`) so tests pin it.
+
+## Report-backed age/gender audience read (`audience_report.go`, LFXV2-2665)
+
+`AudienceReportReader` is `KeywordReportReader`'s twin for the Microsoft age/gender report.
+`Orchestrator.ReadReportedAudience` runs the keyword read's sequence exactly (gate and window
+first, empty scope → empty result with no store or dispatcher call, account refusals before the
+store, check/submit through the shared driver) over `domain.AudienceReportRepository`
+(`SetAudienceReportStore`, wired through `Container.newOrchestrator` with the same
+`KeywordReportRepo`); `isPermanentAudienceRefusal` uses the audience scope sentinels.
+`mergeAudienceReport` serves a covering ready report only, confined to the current scope, summed
+per (age group, gender) in int64 micros with overflow refused, impressions-descending, no cap (the
+fold bounds the bucket count). New upstream tokens `submit_audience_report` /
+`check_audience_report`. `ConnectionService.GetMicrosoftAdsAudience`
+(`connection_microsoft_audience.go`) reuses `resolveMicrosoftKeywordWindow` and
+`classifyInsightsErrorFor` with a `microsoftAdsAudienceInsights` descriptor, and publishes
+`MicrosoftAdsAudience` (`buckets`, `bucket_count`, `metrics_as_of`, `metrics_pending`,
+`data_incomplete`; no currency, no device). `TestPublishedMicrosoftAudienceSpec` pins the
+generated OpenAPI (route, window enum, required fields, composite example, no device/currency).
+
 ## Reddit and X keyword targeting (`brief_keyword_targeting.go`, LFXV2-2665)
 
 `GetKeywordTargeting` and `RemoveKeywordTargeting` serve `get-keyword-targeting` and
@@ -2044,3 +2067,20 @@ reached only by a caller the decoder lets through: the generated decoder applies
 Pattern/MaxLength FIRST, so a malformed id is answered by Goa's own `invalid_pattern` /
 `invalid_length` 400. That one is non-echoing too, but because of the server-wide response encoder
 in [cmd/campaign-service](cmd-campaign-service.md), not because of `platformCampaignIDRule`.
+
+## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
+
+`ListMetaAdSets` and `ToggleMetaAdSetStatus` serve `list-meta-ad-sets` and
+`toggle-meta-ad-set-status` through the optional `MetaAdSetReader` / `MetaAdSetStatusToggler`
+capabilities (`Orchestrator.ReadMetaAdSets` under `metricsCallTimeout`,
+`Orchestrator.ToggleMetaAdSetStatus` under `toggleCallTimeout`; upstream ops `read_meta_ad_sets`
+and `toggle_meta_ad_set_status`). The orchestrator checks the capability before provisioning, so
+a non-Meta row is 400 whatever its state. The toggle follows `ToggleCampaignStatus`'s
+concurrency contract — If-Match (428/412 against the loaded row), validation and
+`SupportsMetaAdSetToggle` before `ClaimCampaignVersion`, an UNCONFIRMED outcome holding the lock
+for `unconfirmedLockCooldown` and answering a 503 with fixed text, as every money lever does — but
+persists nothing: a 200's ETag is the unchanged version, checked with `VerifyClaimedVersion` after
+an APPLIED write. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
+missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
+[Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+

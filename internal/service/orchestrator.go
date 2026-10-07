@@ -759,6 +759,15 @@ type Orchestrator struct {
 	// is wired, and that read refuses rather than running without one.
 	keywordReportsMu sync.RWMutex
 	keywordReports   domain.KeywordReportRepository
+	// audienceReportsMu guards audienceReports, the saved-report store behind the report-backed
+	// audience read (SetAudienceReportStore) — the age/gender KIND of the same store. nil means
+	// no store is wired, and that read refuses rather than running without one.
+	audienceReportsMu sync.RWMutex
+	audienceReports   domain.AudienceReportRepository
+	// insightClockMu guards insightClock, the clock the report-backed insight reads use
+	// (SetInsightReportClock); nil is time.Now.
+	insightClockMu sync.RWMutex
+	insightClock   func() time.Time
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
 	indexingDisabled bool
@@ -841,6 +850,8 @@ const (
 	opNegativeKeywords           = "negative_keywords"
 	opReadKeywordTargeting       = "read_keyword_targeting"
 	opRemoveKeywordTargeting     = "remove_keyword_targeting"
+	opReadMetaAdSets             = "read_meta_ad_sets"
+	opToggleMetaAdSetStatus      = "toggle_meta_ad_set_status"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"

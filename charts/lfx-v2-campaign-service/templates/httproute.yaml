@@ -39,11 +39,13 @@ spec:
     # (ruleset.yaml `project-api`) exactly, or the route would forward sub-paths
     # Heimdall has no rule for (a route/rule parity violation — an unruled path is
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
-    # only they get the free `(/.*)?` tail here. The connection-* family is ruled
+    # only they get the free `(/.*)?` tail here — which is also what routes every
+    # per-campaign path below a brief, including the Meta ad-set read and pause/resume
+    # (campaigns/{id}/meta-ad-sets[/{adSetId}/status], LFXV2-2665), with no branch of its own. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths; per-provider
-    # /metrics, google-ads/keywords|audience|campaign-ref, microsoft-ads/keywords|campaign-ref,
-    # (meta-ads|twitter-ads)/audience and (meta-ads|reddit-ads|twitter-ads)/campaign-ref are
-    # ruled at the base path only.
+    # /metrics, google-ads/keywords|audience|campaign-ref, microsoft-ads/keywords|audience|campaign-ref,
+    # (meta-ads|twitter-ads)/audience and (meta-ads|reddit-ads|twitter-ads)/campaign-ref are ruled at
+    # the base path only.
     #
     # google-ads, meta-ads, linkedin-ads, microsoft-ads, twitter-ads and reddit-ads — every
     # ad provider — share ONE discovery branch carrying /accounts (account discovery) and
@@ -76,7 +78,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|campaign-ref)|(meta-ads|twitter-ads)/audience|(meta-ads|reddit-ads|twitter-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|audience|campaign-ref)|(meta-ads|twitter-ads)/audience|(meta-ads|reddit-ads|twitter-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

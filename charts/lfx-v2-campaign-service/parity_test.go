@@ -434,6 +434,13 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// rows fail if a narrowing drops either.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting", true},
 		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting/removals", true},
+		// The Meta ad-set read and the per-ad-set pause/resume (LFXV2-2665): list-meta-ad-sets one
+		// segment below the campaign, toggle-meta-ad-set-status three (the ad set id, then
+		// /status). The toggle changes a live ad set's delivery. Both inherit the briefs match and
+		// the campaign_manager rule rather than adding their own; these rows fail if a narrowing
+		// drops either.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets", true},
+		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets/120210000000000888/status", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
@@ -452,17 +459,17 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/keywords", true},
-		{"/projects/p1/microsoft-ads/audience", false},
+		{"/projects/p1/microsoft-ads/audience", true},
+		{"/projects/p1/microsoft-ads/audience/x", false},
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
-		// The Meta and X audience reads (LFXV2-2665); the other non-Google providers have none.
+		// The Meta and X audience reads (LFXV2-2665; Microsoft's is above); Reddit and LinkedIn have none.
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},
 		{"/projects/p1/twitter-ads/audience", true},
 		{"/projects/p1/twitter-ads/audience/x", false},
 		{"/projects/p1/reddit-ads/audience", false},
-		{"/projects/p1/microsoft-ads/audience", false},
 		{"/projects/p1/linkedin-ads/audience", false},
 		// The Meta, Reddit and X twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},

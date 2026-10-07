@@ -39,7 +39,7 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `/emails` for google-ads, and `/account-monitor` for hubspot, none of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
-   providers, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|campaign-ref` (LFXV2-2665), `(meta-ads|twitter-ads)/audience` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine
+   providers, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(meta-ads|twitter-ads)/audience` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine
    `audience-builder/*` leaves). The audience-builder family (LFXV2-2770) is enumerated
    entry by entry rather than covered by an `audience-builder/**` wildcard: two of its
    leaves are two segments deep (`lists/search`, `qa/run`) so a single-segment capture
@@ -104,3 +104,5 @@ whose `object` template falls back to the raw capture when the resolver's
 output is empty, because whether a skipped contextualizer's `Outputs` are
 safely absent vs. an error is not documented Heimdall behavior — the
 mutually-exclusive `if:` guards avoid relying on it.
+
+The Meta ad-set read and pause/resume (`campaigns/{id}/meta-ad-sets`, `campaigns/{id}/meta-ad-sets/{adSetId}/status`, LFXV2-2665) are routed and ruled by the `briefs` family with no entry of their own; `parity_test.go` pins both paths.

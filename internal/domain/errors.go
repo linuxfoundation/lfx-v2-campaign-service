@@ -453,19 +453,23 @@ var (
 	// the rest of the project as all of it. The message is fixed, client-safe text.
 	ErrKeywordReportScopeInvalid = errors.New("a campaign in this project has a stored platform id the keyword report cannot be scoped to")
 
-	// ErrAudienceScopeTooLarge indicates the Meta or X audience read refused because the project
-	// owns more campaigns on the platform than one read is bounded to (meta.MaxAudienceCampaigns,
-	// a local bound on the Insights request URL; twitter.MaxAudienceCampaigns, a local bound on the
-	// stats jobs one request creates and awaits). Refused before any upstream
-	// call and PERMANENT while the project stays that large, for ErrKeywordReportScopeTooLarge's
-	// reasons. The message is fixed, client-safe text: it reaches the HTTP body.
+	// ErrAudienceScopeTooLarge indicates a project-scoped audience read refused because the
+	// project owns more campaigns on the platform than one audience request can be scoped to.
+	// The ceiling is per platform: Meta's is meta.MaxAudienceCampaigns (a local bound on the
+	// Insights campaign-id filter in the request URL); Microsoft's is
+	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
+	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
+	// counted over DISTINCT campaign ids; X's is twitter.MaxAudienceCampaigns (a local bound on the
+	// stats jobs one request creates and awaits). Refused before any upstream call and PERMANENT
+	// while the project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message
+	// is fixed, client-safe text: it reaches the HTTP body.
 	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
 
-	// ErrAudienceScopeInvalid indicates the Meta or X audience read refused because a campaign in
-	// the project's scope has a stored platform id that is not a valid campaign id on that
-	// platform. Refused
-	// before any upstream call, PERMANENT until the row is corrected, for
-	// ErrKeywordReportScopeInvalid's reasons. The message is fixed, client-safe text.
+	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft or X)
+	// refused because a campaign in the project's scope has a stored platform id that is not a
+	// valid campaign id for that platform. Refused before any upstream call, PERMANENT until the
+	// row is corrected, for ErrKeywordReportScopeInvalid's reasons. The message is fixed,
+	// client-safe text.
 	ErrAudienceScopeInvalid = errors.New("a campaign in this project has a stored platform id the audience read cannot be scoped to")
 
 	// ErrKeywordActionsUnsupported indicates the platform cannot pause or remove keywords.
@@ -533,6 +537,42 @@ var (
 	// with no keyword at all. That stops it being keyword-targeted and WIDENS delivery to its
 	// other targeting, which this reduce-only surface never does. Mapped to 409, nothing changed.
 	ErrKeywordTargetingWouldEmpty = errors.New("the removal would leave no keyword targeted")
+
+	// ErrMetaAdSetsUnsupported indicates the campaign's platform has no ad-set read or ad-set
+	// status toggle wired (LFXV2-2665: Meta only — the ad set is Meta's unit). The platform is
+	// never contacted; mapped to 400.
+	ErrMetaAdSetsUnsupported = errors.New("ad-set operations are not supported for this platform")
+
+	// ErrMetaAdSetInvalid indicates an ad set id that cannot name a Meta ad set (not a canonical
+	// numeric id). Refused before any connection work; mapped to 400.
+	ErrMetaAdSetInvalid = errors.New("not a valid meta ad set id")
+
+	// ErrMetaAdSetNotInCampaign indicates the named ad set is not provably one of THIS campaign's
+	// ad sets under the project's connected ad account: Meta reports it under another campaign,
+	// or under another ad account. Decided by a read BEFORE any write, so nothing was changed;
+	// mapped to 409.
+	ErrMetaAdSetNotInCampaign = errors.New("the ad set does not belong to this campaign under the connected ad account")
+
+	// ErrMetaAdSetUnwritable indicates the ad set is in a state a pause/resume cannot address
+	// (Meta reports it DELETED or ARCHIVED). Nothing was changed; mapped to 409.
+	ErrMetaAdSetUnwritable = errors.New("the ad set's status cannot be changed")
+
+	// ErrMetaAdSetNotRecorded indicates an ACTIVATE of an ad set other than the one this service
+	// created for the campaign (the row's recorded ad set): this service never verified that ad
+	// set's targeting, so it will not switch its delivery on. Pausing any of the campaign's ad
+	// sets stays allowed. Decided before any write; mapped to 409.
+	ErrMetaAdSetNotRecorded = errors.New("only the ad set this service created for the campaign can be activated here")
+
+	// ErrStoredPlatformIDInvalid indicates the campaign row's stored platform campaign id is not a
+	// valid id for its platform, so nothing under it can be addressed. Decided locally — the
+	// platform is never contacted; mapped to 409.
+	ErrStoredPlatformIDInvalid = errors.New("the campaign's stored platform id is not valid for its platform")
+
+	// ErrConnectionAbsent rides ALONGSIDE ErrNotFound on the one error that means "this project has
+	// no connection for the provider, and no system fallback covered it" (dispatch's
+	// noOwnConnection), so a caller can answer that case precisely instead of matching every
+	// ErrNotFound a dispatcher might wrap.
+	ErrConnectionAbsent = errors.New("no connection is configured for this project and provider")
 
 	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
 	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
