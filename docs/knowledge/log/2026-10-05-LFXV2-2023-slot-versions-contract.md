@@ -1,5 +1,16 @@
 # 2026-10-05 — Slot versions, contract step: drop the legacy slot index, lock adopt/claim per slot
 
+> **Superseded — not what shipped in PR #260.** This entry records the original single-release
+> plan. PR #260 was split (see
+> [2026-10-06 — stage the per-slot lock one release before the index drop](2026-10-06-LFXV2-2023-stage-slot-lock-before-index-drop.md)):
+> it ships ONLY the per-slot adopt/claim/upsert lock. In that release `000022`'s three-column
+> index stays, migration `000038` is the keyword insight reports migration (not the index drop),
+> `requiredIndexes` keeps the entry, a `new_version` claim on an occupied slot is still refused as
+> `domain.ErrSlotVersionUnavailable` ("not available yet"), and a second live Microsoft campaign
+> on one brief is NOT created yet. The index drop, the second-version create and the removals
+> below ship one release later. Read the lock rationale and tests below as current; read the
+> migration, the removals and the API-text changes as the later release's plan.
+
 **Update** — The expand step (`000036`/`000037`) left `000022`'s three-column
 `uq_campaigns_brief_platform_variant_live` in place, so a `new_version` claim on an occupied
 slot raised `23505` and was refused as `domain.ErrSlotVersionUnavailable` ("not available
