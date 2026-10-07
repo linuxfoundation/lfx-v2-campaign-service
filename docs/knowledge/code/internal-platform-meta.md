@@ -578,7 +578,7 @@ neither uses an absolute wall-clock bound (#285).
 - **Correctness:** a 50,000-key row is accepted. The same row is refused when a case-folded
   `Campaign_ID` naming the in-scope campaign is appended last over a foreign `campaign_id`. Both
   run under a 60s hang guard.
-- **Ratio:** each size takes the fastest of three runs, and 4x the keys must cost under 10x the
+- **Ratio:** each size takes the fastest of five runs, each after a forced `runtime.GC()`, and 4x the keys must cost under 10x the
   time. Linear measures about 3-4x; the old pairwise scan measured about 16x.
 
 ## Credential scrubbing on error bodies

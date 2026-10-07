@@ -11,7 +11,7 @@
   wall-clock bound, which is flaky on slow CI. Two tests replace it:
   - `WideRowsAreJudgedCorrectly` checks correctness on 50,000 keys under a 60s hang guard only.
     It includes a foreign `campaign_id` overridden by a trailing case-folded `Campaign_ID`.
-  - `DuplicateKeyCheckScalesLinearly` is a ratio test: the fastest of three runs, and 4x the keys
+  - `DuplicateKeyCheckScalesLinearly` is a ratio test: the fastest of five runs, each after a forced GC, and 4x the keys
     must cost under 10x the time. Linear measures about 3-4x. With the pairwise scan restored it
     measured 15.6x and failed.
 - **`AudienceLastSentEmail` example (Copilot).** The composed example published populated list
