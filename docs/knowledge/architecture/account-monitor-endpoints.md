@@ -748,12 +748,14 @@ differs, and why:
   projects and has no per-project account, so an account-scoped read would report other
   projects' sends. The scope is the emails THIS SERVICE recorded for the project:
   `CampaignReader.ListRecentProjectPlatformCampaigns` (project_id and platform in the SQL,
-  live rows with an upstream id, `created_at DESC, id DESC`, `LIMIT` cap+1) — each row's own
+  rows with an upstream id, soft-deleted included, `created_at DESC, id DESC`, `LIMIT` cap+1) — each row's own
   email plus its recorded A/B variant (`Result.abTestVariant`). The cap is
   `hubspotMonitorMaxCampaigns` = 50 campaigns (≤ 100 emails); the 50 newest are read, and
-  `emails_truncated` is set only when there were more AND the oldest checked row was recorded on
-  or after the window's first day (an email cannot be sent before it is recorded, so otherwise
-  every unchecked row predates the window; the unflagged residual is an old draft sent late).
+  `emails_truncated` is set whenever there were more: nothing stored records when an email was
+  sent, so any unchecked one — an old draft sent late included — could be missing from the
+  totals. Soft-deleted campaigns are INCLUDED (rows carry `deleted: true`): a local delete
+  neither stops nor deletes the HubSpot email, so its sends are still the project's; they get
+  the same portal check, and an email on both a deleted and a live row belongs to the live one.
 - **Empty scope** → 200 with empty `emails`/`action_items`, zero totals, and NO
   `metrics_as_of`/window, without resolving a connection or calling HubSpot — the same early
   return the project-scoped keyword and audience reads make.

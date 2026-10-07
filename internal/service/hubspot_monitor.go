@@ -40,10 +40,8 @@ type EmailMonitorReader interface {
 // email and any A/B variant), so a read is at most 101 logical calls (100 emails plus token-info);
 // each is retried at most 3 times on a 429 by the client, so at most 404 HTTP attempts, all inside
 // the 20s budget. A project with more is answered rather than refused: the newest emails are
-// the ones a trailing window of at most 90 days is about, and Truncated is set only when the oldest
-// CHECKED row was recorded on or after the window start — so an unchecked row could plausibly
-// have been sent inside it. False therefore does not prove nothing was capped (see
-// ReadHubSpotEmailMonitor for the residual).
+// the ones a trailing window of at most 90 days is about, and Truncated is set whenever there were more
+// (any unchecked email — even one recorded long ago — could have been sent inside the window).
 const hubspotMonitorMaxCampaigns = 50
 
 // opReadEmailMonitor is the upstream-operation token for the read (see the main token block in
@@ -53,8 +51,10 @@ const opReadEmailMonitor = "read_email_monitor"
 // ReadHubSpotEmailMonitor is the email account monitor's read. In order:
 //
 //  1. the dispatcher capability (a platform without it is "not supported", 400);
-//  2. the project's recorded campaigns on the platform, from this service's own table by
-//     project_id, newest first, cap plus one — the extra row only says "there were more";
+//  2. the project's recorded campaigns on the platform — soft-deleted ones included, since a local
+//     delete does not stop or delete the HubSpot email — from this service's own table by
+//     project_id, newest first, cap plus one — the extra row says "there were more", which sets
+//     Truncated;
 //  3. an EMPTY scope answers an empty read with NO upstream call and no connection lookup, the
 //     same early return the project-scoped keyword and audience reads make: a project that has
 //     sent nothing has nothing to show, and there is no unscoped read to fall back to;
@@ -93,17 +93,9 @@ func (o *Orchestrator) ReadHubSpotEmailMonitor(ctx context.Context, projectID st
 		// not tell an authoritative empty answer from an adapter that fell through a branch.
 		return nil, fmt.Errorf("%s email monitor reader returned a nil result with no error", platform)
 	}
-	// Truncation is reported only when it can matter. An email cannot be sent before it was
-	// recorded, and the unchecked rows are all OLDER than the oldest checked one; so if that row
-	// was recorded before the window started, every unchecked row was too, and none of them can
-	// have been sent inside the window unless it was scheduled or sent long after it was created.
-	// That residual (an old draft sent late) is the one case this does not flag — documented on
-	// the emails_truncated attribute. Flagging every read past the cap would make the field
-	// permanently true for any long-lived project and so mean nothing.
-	if truncated && !read.SpanStart.IsZero() {
-		oldest := campaigns[len(campaigns)-1]
-		truncated = !oldest.CreatedAt.Before(read.SpanStart)
-	}
+	// Unconditional: with more rows than the cap, ANY unchecked email could have been sent inside
+	// the window — an old draft can be sent late, and nothing stored records when an email was
+	// sent — so the totals may be missing it and the response must say so.
 	read.Truncated = truncated
 	return read, nil
 }

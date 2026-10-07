@@ -61,7 +61,10 @@ type HubSpotMonitorEmail struct {
 	Name string
 	// ABVariant is true for the A/B test's variant ("B") email, recorded on its parent's row.
 	ABVariant bool
-	Counters  HubSpotEmailCounters
+	// Deleted is true when the campaign row was soft-deleted in this service. A local delete does
+	// not stop or delete the HubSpot email, so its sends still belong to the project.
+	Deleted  bool
+	Counters HubSpotEmailCounters
 }
 
 // HubSpotEmailMonitorRead is what the email account monitor read returns (Orchestrator.
@@ -88,11 +91,8 @@ type HubSpotEmailMonitorRead struct {
 	// project's token now reaches (an email id is meaningful only inside its portal), or carries
 	// a malformed id. They are not read at all.
 	EmailsUnattributable int
-	// Truncated is CONDITIONAL. The monitor checks only the most recently recorded campaigns;
-	// when there were more, the orchestrator sets Truncated only if the oldest CHECKED row was
-	// recorded on or after SpanStart — otherwise every unchecked row predates the window and is
-	// presumed not sent in it. So false does NOT prove nothing was capped: an unchecked email
-	// recorded before the window but sent inside it (a draft sent late) is the unflagged residual
-	// (see docs/api-catalog.md and Orchestrator.ReadHubSpotEmailMonitor).
+	// Truncated is true whenever the project has recorded more HubSpot campaigns than the
+	// monitor reads; only the most recently recorded ones were checked, and any unchecked email
+	// (an old draft sent late included) could have been sent inside the window.
 	Truncated bool
 }

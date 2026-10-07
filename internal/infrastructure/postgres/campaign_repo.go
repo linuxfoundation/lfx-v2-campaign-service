@@ -417,33 +417,35 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 	return out, nil
 }
 
-// listRecentProjectPlatformCampaignsQuery returns a project's live, dispatched campaigns on one
-// provider, NEWEST FIRST, at most $3 of them. It feeds the HubSpot email account monitor
+// listRecentProjectPlatformCampaignsQuery returns a project's dispatched campaigns on one
+// provider, NEWEST FIRST, at most $3 of them — soft-deleted ones INCLUDED. It feeds the HubSpot email account monitor
 // (LFXV2-2665), which reads statistics per recorded email and so must bound how many it asks
 // about.
 //
 // project_id and platform are in the WHERE clause for the reason given on
 // listProjectPlatformCampaignIDsQuery: a Go-side filter over an unscoped read is the cross-tenant
-// exposure one layer up. Rows with no upstream id are excluded (nothing to read), and so are
-// soft-deleted ones (invisible to every read).
+// exposure one layer up. Rows with no upstream id are excluded (nothing to read). Soft-deleted
+// rows are deliberately KEPT, unlike every other read here: deleting a campaign is local-only and
+// neither stops nor deletes the HubSpot email, so an email sent after the delete is still the
+// project's send, and dropping the row would hide it (a project whose only campaign was deleted
+// would read as empty without HubSpot being asked). The caller marks such rows from `status`.
 //
 // Whole rows, unlike the scope query above: the monitor needs the campaign's own id and name to
 // label each email, and the Result blob for the creating portal and any A/B variant email.
 //
 // The caller passes its cap PLUS ONE as $3 and treats an extra row as "there were more" — the
 // plus-one read is how it learns rows exist beyond the cap without counting the whole table.
-// Whether that is reported as truncation is the caller's conditional decision (the monitor
-// flags it only when the oldest checked row is not older than the window). The ORDER BY is
+// The monitor reports it as emails_truncated. The ORDER BY is
 // total: created_at alone is not (rows dispatched in one transaction share now()), so id breaks
 // the tie and a repeated read selects the same rows.
 const listRecentProjectPlatformCampaignsQuery = `SELECT ` + campaignCols + ` FROM campaigns
-	WHERE project_id=$1 AND platform=$2 AND status <> 'deleted'
+	WHERE project_id=$1 AND platform=$2
 	  AND platform_campaign_id IS NOT NULL AND platform_campaign_id <> ''
 	ORDER BY created_at DESC, id DESC
 	LIMIT $3`
 
-// ListRecentProjectPlatformCampaigns returns at most limit of the project's live, dispatched
-// campaigns on platform, newest first. An EMPTY slice, not an error, when there are none. A
+// ListRecentProjectPlatformCampaigns returns at most limit of the project's dispatched campaigns
+// on platform (soft-deleted included), newest first. An EMPTY slice, not an error, when there are none. A
 // non-positive limit is refused rather than read as "no limit".
 func (r *CampaignRepo) ListRecentProjectPlatformCampaigns(ctx context.Context, projectID string, platform model.Provider, limit int) ([]*model.Campaign, error) {
 	if limit <= 0 {

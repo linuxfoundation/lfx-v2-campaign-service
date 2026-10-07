@@ -1248,12 +1248,11 @@ type HubspotEmailMonitor struct {
 	// or holds a malformed id. An email id means something only inside its own
 	// portal.
 	EmailsUnattributable int
-	// True when the project has recorded more than 50 HubSpot campaigns AND the
-	// oldest one checked was recorded on or after the window's first day — so an
-	// unchecked, older email could have been sent inside the window and the totals
-	// may omit it. Only the 50 most recently recorded campaigns (and their A/B
-	// variants) are ever checked. Residual: an unchecked email recorded before the
-	// window but sent inside it (a draft sent late) is not flagged.
+	// True whenever the project has recorded more than 50 HubSpot campaigns
+	// (deleted ones included): only the 50 most recently recorded (and their A/B
+	// variants) are checked, and any unchecked email — even one recorded long ago,
+	// since a draft can be sent late — could have been sent inside the window, so
+	// the totals may omit it.
 	EmailsTruncated bool
 }
 
@@ -1267,6 +1266,10 @@ type HubspotEmailMonitorEmail struct {
 	// True for an A/B test's variant (B) email, which is recorded on its parent
 	// campaign; false for the campaign's own email.
 	AbVariant bool
+	// True when the campaign was deleted in this service. A local delete neither
+	// stops nor deletes the HubSpot email, so its sends still count as the
+	// project's and it is still monitored.
+	Deleted bool
 	// HubSpot's `sent` counter for the email, to date.
 	Sent int64
 	// HubSpot's `delivered` counter, to date.

@@ -57,7 +57,7 @@ func buildHubSpotEmailMonitor(days int, read *model.HubSpotEmailMonitorRead) *co
 		sum = sum.Add(e.Counters)
 		c, r := e.Counters, rules.HubSpotRates(e.Counters)
 		emails = append(emails, &conn.HubspotEmailMonitorEmail{
-			CampaignID: e.CampaignID, EmailID: e.EmailID, Name: e.Name, AbVariant: e.ABVariant,
+			CampaignID: e.CampaignID, EmailID: e.EmailID, Name: e.Name, AbVariant: e.ABVariant, Deleted: e.Deleted,
 			Sent: c.Sent, Delivered: c.Delivered, Opens: c.Opens, Clicks: c.Clicks,
 			Bounces: c.Bounces, Unsubscribes: c.Unsubscribes, SpamReports: c.SpamReports,
 			OpenRate: r.OpenRate, ClickRate: r.ClickRate, BounceRate: r.BounceRate, UnsubscribeRate: r.UnsubscribeRate, SpamRate: r.SpamRate,

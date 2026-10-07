@@ -36,6 +36,7 @@ type hubspotMonitorTarget struct {
 	emailID    string
 	name       string
 	abVariant  bool
+	deleted    bool
 }
 
 // hubspotRecordedEmails is the part of a HubSpot campaign row's Result blob the monitor reads:
@@ -177,6 +178,7 @@ func (d *HubSpotDispatcher) ReadEmailMonitor(ctx context.Context, projectID stri
 			EmailID:    t.emailID,
 			Name:       t.name,
 			ABVariant:  t.abVariant,
+			Deleted:    t.deleted,
 			Counters: model.HubSpotEmailCounters{
 				Sent: c.Sent, Delivered: c.Delivered, Opens: c.Opens, Clicks: c.Clicks,
 				Bounces: c.Bounces, Unsubscribes: c.Unsubscribes, SpamReports: c.SpamReports,
@@ -196,10 +198,12 @@ func (d *HubSpotDispatcher) ReadEmailMonitor(ctx context.Context, projectID stri
 // seen would suppress an older, attributable row with that number, and a foreign row met after
 // an attributable one would escape the unattributable count. Every attributable email is in the
 // current portal, so the dedupe key is portal+id; an id seen twice there is read once, under its
-// first (newest) row.
+// first (newest) row — unless that row is soft-deleted and a later one is live, in which case the
+// live row owns it. Soft-deleted rows are read at all because a local delete neither stops nor
+// deletes the HubSpot email; they are marked Deleted.
 func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([]hubspotMonitorTarget, int) {
 	targets := make([]hubspotMonitorTarget, 0, len(campaigns))
-	seen := map[string]struct{}{}
+	seen := map[string]int{} // portal/id → index in targets
 	unattributable := 0
 	for _, c := range campaigns {
 		if c == nil {
@@ -209,11 +213,12 @@ func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([
 		// An undecodable blob records no portal, which is the unattributable case below; the
 		// decode error itself carries nothing more to report.
 		_ = json.Unmarshal(c.Result, &rec)
-		candidates := []hubspotMonitorTarget{{campaignID: c.ID, emailID: strings.TrimSpace(c.PlatformCampaignID), name: c.CampaignName}}
+		deleted := c.Status == model.CampaignStatusDeleted
+		candidates := []hubspotMonitorTarget{{campaignID: c.ID, emailID: strings.TrimSpace(c.PlatformCampaignID), name: c.CampaignName, deleted: deleted}}
 		if rec.ABTestVariant != nil && strings.TrimSpace(rec.ABTestVariant.ID) != "" {
 			candidates = append(candidates, hubspotMonitorTarget{
 				campaignID: c.ID, emailID: strings.TrimSpace(rec.ABTestVariant.ID),
-				name: rec.ABTestVariant.Name, abVariant: true,
+				name: rec.ABTestVariant.Name, abVariant: true, deleted: deleted,
 			})
 		}
 		portal := strings.TrimSpace(rec.PortalID)
@@ -224,10 +229,15 @@ func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([
 				continue
 			}
 			key := portal + "/" + t.emailID
-			if _, dup := seen[key]; dup {
+			if at, dup := seen[key]; dup {
+				// The same email on a soft-deleted row and a live one belongs to the live row:
+				// the email is not "deleted" while a live campaign still holds it.
+				if targets[at].deleted && !t.deleted {
+					targets[at] = t
+				}
 				continue
 			}
-			seen[key] = struct{}{}
+			seen[key] = len(targets)
 			targets = append(targets, t)
 		}
 	}

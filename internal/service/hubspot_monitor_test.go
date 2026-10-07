@@ -81,7 +81,7 @@ func TestMonitorHubspotAccount_TotalsAndRatesAreFromTheSums(t *testing.T) {
 	d := &mockEmailMonitorDispatcher{read: &model.HubSpotEmailMonitorRead{
 		Emails: []model.HubSpotMonitorEmail{
 			{CampaignID: "c0", EmailID: "1000", Name: "big", Counters: model.HubSpotEmailCounters{Sent: 1000, Delivered: 1000, Opens: 300, Clicks: 40, Bounces: 0, Unsubscribes: 2}},
-			{CampaignID: "c0", EmailID: "1001", Name: "small B", ABVariant: true, Counters: model.HubSpotEmailCounters{Sent: 100, Delivered: 0, Bounces: 100}},
+			{CampaignID: "c0", EmailID: "1001", Name: "small B", ABVariant: true, Deleted: true, Counters: model.HubSpotEmailCounters{Sent: 100, Delivered: 0, Bounces: 100}},
 		},
 		SpanStart: monStart, SpanEnd: monEnd, AsOf: monAsOf,
 		EmailsChecked: 3, EmailsNotSentInWindow: 1, EmailsUnattributable: 2,
@@ -105,6 +105,9 @@ func TestMonitorHubspotAccount_TotalsAndRatesAreFromTheSums(t *testing.T) {
 	}
 	// The undelivered variant has no delivered-based rates: absent, not 0.
 	b := out.Emails[1]
+	if !b.Deleted || out.Emails[0].Deleted {
+		t.Errorf("deleted flags = %v/%v, want only the second row marked", out.Emails[0].Deleted, b.Deleted)
+	}
 	if !b.AbVariant || b.OpenRate != nil || b.ClickRate != nil || b.UnsubscribeRate != nil || b.BounceRate == nil || *b.BounceRate != 1 {
 		t.Errorf("variant row = %+v", b)
 	}
@@ -170,18 +173,13 @@ func TestMonitorHubspotAccount_TruncatesToTheCapAndSaysSo(t *testing.T) {
 		t.Errorf("first campaign = %s, want the newest (c0)", d.calls[0][0].ID)
 	}
 
-	// More rows than the cap, but the oldest CHECKED one was recorded before the window began, so
-	// every unchecked row was too: not flagged (the documented residual is a draft sent late).
-	repo3 := &fakeCampaignRepo{recent: recordedCampaignsFrom(hubspotMonitorMaxCampaigns+5, monStart.Add(10*time.Hour))}
+	// More rows than the cap is truncation EVEN WHEN every checked row predates the window: an
+	// unchecked older draft could have been sent late, inside the window, and nothing stored
+	// says otherwise.
+	repo3 := &fakeCampaignRepo{recent: recordedCampaignsFrom(hubspotMonitorMaxCampaigns+5, monStart.Add(-100*24*time.Hour))}
 	out3, err := hubspotMonitorService(repo3, d).MonitorHubspotAccount(context.Background(), &conn.MonitorHubspotAccountPayload{ProjectID: "p", Days: 30})
-	if err != nil || out3.EmailsTruncated {
-		t.Errorf("oldest checked row before the window: truncated=%v err=%v, want false", out3 != nil && out3.EmailsTruncated, err)
-	}
-	// Boundary: the oldest checked row recorded exactly at the window start IS flagged.
-	repo4 := &fakeCampaignRepo{recent: recordedCampaignsFrom(hubspotMonitorMaxCampaigns+1, monStart.Add(time.Duration(hubspotMonitorMaxCampaigns-1)*time.Hour))}
-	out4, err := hubspotMonitorService(repo4, d).MonitorHubspotAccount(context.Background(), &conn.MonitorHubspotAccountPayload{ProjectID: "p", Days: 30})
-	if err != nil || !out4.EmailsTruncated {
-		t.Errorf("oldest checked row at the window start: truncated=%v err=%v, want true", out4 != nil && out4.EmailsTruncated, err)
+	if err != nil || !out3.EmailsTruncated {
+		t.Errorf("every row older than the window: truncated=%v err=%v, want true", out3 != nil && out3.EmailsTruncated, err)
 	}
 
 	// Exactly the cap is not truncated.
@@ -284,5 +282,19 @@ func TestReadHubSpotEmailMonitor_CapabilityAndScopeFailures(t *testing.T) {
 	}
 	if d.callCount() != 0 {
 		t.Error("the dispatcher was called without a scope")
+	}
+}
+
+// A project whose only recorded campaign was deleted locally still has an email in HubSpot that
+// may be sending: the read reaches the dispatcher rather than answering empty.
+func TestReadHubSpotEmailMonitor_DeletedOnlyScopeIsStillRead(t *testing.T) {
+	d := &mockEmailMonitorDispatcher{read: &model.HubSpotEmailMonitorRead{Emails: []model.HubSpotMonitorEmail{}, SpanStart: monStart, SpanEnd: monEnd, AsOf: monAsOf}}
+	o := &Orchestrator{campaigns: &fakeCampaignRepo{recent: []*model.Campaign{{ID: "c1", PlatformCampaignID: "1", Status: model.CampaignStatusDeleted}}},
+		dispatchers: map[model.Provider]PlatformDispatcher{model.ProviderHubSpot: d}}
+	if _, err := o.ReadHubSpotEmailMonitor(context.Background(), "p", model.ProviderHubSpot, 30); err != nil {
+		t.Fatalf("ReadHubSpotEmailMonitor: %v", err)
+	}
+	if d.callCount() != 1 {
+		t.Error("a deleted-only scope was answered empty without asking HubSpot")
 	}
 }

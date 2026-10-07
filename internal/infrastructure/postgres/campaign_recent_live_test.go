@@ -14,7 +14,7 @@ import (
 
 // TestListRecentProjectPlatformCampaigns_Live runs the HubSpot email monitor's scope query
 // against a real database: newest first, bounded by the limit, scoped to the project and
-// platform, and blind to soft-deleted rows and rows with no upstream id.
+// platform, blind to rows with no upstream id, and INCLUDING soft-deleted rows.
 func TestListRecentProjectPlatformCampaigns_Live(t *testing.T) {
 	pool := creativeAssetTestPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -54,11 +54,16 @@ func TestListRecentProjectPlatformCampaigns_Live(t *testing.T) {
 	for _, c := range got {
 		ids = append(ids, c.PlatformCampaignID)
 	}
-	if len(ids) != 3 || ids[0] != "103" || ids[1] != "102" || ids[2] != "101" {
-		t.Fatalf("ids = %v, want [103 102 101]: newest first, own project and platform, live and dispatched only", ids)
+	// 104 is soft-deleted and still included — a local delete does not stop the HubSpot email —
+	// carrying its status so the caller can mark it.
+	if len(ids) != 4 || ids[0] != "104" || ids[1] != "103" || ids[2] != "102" || ids[3] != "101" {
+		t.Fatalf("ids = %v, want [104 103 102 101]: newest first, own project and platform, dispatched (deleted included)", ids)
+	}
+	if got[0].Status != model.CampaignStatusDeleted || got[1].Status == model.CampaignStatusDeleted {
+		t.Errorf("statuses = %q, %q; want the deleted row marked", got[0].Status, got[1].Status)
 	}
 	bounded, err := repo.ListRecentProjectPlatformCampaigns(ctx, projectID, model.ProviderHubSpot, 2)
-	if err != nil || len(bounded) != 2 || bounded[0].PlatformCampaignID != "103" {
+	if err != nil || len(bounded) != 2 || bounded[0].PlatformCampaignID != "104" {
 		t.Fatalf("limit 2 = %v, %v; want the two newest", bounded, err)
 	}
 	if _, err := repo.ListRecentProjectPlatformCampaigns(ctx, projectID, model.ProviderHubSpot, 0); err == nil {

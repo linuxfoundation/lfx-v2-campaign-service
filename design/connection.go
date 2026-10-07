@@ -1270,6 +1270,7 @@ var HubSpotEmailMonitorEmail = Type("hubspot-email-monitor-email", func() {
 	Attribute("email_id", String, "The HubSpot marketing-email id.", func() { Example("112233445566") })
 	Attribute("name", String, "The email's name as this service recorded it when the email was created.", func() { Example("KubeCon NA 2026 — registration open") })
 	Attribute("ab_variant", Boolean, "True for an A/B test's variant (B) email, which is recorded on its parent campaign; false for the campaign's own email.", func() { Example(false) })
+	Attribute("deleted", Boolean, "True when the campaign was deleted in this service. A local delete neither stops nor deletes the HubSpot email, so its sends still count as the project's and it is still monitored.", func() { Example(false) })
 	Attribute("sent", Int64, "HubSpot's `sent` counter for the email, to date.", func() { Example(5000) })
 	Attribute("delivered", Int64, "HubSpot's `delivered` counter, to date.", func() { Example(4850) })
 	Attribute("opens", Int64, "HubSpot's `open` counter, to date. Inflated by mail clients that pre-fetch images (e.g. Apple Mail Privacy Protection).", func() { Example(1455) })
@@ -1282,7 +1283,7 @@ var HubSpotEmailMonitorEmail = Type("hubspot-email-monitor-email", func() {
 	Attribute("bounce_rate", Float64, "bounces / sent, as a fraction. ABSENT when sent is 0.", func() { Example(0.03) })
 	Attribute("unsubscribe_rate", Float64, "unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.", func() { Example(0.004948453608247423) })
 	Attribute("spam_rate", Float64, "spam_reports / delivered, as a fraction. ABSENT when delivered is 0.", func() { Example(0.00020618556701030928) })
-	Required("campaign_id", "email_id", "name", "ab_variant", "sent", "delivered", "opens", "clicks",
+	Required("campaign_id", "email_id", "name", "ab_variant", "deleted", "sent", "delivered", "opens", "clicks",
 		"bounces", "unsubscribes", "spam_reports")
 	Example(hubspotMonitorEmailExample())
 })
@@ -1293,7 +1294,7 @@ var HubSpotEmailMonitorEmail = Type("hubspot-email-monitor-email", func() {
 func hubspotMonitorEmailExample() map[string]any {
 	return map[string]any{
 		"campaign_id": "6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f", "email_id": "112233445566",
-		"name": "KubeCon NA 2026 — registration open", "ab_variant": false,
+		"name": "KubeCon NA 2026 — registration open", "ab_variant": false, "deleted": false,
 		"sent": 5000, "delivered": 4850, "opens": 1455, "clicks": 194, "bounces": 150,
 		"unsubscribes": 24, "spam_reports": 1,
 		"open_rate": 0.3, "click_rate": 0.04, "bounce_rate": 0.03, "unsubscribe_rate": 0.004948453608247423,
@@ -1325,7 +1326,7 @@ var HubSpotEmailMonitorTotals = Type("hubspot-email-monitor-totals", func() {
 // hubspotMonitorTotalsExample is the totals of the one-email example above.
 func hubspotMonitorTotalsExample() map[string]any {
 	t := hubspotMonitorEmailExample()
-	for _, k := range []string{"campaign_id", "email_id", "name", "ab_variant"} {
+	for _, k := range []string{"campaign_id", "email_id", "name", "ab_variant", "deleted"} {
 		delete(t, k)
 	}
 	t["email_count"] = 1
@@ -1371,7 +1372,7 @@ var HubSpotEmailMonitor = Type("hubspot-email-monitor", func() {
 	Attribute("emails_checked", Int, "How many of the project's recorded emails HubSpot was asked about: the emails array plus emails_not_sent_in_window.", func() { Example(3) })
 	Attribute("emails_not_sent_in_window", Int, "How many checked emails HubSpot reported no send of inside the window — sent outside it, never sent (a staged draft), or no longer existing; HubSpot's answer does not tell these apart. Never reported as zeros.", func() { Example(2) })
 	Attribute("emails_unattributable", Int, "How many recorded emails were NOT read because they cannot be read safely: the campaign row does not record which HubSpot portal the email was created in, records a different portal than the one the project's token reaches now, or holds a malformed id. An email id means something only inside its own portal.", func() { Example(0) })
-	Attribute("emails_truncated", Boolean, "True when the project has recorded more than 50 HubSpot campaigns AND the oldest one checked was recorded on or after the window's first day — so an unchecked, older email could have been sent inside the window and the totals may omit it. Only the 50 most recently recorded campaigns (and their A/B variants) are ever checked. Residual: an unchecked email recorded before the window but sent inside it (a draft sent late) is not flagged.", func() { Example(false) })
+	Attribute("emails_truncated", Boolean, "True whenever the project has recorded more than 50 HubSpot campaigns (deleted ones included): only the 50 most recently recorded (and their A/B variants) are checked, and any unchecked email — even one recorded long ago, since a draft can be sent late — could have been sent inside the window, so the totals may omit it.", func() { Example(false) })
 	Required("days", "emails", "action_items", "totals", "emails_checked", "emails_not_sent_in_window",
 		"emails_unattributable", "emails_truncated")
 	Example(map[string]any{

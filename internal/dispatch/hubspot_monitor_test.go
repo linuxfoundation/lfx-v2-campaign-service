@@ -268,6 +268,39 @@ func TestHubSpotEmailMonitor_AttributionIsDecidedBeforeDedupe(t *testing.T) {
 	}
 }
 
+// A soft-deleted campaign's email is still read — a local delete neither stops nor deletes the
+// HubSpot email — and marked Deleted. When the same email is on a deleted row and a live one, the
+// live row owns it, whichever is newer.
+func TestHubSpotEmailMonitor_DeletedCampaignsAreReadAndMarked(t *testing.T) {
+	deleted := func(c *model.Campaign) *model.Campaign { c.Status = model.CampaignStatusDeleted; return c }
+	srv, rec := monitorServer(t, monitorServerOpts{byID: map[string]string{
+		"1101": monitorStats("1101", `{"sent":10,"delivered":10}`),
+		"1102": monitorStats("1102", `{"sent":10,"delivered":10}`),
+	}})
+	d := newMonitorDispatcher(srv, fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)})
+	read, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot, []*model.Campaign{
+		deleted(recordedEmail("gone", "1101", testPortalID, nil)),
+		deleted(recordedEmail("gone-newer", "1102", testPortalID, nil)),
+		recordedEmail("live-older", "1102", testPortalID, nil),
+		deleted(recordedEmail("gone-foreign", "1103", "999999", nil)),
+	}, 30)
+	if err != nil {
+		t.Fatalf("ReadEmailMonitor: %v", err)
+	}
+	if got := rec.ids(); len(got) != 2 {
+		t.Fatalf("statistics requested for %v, want 1101 and 1102 once each", got)
+	}
+	if len(read.Emails) != 2 || !read.Emails[0].Deleted || read.Emails[0].EmailID != "1101" {
+		t.Fatalf("emails = %+v, want 1101 read and marked deleted", read.Emails)
+	}
+	if e := read.Emails[1]; e.EmailID != "1102" || e.Deleted || e.CampaignID != "live-older" {
+		t.Errorf("shared email = %+v, want it owned by the live row and not marked deleted", e)
+	}
+	if read.EmailsUnattributable != 1 {
+		t.Errorf("unattributable = %d, want 1 (a deleted row still gets the portal check)", read.EmailsUnattributable)
+	}
+}
+
 // DEFINITE OR NOTHING: one email's failure fails the read, whatever the others returned.
 func TestHubSpotEmailMonitor_AnyUpstreamFailureFailsTheWholeRead(t *testing.T) {
 	for _, tc := range []struct {

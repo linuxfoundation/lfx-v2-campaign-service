@@ -143,9 +143,6 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 		// shared across every foundation. A soft-deleted campaign here would keep widening
 		// those reads after the campaign was removed.
 		"ListProjectPlatformCampaignIDs": listProjectPlatformCampaignIDsQuery,
-		// The HubSpot email monitor's scope: a deleted campaign's email would keep being read
-		// and counted in the project's totals.
-		"ListRecentProjectPlatformCampaigns": listRecentProjectPlatformCampaignsQuery,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Contains(t, normalizeWS(q), livePredicate,
@@ -201,6 +198,8 @@ func TestListRecentProjectPlatformCampaigns_IsScopedBoundedAndOrdered(t *testing
 	require.Contains(t, q, "ORDER BY created_at DESC, id DESC",
 		"newest first, with id breaking created_at ties (one transaction shares now()), so the cap keeps the same rows on every read")
 	require.Contains(t, q, "LIMIT $3", "the bound must be a bound parameter applied in SQL")
+	require.NotContains(t, q, livePredicate,
+		"soft-deleted rows must be KEPT: a local delete does not stop the HubSpot email, so its sends are still the project's")
 }
 
 // The resolver answers "which of MY campaigns is this upstream id", and the tenant scope has

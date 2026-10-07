@@ -4138,7 +4138,8 @@ token's portal via `AuthenticatedPortalID` on its own `portalLookupTimeout`; the
 `hubspotMonitorTargets` turns the campaigns the orchestrator passed into emails — each row's own
 email then its recorded `Result.abTestVariant`, deduplicated by email id (first, newest row
 wins, see below) — counting as unattributable any whose row records no `portalId`, another portal, or a
-non-canonical id; those are never sent upstream. One `GetEmailCounters` per email through an
+non-canonical id; those are never sent upstream. Soft-deleted rows are read and marked `Deleted`; an email on both a deleted and a live row is
+owned by the live one. One `GetEmailCounters` per email through an
 `errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read).
 A 401/403 on token-info or statistics is tagged `ErrConnectionNotUsable` through
 `res.systemScoped` (400 own token, 500 LF fallback token), as SearchEmails/SearchCampaigns do.

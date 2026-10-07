@@ -1864,9 +1864,11 @@ skip/fail-on-CI convention and the same `UniqueID` discipline as the rest of the
 
 ## `ListRecentProjectPlatformCampaigns` (LFXV2-2665)
 
-The HubSpot email monitor's scope: `campaignCols` for a project's live rows on one platform that
-have an upstream id, `ORDER BY created_at DESC, id DESC LIMIT $3` — id breaks the created_at tie
+The HubSpot email monitor's scope: `campaignCols` for a project's rows on one platform that have
+an upstream id — soft-deleted rows INCLUDED, the one read here that keeps them, because a local
+delete neither stops nor deletes the HubSpot email — `ORDER BY created_at DESC, id DESC LIMIT $3` — id breaks the created_at tie
 rows dispatched in one transaction share. The caller passes cap+1 and reads the extra row as
-"truncated". A non-positive limit is refused, not read as unbounded. Pinned by
+"truncated". It is deliberately absent from the soft-delete table test, which instead asserts
+it does NOT carry the live predicate. A non-positive limit is refused, not read as unbounded. Pinned by
 `TestListRecentProjectPlatformCampaigns_IsScopedBoundedAndOrdered` (SQL text, incl. the
 soft-delete table) and `TestListRecentProjectPlatformCampaigns_Live` (`TEST_DATABASE_URL`).

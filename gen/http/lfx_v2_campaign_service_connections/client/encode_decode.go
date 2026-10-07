@@ -14063,6 +14063,7 @@ func unmarshalHubspotEmailMonitorEmailResponseBodyToLfxv2campaignserviceconnecti
 		EmailID:         *v.EmailID,
 		Name:            *v.Name,
 		AbVariant:       *v.AbVariant,
+		Deleted:         *v.Deleted,
 		Sent:            *v.Sent,
 		Delivered:       *v.Delivered,
 		Opens:           *v.Opens,

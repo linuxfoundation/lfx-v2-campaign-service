@@ -2055,8 +2055,9 @@ the orchestrator, not a raw account. `Orchestrator.ReadHubSpotEmailMonitor`: cap
 (else `ErrAccountMetricsUnsupported` → 400); scope from
 `ListRecentProjectPlatformCampaigns(project, hubspot, hubspotMonitorMaxCampaigns+1)` (50+1);
 EMPTY scope → empty read with no connection lookup or upstream call; more than the cap →
-truncate to 50, and set `Truncated` only when the oldest checked row's `CreatedAt` is not before
-the read's `SpanStart`; the dispatcher call inside `accountsCallTimeout`, recorded as
+truncate to 50 and set `Truncated` (unconditionally: any unchecked email could have been sent
+late inside the window; soft-deleted campaigns are in scope, since a local delete leaves the
+HubSpot email in place); the dispatcher call inside `accountsCallTimeout`, recorded as
 `read_email_monitor`; a nil read or nil `Emails` is a contract violation (503).
 
 `ConnectionService.MonitorHubspotAccount` runs the monitor guards (`rejectSystemScope`,
