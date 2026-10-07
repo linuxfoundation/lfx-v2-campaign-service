@@ -150,6 +150,34 @@ decoding arbitrary addresses, which is exactly why this package does not do that
 this option is the in-process half of the answer, not a substitute for a destination policy at
 an egress boundary. Where the prefix cannot be enumerated, the boundary is the only real control.
 
+## One judgement, two entry points
+
+`judgeAddress` is the judgement itself. `guardDialAddress` wraps it for the `Control` hook —
+parse the dial address, hand the IP over — and `NewAddressGuard` exports it as a predicate over
+an already-resolved IP.
+
+`NewAddressGuard` exists so the "exactly ONE implementation of the guard" rule
+`NewGuardedClient` states survives the one caller that cannot use `NewGuardedClient`. The Google
+Ads creative fetch needs a transport this package does not build: it refuses redirects with a
+REDACTED target (a signed CDN URL in a `Location` header is the same class of secret as the
+caller's own URL), and its tests inject a TLS config so an `httptest` server is reachable.
+
+Reimplementing the ADDRESS judgement to get that transport is exactly what went wrong before
+this existed. `googleads.checkPublicIP` was a local enumeration of predicates — unspecified,
+loopback, private, link-local, multicast, CGNAT — and none of them decode an RFC 6052 address,
+so `64:ff9b::a9fe:a9fe` matched nothing and was dialled. The failure mode the package doc warns
+about ("a second fetcher that builds its own `http.Client` is not a smaller version of this one
+— it is an unguarded one") reached that path through a second GUARD rather than a second client,
+and the lesson generalises: anything that re-answers "is this address allowed" is a second
+implementation, whatever shape it takes.
+
+It takes `Option` rather than a prefix slice for the reason `resolveNAT64` gives — "use the
+deployment's prefixes" stays one argument to forward instead of a conversion each caller could
+get wrong. A caller whose deployment sets `EventURLNAT64Prefixes` MUST pass `WithNAT64Prefixes`
+here too; the well-known prefix alone is the narrower guard, and the residual risk stated above
+applies unchanged. `judgeAddress` refuses a nil IP for the same reason `embeddedIPv4`'s nil is a
+refusal: "cannot judge" must never become "nothing forbidden found".
+
 ## Parsing degrades, it does not guess
 
 Three strategies in strict precedence — JSON-LD `schema.org/Event`, then OpenGraph, then
