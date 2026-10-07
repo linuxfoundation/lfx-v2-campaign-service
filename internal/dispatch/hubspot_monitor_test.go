@@ -320,6 +320,8 @@ func TestHubSpotEmailMonitor_StoredIDsAreValidatedVerbatim(t *testing.T) {
 		withRawVariant(recordedEmail("empty-variant", "1201", testPortalID, nil), `{"id":"","name":"B"}`),
 		withRawVariant(recordedEmail("blank-variant", "1203", testPortalID, nil), `{"id":"  ","name":"B"}`),
 		withRawVariant(recordedEmail("null-variant", "1204", testPortalID, nil), `null`), // null = absent
+		// A type error after the portal decodes: the portal must not be trusted in part.
+		withRawVariant(recordedEmail("mistyped-variant", "1205", testPortalID, nil), `"oops"`),
 	}, 30)
 	if err != nil {
 		t.Fatalf("ReadEmailMonitor: %v", err)
@@ -327,9 +329,10 @@ func TestHubSpotEmailMonitor_StoredIDsAreValidatedVerbatim(t *testing.T) {
 	if got := rec.ids(); len(got) != 3 || got[0] != "1201" || got[1] != "1203" || got[2] != "1204" {
 		t.Fatalf("statistics requested for %q, want only the canonical 1201, 1203 and 1204", got)
 	}
-	// padded id + empty variant + blank variant = 3; the null (absent) variant adds nothing.
-	if read.EmailsUnattributable != 3 {
-		t.Errorf("unattributable = %d, want 3", read.EmailsUnattributable)
+	// padded id + empty variant + blank variant + the mistyped row's own email = 4; the null
+	// (absent) variant adds nothing.
+	if read.EmailsUnattributable != 4 {
+		t.Errorf("unattributable = %d, want 4", read.EmailsUnattributable)
 	}
 }
 

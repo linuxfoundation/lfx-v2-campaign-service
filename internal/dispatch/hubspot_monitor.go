@@ -79,8 +79,9 @@ type hubspotRecordedEmails struct {
 // DEFINITE OR NOTHING. Any failure of steps 3–4 fails the whole read. A 401/403 is a credential
 // the platform refused — tagged ErrConnectionNotUsable (400; 500 when it came from the LF system
 // row). Everything else — transport, a 5xx, a 429 still refused after the client's retries, a
-// malformed, untrustworthy (identityjson) or filter-violating // response, a null counter — fails the whole read with no partial result: a monitor that silently
-// drops the one email it could not read reports a total that is wrong while looking complete. The
+// malformed, untrustworthy (identityjson) or filter-violating response, a null counter — fails
+// the whole read with no partial result: a monitor that silently drops the one email it could
+// not read reports a total that is wrong while looking complete. The
 // one per-email answer that is NOT a failure is HubSpot reporting no send of that email inside the
 // span (hubspot.ErrNoSentEmailInWindow), which is counted, not read as zeros.
 func (d *HubSpotDispatcher) ReadEmailMonitor(ctx context.Context, projectID string, platform model.Provider, campaigns []*model.Campaign, days int) (*model.HubSpotEmailMonitorRead, error) {
@@ -210,9 +211,12 @@ func hubspotMonitorTargets(campaigns []*model.Campaign, currentPortal string) ([
 			continue
 		}
 		var rec hubspotRecordedEmails
-		// An undecodable blob records no portal, which is the unattributable case below; the
-		// decode error itself carries nothing more to report.
-		_ = json.Unmarshal(c.Result, &rec)
+		// An undecodable blob records no portal, which is the unattributable case below. A type
+		// error still leaves the fields decoded before it (a portal, but no variant), so the record
+		// is reset on ANY decode error rather than trusted in part.
+		if err := json.Unmarshal(c.Result, &rec); err != nil {
+			rec = hubspotRecordedEmails{}
+		}
 		deleted := c.Status == model.CampaignStatusDeleted
 		// Ids are taken VERBATIM, never trimmed: ValidateEmailID is what decides whether a stored
 		// id is usable, and a padded " 123 " is a malformed record to count, not one to repair
