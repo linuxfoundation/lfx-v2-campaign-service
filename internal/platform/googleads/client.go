@@ -27,6 +27,7 @@ package googleads
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +43,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 )
 
 // ---------------------------------------------------------------------------
@@ -147,6 +150,24 @@ type Client struct {
 	// retryBaseDelay const; tests shrink it (via withRetryBaseDelay) to keep runs
 	// fast.
 	retryBaseDelay time.Duration
+
+	// imageDialGuard decides whether the Demand Gen creative fetch may connect to a
+	// resolved address. Defaults to checkPublicIP, which refuses every non-public
+	// range; only tests override it (via withImageDialGuard), because httptest
+	// serves on 127.0.0.1 and the production guard rightly refuses loopback.
+	//
+	// Unexported with an unexported setter: there is deliberately NO way for a
+	// caller outside this package to relax the guard, which is the whole point of
+	// it. See demandgen_creative.go.
+	imageDialGuard func(net.IP) error
+
+	// imageTLSConfig overrides the TLS settings of the creative fetch transport.
+	// Nil in production, which is what gives it the standard system roots; only
+	// tests set it, so an httptest TLS server's self-signed certificate can be
+	// trusted for that one server without weakening anything else. Unexported for
+	// the same reason imageDialGuard is: no caller outside this package can reach
+	// it, so there is no way to turn verification off in a running service.
+	imageTLSConfig *tls.Config
 
 	// tokenMu guards the cached access token AND the inflight single-flight
 	// pointer. It is held only for the brief cache read/write and to publish or
@@ -275,6 +296,49 @@ func withRetryBaseDelay(d time.Duration) Option {
 	}
 }
 
+// WithNAT64Prefixes supplies the deployment's operator-specific NAT64 prefixes to the
+// creative-fetch address guard, matching what the event-URL fetcher and the HubSpot image
+// download are given.
+//
+// Without it the guard judges only the well-known 64:ff9b::/96, which is NARROWER than the
+// fetcher's: an address under an operator prefix cannot be decoded, so the private IPv4 it
+// encodes is never seen and the fetch proceeds — turning the creative download into a read
+// primitive against cluster-internal endpoints and the metadata service. Any deployment that
+// sets EventURLNAT64Prefixes must pass them here too.
+//
+// Deliberately NOT the same shape as hubspot.WithNAT64Prefixes, which swaps in a whole
+// guarded client: this path needs its own transport (redirects refused with a redacted
+// target, a TLS config tests can inject), so what is swapped is the ADDRESS JUDGEMENT alone.
+// Both end at eventurl's single implementation.
+func WithNAT64Prefixes(cidrs ...string) Option {
+	return func(c *Client) {
+		if len(cidrs) == 0 {
+			return
+		}
+		c.imageDialGuard = eventurl.NewAddressGuard(eventurl.WithNAT64Prefixes(cidrs...))
+	}
+}
+
+// withImageDialGuard overrides the creative fetch's destination-address policy.
+// Unexported: only tests use it, to reach an httptest server on loopback.
+func withImageDialGuard(guard func(net.IP) error) Option {
+	return func(c *Client) {
+		if guard != nil {
+			c.imageDialGuard = guard
+		}
+	}
+}
+
+// withImageTLSConfig overrides the creative fetch transport's TLS settings.
+// Unexported: only tests use it, to trust an httptest TLS server's certificate.
+func withImageTLSConfig(cfg *tls.Config) Option {
+	return func(c *Client) {
+		if cfg != nil {
+			c.imageTLSConfig = cfg
+		}
+	}
+}
+
 // NewClient builds a Google Ads client from injected credentials and account
 // config. Redirect following is force-disabled on whatever *http.Client is used,
 // including one supplied via WithHTTPClient (applied to a shallow copy so the
@@ -289,6 +353,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		httpClient:     &http.Client{Timeout: googleAdsRequestTimeout, CheckRedirect: noFollow},
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
+		imageDialGuard: checkPublicIP,
 	}
 	for _, o := range opts {
 		o(c)
@@ -707,6 +772,19 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 // The Goa design now declares the same rule as a Pattern, and this check STAYS regardless:
 // Goa validates the HTTP transport only, so a row written by bootstrap, by a migration, or
 // before that pattern existed reaches this concatenation having passed nothing.
+//
+// LENGTH-AGNOSTIC, DELIBERATELY — and the name is the only thing here that suggests
+// otherwise. Despite what it is called, this is the package's general digits-only id
+// matcher: ad group and criterion ids (`keywords.go`), the asset group id
+// (`pmax_creative.go`) and campaign ids all run through it, and none of those shares a
+// customer id's width. The edit to resist is "Google customer ids are ten digits, so pin
+// the length" — a customer-id-shaped bound here would refuse every ASSET GROUP id Google
+// issued, which turns a working Performance Max activation into a local refusal of a
+// campaign that exists and is ready to serve. That is over-refusal, the one failure mode
+// this package's guards are not allowed to have. The shape is all that matters for the
+// injection this guard exists to stop: no slash, no dot, nothing that can alter a resource
+// path. If a genuine customer-id length check is ever wanted, it belongs in a separate
+// matcher used only at the customer-id call sites, never as a narrowing of this one.
 var customerIDRE = regexp.MustCompile(`^[0-9]+$`)
 
 // ErrNotACustomerID reports that a caller-supplied account id is not a digits-only Google

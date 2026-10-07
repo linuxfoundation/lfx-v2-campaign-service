@@ -66,7 +66,7 @@ A campaign is subordinate to a brief. This is a **collection** under the brief (
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns` | `campaign_manager` | JSON | Create campaigns across the platforms selected in the body (async → `JobCreateResponse` with `jobId`). Persists one execution record per platform. Repeating the create is an idempotent **retry** — a platform whose latest campaign is complete returns that campaign. Set `new_version: true` to create **another** campaign alongside it instead — **`microsoft-ads` only for now**; a request naming any other platform with `new_version` is refused with `400` before a job exists, because those platforms reuse campaigns by a name that does not yet differ per version (a platform with none gets its first; one whose latest campaign is still in flight or needs reconciliation gets the retry answer). The version is internal — returned as `slot_version` on the campaign — and never appears on the ad platform as a label. Until the release after migration `000037` drops the one-campaign-per-slot index, a `new_version` request on an occupied slot fails that platform with "not available yet" and creates nothing. `409` with `reason=ab_test_unsupported_send_type` — **synchronous, before any job exists** — when a HubSpot email asks for an A/B test (`hubspotConfig.abTestEnabled`) but its source email (`hubspotConfig.sourceEmailId`) is set to send based on recipients' time zones, which HubSpot does not allow together. Nothing is created; choose a different source email or turn the A/B test off. The check reads the source email once and **fails open**: if HubSpot cannot be reached or does not report a type, the create proceeds as it did before the check existed. |
-| POST | `/projects/{projectId}/briefs/{briefId}/campaigns/adopt` | `campaign_manager` | JSON | **Bind an ad campaign that already exists upstream** to this brief, without creating anything on the ad platform. Synchronous (no job): the platform is read once, and on success the campaign row is written in the same request. `platform_campaign_id` is verified against the project's own connection before anything is persisted — a `404` means the platform answered and there is no such campaign; a `503` means the campaign could not be **verified** and its existence is **unknown** — the platform may have been unreachable, or it may have answered with something untrustworthy (an unhonoured id filter, an undecodable row, an unrecognised status), which is why the message names verification rather than connectivity. `400` for a platform with no adoption support, an unapproved brief, an unknown platform, or a blank or malformed `platform_campaign_id` (**malformed IDs are validated before the connection state is checked, so a permanent input fault always returns `400` regardless of connection availability**); `409` when the brief already has a live campaign on that platform, when that upstream campaign is already bound to a **different** brief — **in any project**, because Google Ads is one shared upstream account across every foundation, so a project-scoped check would let two projects bind and then fight over one live campaign; the message names the campaign but not the other project, which the caller may not be entitled to see — when the brief lost its approval during the platform read, when the project's connection is unusable, or when the project has **no connection of its own** — adoption is the one path that cannot fall back to the shared LF system account, because many projects share that one ad account and the caller names an arbitrary campaign inside it. There is deliberately **no `500` for an unusable LF system connection** on this endpoint, unlike the metrics and toggle endpoints: adoption resolves the project's own scope only and never loads the LF row, so the answer for a project without its own connection is the same actionable `409` whatever state that row is in. |
+| POST | `/projects/{projectId}/briefs/{briefId}/campaigns/adopt` | `campaign_manager` | JSON | **Bind an ad campaign that already exists upstream** to this brief, without creating anything on the ad platform. Synchronous (no job): the platform is read once, and on success the campaign row is written in the same request. `platform_campaign_id` is verified against the project's own connection before anything is persisted — a `404` means the platform answered and there is no such campaign; a `503` means the campaign could not be **verified** and its existence is **unknown** — the platform may have been unreachable, or it may have answered with something untrustworthy (an unhonoured id filter, an undecodable row, an unrecognised status), which is why the message names verification rather than connectivity. `400` for a platform with no adoption support, an unapproved brief, an unknown platform, or a blank or malformed `platform_campaign_id` (**malformed IDs are validated before the connection state is checked, so a permanent input fault always returns `400` regardless of connection availability**); `409` when the brief already has a live campaign on that platform, when that upstream campaign is already bound to a **different** brief — **in any project**, because Google Ads is one shared upstream account across every foundation, so a project-scoped check would let two projects bind and then fight over one live campaign; the message names the campaign but not the other project, which the caller may not be entitled to see — when the brief lost its approval during the platform read, when the project's connection is unusable, or when the project has **no connection of its own** — adoption is the one path that cannot fall back to the shared LF system account, because many projects share that one ad account and the caller names an arbitrary campaign inside it. There is deliberately **no `500` for an unusable LF system connection** on this endpoint, unlike the metrics and toggle endpoints: adoption resolves the project's own scope only and never loads the LF row, so the answer for a project without its own connection is the same actionable `409` whatever state that row is in. An adopted campaign records **provenance only** — no ad group, ad or asset group ids — so the status-toggle endpoint **refuses to ACTIVATE it on every platform channel** and says so in those words; un-pause an adopted campaign in the ad platform's own UI. PAUSE is unaffected, because pausing the campaign resource alone is always safe. |
 | GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. |
 | PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
 | DELETE | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Delete a campaign (soft delete; requires `If-Match`). **Local only — does NOT touch the ad platform.** Frees the campaign's `(brief, platform)` slot so the brief can be re-dispatched to that platform. `409` if the campaign is mid-dispatch. |
@@ -204,14 +204,14 @@ Each optimization action is scoped to a single campaign under its brief and is i
 
 | Method | Path | FGA relation | Type | Description |
 |--------|------|--------------|------|-------------|
-| PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Reddit, Meta, LinkedIn, X/Twitter, Google Ads, Microsoft Ads). **409** when the change is refused before the platform is contacted: the campaign is unprovisioned, or the connection row itself is unusable — no stored credential blob, or one too short for the encryptor to authenticate. Those are non-retryable, which is why none of them is a 503. **Four further 409 reasons come from the adapter's own pre-flight**, each tagged with `ErrConnectionNotUsable`: `reason=connection_inactive` (the row's status is not `active`), `reason=credentials_undecodable` (the decrypted blob is not valid JSON), `reason=credentials_incomplete` (a required credential field is empty) and `reason=account_not_selected` (credentials stored, no ad account chosen yet). **Google Ads, Reddit, X/Twitter and Microsoft Ads emit all four.** **Meta emits the first three** (`resolveMetaCredentials`, `internal/dispatch/meta.go`) **and deliberately not the fourth**: a status update targets the campaign node by platform id and never reads `AccountConfig.AccountID`, so an account cleared after creation must not block pausing or resuming. That guard is `requireMetaAccountID`, and it is reached only from Dispatch. **LinkedIn emits all four as of LFXV2-3196** — `resolveLinkedInCredentials` mirrors `resolveMetaCredentials`, replacing the inline checks that previously fell through to 503. **A fifth adapter pre-flight reason is LinkedIn-only as of LFXV2-3281**: `reason=credentials_expired` (the stored access token has expired and could not be renewed — either no refresh token is stored, since LinkedIn issues them only to approved Marketing Developer Platform partners, or the refresh token is itself expired/revoked). It is tagged with `ErrConnectionNotUsable` like the others, so it is a 409 rather than the 500 an expired token produced before, and it is distinct from `credentials_incomplete`: nothing is missing from the row, what was saved simply aged out, and only a member re-authorization repairs it. Unlike Meta it DOES emit `account_not_selected` on this path: LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an empty account id cannot reach the platform at all, whereas Meta targets the campaign node by platform id and never reads the account. **Two further LinkedIn-only reasons come from the SAME token exchange, and neither is `credentials_expired`** — `ToggleStatus` routes every token-exchange defect through the same `linkedinConnectionDefect`/`linkedinExpiry` pair, so this row's vocabulary is identical to the metrics row's below. Only RFC 6749 §5.2 `invalid_grant` (and a body the client cannot read) means the grant itself died. `invalid_client` and `unauthorized_client` name the APPLICATION registration and carry `reason=application_credentials_invalid`: no member re-authorization repairs them, and an operator must correct the connection's stored application credentials. `invalid_request`, `unsupported_grant_type` and `invalid_scope` carry `reason=token_request_rejected`, and they are the one reason in this whole vocabulary that names NO operator remedy: LinkedIn refused the SHAPE of the request this service built, so neither stored credential was evaluated, and editing a credential cannot make a malformed refresh request well-formed. (This client sends no `scope` parameter on a refresh grant at all.) Report it as a service defect. **An account mismatch — the campaign belongs to a different ad account than the connection now resolves to — is raised by every paid-ads adapter**: Google Ads and Microsoft Ads, and as of LFXV2-3050 LinkedIn, Meta, Reddit and X/Twitter too. Campaign ids are unique only WITHIN an ad account, so a connection re-pointed between create and toggle would address an unrelated campaign, and this path changes delivery. Each adapter checks it BEFORE its own narrower provisioning guard, so a foreign-account campaign answers the mismatch rather than describing the wrong campaign's provisioning. **Absent provenance is not a mismatch**: a row created before its adapter stamped the account records none, and is waved through as "unknown" rather than being made un-pausable until a re-dispatch. **One reason stays Google-Ads-only on this path**: `reason=provider_config_invalid` (the stored `login_customer_id` is not digits-only, so no manager id can be sent) — Meta raises `ErrProviderConfigInvalid` too, but only from Dispatch, never from a toggle. **500** is reserved for defects the caller cannot act on: the project has no connection of its own, fell back to the LF system row, and THAT row is unusable; a defect in THIS SERVICE (`ErrServiceDefect` — LinkedIn refused the SHAPE of the refresh request, carrying `reason=token_request_rejected`, so no stored credential was evaluated and no operator has anything to repair either); or the stored credential blob failed GCM authentication (`ErrCredentialDecryptionFailed`), meaning the application's encryption key no longer matches it — a rotated `CREDENTIAL_ENCRYPTION_KEY` or a corrupted row, and this path cannot tell them apart — re-saving credentials repairs the corrupted row, but no reconnect touches a rotated key, so the answer is the conservative one. **404** is the third permanent answer, added alongside them: no connection row exists for this project and provider at all, and the shared system row did not cover it either — there is nothing to repair, so the caller is told to connect rather than to fix. It is deliberately not a 409 — a 409 tells the caller to repair "this project's connection", which is a scope they do not own and cannot address. The `reason` token is logged, never returned. **One request succeeds without persisting anything**: pausing a campaign in `created_degraded` pauses it upstream and returns **200** with the status and ETag UNCHANGED, no version bump and no index event. `created_degraded` records that the campaign's wiring was never verified and the row has a single status column, so writing `paused` would spend the reconciliation marker to record a run state the ad platform already holds authoritatively — and pausing reconciles nothing, it stops spend. Activating such a campaign is refused with **409**. A caller that needs to confirm the pause reads it from the ad platform, not from this row. |
+| PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/status` | `campaign_manager` | JSON | Toggle campaign ACTIVE/PAUSED (Reddit, Meta, LinkedIn, X/Twitter, Google Ads, Microsoft Ads). **409** when the change is refused before the platform is contacted: the campaign is unprovisioned, or the connection row itself is unusable — no stored credential blob, or one too short for the encryptor to authenticate. Those are non-retryable, which is why none of them is a 503. **What counts as provisioned is channel-specific on Google Ads**, because the five channels it resolves do not have the same serving resources: a `default` (Search) campaign needs an ad group, an ad AND at least one keyword criterion; a `demand-gen` campaign needs the ad group and ad but NOT keywords — this service refuses keywords on that channel, so requiring one would be unsatisfiable by construction and the operator would be told to supply the very field the create path rejects; a `video` campaign takes the same gate as `demand-gen` and for the same reason, since keywords are refused there too, as does a `display` campaign; and a `performance-max` campaign has no ad groups and no ads at all, so the gate is its ASSET GROUP and the 409 says so in those words rather than describing an ad-group failure that cannot have happened. **Four of the five are created here; `video` is resolved by this gate but never created** — the Google Ads API has no call that creates a Video campaign, so a `video` row reaching this endpoint was ADOPTED, and adoption records no serving resources, which is the `targets` is empty arm. **On `performance-max` an asset group id alone is not enough**: the group is created before its asset links, so a failed or unconfirmed `assetGroupAssets:mutate` leaves the id recorded with nothing attached — an empty asset group looks finished in the Google Ads UI and cannot serve. A RECORDED link count of zero therefore refuses with a 409 naming the group. A count of `nil` does not: a row written before the count was recorded cannot distinguish "no links" from "not recorded", and refusing those would break activation on correctly provisioned campaigns. The arm is keyed on the campaign's variant, which is part of its identity rather than its config, and a row written before variants existed keeps the Search rules it was created under. **Activation also cascades to the resource that actually serves**: asset groups are created PAUSED like every other resource this service creates, so an ACTIVATE flips the asset group first and the campaign last — the campaign never reports ENABLED before the thing that delivers does — while a PAUSE flips the campaign first and the asset group after, stopping spend immediately even if the second mutate then fails. **Four further 409 reasons come from the adapter's own pre-flight**, each tagged with `ErrConnectionNotUsable`: `reason=connection_inactive` (the row's status is not `active`), `reason=credentials_undecodable` (the decrypted blob is not valid JSON), `reason=credentials_incomplete` (a required credential field is empty) and `reason=account_not_selected` (credentials stored, no ad account chosen yet). **Google Ads, Reddit, X/Twitter and Microsoft Ads emit all four.** **Meta emits the first three** (`resolveMetaCredentials`, `internal/dispatch/meta.go`) **and deliberately not the fourth**: a status update targets the campaign node by platform id and never reads `AccountConfig.AccountID`, so an account cleared after creation must not block pausing or resuming. That guard is `requireMetaAccountID`, and it is reached only from Dispatch. **LinkedIn emits all four as of LFXV2-3196** — `resolveLinkedInCredentials` mirrors `resolveMetaCredentials`, replacing the inline checks that previously fell through to 503. **A fifth adapter pre-flight reason is LinkedIn-only as of LFXV2-3281**: `reason=credentials_expired` (the stored access token has expired and could not be renewed — either no refresh token is stored, since LinkedIn issues them only to approved Marketing Developer Platform partners, or the refresh token is itself expired/revoked). It is tagged with `ErrConnectionNotUsable` like the others, so it is a 409 rather than the 500 an expired token produced before, and it is distinct from `credentials_incomplete`: nothing is missing from the row, what was saved simply aged out, and only a member re-authorization repairs it. Unlike Meta it DOES emit `account_not_selected` on this path: LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an empty account id cannot reach the platform at all, whereas Meta targets the campaign node by platform id and never reads the account. **Two further LinkedIn-only reasons come from the SAME token exchange, and neither is `credentials_expired`** — `ToggleStatus` routes every token-exchange defect through the same `linkedinConnectionDefect`/`linkedinExpiry` pair, so this row's vocabulary is identical to the metrics row's below. Only RFC 6749 §5.2 `invalid_grant` (and a body the client cannot read) means the grant itself died. `invalid_client` and `unauthorized_client` name the APPLICATION registration and carry `reason=application_credentials_invalid`: no member re-authorization repairs them, and an operator must correct the connection's stored application credentials. `invalid_request`, `unsupported_grant_type` and `invalid_scope` carry `reason=token_request_rejected`, and they are the one reason in this whole vocabulary that names NO operator remedy: LinkedIn refused the SHAPE of the request this service built, so neither stored credential was evaluated, and editing a credential cannot make a malformed refresh request well-formed. (This client sends no `scope` parameter on a refresh grant at all.) Report it as a service defect. **An account mismatch — the campaign belongs to a different ad account than the connection now resolves to — is raised by every paid-ads adapter**: Google Ads and Microsoft Ads, and as of LFXV2-3050 LinkedIn, Meta, Reddit and X/Twitter too. Campaign ids are unique only WITHIN an ad account, so a connection re-pointed between create and toggle would address an unrelated campaign, and this path changes delivery. Each adapter checks it BEFORE its own narrower provisioning guard, so a foreign-account campaign answers the mismatch rather than describing the wrong campaign's provisioning. **Absent provenance is not a mismatch**: a row created before its adapter stamped the account records none, and is waved through as "unknown" rather than being made un-pausable until a re-dispatch. **One reason stays Google-Ads-only on this path**: `reason=provider_config_invalid` (the stored `login_customer_id` is not digits-only, so no manager id can be sent) — Meta raises `ErrProviderConfigInvalid` too, but only from Dispatch, never from a toggle. **500** is reserved for defects the caller cannot act on: the project has no connection of its own, fell back to the LF system row, and THAT row is unusable; a defect in THIS SERVICE (`ErrServiceDefect` — LinkedIn refused the SHAPE of the refresh request, carrying `reason=token_request_rejected`, so no stored credential was evaluated and no operator has anything to repair either); or the stored credential blob failed GCM authentication (`ErrCredentialDecryptionFailed`), meaning the application's encryption key no longer matches it — a rotated `CREDENTIAL_ENCRYPTION_KEY` or a corrupted row, and this path cannot tell them apart — re-saving credentials repairs the corrupted row, but no reconnect touches a rotated key, so the answer is the conservative one. **404** is the third permanent answer, added alongside them: no connection row exists for this project and provider at all, and the shared system row did not cover it either — there is nothing to repair, so the caller is told to connect rather than to fix. It is deliberately not a 409 — a 409 tells the caller to repair "this project's connection", which is a scope they do not own and cannot address. The `reason` token is logged, never returned. **One request succeeds without persisting anything**: pausing a campaign in `created_degraded` pauses it upstream and returns **200** with the status and ETag UNCHANGED, no version bump and no index event. `created_degraded` records that the campaign's wiring was never verified and the row has a single status column, so writing `paused` would spend the reconciliation marker to record a run state the ad platform already holds authoritatively — and pausing reconciles nothing, it stops spend. Activating such a campaign is refused with **409**. A caller that needs to confirm the pause reads it from the ad platform, not from this row. |
 | GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/metrics` | `campaign_manager` | JSON | Read live performance metrics (impressions, clicks, cost, CTR, and conversions where the channel reports them) for one campaign directly from the channel that runs it — an ad platform, or HubSpot for the email channel. **`conversions` is OPTIONAL and its absence is meaningful**: it is omitted entirely for Meta, X, Reddit and the email channel, none of which expose a campaign-level conversion count, and an absent value means "not measured here" rather than a measured zero — a consumer must not render it as `0` or fold it into a conversion total. Where it is present (Google Ads, LinkedIn, Microsoft) it is carried on the same `float64` wire type, but only two of the three can be **fractional**: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold `0.4` — for those two, do not round it, and in particular do not treat a value below 1 as zero. **LinkedIn is an integer count widened onto that shared type**: `externalWebsiteConversions` is typed `long` in the Ads Reporting schema, so it never carries a fraction — a LinkedIn value below 1 is always exactly `0`. Pure read — never persisted, unlike `GET .../campaigns/{id}`. `window` query param (`today`, `yesterday`, `last_7_days`, `last_14_days`, `last_30_days`, `this_month`, `last_month`; default `last_30_days`, except X Ads which defaults to `last_7_days` since its stats endpoint caps queryable ranges at 7 days) is a closed, platform-agnostic vocabulary — each dispatcher maps it to its own platform's date-range dialect. A platform with no `MetricsReader` wired returns 400. **409 covers two different moments, and the distinction is operational, not "was the channel ever contacted."** The first group is refused before the TENANT-SCOPED METRICS REQUEST — the read that would actually return numbers — is attempted, and waiting will not change that. Every platform returns it when the campaign is unprovisioned (empty `PlatformCampaignID`), and when the connection row is unusable in one of the two ways the SHARED resolver detects — no stored credential blob (`reason=credentials_absent`) or a blob too short to authenticate (`reason=credential_blob_malformed`). These are genuinely pre-contact: nothing is called at all. **Google Ads, Reddit and X/Twitter** additionally tag the four defects their own pre-flight detects with `ErrConnectionNotUsable`, so those are 409 too: `reason=connection_inactive` (the row's status is not `active`), `reason=credentials_undecodable` (the decrypted blob is not valid JSON), `reason=credentials_incomplete` (a required credential field is empty) and `reason=account_not_selected` (a connection created with credentials only, whose ad account has not been chosen yet). **HubSpot tags the first three but not the fourth** — there is no ad account in an email connection to choose. **Meta tags the first three and not `account_not_selected`** — `ReadMetrics` resolves through `resolveMetaCredentials`, the same helper `ToggleStatus` uses, and like the toggle it targets an existing campaign by platform id via `GET /{campaignID}/insights` without reading `AccountConfig.AccountID`, so an account cleared after creation must not block reading metrics. **LinkedIn emits all four as of LFXV2-3196** — `ReadMetrics` resolves through `resolveLinkedInCredentials`, the same helper `ToggleStatus` uses. It emits `account_not_selected` here too, for the same reason: the client cannot be constructed without an account id. **A fifth adapter pre-flight reason is LinkedIn-only as of LFXV2-3281**: `reason=credentials_expired` (the stored access token has expired and could not be renewed — either no refresh token is stored, since LinkedIn issues them only to approved Marketing Developer Platform partners, or the refresh token is itself expired/revoked). `ReadMetrics` routes it through the same `linkedinConnectionDefect`/`linkedinExpiry` pair the toggle uses, so it is tagged with `ErrConnectionNotUsable` and answers 409 rather than the 500 an expired token produced before. It is distinct from `credentials_incomplete`: nothing is missing from the row, what was saved simply aged out, and only a member re-authorization repairs it. **A token-endpoint rejection that names an RFC 6749 §5.2 code describing the CLIENT or the REQUEST — `invalid_client`, `invalid_request`, `unauthorized_client`, `unsupported_grant_type` or `invalid_scope` — is NOT this reason**: only `invalid_grant` (and a body the client cannot read) means the grant itself died. Those five split across TWO further reasons, by who can act. `invalid_client` and `unauthorized_client` name the APPLICATION registration and carry `reason=application_credentials_invalid`: no member re-authorization repairs them, and an operator must correct the connection's stored application credentials. `invalid_request`, `unsupported_grant_type` and `invalid_scope` carry `reason=token_request_rejected` instead — LinkedIn refused the SHAPE of the request this service constructed, so neither stored credential was ever evaluated and there is no field on a connection whose editing repairs it (this client does not even send a `scope` parameter on a refresh grant). It is the one reason token in this vocabulary that points at the service rather than at the caller's configuration: report it as a bug, not as a connection to repair. Reporting these three as `application_credentials_invalid`, as this service briefly did, sends an operator to audit a correct configuration — the same actionable-but-useless remedy the `credentials_expired` split exists to retire. **`reason=provider_config_invalid` remains Google-Ads-only** — the stored `login_customer_id` is not digits-only, so no manager id can be sent. **Account-identity mismatch is emitted by every adapter that verifies tenant identity — Google Ads, Microsoft Ads, LinkedIn, Meta, Reddit and X/Twitter for an ad account, and HubSpot for a portal — and the ad adapters and HubSpot verify different things.** For the ad adapters the campaign was created under a different ad account than the connection now resolves to; platform campaign ids are account-scoped, so reading one under the wrong account silently yields zeros or another account's numbers, and the fix is to reconnect the original account. Those checks resolve entirely from locally-stored account ids, so they are pre-contact in the strict sense. **Absent provenance is not a mismatch on the ad adapters**: a row created before its adapter stamped the account records none and is waved through as "unknown", since failing closed would make every pre-existing row unreadable until a re-dispatch. HubSpot is the deliberate exception — see the narrower `ErrCampaignProvenanceUnknown` below. HubSpot's is not: a HubSpot email id is a bare numeric unique only within its portal, so the dispatcher records the portal the private-app token authenticates against at create time — read by POSTing the token to `/oauth/v2/private-apps/get/access-token-info`, not from the optional operator-supplied `portal_id` config, which a credential swap leaves untouched — and `ReadMetrics` calls `AuthenticatedPortalID` against that same endpoint to learn the token's CURRENT portal before it can compare. The channel IS reached, just not for the tenant-scoped metrics themselves. **The two HubSpot remedies differ, and the response message is what carries the distinction:** a recorded-but-different portal is `ErrCampaignAccountMismatch` and can be repaired by reconnecting the original portal; a row with no recorded portal at all — which is every campaign staged before this landed — is the narrower `ErrCampaignProvenanceUnknown`, and since there is nothing to reconnect to its message says to re-dispatch instead. That second case IS strictly pre-contact, unlike the mismatch: an absent recorded portal is decided from the row alone, so it is refused before `AuthenticatedPortalID` is called at all. The order matters operationally — checked after the lookup, a legacy row read while token-info was throttled would surface as the transient 503 below rather than this 409, offering "try later" for a row that only re-dispatch can fix. The refusal is deliberate rather than a best guess, because reading across a re-point is wrong in both directions — a same-numeric collision reports another portal's opens and clicks as this campaign's, and no collision reports "not sent yet" for an email that was sent. The second moment belongs to HubSpot alone: `GetEmailMetrics` — the tenant-scoped metrics call itself — succeeds and matches no sent email in the window, which `internal/dispatch/hubspot.go` tags with `domain.ErrNoMetricsInWindow` so it lands on 409 rather than the 503 default. Nothing is broken — a staged draft nobody has sent yet is the ordinary state of this channel between `Dispatch` and the send — so read this 409 as "no data", not as "repair your connection". The response body does not separate these cases (`ConflictError` carries only `code` and `message`), so the message text is what distinguishes them: the first group names the connection, the provisioning state, or (for HubSpot's identity checks) the portal; this one names the window. **500**, as on the status toggle, covers the defects on a scope the caller cannot address, so none is a 409: the project has no connection, fell back to the LF system row, and that row is unusable; a defect in THIS SERVICE (`ErrServiceDefect`, `reason=token_request_rejected` — the refresh request this service built was malformed, so neither stored credential was evaluated and there is nothing for an operator to repair); or the stored credential blob failed GCM authentication (`ErrCredentialDecryptionFailed`) — a rotated `CREDENTIAL_ENCRYPTION_KEY` or a corrupted row, and this path cannot tell them apart — re-saving credentials repairs the corrupted row, but no reconnect touches a rotated key, so the answer is the conservative one. **404**, also as on the toggle, is the third permanent answer: no connection row exists for this project and provider and the shared system row did not cover it, so there is nothing to repair and the caller is told to connect. Both were 503 before LFXV2-3065, which invited a retry that could never succeed. Support is per-platform (see below). |
 | GET | `/projects/{projectId}/briefs/{briefId}/metrics` | `campaign_manager` | JSON | **Read every campaign on a brief in one request.** Same read-through as the campaign-scoped row above, fanned out across the brief's campaigns concurrently. `window` accepts the same closed vocabulary and applies to every campaign, with the same per-platform default fallback (X Ads cannot serve `last_30_days`, so with no window named its rows are read over `last_7_days` while the others use 30 — **each row reports the window IT was read over in `metrics.window`; the top-level `window` is the requested one and does not claim to cover every row**). **A per-campaign failure does NOT fail the request.** Every campaign gets a row, including unreadable ones, and each carries its own `status`: `ok` (the only status carrying `metrics`), `unsupported` (no `MetricsReader` for the platform, or the window exceeds what it can serve — the 400s of the campaign-scoped endpoint), `not_ready` (unprovisioned, or the platform reported no data in the window — includes the ordinary state of a staged email draft nobody has sent yet), `connection_problem` (unknown provenance, account mismatch, or an unusable connection — the operator must repair the connection; retrying will not help), and `failed` (the platform read itself failed; transient, retrying may help). **A non-`ok` row omits `metrics` entirely rather than carrying zeroes** — a zero is a measurement, and substituting one for a campaign that could not be read is indistinguishable from a campaign that genuinely served nothing. `reason` carries a fixed, consumer-safe sentence, never the adapter's error text, which can embed a platform response body or an operator-supplied account id. `ok_count` reports how many rows carry a measurement, so a consumer can see that a cross-campaign total covers 2 of 6 campaigns before presenting it. **There is no cross-channel cost total**: `cost_micros` is micro-units of each platform's own native currency and this service performs no FX conversion, so summing them would produce a figure with no currency. Each `ok` row also carries `pacing`: spend against what the flight expects **by now**, not against the whole budget — a campaign three days into a thirty-day flight is expected to have spent a tenth of it. Expected spend is prorated over the OVERLAP of the row's window with the campaign's flight, so a 7-day read is compared against 7 days of plan rather than the whole elapsed flight — and a window that precedes the flight (`last_month` for a campaign that started last week) yields `unknown` rather than pacing a correct zero spend as underspending. **The flight's `end_date` is INCLUSIVE — the campaign runs through the end of that day**, matching how every ad platform is asked for the same range, so a flight of `2026-08-17`..`2026-08-18` is two days of plan and one whose start equals its end is a valid single day. Before LFXV2-3314 this endpoint treated the end date as an exclusive midnight, which cut the last day off every flight: a two-day flight was priced as one (an on-plan campaign reported 200% and `overspending`), and on the final date the window/flight overlap collapsed to zero so `pacing` read `unknown` for that whole day. **A consumer that reconciled its own pacing against this endpoint will see figures move on short flights and on every flight's last day.** **A campaign in its first day is also `unknown`**: a minute into a 30-day $1000 flight the expected spend is two cents, so a zero would raise a HIGH-priority underspending item against a campaign whose only property is being new — and platform reporting lag means the measured spend is not trustworthy that early either. **`pacing.pct` is ABSENT, not zero, when pacing cannot be derived** (no budget, no usable flight, an unreadable budget), with `pacing.label` reading `unknown` — a `0` there would be indistinguishable from a campaign that spent nothing. Pacing is **per campaign only**: like `cost_micros` it is denominated in the platform's own currency, so pacing figures must never be totalled or averaged across rows. `action_items` is derived service-side from the readable rows, so every consumer applies the same thresholds rather than each deriving its own; each item carries a stable `rule` token (`zero_delivery`, `underspending`, `budget_constrained`, `low_ctr`, `no_conversions`) to group or link on, since the `issue` prose is free to be reworded. **`zero_delivery` waits for the flight to begin** — a campaign dispatched days before its start date has delivered nothing for the same reason it has spent nothing, and it uses the same one-elapsed-day floor as pacing so both agree on when an absence is evidence. It is also **paid-ads only** — the email channel bills nothing per send and its adapter always reports `cost_micros: 0` while mapping opens onto `impressions`, so absent spend there is the normal state and carries no delivery signal; an email delivered to every recipient but opened by none would otherwise be reported as a campaign that never ran. **It also suppresses the pacing items for that campaign**: something that never started is trivially at 0% of plan, and emitting both would hand the operator two `HIGH` findings with opposite remedies — one saying no budget change will fix it, the other saying to adjust the budget. **Every rule is gated on the campaign's status**, which carries both a provisioning state and the run state the toggle sets: a `paused` campaign raises nothing, because zero spend is the intended outcome of pausing it, and neither does a `pending` one, which has not necessarily reached the platform. **`no_conversions` flags real traffic that converts nobody** — zero MEASURED conversions over enough clicks to mean anything. It is gated on the platform reporting conversions **at all**: `metrics.conversions` is ABSENT (not `0`) for Meta, X, Reddit and the email channel, none of which expose a campaign-level conversion count, and the rule never fires on an absent count — a rule that fired because data is missing would flag every campaign on those platforms forever. Like `low_ctr`'s impression floor, it carries a click floor below which zero conversions is variance rather than a broken funnel. **A row whose window does not overlap the flight raises no items either** — `last_month` for a campaign that started this month is a correct zero that means "not running yet". **Rows that could not be read raise no items**, so an empty `action_items` means nothing was flagged *among the readable rows* — check `ok_count` against the row count before presenting it as an all-clear. Request-level errors remain: `400` for an invalid `window` (refused before any platform is contacted), `404` for a missing or archived brief — a brief with no campaigns is **not** an error and returns an empty `rows` array, since that is what every brief looks like before it is dispatched. |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-actions` | `campaign_manager` | JSON | Pause or remove Google Ads or Microsoft Advertising keywords on this campaign. **Google Ads is ALL-OR-NOTHING**: its batch is one atomic `adGroupCriteria:mutate` with partial failure disabled, so every action applied or none did — a caller stopping a budget leak is never left working out which half took effect, and on Google Ads `applied_count` therefore always equals the number requested (Microsoft Advertising is NOT atomic — see below). **`REMOVE` is IRREVERSIBLE** — Google cannot re-enable a removed criterion, only create a new one with a new id. There is deliberately no `ENABLE`: this surface only ever reduces what serves. Google Ads and Microsoft Advertising only; any other platform is **400**, as is a malformed batch (non-numeric ids, an unsupported action, a duplicated criterion, or a criterion outside this campaign's ad group). **409** when the change is refused before the ad platform is contacted — the campaign is unprovisioned (no platform campaign id, or no ad group), it belongs to a different ad account than the connection now resolves to, **it records no creating ad account at all** (`ErrCampaignProvenanceUnknown`: unlike the metrics reads, which proceed on an unrecorded tenant, this path FAILS CLOSED on both platforms — Google Ads is one customer shared across foundations and criterion ids are account-scoped bare numerics, so an unprovable tenant plus an irreversible `REMOVE` is not a risk worth taking; the message says re-dispatch, not reconnect, because there is no account to reconnect to), or the connection row is unusable; none is a 503 because waiting fixes none of them. **500** for the two operator-only defects the toggle also reports (an unusable LF system fallback, or a credential blob that failed GCM authentication), and **404** when no connection exists at all. **503** covers two DIFFERENT outcomes and the message is what separates them, so a client must read it rather than branch on the status alone: a DEFINITE upstream failure (nothing was applied — retry is the right remedy), and an **UNCONFIRMED** one where the mutate may ALREADY have been applied (a short or mismatched `adGroupCriteria:mutate` response, a 5xx, a timeout). The unconfirmed message says so and tells the caller to **verify the campaign's keywords in the platform before retrying** — retrying an irreversible `REMOVE` that already ran cannot undo it and only creates noise, so an ambiguous outcome deliberately does not get the same answer as a definite one. This mirrors the status toggle's unconfirmed arm. A malformed batch reports **400 even when the campaign is also unprovisioned**: a permanent input fault the caller must fix dominates a contingent state fault they can only wait on, matching the order both adapters validate in. Unlike the status toggle this takes **no `If-Match` and no write lock**: it persists nothing, so there is no version to bump and no index event — the keywords live upstream. **Microsoft Advertising (LFXV2-2665) is NOT atomic**, and the row says so per result rather than pretending otherwise: `PAUSE` is one `UpdateKeywords` (`PUT Keywords`, `{AdGroupId, Keywords:[{Id, Status:"Paused"}]}`) and `REMOVE` one `DeleteKeywords` (`DELETE Keywords`, `{AdGroupId, KeywordIds}`), PAUSE sent first, and Microsoft applies each item independently, naming the ones it rejected by `Index` in `PartialErrors`. The same guards run first and in the same order (batch, provisioning, ad group taken from the row, provenance FAILING CLOSED, account match), plus an ownership READ — `GetKeywordsByAdGroupId` (`POST Keywords/QueryByAdGroupId`) — that refuses (**400**, nothing changed) any keyword id that is not a live, non-deleted keyword of THIS campaign's ad group. The **200** then carries exactly one result per action in request order (`results[i]` answers `actions[i]`), each with `outcome` `APPLIED` / `FAILED` (with `error_code`) / `UNCONFIRMED`, no `resource_name` (Microsoft has none), and `applied_count` counts only `APPLIED`. An error Microsoft did not pin to an index makes every un-named item `UNCONFIRMED`; a refusal that follows a retried 429 is `UNCONFIRMED`, never `FAILED`. A Microsoft request answers **503** only when no call was answered item by item — unconfirmed for a 5xx, timeout, retried-429 refusal or unreadable 200, definite otherwise. Google Ads responses are unchanged: `resource_name` on every result, no `outcome`, `applied_count` equal to the request. **⚠️ Known limitation (Microsoft, documented, not fixed): a keyword PAUSED here is re-enabled by the next ACTIVATE of the campaign** (`PATCH …/status` → active), because the status cascade enables every keyword the campaign was created with and this endpoint persists nothing that would let it tell an operator's pause from the Paused state keywords are created in. There is no `ENABLE` action; to keep a keyword paused across a campaign pause/resume, pause it again after activating (or pause it in Microsoft Advertising), and to un-pause one, activate the campaign or enable it in Microsoft Advertising. A REMOVED keyword is NOT re-created — the cascade skips keywords no longer live. |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/negative-keywords` | `campaign_manager` | JSON | **Add campaign-level negative keywords to a live campaign (LFXV2-2665). Microsoft Advertising only** — any other platform is **400** before anything is contacted. Body `negative_keywords`: 1–60 of `{text, match_type}`, `match_type` `Exact` or `Phrase` (Microsoft: "The supported values for a negative keyword are Exact and Phrase"), `text` at most 100 characters (Microsoft's NegativeKeyword.Text limit) of letters, digits, spaces and `& ' - .` with no two punctuation characters together (Microsoft's text policy refuses symbols such as `@ < > = { } [ ] \ ¤ §` and consecutive non-alphanumerics), the same text+match type at most once (refused, not de-duplicated, because results are positional). One `AddNegativeKeywordsToEntities` call (`POST EntityNegativeKeywords`, `EntityType: "Campaign"`, the campaign id taken from the row). Same guards as keyword-actions: batch first (a malformed batch is **400** even on an unprovisioned campaign), then provisioning, provenance (**fails closed**), account match — all **409** before Microsoft is contacted. **NOT ATOMIC**: the **200** carries one result per requested keyword in request order with `outcome` `APPLIED` (+ `negative_keyword_id`), `ALREADY_PRESENT` (Microsoft answered `CampaignServiceNegativeKeywordAlreadyExists`, 4335 — the requested state holds, so it counts toward `applied_count`), `FAILED` (+ `error_code`), or `UNCONFIRMED` (Microsoft answered but not about this keyword). A campaign-level (entity) error is a definite **503**. **NOT retried on 429** (an add with no idempotency key): a 429, 5xx, timeout or unreadable 200 is the **unconfirmed 503** — verify the campaign's negative keywords before retrying. Like keyword-actions it persists nothing, so **no `If-Match`, no write lock, no ETag, no index event**. |
 | GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-targeting` | `campaign_manager` | JSON | **Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665, `get-keyword-targeting`).** On these two platforms a keyword is an entry in the targeting of the ONE ad group (Reddit) or line item (X) this service created, not a criterion with a status, so it cannot be paused — only removed. Read live, never persisted. Response: `platform`, `targeting_entity_id` (the ad group / line item), `keywords` (positive keywords only, in the platform's order; each `{keyword}` on Reddit, `{keyword, criterion_id, match_type}` on X), and on Reddit `revision` — a `sha256:` fingerprint of the ad group's WHOLE targeting, which a removal must send back. **Reddit** keywords come from `redditConfig.keywords` at create. **X: the create path sets NO targeting criteria**, so a campaign this service created reads as an empty list until an operator adds keywords in X Ads Manager. Before anything is returned the row must record the ad group / line item, the campaign's ad account must match the connection, and the platform must report the ad group / line item under THIS campaign. Any other platform is **400**. **409** unprovisioned, no recorded ad group / line item, a different ad account, the ad group / line item gone or reporting another campaign, or a targeting that is not a legible keyword list. **503** when the platform could not be read. No per-keyword metrics: see `docs/knowledge/architecture/keyword-targeting-reddit-x.md`. |
 | POST | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/keyword-targeting/removals` | `campaign_manager` | JSON | **Remove keywords from a Reddit or X campaign's keyword targeting (LFXV2-2665, `remove-keyword-targeting`).** Body `keywords`: 1–20 items — `{keyword}` on Reddit (compared and echoed exactly as sent — no trimming or case folding; all-whitespace is 400), `{criterion_id}` on X — and on Reddit `revision` from the read (must be absent on X). Persists nothing: no `If-Match`, no ETag. Guards, all before anything changes: the batch; provisioning; provenance FAILS CLOSED (a row recording no creating account is 409, re-dispatch); the account match; the ad group / line item is read and must report THIS campaign; every named keyword must be in its current targeting (an X criterion id from any other line item, a negated keyword or a non-keyword criterion is 400). **Refused (409) when it would remove every keyword** — the ad group / line item would stop being keyword-targeted and serve to its other targeting alone, a widening. **Reddit**: one PATCH of the ad group carrying the WHOLE targeting object exactly as read with the named keywords taken out (Reddit replaces targeting as a whole), only if the targeting's fingerprint still equals `revision` (else **409**, nothing written); then a re-read must show exactly the written keywords and no other targeting member changed, or the outcome is UNCONFIRMED. All items share one outcome. **Default-OFF** behind `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED="true"` (otherwise **400**): the whole-object round trip has not been exercised against a live ad account. **X**: one `DELETE targeting_criteria/{id}` per item, in request order, never retried on a 429, each with its own `outcome` (APPLIED / FAILED / UNCONFIRMED) and `error_code` (`NOT_SENT`, `NOT_FOUND`, `REJECTED`, `WOULD_EMPTY`); the targeting is re-listed before EACH delete, and an item whose criterion has meanwhile gone (`NOT_FOUND`) or that is now the last keyword (`WOULD_EMPTY`) is not sent, so a concurrent removal cannot combine with this one to empty the line item (the moment between that re-list and the DELETE remains); `applied_count` counts APPLIED. **503** only when no item got a definite answer; its MESSAGE separates a definite failure (retry) from an UNCONFIRMED one (read the targeting again first). Platform text is never returned. |
-| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/settings` | `campaign_manager` | JSON | **Read the campaign's CURRENT configuration from the platform and report where it diverges from what the campaign row recorded.** A pure read — never persisted — and the one read `.../metrics` cannot be: impressions, clicks, cost and CTR do not describe a campaign's *configuration*. The row records what a dispatch **asked for**; nothing pushes the recorded config upstream, and more than one path lets the recorded settings and the live campaign drift apart, so the two can legitimately disagree. **This endpoint never writes back onto the row** — doing so would change those columns' meaning from request to observation and let one transient bad read destroy the only record of the request — and it never issues a mutating upstream call. There is deliberately **no stored status and no polling**: a status that goes stale is worse than none, so divergence is answered on demand. Each entry in `fields` carries `recorded`, `upstream` and a `comparison` of `match`, `diverged` or `unknown`. `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date` are COMPARED; `status`, `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported **upstream-only** with no `recorded` counterpart, so they always carry `unknown`. Their reasons differ. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` have no recorded side because nothing this service records expresses them, and they are reported anyway because a budget that reads as expected while being `ACCELERATED` or shared across campaigns is exactly what explains a spend anomaly the compared fields cannot. `status` is different: the campaign row DOES record a status, and it is upstream-only because that lifecycle status and Google's delivery status are different axes — see the dedicated paragraph below. Flight dates are normalised to `YYYY-MM-DD` before comparison — Google returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so a raw comparison would flag every campaign that actually agrees. **`match` and `diverged` both require BOTH sides to have been read; a side that could not be read is ABSENT from the response — never zero-filled — and its verdict is `unknown`, never `match`**, because agreement asserted from an observation nobody made is a fabricated match. `diverged_count` and `unknown_count` are reported separately so "2 differ" is not read without "and 5 were not compared". **`unknown_count` is NOT a read-failure count**: it counts every field that was not compared, which on a fully healthy readback is most of them — `status` plus the three other fields that remain upstream-only, are permanently `unknown` by construction — `status` is itself one of the upstream-only fields and is not an extra one on top of them. That floor is four on a row whose `config_snapshot` records a channel and five on a legacy row that has none. The two flight dates USED to sit in that floor, because `googleAdsConfig` carried no dates and their recorded side was always empty; they now compare for real when a campaign was created with a window, and remain `unknown` only where there is nothing to compare — a campaign created before the fields existed, or one created without them (both are optional). An ADOPTED campaign is not automatically in that set: adoption records the window the dispatch asked for, so if the adopting request supplied dates the recorded side exists and the comparison is real — which is the point, since adoption pushes nothing upstream and the readback is the only thing that can say whether the campaign actually carries it. A consumer watching this number for read failures would see a constant floor it cannot distinguish from a real one; the per-field `comparison` is what says which is which. `status` is reported with no `recorded` counterpart and is deliberately never compared — and NOT because the row lacks a column for it. The campaign row HAS a `status` column; it simply does not hold the same axis. That column carries this service's own lifecycle vocabulary, which is mostly provisioning state (`pending`, `created`, `created_degraded`, the retained-partial orphan markers, the soft-delete `deleted`) and only sometimes a run state, whereas Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state. A `created` campaign is not more or less `ENABLED` than a `created_degraded` one, so comparing the two columns would report a permanent, meaningless divergence on nearly every campaign while saying nothing about whether the campaign is actually serving. The upstream value is reported on its own so an operator can see the delivery state directly. **Google Ads only** today — the readback is wired per platform; every other platform returns **400**, as it does for any unwired capability. **404** when the platform holds no such campaign (it may have been deleted upstream — kept out of the 503 default, which would invite retrying a read that will keep reporting nothing), and when the project has no connection for the channel. **409** for an unprovisioned campaign (no platform campaign id, so nothing to compare), an account mismatch (the campaign belongs to a different ad account than the connection now resolves to — reading it there could return another campaign's configuration and report it as this one's divergence), unknown provenance, and an unusable connection. **Unknown provenance IS a 409 here, deliberately** — and this endpoint is STRICTER than the metrics read and the status toggle, which wave an unstamped row through. `ReadSettings` fails closed BEFORE the platform call when the row records no creating customer, returning `ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch` so existing mismatch callers keep matching while the handler's dedicated arm can tell the two apart. The reason the convention diverges here: the stored platform campaign id is unique only WITHIN a customer, so querying it under an unverified account can, on an id collision, return ANOTHER account's campaign — and this endpoint would then report a divergence between this campaign's recorded budget and a different campaign's actual one. A confidently wrong report about somebody else's account is precisely what a readback must not produce, and an absent creating account is a purely LOCAL fact no answer from Google could change. The remedies differ too: a mismatch has an original account to reconnect to, whereas unknown provenance has none, so the row must be re-dispatched. **500** for an unusable LF system connection or undecryptable credentials. **503** when the settings could not be read — which covers BOTH a platform that could not be reached AND one that answered with a response this service refused to trust (more than one row for a unique id, an unhonoured id filter, disagreeing identity fields, mutually exclusive budget amounts, a period contradicting its amount). The message names neither cause, because the two are indistinguishable to the caller and a connectivity claim would be false for the second; the specific refusal is logged. |
+| GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/settings` | `campaign_manager` | JSON | **Read the campaign's CURRENT configuration from the platform and report where it diverges from what the campaign row recorded.** A pure read — never persisted — and the one read `.../metrics` cannot be: impressions, clicks, cost and CTR do not describe a campaign's *configuration*. The row records what a dispatch **asked for**; nothing pushes the recorded config upstream, and more than one path lets the recorded settings and the live campaign drift apart, so the two can legitimately disagree. **This endpoint never writes back onto the row** — doing so would change those columns' meaning from request to observation and let one transient bad read destroy the only record of the request — and it never issues a mutating upstream call. There is deliberately **no stored status and no polling**: a status that goes stale is worse than none, so divergence is answered on demand. Each entry in `fields` carries `recorded`, `upstream` and a `comparison` of `match`, `diverged` or `unknown`. `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date` are COMPARED; `status`, `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported **upstream-only** with no `recorded` counterpart, so they always carry `unknown`. Their reasons differ. `budget_delivery_method` and `budget_explicitly_shared` have no recorded side because nothing this service records expresses them, and they are reported anyway because a budget that reads as expected while being `ACCELERATED` or shared across campaigns is exactly what explains a spend anomaly the compared fields cannot. `bidding_strategy_type` is upstream-only for a third reason: `googleAdsConfig.biddingStrategy` DOES record one, but comparing it would mean mapping this service's caller vocabulary onto Google's OUTPUT_ONLY `BiddingStrategyTypeEnum`, and that mapping is unverified exactly where it is ambiguous — `target-cpa` and `maximize-conversions` are both sent as `maximize_conversions` — while on the adopt path the recorded strategy was never pushed upstream and the two sides are expected to disagree. A guessed mapping would report a false divergence on a campaign set exactly as asked, so the field stays `unknown` until a live readback settles the enum. `status` is different: the campaign row DOES record a status, and it is upstream-only because that lifecycle status and Google's delivery status are different axes — see the dedicated paragraph below. Flight dates are normalised to `YYYY-MM-DD` before comparison — Google returns `yyyy-MM-dd HH:mm:ss` in the ad account's timezone, so a raw comparison would flag every campaign that actually agrees. **`match` and `diverged` both require BOTH sides to have been read; a side that could not be read is ABSENT from the response — never zero-filled — and its verdict is `unknown`, never `match`**, because agreement asserted from an observation nobody made is a fabricated match. `diverged_count` and `unknown_count` are reported separately so "2 differ" is not read without "and 5 were not compared". **`unknown_count` is NOT a read-failure count**: it counts every field that was not compared, which on a fully healthy readback is most of them — `status` plus the three other fields that remain upstream-only, are permanently `unknown` by construction — `status` is itself one of the upstream-only fields and is not an extra one on top of them. That floor is four on a row whose `config_snapshot` records a channel and five on a legacy row that has none. The two flight dates USED to sit in that floor, because `googleAdsConfig` carried no dates and their recorded side was always empty; they now compare for real when a campaign was created with a window, and remain `unknown` only where there is nothing to compare — a campaign created before the fields existed, or one created without them (both are optional). An ADOPTED campaign is not automatically in that set: adoption records the window the dispatch asked for, so if the adopting request supplied dates the recorded side exists and the comparison is real — which is the point, since adoption pushes nothing upstream and the readback is the only thing that can say whether the campaign actually carries it. A consumer watching this number for read failures would see a constant floor it cannot distinguish from a real one; the per-field `comparison` is what says which is which. `status` is reported with no `recorded` counterpart and is deliberately never compared — and NOT because the row lacks a column for it. The campaign row HAS a `status` column; it simply does not hold the same axis. That column carries this service's own lifecycle vocabulary, which is mostly provisioning state (`pending`, `created`, `created_degraded`, the retained-partial orphan markers, the soft-delete `deleted`) and only sometimes a run state, whereas Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state. A `created` campaign is not more or less `ENABLED` than a `created_degraded` one, so comparing the two columns would report a permanent, meaningless divergence on nearly every campaign while saying nothing about whether the campaign is actually serving. The upstream value is reported on its own so an operator can see the delivery state directly. **Google Ads only** today — the readback is wired per platform; every other platform returns **400**, as it does for any unwired capability. **404** when the platform holds no such campaign (it may have been deleted upstream — kept out of the 503 default, which would invite retrying a read that will keep reporting nothing), and when the project has no connection for the channel. **409** for an unprovisioned campaign (no platform campaign id, so nothing to compare), an account mismatch (the campaign belongs to a different ad account than the connection now resolves to — reading it there could return another campaign's configuration and report it as this one's divergence), unknown provenance, and an unusable connection. **Unknown provenance IS a 409 here, deliberately** — and this endpoint is STRICTER than the metrics read and the status toggle, which wave an unstamped row through. `ReadSettings` fails closed BEFORE the platform call when the row records no creating customer, returning `ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch` so existing mismatch callers keep matching while the handler's dedicated arm can tell the two apart. The reason the convention diverges here: the stored platform campaign id is unique only WITHIN a customer, so querying it under an unverified account can, on an id collision, return ANOTHER account's campaign — and this endpoint would then report a divergence between this campaign's recorded budget and a different campaign's actual one. A confidently wrong report about somebody else's account is precisely what a readback must not produce, and an absent creating account is a purely LOCAL fact no answer from Google could change. The remedies differ too: a mismatch has an original account to reconnect to, whereas unknown provenance has none, so the row must be re-dispatched. **500** for an unusable LF system connection or undecryptable credentials. **503** when the settings could not be read — which covers BOTH a platform that could not be reached AND one that answered with a response this service refused to trust (more than one row for a unique id, an unhonoured id filter, disagreeing identity fields, mutually exclusive budget amounts, a period contradicting its amount). The message names neither cause, because the two are indistinguishable to the caller and a connectivity claim would be false for the second; the specific refusal is logged. |
 | PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/budget` | `campaign_manager` | JSON | **Change how much a campaign may spend on its ad platform, then persist the new amount.** **Google Ads, LinkedIn, Meta, Microsoft Advertising, Reddit and X** today; any other platform is **400**. The refusal list below is the UNION of the six budget models — a platform whose model has no analogue of a given refusal simply never raises it, and which platforms support the capability is decided solely by whether their dispatcher implements it, never by an allowlist in the service. Also **400** is a `budget` that is not a finite number, is not strictly greater than zero, is below the contract floor of 0.000001 (the LOOSEST floor any supported platform has: Google bills in micros, LinkedIn in whole cents, Meta in the account currency's minor unit — refused by request validation before the service runs; a direct caller below it is refused only when the amount rounds to zero micros, i.e. under half a micro; the design's `Minimum` is that micro, not zero: 0.000001 is the intentionally stricter HTTP (Goa) contract floor, while the service's own guard refuses only what rounds to zero micros), or exceeds 1,000,000,000, and a `budget_type` outside `daily`/`lifetime`. **A platform's OWN minimum is also a 400, not a 503**: the checks above are only the bounds that hold for every platform at once, and an adapter holding a stricter floor — LinkedIn's `$10` daily / `$100` lifetime, or Meta's one minor unit of the account currency — refuses the amount before anything is written, and Microsoft's own definite refusal of the amount (`CampaignServiceInvalidDailyBudget` — below the minimum, or not a settable amount, in the account currency — or a daily budget below what the campaign has already spent) leaves the campaign unchanged the same way; either is a permanent request fault and is answered as one, with the adapter's own explanation of what was wrong. **The amount is in the AD ACCOUNT's own currency, not USD** — this service never converts. **AMOUNT ONLY: the pacing model is never changed here.** A request whose `budget_type` differs from the campaign's CURRENT upstream pacing is refused **409** rather than translated — daily and lifetime write different fields on every platform (`amount_micros` vs `total_amount_micros` on Google's budget resource; `dailyBudget` vs `totalBudget` on the LinkedIn campaign; `daily_budget` vs `lifetime_budget` on the Meta ad set; Microsoft Search campaigns have only a daily `DailyBudget`, so a `lifetime` request for one is always this 409; `goal_type` `DAILY_SPEND` vs `LIFETIME_SPEND` on the Reddit campaign; X campaigns are written as a daily amount only, so a `lifetime` request for one is always this 409), and silently switching one for the other would change the campaign's whole spend model behind a request that only named a number. **Each platform models a budget differently, and that decides which guards even have a subject.** *Google:* the budget is a SEPARATE RESOURCE from the campaign (`campaign_budget`), so three facts are read from the platform before anything is written: which budget resource is attached, whether it is `explicitly_shared`, and its period. **A SHARED budget is refused (409) before any mutate**: writing it through one campaign moves the spend of every other campaign attached to it, including campaigns this service does not own and cannot see — the create path pins `explicitly_shared: false`, so only ADOPTED campaigns can reach this refusal, and the remedy is a human one in the ad platform. An unreadable shared flag is refused the same way rather than assumed unshared. *LinkedIn:* the budget is a pair of FIELDS ON THE CAMPAIGN (`{amount, currencyCode}` with a two-decimal string amount), so a campaign id fully addresses its budget and **there is nothing to share** — that refusal has no analogue and is deliberately absent rather than forgotten. In its place is a CURRENCY guard (**409**): the minimums are USD-specific and this service only ever SENDS `currencyCode "USD"`, so a campaign denominated in anything else — including one whose currency LinkedIn did not report at all — would be silently redenominated by writing over it. *Meta:* the budget is on the AD SET, in the account currency's MINOR UNITS, and **Campaign Budget Optimization is Meta's form of a shared budget** — the campaign holds one amount and distributes it across every ad set beneath it, so an ad-set write there either fails or converts the campaign off CBO, and both change spend this request never named; it is refused **409**. An ad account whose currency has no known minor-unit scale is also **409**, not 400: the amount is fine and the remedy is in Meta Ads Manager, not in the request. *Microsoft:* the budget is a pair of FIELDS ON THE CAMPAIGN (`DailyBudget`, a plain decimal in the account currency sent unrounded, and `BudgetType`) — **unless the campaign is attached to a shared Budget** (`BudgetId` set), Microsoft's form of a shared budget, which is refused **409** from the read before any write; Microsoft's own `CampaignServiceCannotUpdateSharedBudget` on the write (a budget attached between the read and the write) is the same 409, and nothing changed. An unreadable `BudgetId` is refused **409** rather than assumed unshared, and so is an **experiment campaign**, whose budget is inherited from its base campaign and cannot be set on it. The campaign's `BudgetType` must be `DailyBudgetStandard`, and the write sends it back unchanged, so only the amount moves; a Search campaign reporting `DailyBudgetAccelerated` — which Microsoft documents as available only to Audience campaigns — is a contradictory response and is refused **409** before any write rather than echoed back. *Reddit:* the budget is the CAMPAIGN's `goal_value`, in micro-units of the account currency — the create path sets `is_campaign_budget_optimization: true` with `goal_type: LIFETIME_SPEND`, so every campaign this service creates is `lifetime` and a `daily` request against one is the pacing **409** above. Only `goal_value` is written. A campaign whose budget optimization is OFF has its spend governed per ad group; that is refused **409** rather than allocated across ad groups, as is one whose budget-optimization flag or `goal_type` Reddit does not report. There is no shared-budget or currency analogue. *X:* only the CAMPAIGN's own `daily_budget_amount_local_micro` is written, in micro-units of the account currency, and only when X reports campaign budget optimization (`budget_optimization` `CAMPAIGN`). That campaigns created here have that shape is INFERRED from the create path (a daily amount on the campaign, no `budget_optimization` sent, no line-item budget) and is unverified against a live account — X's current reference lists `LINE_ITEM` as the only value. A `lifetime` request is always **409**: under campaign budget optimization X requires the daily budget, so the campaign is paced daily. Only the daily amount is PUT; `budget_optimization`, `entity_status` and `total_budget_amount_local_micro` are never sent. A campaign reporting `LINE_ITEM` or omitting `budget_optimization`, one with no daily budget (total-only or neither), one that also carries a total cap, or one with an unreadable amount is refused **409** before any write. X publishes no per-currency budget minimum, so only the service's own bounds are checked before the PUT; an amount X itself refuses comes back as X's definite 4xx, answered **503** "not modified" as for Reddit. A refusal that follows a retried 429 is instead the UNCONFIRMED **503** (verify before retrying), because the 4xx answers only the last attempt. There is no shared-budget analogue. **409** likewise when the campaign is unprovisioned, belongs to a different ad account than the connection now resolves to, records no creating ad account at all (re-dispatch, not reconnect), or the connection row is unusable; **404** when the platform holds no such campaign, or no connection exists at all; **500** for the two operator-only defects the toggle also reports. Requires `If-Match` (**428** missing, **412** mismatch) and takes the campaign write lock, since it persists. **503 covers two outcomes and the message separates them**: a DEFINITE failure (nothing changed) and an **UNCONFIRMED** one where the mutate may already have applied — unlike `keyword-actions`' irreversible `REMOVE`, re-applying a budget CONVERGES (the mutate is sent idempotent), so a retry is safe once verified, but the caller is still told to verify because this service's stored amount and the platform's may differ until they do. **UNCONFIRMED also covers a mutate Google ACCEPTED but did not acknowledge usably** — a 2xx naming no budget resource, or naming a different one: the request reached the platform, so "nothing was modified" is precisely the claim that cannot be made. **Only the budget columns are written**: `status` in particular is left exactly as found, which is what lets a `created_degraded` campaign — one that definitely exists upstream and may be spending — have its budget cut without losing its reconciliation marker. |
 | PATCH | `/projects/{projectId}/briefs/{briefId}/campaigns/{id}/bid` | `campaign_manager` | JSON | **Set a campaign's MANUAL max cost-per-click bid on its ad platform, then persist it** (LFXV2-2665). Body: `bid` (Float64 > 0, in the AD ACCOUNT's own currency, contract range one micro to 1,000,000) and optional `bid_type` (only `cpc`; defaults to `cpc` when omitted — applied by the service, not a Goa default, so the generated CLI accepts a body without it). Requires `If-Match` (**428** missing, **412** stale). **Microsoft Advertising, Reddit, Meta and X** today; Google Ads, LinkedIn and the email channel are **400**. The bid goes where the create path put it: Microsoft — the default `CpcBid` of the ONE ad group this service created (its keywords carry no bids, so they inherit it); Reddit — the `bid_value` of the ONE ad group this service created; Meta — the `bid_amount` (a bid cap in the account currency's minor units) of the ONE ad set this service created; X — the `bid_amount_local_micro` of the ONE line item this service created. A row recording none (an adopted campaign) is **409**: the endpoint does not choose among ad groups, ad sets or line items. **409 when the bid would be ignored, and the strategy is NEVER switched**: Microsoft writes only under the campaign's own `EnhancedCpc` or `ManualCpc` (any automated scheme — MaxClicks, MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, CostPerSale — any portfolio strategy, or an unreported scheme is refused); Reddit writes only to a `MANUAL_BIDDING`, `CPC` ad group that reports this campaign as its owner, and only when the campaign's own strategy allows it (with Campaign Budget Optimization on — as the create path sets it — the campaign itself must be `MANUAL_BIDDING`); Meta writes only to an ad set of this campaign under `LOWEST_COST_WITH_BID_CAP` with `billing_event` AND `optimization_goal` both `LINK_CLICKS` (a Meta cap is per optimization event, and per 1,000 impressions when billed on impressions, so only that pairing is a max CPC — `LOWEST_COST_WITHOUT_CAP`, `COST_CAP`, `LOWEST_COST_WITH_MIN_ROAS`, impression- or `CLICKS`-billed caps are refused); X writes only to a line item of this campaign with `bid_strategy` `MAX` and `pay_by` `LINK_CLICK` (`AUTO`, `TARGET`, impression-charged, deleted or unreported are refused). **Every Reddit campaign this service creates is `BIDLESS` on both the campaign and its ad group**, so the Reddit leg applies only after an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group. **Every Meta campaign this service creates is `LOWEST_COST_WITHOUT_CAP` billed on `IMPRESSIONS`, and every X campaign `AUTO`**, so those legs likewise apply only after an operator moves the ad set or line item to a manual per-click bid. Also **409**: unprovisioned, unknown or mismatched creating ad account, an unusable connection. **400**: a non-finite, non-positive or out-of-range bid, an unknown `bid_type`, or a bid the platform refuses on its own floor/ceiling (Microsoft: the create path's 0.01–1000 bounds, and Microsoft's floor/ceiling/invalid-bid refusals; Reddit: a 400 carrying a structured field error on `bid_value`, and only when no 429 was retried first; Meta: under one minor unit of the account currency, or a definite refusal whose `error_data.blame_field_specs` names `bid_amount`; X: a definite `INVALID_PARAMETER` 400 whose `parameter` is `bid_amount_local_micro`) — the message names the reason. **404**: the platform holds no such campaign. **503**: the platform could not be reached or did not confirm (including any Microsoft or Reddit refusal after a retried 429, and any Meta or X throttle — those writes are never retried in-call) — the row is unchanged; verify the bid in the platform before retrying. Persisted to `campaigns.max_cpc_bid` (migration `000039`), the bid lever's twin of `budget_amount`: a confirmed request, never an observation. |
 
@@ -306,7 +306,10 @@ The program type determines the AI brief generation strategy (copy tone, targeti
 | Type | Description |
 |------|-------------|
 | `search` | Search (RSA, responsive search ads) |
-| `demand-gen` | Display (YouTube, Discover, Gmail) |
+| `demand-gen` | Demand Gen (YouTube, Discover, Gmail) |
+| `performance-max` | Performance Max (every Google inventory from one asset group) |
+| `video` | Video / YouTube — **adoption and reporting only; CREATE IS REFUSED**, because the Google Ads API cannot create or mutate Video campaigns ([Google's Video overview](https://developers.google.com/google-ads/api/docs/video/overview)) |
+| `display` | Display network (responsive display ad, no channel sub-type) |
 
 ### Campaign Goals
 
@@ -555,17 +558,29 @@ config — not this campaign config.
 
 #### GoogleAdsConfig (the `googleAdsConfig` object)
 
-Google Ads per-platform config. The dispatcher creates a PAUSED search campaign with an ad
-group + a Responsive Search Ad (GA-3), then attaches keyword/audience targeting to that ad
-group (GA-4) — without it, the ad group has zero criteria and the campaign can never serve,
-even once a human enables it. **Budget is in whole units of the ad ACCOUNT's currency**, not
-USD — the service does no FX conversion (mirroring `metaConfig`).
+Google Ads per-platform config. Which campaign is created depends on `channel`. The default
+(`search`) is a PAUSED search campaign with an ad group + a Responsive Search Ad (GA-3), then
+keyword/audience targeting attached to that ad group (GA-4) — without it, the ad group has zero
+criteria and the campaign can never serve, even once a human enables it. `demand-gen` creates a
+Demand Gen campaign with an ad group and (given `demandGenCreative`) one ad; `performance-max`
+creates a Performance Max campaign with NO ad group and NO ad at all — its creative is an ASSET
+GROUP built from `performanceMaxCreative`; `video` CREATES NOTHING — the Google Ads API
+supports fetching and reporting on Video campaigns but cannot create or mutate them, so a
+`video` create is REFUSED before the first budget mutate rather than stranding a paid
+budget at the campaign step (`adoptExisting` still works, and so does monitoring, because
+only creation is impossible); `display` creates a DISPLAY campaign with NO channel
+sub-type, an ad group of type `DISPLAY_STANDARD`, and (given `displayCreative`) one
+responsive display ad built from images this service fetches and uploads. **Budget is in whole units of the ad ACCOUNT's
+currency**, not USD — the service does no FX conversion (mirroring `metaConfig`).
 
 Every field below is OPTIONAL except `budget`, and every one of them is additive: a config
 that names none of them produces exactly the single-ad-group, single-ad campaign this
 service created before they existed. Additive does NOT mean channel-independent — the
-entries below marked SEARCH ONLY are REFUSED, not ignored, when `campaignType` is
-`demand-gen`. Each is validated BEFORE the first budget mutate, so a
+entries below marked SEARCH ONLY are REFUSED, not ignored, on any other `channel`. Each
+entry states which channels accept it, because the channels do not refuse the same set:
+`performance-max` takes languages, ad schedules and proximity that `demand-gen` refuses, and
+refuses device bid modifiers and demographic exclusions alongside it. Each is validated
+BEFORE the first budget mutate, so a
 refused value cannot strand a paid campaign — and the same validation runs on the
 `adoptExisting` path, so a config is refused identically whether it creates or adopts.
 
@@ -576,6 +591,16 @@ budget: number                  — Whole units of the account currency (e.g. 25
                                   during dispatch (a pre-create job failure, since CreateCampaigns is
                                   async). Omitting it leaves the shell with no budget, which fails the
                                   platform job asynchronously — supply it explicitly.
+channel?: string                — OPTIONAL which Google Ads campaign type to create: `search` (the
+                                  default), `demand-gen`, `performance-max`, `video` or `display`. ABSENT
+                                  MEANS `search`,
+                                  deliberately: every caller predating this field omits it and means
+                                  Search, so absence must not repoint them. An unrecognised value is
+                                  REFUSED, never defaulted — defaulting a typo'd `demandgen` to Search
+                                  would spend the Demand Gen budget on Search ads and report success.
+                                  `video` is accepted and VALIDATED like any other channel but its
+                                  CREATE is refused: Google cannot create Video campaigns. It remains a
+                                  legal value because `adoptExisting` and monitoring do work on Video.
 headlines?: string[]            — Optional Responsive Search Ad headlines (≤30 WEIGHTED chars
                                   each, 3-15 after padding). Trimmed, truncated, and de-duplicated;
                                   caller-supplied entries are accepted up to 15 (later entries
@@ -600,19 +625,34 @@ keywords?: {text, matchType}[]  — OPTIONAL positive Search keyword criteria (G
                                   unsupported matchType fails the job BEFORE any Google Ads request is
                                   made. Left empty/omitted, the ad group has no criteria and can never
                                   serve — supply at least one for a campaign that should actually run.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on every other
+                                  `channel`: keyword criteria are attached only on the Search cascade,
+                                  Demand Gen's ad group takes no criteria at all, and Performance Max
+                                  has no ad group to hang them on. Accepting them elsewhere would
+                                  validate every term and then discard the lot.
 audienceSegments?: string[]     — OPTIONAL Google Ads resource names of EXISTING audiences to attach
                                   to the ad group (GA-4) as observation-only criteria — bid/report on
                                   the segment without narrowing delivery to it. This client does not
                                   create audiences; each entry must be a Customer Match user list
                                   (`.../userLists/{id}`) the caller already built elsewhere. Custom
-                                  audiences are not supported (limited to Display/Demand Gen/Gmail/Video/
-                                  Performance Max by Google; this client creates SEARCH campaigns only).
+                                  audiences are not supported: this client attaches audience criteria
+                                  only on the Search ad-group cascade, and `audienceSegments` is refused
+                                  outright on every other `channel` (below), so the Demand Gen and
+                                  Performance Max campaigns it now creates never reach an audience
+                                  attach at all.
                                   Any other resource-name shape (customAudiences, userInterest,
                                   combinedAudience, etc.) is rejected. At most 20 entries; duplicates are
                                   deduped. When non-empty, the client sets the ad group's
                                   `targetingSetting.targetRestrictions` (AUDIENCE, bidOnly) on the ad group
                                   create so these segments stay observation-only rather than Google's
                                   default of restricting delivery to the audience alone.
+
+                                  SEARCH ONLY, and REFUSED rather than ignored on every other
+                                  `channel`, for the same reason `keywords` is: audience criteria are
+                                  attached only on the Search cascade, so an audience named on any
+                                  other channel would be validated and then dropped, leaving a campaign
+                                  that reads as targeted and is not.
 geoTargets?: string[]           — OPTIONAL locations the campaign should serve in (LFXV2-3283). Each
                                   entry is EITHER an ISO 3166-1 alpha-2 country code, spelled as in
                                   `metaConfig`/`redditConfig`, OR a raw numeric geo target constant id
@@ -624,8 +664,8 @@ geoTargets?: string[]           — OPTIONAL locations the campaign should serve
 
                                   Each is resolved to Google's numeric geo target constant and attached
                                   as a location criterion at the level the CHANNEL requires: campaign
-                                  level for Search, AD GROUP level for Demand Gen (which rejects
-                                  campaign-level location criteria). Case/whitespace-insensitive and
+                                  level for Search and Performance Max, AD GROUP level for Demand Gen
+                                  (which rejects campaign-level location criteria). Case/whitespace-insensitive and
                                   de-duplicated by the RESOLVED id — "US" and "2840" are one criterion;
                                   at most 60 entries.
 
@@ -676,8 +716,9 @@ excludedGeoTargets?: string[]   — OPTIONAL locations the campaign must NOT ser
                                   exclusion win, so the campaign would silently not serve where the
                                   caller plainly asked it to.
 
-                                  Applies to BOTH channels — unlike proximity below, an excluded
-                                  location is the same criterion at either level. Omitted/empty, no
+                                  Applies to EVERY `channel` — unlike proximity below, an excluded
+                                  location is the same criterion at either level, and Performance Max
+                                  attaches it at the campaign level like Search. Omitted/empty, no
                                   exclusions are attached.
 proximityTargets?:              — OPTIONAL radius targeting: "everyone within N of this point"
   {latitude, longitude,           (LFXV2-2665). `latitude`/`longitude` are decimal degrees (e.g.
@@ -699,11 +740,13 @@ proximityTargets?:              — OPTIONAL radius targeting: "everyone within 
                                   entries cannot disagree about anything. Units are NOT converted — 10
                                   MILES and 16.09 KILOMETERS stay two criteria.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen: that
-                                  channel takes location criteria on the ad group, where this client
-                                  has not verified proximity against a real account. Dropping it
-                                  silently would create a campaign serving nationwide when the caller
-                                  asked for a 25-mile radius.
+                                  REFUSED rather than ignored on `demand-gen` ALONE: that channel takes
+                                  location criteria on the ad group, where this client has not verified
+                                  proximity against a real account. Dropping it silently would create a
+                                  campaign serving nationwide when the caller asked for a 25-mile
+                                  radius. `performance-max`, `video` and `display` take campaign-level
+                                  geo exactly as Search does, so radius targets are accepted on all
+                                  three.
 negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached at CAMPAIGN level (not
   {text, matchType}[]             ad group), so they keep applying to any ad group a human adds later.
                                   Same `text`/`matchType` rules as `keywords` above (≤80 runes; EXACT,
@@ -712,12 +755,10 @@ negativeKeywords?:              — OPTIONAL Search keyword EXCLUSIONS, attached
                                   in both. An empty text or unsupported matchType fails the job BEFORE
                                   any Google Ads request is made.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored when `campaignType` is
-                                  `demand-gen` — unlike `keywords`, which IS ignored there. The
-                                  difference is deliberate: Demand Gen creates no ad and no keyword
-                                  criteria, so a positive keyword has nothing to attach to, but an
-                                  exclusion exists to STOP spend and dropping it quietly would leave the
-                                  campaign paying for exactly the queries you named. Omitted/empty, no
+                                  SEARCH ONLY, and REFUSED rather than ignored on every other
+                                  `channel`, as `keywords` and `audienceSegments` now are. An
+                                  exclusion exists to STOP spend, so dropping it quietly would leave
+                                  the campaign paying for exactly the queries you named. Omitted/empty, no
                                   exclusions are attached and the campaign is eligible for every query
                                   its positive keywords match.
 cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in whole units of the ad
@@ -732,10 +773,132 @@ cpcBid?: number                 — OPTIONAL manual CPC bid for the ad group, in
                                   0 (or omitted) means UNSET: no bid field is sent and the ad group
                                   inherits whatever Google derives, which is what every campaign
                                   created before this field existed did. An explicit 0 is NOT sent as
-                                  a zero bid. SEARCH only — Demand Gen bids via targetSpend and
-                                  rejects manualCpc — and a non-zero bid on that channel is REFUSED
-                                  before anything is created, not dropped: Demand Gen's ad group has
-                                  no bid field at all, so accepting it would discard it silently.
+                                  a zero bid. SEARCH only — no other channel here has a manual bidding
+                                  strategy, and a non-zero bid on one of them is REFUSED before
+                                  anything is created, not dropped: their ad-group payloads carry no
+                                  bid field at all (Performance Max has no ad group whatsoever), so
+                                  accepting it would discard it silently.
+
+                                  Also REFUSED under any `biddingStrategy` other than `manual-cpc`:
+                                  an automated strategy sets the bids itself, so a CPC bid supplied
+                                  with one is never bid. The refusal covers a per-group `cpcBid` in
+                                  `adGroups` as well as this campaign-level one.
+biddingStrategy?: string        — OPTIONAL how the campaign bids. Named with the Google Ads UI's own
+                                  labels, lower-cased and hyphenated, because the operator choosing one
+                                  is reading that UI and not the proto:
+
+                                    manual-cpc                 you set the bid (see `cpcBid`)
+                                    maximize-clicks            most clicks the budget allows
+                                    maximize-conversions       most conversions the budget allows
+                                    target-cpa                 ..., at a target cost per conversion
+                                    maximize-conversion-value  most conversion VALUE the budget allows
+                                    target-roas                ..., at a target return on ad spend
+
+                                  `target-cpa`/`target-roas` are the UI's names for
+                                  `maximize-conversions`/`maximize-conversion-value` WITH a target set;
+                                  both spellings are accepted and resolve to the same Google strategy.
+                                  The only difference is that the target is REQUIRED under the
+                                  target-bearing name and optional under the maximize- one.
+
+                                  Omitted, the channel default is used and the payload is byte-identical
+                                  to what this service sent before the strategy was selectable:
+                                  `manual-cpc` on Search, `maximize-clicks` on Demand Gen,
+                                  `maximize-conversions` on Performance Max. An unknown name is refused
+                                  and the error lists the supported set.
+
+                                  On `demand-gen` ONLY `maximize-clicks` is accepted. That is not a
+                                  Google limit but the limit of what this client has verified: a
+                                  recorded live-API check (2026-08-14, v23) had Demand Gen accept
+                                  `targetSpend` and reject `maximizeConversions` with
+                                  BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET — AFTER the
+                                  budget was created. Anything else on that channel is refused before
+                                  the budget mutate rather than risking that orphan.
+
+                                  On `performance-max` the accepted set is the four conversion-oriented
+                                  strategies — `maximize-conversions`, `target-cpa`,
+                                  `maximize-conversion-value`, `target-roas`. Performance Max has no
+                                  manual form at all, so `manual-cpc` and `maximize-clicks` are refused
+                                  there before the budget mutate.
+
+                                  On `video` the accepted set is the NARROWEST of the four:
+                                  `maximize-conversions` and `target-cpa`, and nothing else. That is
+                                  not a Google limit either — it is the pair Google's published
+                                  VIDEO_ACTION documentation names, and unlike every other channel's
+                                  set it has NOT been checked against the live API, because the only
+                                  reachable account is a production one and a `validateOnly` mutate is
+                                  still a POST to it. The refusal message says so in those words
+                                  rather than claiming a verification that never happened. Widening
+                                  the set is a live-API question: run a `validateOnly`
+                                  `campaigns:mutate` for VIDEO/VIDEO_ACTION on a non-production
+                                  account and record the result in `videoBiddingStrategies`.
+
+                                  On `display` the accepted set is the five AUTOMATED strategies —
+                                  `maximize-clicks`, `maximize-conversions`, `target-cpa`,
+                                  `maximize-conversion-value` and `target-roas`. It is NOT live-verified
+                                  either, on exactly Video's terms, and the refusal message says so.
+                                  `manual-cpc` is the DELIBERATE omission and is this client's
+                                  limitation rather than Google's: Google accepts manual CPC on a
+                                  Display campaign, but this client's Display AD GROUP payload carries
+                                  no bid field and `cpcBid` is refused off Search, so a manual-CPC
+                                  Display campaign created from here would serve bidding a number
+                                  nobody supplied. Closing that is an implementation question — give
+                                  the ad group a bid field — not an API one.
+targetCpa?: number              — OPTIONAL target cost per conversion, in whole units of the ad ACCOUNT's
+                                  currency (same no-FX caveat as `budget`). Accepted range
+                                  0.01..1000000.0; 0 or omitted means UNSET and no target is sent.
+                                  REQUIRED with `target-cpa`; optional with `maximize-conversions`;
+                                  REFUSED with any other strategy rather than dropped, since a target
+                                  the strategy cannot carry is an instruction that would vanish.
+targetRoas?: number             — OPTIONAL target return on ad spend. A RATIO, NOT a percentage: 4.0
+                                  means "four units of conversion value per unit spent", i.e. 400%.
+                                  Accepted range 0.01..1000.0 — Google's own documented bounds; 0 or
+                                  omitted means UNSET. REQUIRED with `target-roas`; optional with
+                                  `maximize-conversion-value`; REFUSED with any other strategy.
+
+                                  Note 400 IS inside the accepted range even though it is also how
+                                  400% is commonly mis-typed. Refusing it would refuse a target Google
+                                  accepts, so the ratio spelling is documented here and named in the
+                                  out-of-range error rather than guessed at.
+conversionActions?: string[]    — OPTIONAL the conversion actions THIS campaign optimizes toward,
+                                  overriding the account-level conversion goals. Each entry is either a
+                                  bare numeric id (`987654321`) or the full resource name
+                                  (`customers/<customer-id>/conversionActions/<id>`); bare ids are
+                                  qualified with the campaign's own account. At most 100 entries;
+                                  duplicates across the two spellings are deduplicated, not refused.
+
+                                  A full resource name naming a DIFFERENT customer is refused — a
+                                  conversion action cannot be shared across accounts, and the create
+                                  would otherwise fail after the budget mutate. Omitted/empty, no
+                                  selective-optimization field is sent and the campaign bids toward the
+                                  account's own conversion goals, which is what every campaign created
+                                  before this field existed did.
+
+                                  ACCEPTED on `search`, `video` and `display`; REFUSED rather than
+                                  ignored on `demand-gen` and `performance-max`. The split follows the
+                                  mechanism, not a Search-versus-the-rest rule: this client attaches
+                                  them through `campaign.selective_optimization`, which Google defines
+                                  for SEARCH, DISPLAY, VIDEO and APP campaigns — so refusing them on
+                                  Video or Display would refuse a payload Google accepts. Demand Gen
+                                  conversion goals (`conversion_goal_campaign_config`) and Performance
+                                  Max campaign conversion goals are NOT implemented — both need a
+                                  second mutate after the campaign exists. A Performance Max campaign
+                                  therefore inherits the ACCOUNT's conversion goals, which is what
+                                  Google applies when none are named.
+
+                                  Sent at CREATE time via `campaign.selective_optimization` rather than
+                                  through `campaignConversionGoal`, which is update-only: attaching
+                                  goals after the campaign exists needs a second mutate that can fail
+                                  and leave a campaign bidding toward the wrong goals.
+
+                                  To populate a picker, the account's available actions are read by
+                                  `googleads.ListConversionActions` — id, name, status, type, category
+                                  and whether each is primary for the account goal. It exists only as a
+                                  Go client method today: there is NO endpoint, no Goa method and no
+                                  mount, so a caller has no HTTP route to source these ids from yet.
+                                  Creating a
+                                  conversion action is deliberately NOT offered: it is half a
+                                  measurement setup (the other half is a site tag), and one created
+                                  without its tag reports as configured while recording nothing.
 startDate?: string              — OPTIONAL campaign flight window as `YYYY-MM-DD` (spelled as in
 endDate?: string                  `metaConfig`/`redditConfig`). Each is INDEPENDENTLY optional: an
                                   omitted `startDate` leaves Google's default (the campaign starts
@@ -751,8 +914,9 @@ endDate?: string                  `metaConfig`/`redditConfig`). Each is INDEPEND
                                   this service does not know, so a UTC "today" would refuse a start
                                   date Google accepts for an account several hours behind.
 
-                                  Applies to BOTH channels: a flight window is a property of the
-                                  campaign, not of the channel. Sent as v23's
+                                  Applies to EVERY `channel`: a flight window is a property of the
+                                  campaign, not of the channel — all three create payloads carry these
+                                  fields, resolved by the one shared preflight. Sent as v23's
                                   `startDateTime`/`endDateTime` with the account-timezone day
                                   boundaries (`00:00:00` / `23:59:59`) — the pre-v23 `startDate`/
                                   `endDate` request fields were REMOVED and are rejected. The
@@ -772,13 +936,29 @@ languages?: string[]            — OPTIONAL languages the campaign targets (LFX
                                   eligible in every language, which is what every campaign created
                                   before this field existed did.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen — as are
-                                  `adSchedules`, `deviceBidModifiers`, `excludedAgeRanges` and
-                                  `excludedGenders`, which the same guard refuses together. Demand Gen
-                                  attaches this targeting at the AD GROUP level, where this client has
-                                  not verified it against a real account; accepting the field and
-                                  dropping it would create a campaign with none of the targeting the
-                                  caller asked for.
+                                  REFUSED rather than ignored on `demand-gen` — as are `adSchedules`,
+                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders`,
+                                  which one guard refuses together there. Demand Gen attaches this
+                                  targeting at the AD GROUP level, where this client has not verified
+                                  it against a real account; accepting the field and dropping it would
+                                  create a campaign with none of the targeting the caller asked for.
+
+                                  ACCEPTED on `performance-max`, which Google documents as taking
+                                  LANGUAGE, LOCATION and AD_SCHEDULE campaign criteria. Only
+                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` are
+                                  refused there; refusing languages too would be an over-refusal of
+                                  something Google accepts.
+
+                                  ACCEPTED on `video` AND on `display`, along with `adSchedules`,
+                                  `deviceBidModifiers`, `excludedAgeRanges` and `excludedGenders` — the
+                                  whole set, exactly as on Search. A VIDEO or DISPLAY campaign carries
+                                  all five as CAMPAIGN criteria and each cascade attaches all five, so
+                                  none of them is dropped. One NAMED GAP inside `deviceBidModifiers`:
+                                  Google supports a TV-screen device on these two channels and this
+                                  client sends it on none, because whether that criterion carries a bid
+                                  modifier is not settled by the documentation and guessing lands at a
+                                  mutate that runs after the budget. That is this client's limitation,
+                                  not Google's.
 adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the intervals in the ad ACCOUNT's
   {dayOfWeek, startHour,          timezone during which the campaign may serve. `dayOfWeek` is
    startMinute, endHour,          MONDAY..SUNDAY (case-insensitive). `startHour` is 0..23 and `endHour`
@@ -808,18 +988,21 @@ adSchedules?:                   — OPTIONAL dayparting (LFXV2-2665): the interv
                                   campaign to the intervals listed — Google treats the set as
                                   exhaustive, so a single Monday interval means a Monday-only campaign.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
-                                  `languages` for why.
+                                  REFUSED rather than ignored on `demand-gen`, accepted on
+                                  `performance-max`, `video` and `display`; see `languages` for why.
 deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2665). `device` is one of
   {device, bidModifier}[]         MOBILE, DESKTOP, TABLET (case-insensitive); at most 3 entries and a
                                   device may appear only ONCE — two criteria for the same device are a
                                   conflict Google rejects after the campaign exists, and the caller
                                   plainly meant one of the two values.
 
-                                  There is NO TV-screen value. Google supports that device only on
-                                  Display and Video campaigns, and these criteria are Search-only here,
-                                  so a TV-screen entry could at best do nothing and at worst be rejected
-                                  at the criteria mutate, after the campaign is paid for.
+                                  There is NO TV-screen value, on ANY channel. Google supports that
+                                  device only on Display and Video campaigns — which this service now
+                                  creates — so on those two the omission is this client's limitation
+                                  rather than Google's, and is named as one. It stays closed because the
+                                  documentation does not settle whether a TV-screen criterion carries a
+                                  bid modifier, and this client cannot send one without: a wrong guess
+                                  is rejected at the criteria mutate, after the campaign is paid for.
 
                                   `bidModifier` is REQUIRED here (unlike on `adSchedules`, where the
                                   absent case means "listed but unadjusted"; a device entry with no
@@ -830,8 +1013,9 @@ deviceBidModifiers?:            — OPTIONAL per-device bid adjustments (LFXV2-2
                                   Omitted/empty, no device criteria are created and the campaign bids
                                   equally on every device.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
-                                  `languages` for why.
+                                  REFUSED rather than ignored on `demand-gen` AND on
+                                  `performance-max`; ACCEPTED on `video` and `display`; see `languages`
+                                  for why.
 excludedAgeRanges?: string[]    — OPTIONAL demographic EXCLUSIONS (LFXV2-2665), attached as negative
 excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34, 35-44, 45-54, 55-64,
                                   65+ or UNDETERMINED (Google's own AGE_RANGE_* enum names are accepted
@@ -847,8 +1031,9 @@ excludedGenders?: string[]        campaign criteria. Age ranges are 18-24, 25-34
                                   Omitted/empty, no demographic criteria are created and the campaign
                                   is eligible for every bucket.
 
-                                  SEARCH ONLY, and REFUSED rather than ignored on Demand Gen; see
-                                  `languages` for why.
+                                  REFUSED rather than ignored on `demand-gen` AND on
+                                  `performance-max`; ACCEPTED on `video` and `display`; see `languages`
+                                  for why.
 sitelinks?:                     — OPTIONAL sitelink extensions (LFXV2-2665): extra links shown under the
   {text, description1?,           ad. `text` ≤25 runes, required and unique within the list.
    description2?, finalUrl}       `description1`/`description2` are ≤35 runes each and ALL-OR-NOTHING —
@@ -875,14 +1060,102 @@ structuredSnippets?:            — OPTIONAL structured-snippet extensions (LFXV
                                   revises it, so a local list would refuse headers Google accepts. An
                                   unrecognised header is rejected upstream, after the campaign exists.
 
-                                  All three extension fields are SEARCH ONLY and are REFUSED, not
-                                  ignored, on Demand Gen. Omitted/empty, no assets are created and the
-                                  ad serves with no extensions — the pre-LFXV2-2665 behaviour.
+callExtensions?:                — OPTIONAL call extensions (LFXV2-2665): a phone number shown with the
+  {countryCode, phoneNumber}[]    ad. `countryCode` is an ISO-3166-1 alpha-2 code (upper-cased before
+                                  sending). `phoneNumber` may carry digits, spaces and `+-().` only —
+                                  LETTERS are refused, because Google rejects vanity numbers such as
+                                  1-800-FLOWERS — and must hold at least 4 digits and be ≤35 runes.
+                                  De-duplicated on country plus digits-only number. At most 20.
+promotions?:                    — OPTIONAL promotion extensions (LFXV2-2665): a discount shown with the
+  {promotionTarget,               ad. `promotionTarget` (the thing discounted) is required, ≤25 runes
+   discountPercent?,              and unique case-insensitively within the list.
+   discountAmount?,
+   ordersOverAmount?,             EXACTLY ONE discount arm is required — `discountPercent` (0 < p ≤ 100)
+   currencyCode?,                 or `discountAmount`; supplying both or neither is refused, because
+   promotionCode?, occasion?,     Google models them as a oneof and would pick for you. A percentage is
+   languageCode?,                 sent as micros of a FRACTION (Google's 1,000,000 = 100%), so 25 becomes
+   startDate?, endDate?,          250,000. `discountAmount` and `ordersOverAmount` each require
+   redemptionStartDate?,          `currencyCode` (ISO-4217, three upper-case letters).
+   redemptionEndDate?,
+   finalUrl}[]                    At most ONE eligibility arm: `promotionCode` (≤20 runes) or
+                                  `ordersOverAmount` — a promotion cannot be both code-gated and
+                                  spend-gated.
+
+                                  `occasion` is checked for SHAPE only (`^[A-Z][A-Z0-9_]*$`), not
+                                  against Google's published occasion list, for the same reason
+                                  structured-snippet headers are: the list is revised upstream and a
+                                  local copy would refuse values Google accepts.
+
+                                  The two date windows are ordered INDEPENDENTLY: an offer may be
+                                  redeemable after the ad stops running, so `redemptionEndDate` is not
+                                  required to fall inside `startDate`..`endDate`. Each window is
+                                  `YYYY-MM-DD` and each requires its own start before its own end.
+
+                                  `finalUrl` is required, UTM-tagged by the same builder as the ad's
+                                  destination, and ≤2084 bytes after tagging. At most 20.
+prices?:                        — OPTIONAL price extensions (LFXV2-2665): a table of offerings shown
+  {type, priceQualifier?,         with the ad. `type` (e.g. `EVENTS`), `priceQualifier` (e.g. `FROM`)
+   languageCode,                  and each offering's `unit` (e.g. `PER_DAY`) are SHAPE-checked only,
+   offerings: {header,            like `occasion` above. `languageCode` is required.
+     description, amount,
+     currencyCode, unit?,         3..8 `offerings` — fewer than 3 is refused because Google will not
+     finalUrl}[]}[]               serve the table. Per offering: `header` and `description` ≤25 runes
+                                  each, `amount` with an ISO-4217 `currencyCode`, and a required
+                                  `finalUrl` tagged and bounded exactly as above — EVERY row is its own
+                                  clickable destination. Headers are de-duplicated case-insensitively;
+                                  Google serves one row per header. At most 10 price extensions.
+
+leadForms?:                     — OPTIONAL lead form (LFXV2-2665). The one extension that changes WHERE
+  {businessName, headline,        THE LEAD GOES: the user's details are collected inside Google rather
+   description,                   than at the registration URL, so a campaign that sets one is changing
+   callToActionType,              what a conversion means for it. AT MOST ONE per campaign — Google
+   callToActionDescription,       links a single lead form, so a second is refused here rather than
+   privacyPolicyUrl,              created as an account-level asset and then rejected at the link.
+   fields: string[],
+   postSubmitHeadline?,           Required: `businessName` (≤25 runes), `headline` (≤30),
+   postSubmitDescription?,        `description` (≤200), `callToActionDescription` (≤30),
+   postSubmitCallToActionType?,   `callToActionType` (the button label, e.g. `SIGN_UP`),
+   desiredIntent?,                `privacyPolicyUrl`, and at least one entry in `fields` — a form that
+   customDisclosure?}[]           collects nothing cannot generate a lead. 1..12 `fields`, each an
+                                  input-type name (`FULL_NAME`, `EMAIL`, …), de-duplicated on the type
+                                  because Google renders one input per type.
+
+                                  `privacyPolicyUrl` is required BY GOOGLE and is the one caller URL
+                                  this client validates but does NOT UTM-tag: it is a link Google
+                                  renders inside the form, not an ad destination, so tagging it would
+                                  attribute a policy read as an ad click. It is otherwise held to the
+                                  same checks as every destination — http(s) only, host required, no
+                                  embedded credentials, ≤2084 bytes — and is reduced to scheme+host in
+                                  `config_snapshot`.
+
+                                  `postSubmitHeadline` (≤25 runes) and `postSubmitDescription` (≤200)
+                                  are ALL-OR-NOTHING: one without the other renders a half-written
+                                  thank-you screen. `postSubmitCallToActionType` stands alone — Google
+                                  renders it on its own default screen too.
+
+                                  `callToActionType`, `postSubmitCallToActionType`, `desiredIntent`
+                                  (e.g. `HIGH_INTENT`) and every `fields` entry are SHAPE-checked only
+                                  (`^[A-Z][A-Z0-9_]*$`), like `occasion` above. `customDisclosure`
+                                  (≤200 runes) is only permitted on accounts Google has allow-listed
+                                  for it, which this client cannot check — an account without the
+                                  allow-list is refused at the mutate.
+
+                                  All seven extension fields are SEARCH ONLY and are REFUSED, not
+                                  ignored, on every other channel. Omitted/empty, no assets are created
+                                  and the ad serves with no extensions — the pre-LFXV2-2665 behaviour.
+
+                                  IMAGE and LOCATION extensions, and the lead form's optional
+                                  BACKGROUND IMAGE, are NOT supported. Each of the first two carries
+                                  bytes — as does the background image — which would give the Search
+                                  create path a network fetch phase it does not have today; a location
+                                  extension cannot be created through this API at all — it is derived
+                                  from a Business Profile linked to the account. A lead form without a
+                                  background image renders on Google's default and is servable.
 adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-2665), each with its own
   {name, cpcBid?, keywords?,      keywords and up to 3 Responsive Search Ads. SEARCH ONLY and REFUSED on
-   audienceSegments?,             Demand Gen, which creates its own single ad group and no ad. At most
-   ads?: {headlines?,             20 groups, at most 3 ads per group.
-          descriptions?}[]}[]
+   audienceSegments?,             every other `channel`: Demand Gen creates its own single ad group,
+   ads?: {headlines?,             and Performance Max has no ad groups at all. At most 20 groups, at
+          descriptions?}[]}[]     most 3 ads per group.
                                   `name` is REQUIRED per group and is a THEME LABEL, not the full name:
                                   the created ad group is named `<composed campaign name> | <label>`.
                                   Names must be distinct case-insensitively — Google rejects duplicates
@@ -905,6 +1178,205 @@ adGroups?:                      — OPTIONAL multiple themed ad groups (LFXV2-26
                                   the field existed. The groups are created in the order listed, and a
                                   failure partway through leaves the groups before it in place — the
                                   error names which group of how many failed and how many were created.
+demandGenCreative?:             — OPTIONAL Demand Gen ad (LFXV2-2665). DEMAND GEN ONLY, and REFUSED on
+  {marketingImages?: string[],    Search — the mirror of every SEARCH ONLY entry above. Supplying it is
+   squareMarketingImages?:        what turns a Demand Gen campaign from a shell into one that can serve:
+     string[],                    omitted, the campaign is still created with NO AD, exactly as before
+   portraitImages?: string[],     this field existed, and a human must add creative in the Google Ads UI.
+   tallPortraitImages?: string[],
+   logoImages?: string[],         Images are given as https URLs that THIS SERVICE fetches and uploads as
+   headlines?: string[],          Google Ads image assets; Google is never handed the URL. The fetch is
+   descriptions?: string[],       anonymous (no credentials are sent), follows no redirects, refuses any
+   businessName?: string,         address that is not a public IP, caps each body at 5 MiB AND the sum
+   callToActionText?: string}     of every image in one creative at 64 MiB, and accepts only PNG, JPEG
+                                  and GIF. Every image is fetched and checked BEFORE the first budget
+                                  mutate, so a bad URL cannot strand a paid campaign. The 64 MiB total
+                                  is a separate refusal from the per-image cap: images that each pass
+                                  5 MiB and every count and shape bound can still be refused on the sum.
+                                  Fetching is sequential and bounded per image AND as a phase: it may
+                                  spend at most HALF the request's remaining deadline, so a set of slow
+                                  image hosts is refused here rather than leaving the campaign mutates
+                                  to run out of time after something has been created.
+
+                                  Each list has its own shape, checked against the decoded image:
+                                    marketingImages          1.91:1, min 600x314
+                                    squareMarketingImages    1:1,    min 300x300
+                                    portraitImages           4:5,    min 480x600
+                                    tallPortraitImages       9:16,   min 600x1067
+                                    logoImages               1:1,    min 128x128
+                                  Aspect ratios are allowed Google's documented +-1%. A URL must be
+                                  https with a host, and may not repeat within its list.
+
+                                  At most 20 marketing images COMBINED across the four marketing lists
+                                  (not 20 each), and at least one `marketingImages` OR one
+                                  `squareMarketingImages` — Google requires each when the other is
+                                  absent, so neither alone is mandatory and the pair is. Logos are
+                                  counted separately: 1-5, at least one REQUIRED.
+
+                                  `headlines` 1-5 (<=30 weighted chars) and `descriptions` 1-5 (<=90).
+                                  These are NOT the RSA counts above (3-15 / 2-4) even though the width
+                                  limits coincide. `businessName` is REQUIRED, <=25 weighted chars;
+                                  `callToActionText` is optional, <=30 runes. Over-long copy is
+                                  REFUSED, not truncated — unlike the RSA `headlines`/`descriptions`
+                                  above, because a Demand Gen ad is created from exactly what you named.
+
+                                  The ad is created PAUSED, like every other resource this service
+                                  creates. The result carries `creativeAssetIds` and `adId`; a failure
+                                  after the assets upload still reports the asset ids, so a retry does
+                                  not lose them. The same validation runs on the `adoptExisting` path.
+performanceMaxCreative?:        — OPTIONAL Performance Max ASSET GROUP (LFXV2-2665). PERFORMANCE MAX
+  {marketingImages?: string[],    ONLY, and REFUSED on every other `channel`. Performance Max has no ad
+   squareMarketingImages?:        groups and no ads: this field IS its creative. Omitted, the campaign
+     string[],                    is still created, with no asset group — reconcilable in the Google Ads
+   portraitImages?: string[],     UI, and the same shape `adoptExisting` needs for a campaign whose asset
+   logoImages?: string[],         group was built by hand.
+   landscapeLogoImages?:
+     string[],                    Images are given as https URLs that THIS SERVICE fetches and uploads as
+   headlines?: string[],          Google Ads image assets, under exactly the rules `demandGenCreative`
+   longHeadlines?: string[],      states (anonymous, no redirects, public IPs only, 5 MiB per image and
+   descriptions?: string[],       64 MiB across the whole creative, PNG/JPEG/GIF only, every image
+   businessName?: string,         fetched and checked BEFORE the first budget mutate). Google is never
+                                  handed the URL.
+   youtubeVideoIds?: string[],
+   assetGroupName?: string,       Each list has its own shape, checked against the decoded image:
+   path1?: string,                  marketingImages          1.91:1, min 600x314
+   path2?: string}                  squareMarketingImages    1:1,    min 300x300
+                                    portraitImages           4:5,    min 480x600
+                                    logoImages               1:1,    min 128x128
+                                    landscapeLogoImages      4:1,    min 512x128
+                                  Ratios are allowed Google's documented ±1%.
+
+                                  BOTH a `marketingImages` and a `squareMarketingImages` entry are
+                                  REQUIRED — unlike Demand Gen, where either satisfies the other. At
+                                  most 20 marketing images COMBINED across the three marketing shapes.
+                                  `logoImages` 1-5, at least one REQUIRED; `landscapeLogoImages`
+                                  optional, at most 5.
+
+                                  The text counts are Performance Max's OWN and are NOT Demand Gen's:
+                                  `headlines` 3-15 (≤30 weighted chars) against Demand Gen's 1-5,
+                                  `longHeadlines` 1-5 (≤90) as a SEPARATE field type, `descriptions`
+                                  2-5 (≤90) of which at least ONE must fit ≤60 weighted chars for the
+                                  short slot Google renders on constrained surfaces — checked as ANY
+                                  entry, not the first. `businessName` is REQUIRED, ≤25 weighted chars.
+                                  Over-long copy is REFUSED, not truncated.
+
+                                  `youtubeVideoIds` are optional, at most 5, and are IDs — a YouTube
+                                  URL is refused rather than parsed, because guessing which part of a
+                                  URL is the id is how the wrong video gets attached. `assetGroupName`
+                                  defaults to `<eventName> - Asset Group`. `path1`/`path2` are the
+                                  display-path segments rendered after the domain, ≤15 runes each;
+                                  `path2` without `path1` is REFUSED rather than promoted or dropped.
+
+                                  The asset group is created PAUSED, matching the campaign. It takes
+                                  THREE mutates — assets, then the group, then the links that carry
+                                  each asset's field type — because Google has no call that does more;
+                                  the links use the resource names Google RETURNED, never rebuilt ones.
+                                  The result carries `creativeAssetIds` and `assetGroupId`, so a
+                                  failure after the assets upload does not lose them. The same
+                                  validation runs on the `adoptExisting` path.
+videoCreative?:                 — OPTIONAL Video RESPONSIVE VIDEO AD (LFXV2-2665). VIDEO ONLY, and
+  {youtubeVideoIds?: string[],    REFUSED on every other `channel`.
+   headlines?: string[],
+   longHeadlines?: string[],      **THE GOOGLE ADS API CANNOT CREATE A VIDEO CAMPAIGN, so this field is
+   descriptions?: string[],       reached only on the `adoptExisting` path.** Google's Video overview
+   callToActions?: string[]}      says so without qualification; a `channel: "video"` CREATE is refused
+                                  by `CreateVideoCampaign`'s first statement, before any request is
+                                  sent, so no budget is left behind. FETCHING, reporting, adoption, the
+                                  activation gate and monitoring are all unaffected — only creation is
+                                  impossible. Everything described below is the validation this field
+                                  gets on adoption, and the cascade it describes is retained in the
+                                  code, unexported and deliberately unreachable, so that the channel
+                                  can be created the day Google supports it.
+
+                                  Omitted, an adopted campaign and its ad group carry NO AD —
+                                  reconcilable in the Google Ads UI, and the shape `adoptExisting`
+                                  needs for a campaign whose ad was built by hand. The closing step
+                                  says NO AD in those words so an operator is never told a campaign is
+                                  ready when nothing can serve.
+
+                                  Unlike every other creative field here, this one carries NO URLs and
+                                  this service fetches NOTHING. A YouTube video stays on YouTube and is
+                                  referenced by its BARE id: `youtubeVideoIds` are ids, not watch URLs,
+                                  and a URL is REFUSED rather than parsed — guessing which part of a URL
+                                  is the id is how the wrong video gets attached. 1-5 ids, each checked
+                                  against YouTube's id alphabet. Because there is no fetch phase at all,
+                                  the Video cascade has no network I/O before its first budget mutate.
+
+                                  The text counts and widths are Video's OWN and are NOT Demand Gen's or
+                                  Performance Max's: `headlines` 1-5 at ≤15 WEIGHTED chars (not 30 —
+                                  VIDEO_ACTION renders a short headline), `longHeadlines` 1-5 at ≤90 as
+                                  a SEPARATE field type, `descriptions` 1-5 at ≤70 (not 90), and
+                                  `callToActions` 0-5 at ≤10. Headlines, long headlines and descriptions
+                                  are each REQUIRED when a creative is supplied; `callToActions` is
+                                  optional and ABSENT means Google supplies its own default — an empty
+                                  list is never sent, because that would mean "no call to action".
+                                  Over-long copy is REFUSED, not truncated.
+
+                                  The ad group is type `VIDEO_RESPONSIVE` and is created ENABLED,
+                                  exactly as Demand Gen's is; the AD is created PAUSED, as is the
+                                  campaign. Only Search creates its ad group paused. Nothing serves
+                                  either way — a paused campaign delivers nothing whatever its children
+                                  say — but a reconciler reading an ENABLED ad group under a PAUSED
+                                  campaign is looking at a correctly created Video campaign, not a
+                                  half-enabled one. It
+                                  takes TWO mutates — the video assets, then the ad that references the
+                                  resource names Google RETURNED, never rebuilt ones. The result carries
+                                  `creativeAssetIds` and `adId`, so a failure after the assets are
+                                  created does not lose them, and an AMBIGUOUS failure (5xx, timeout, a
+                                  malformed or short 2xx, a resource name naming another account or
+                                  another ad group) is reported UNCONFIRMED rather than failed, so a
+                                  retry does not create a second ad. The same validation runs on the
+                                  `adoptExisting` path.
+displayCreative?:               — OPTIONAL Display RESPONSIVE DISPLAY AD (LFXV2-2665). DISPLAY ONLY, and
+  {marketingImages?: string[],    REFUSED on every other `channel`. Omitted, the campaign and its ad
+   squareMarketingImages?:        group are still created with NO AD — reconcilable in the Google Ads
+     string[],                    UI, and the shape `adoptExisting` needs for a campaign whose ad was
+   logoImages?: string[],         built by hand. The closing step says NO AD in those words so an
+   squareLogoImages?: string[],   operator is never told a campaign is ready when nothing can serve.
+   headlines?: string[],
+   longHeadline?: string,         Images are given as https URLs that THIS SERVICE fetches and uploads
+   descriptions?: string[],       as Google Ads image assets, under exactly the rules
+   businessName?: string,         `demandGenCreative` states (anonymous, no redirects, public IPs only,
+   callToActionText?: string}     5 MiB per image and 64 MiB across the whole creative, PNG/JPEG/GIF
+                                  only, every image fetched and checked BEFORE the first budget
+                                  mutate). Google is never handed the URL.
+
+                                  FOUR image slots, and they are neither Demand Gen's five nor
+                                  Performance Max's five — there is no portrait shape here, and
+                                  `squareLogoImages` exists on neither sibling:
+                                    marketingImages          1.91:1, min 600x314
+                                    squareMarketingImages    1:1,    min 300x300
+                                    logoImages               4:1,    min 512x128
+                                    squareLogoImages         1:1,    min 128x128
+                                  Ratios are allowed Google's documented ±1%.
+
+                                  The two MARKETING arrays are RECIPROCALLY required — Google requires
+                                  each when the other is absent — so either one alone satisfies the
+                                  requirement and supplying neither is refused. At most 15 marketing
+                                  images COMBINED across the two shapes. BOTH logo arrays are OPTIONAL,
+                                  each capped at 5 independently: a ceiling with no floor, unlike
+                                  Demand Gen, which refuses an ad with no logo.
+
+                                  `longHeadline` is a SINGLE STRING, not a list — the one place this
+                                  channel's shape departs from Performance Max and Video, which both
+                                  take a list of long headlines. It is REQUIRED when a creative is
+                                  supplied, ≤90 weighted chars. `headlines` 1-5 (≤30), `descriptions`
+                                  1-5 (≤90), `businessName` REQUIRED ≤25 — all weighted chars.
+                                  `callToActionText` is OPTIONAL, ≤30 runes, and ABSENT means Google
+                                  supplies its own button text. Over-long copy is REFUSED, not
+                                  truncated.
+
+                                  The ad group is type `DISPLAY_STANDARD` and is created ENABLED,
+                                  exactly as Demand Gen's and Video's are; the AD is created PAUSED, as
+                                  is the campaign. Only Search creates its ad group paused. The campaign
+                                  carries NO `advertisingChannelSubType` — the deliberate contrast with
+                                  Video, which pins `VIDEO_ACTION`. It takes TWO mutates — the image
+                                  assets, then the ad that references the resource names Google
+                                  RETURNED, never rebuilt ones. The result carries `creativeAssetIds`
+                                  and `adId`, so a failure after the assets are created does not lose
+                                  them, and an AMBIGUOUS failure is reported UNCONFIRMED rather than
+                                  failed, so a retry does not create a second ad. The same validation
+                                  runs on the `adoptExisting` path.
 adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When true, the dispatcher first
                                   looks the composed campaign name up on the account and, if a single
                                   live campaign already carries it, ADOPTS that campaign instead of
@@ -918,6 +1390,18 @@ adoptExisting?: boolean         — OPTIONAL, default FALSE (LFXV2-3042). When t
                                   still-live campaign the delete walked away from. With the flag off,
                                   that dispatch creates, and Google's duplicate-name response surfaces
                                   as a job failure requiring reconciliation.
+                                  On Google the adopted campaign also takes the brief SLOT its
+                                  `campaign.advertising_channel_type` maps to, and the slot is keyed on
+                                  that TYPE alone — the lookup does not read
+                                  `advertising_channel_sub_type`. So ANY `VIDEO` campaign fills the
+                                  `video` slot, including a YouTube reach, bumper or sequence campaign
+                                  this service cannot itself create, after which a later `video`
+                                  dispatch on that brief finds the slot taken, and ANY `DISPLAY`
+                                  campaign fills the `display` slot on the same terms. One slot per
+                                  channel type is the model — `SEARCH` has sub-types too and behaves
+                                  the same way — not a Video- or Display-specific gap. A channel type this service does not
+                                  create (`SHOPPING`, `HOTEL`, an unrecognised future value, or an
+                                  absent field) is REFUSED rather than defaulted into a slot.
 ```
 
 #### HubSpotConfig (the `hubspotConfig` object)
@@ -1469,7 +1953,11 @@ pacingLabel: string             — underspending | normal | constrained | overs
 ### Google Ads
 - Budget is in micros: on **write**, multiply currency → micros (× 1,000,000); on **read**, divide micros → currency (÷ 1,000,000)
 - No `campaign.start_date` / `campaign.end_date` in GAQL for API v23+
-- Demand Gen campaigns use ad group level geo targeting (not campaign level)
+- Demand Gen campaigns use ad group level geo targeting (not campaign level); Search and
+  Performance Max use campaign level
+- Performance Max has no ad groups and no ads: its creative is an asset group, created as
+  assets → asset group → asset-group links, three mutates because Google has no call that
+  does more
 - Duplicate campaign names cause creation failure; retry adds timestamp suffix
 - RSA ads pin top 3 headlines for consistency
 

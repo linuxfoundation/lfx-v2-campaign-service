@@ -24,6 +24,35 @@ import (
 
 const goodGoogleAdsCreds = `{"ClientID":"cid","ClientSecret":"csec","DeveloperToken":"dev","RefreshToken":"rt"}`
 
+// echoMutateResults answers a status mutate the way Google does: one result per
+// operation, naming the resource that operation addressed. checkStatusMutateResults
+// matches results to operations by NAME, not by count, so a fixture echoing one fixed
+// name reads as every other operation going unaccounted for — a cascade that touches
+// an ad group, an ad and a campaign needs the answer to depend on what was sent.
+func echoMutateResults(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	var req struct {
+		Operations []struct {
+			Update struct {
+				ResourceName string `json:"resourceName"`
+			} `json:"update"`
+		} `json:"operations"`
+	}
+	body, _ := io.ReadAll(r.Body)
+	if err := json.Unmarshal(body, &req); err != nil {
+		// t.Errorf, never t.Fatal: this runs on the server's goroutine.
+		t.Errorf("decode %s request: %v", r.URL.Path, err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	results := make([]string, 0, len(req.Operations))
+	for _, op := range req.Operations {
+		results = append(results, `{"resourceName":"`+op.Update.ResourceName+`"}`)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, `{"results":[`+strings.Join(results, ",")+`]}`)
+}
+
 func activeGoogleAdsConn(creds string) *model.Connection {
 	return &model.Connection{
 		Provider:             model.ProviderGoogleAds,
@@ -481,7 +510,7 @@ func TestGoogleAds_ToggleStatus_MutatesCampaignStatus(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
 
@@ -528,7 +557,7 @@ func TestGoogleAds_ToggleStatus_ActivateIsNotProvisioned(t *testing.T) {
 		mu.Lock()
 		reached = true
 		mu.Unlock()
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
 
@@ -623,7 +652,7 @@ func TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing(t *testing.T)
 		mu.Lock()
 		reached = true
 		mu.Unlock()
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
 
@@ -707,11 +736,11 @@ func TestGoogleAds_ToggleStatus_PauseCascadesToChildren(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "adGroupAds:mutate"):
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/adGroupAds/333~444"}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroupAds/333~444"}]}`)
 		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/adGroups/333"}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
 		default:
-			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
 		}
 	}))
 	defer apiSrv.Close()
@@ -779,7 +808,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadeStopsOnChildFailure(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
 
@@ -829,7 +858,7 @@ func TestGoogleAds_ToggleStatus_PauseCascadeChildDefiniteFailureIsUnconfirmed(t 
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
 
@@ -898,7 +927,7 @@ func TestGoogleAds_ToggleStatus_ActivateChildDefiniteFailureIsNotUnconfirmed(t *
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
 	}))
 	defer apiSrv.Close()
 
@@ -955,7 +984,7 @@ func TestGoogleAds_ToggleStatus_ActivateSecondChildDefiniteFailureIsUnconfirmed(
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/adGroups/333"}]}`)
+		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/adGroups/333"}]}`)
 	}))
 	defer apiSrv.Close()
 
@@ -1011,8 +1040,7 @@ func TestGoogleAds_ToggleStatus_ActivateCampaignDefiniteFailureIsUnconfirmed(t *
 			_, _ = io.WriteString(w, `{"error":{"message":"invalid campaign status"}}`)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		echoMutateResults(t, w, r)
 	}))
 	defer apiSrv.Close()
 
@@ -1477,9 +1505,8 @@ func TestGoogleAds_ToggleStatus_UnknownOrMatchingAccountStillToggles(t *testing.
 		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
 	}))
 	defer tokenSrv.Close()
-	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/777"}]}`)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		echoMutateResults(t, w, r)
 	}))
 	defer apiSrv.Close()
 
@@ -1523,8 +1550,7 @@ func TestGoogleAds_ToggleStatus_ActivateSucceedsChildrenFirst(t *testing.T) {
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/123/campaigns/777"}]}`)
+		echoMutateResults(t, w, r)
 	}))
 	defer apiSrv.Close()
 

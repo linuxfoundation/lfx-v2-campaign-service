@@ -122,23 +122,58 @@ type CampaignInput struct {
 	//
 	// Campaign level rather than ad group, deliberately — an exclusion expresses
 	// intent for the whole campaign and must keep applying to an ad group a human
-	// adds later in the UI. SEARCH only, and REFUSED on Demand Gen rather than
-	// ignored — see the guard in preflightCampaignKind. It is deliberately NOT
-	// modelled on Keywords, which IS ignored there: that silence is defensible
-	// because Demand Gen creates no ad and no keyword criteria at all, so a positive
-	// keyword has nothing it could have attached to and the caller is told as much in
-	// the closing step. An exclusion is the opposite case — its whole job is to stop
-	// spend, so dropping it quietly leaves the operator believing the campaign is
-	// protected while it pays for exactly the queries they named.
+	// adds later in the UI. SEARCH only, and REFUSED on EVERY non-Search channel
+	// rather than ignored — see the guard in preflightCampaignKind.
+	//
+	// Keywords and AudienceSegments were once accepted-and-ignored off Search and are
+	// now refused on the same terms, so the contrast this comment used to draw between
+	// them is gone: the rule is simply that a Search-only field refuses off Search.
+	// The reasoning that closed it is worth keeping, because it is why the refusal is
+	// the right default rather than a strictness. A dropped exclusion leaves the
+	// operator believing the campaign is protected while it pays for exactly the
+	// queries they named; a dropped positive keyword leaves them believing the
+	// campaign can serve a query it will never see. Neither silence is recoverable
+	// from the created campaign, so neither is defensible.
 	NegativeKeywords []Keyword
 	// CPCBid is the ad group's manual CPC bid in whole units of the ad ACCOUNT's
 	// currency — the same no-FX-conversion caveat Budget carries applies here.
 	//
 	// 0 means UNSET and no bid field is sent, which is exactly what every campaign
-	// created before this field existed did; no default is invented. SEARCH only —
-	// Demand Gen bids via targetSpend and rejects manualCpc outright. See
+	// created before this field existed did; no default is invented. SEARCH only, and
+	// REFUSED on every other channel — no non-Search channel here has a manual bidding
+	// strategy and their ad-group payloads carry no bid field at all. See
 	// validateCPCBid (adgroup_ad.go) for the accepted range.
 	CPCBid float64
+	// BiddingStrategy names the campaign's bidding strategy in the caller's
+	// vocabulary — the labels the Google Ads UI uses, lower-cased and hyphenated.
+	// See bidding.go for the accepted set, which channel takes which, and why
+	// `target-cpa`/`target-roas` are accepted alongside the `maximize-` spellings
+	// Google folded them into.
+	//
+	// Empty means the CHANNEL DEFAULT, which is the strategy this client hard-coded
+	// before the field existed — manual CPC on Search, maximize clicks on Demand Gen
+	// — so an existing caller's payload is unchanged to the byte.
+	BiddingStrategy string
+	// TargetCPA is the target cost per acquisition in whole units of the ad ACCOUNT's
+	// currency, carried only by the conversion-bidding strategies. 0 means UNSET:
+	// optional under `maximize-conversions`, REQUIRED under `target-cpa`, and
+	// REFUSED under any strategy that cannot bid to it rather than accepted and
+	// discarded.
+	TargetCPA float64
+	// TargetROAS is the target return on ad spend as a RATIO, not a percentage —
+	// 4.0 means four units of conversion value per unit spent. Same unset/required/
+	// refused rules as TargetCPA, against `maximize-conversion-value` and
+	// `target-roas`.
+	TargetROAS float64
+	// ConversionActions are the conversion actions this campaign optimizes toward,
+	// as bare numeric ids or full `customers/<id>/conversionActions/<id>` resource
+	// names. Empty means the campaign inherits the ACCOUNT's conversion goals, which
+	// is what every campaign created before this field existed does.
+	//
+	// SEARCH, VIDEO and DISPLAY, and REFUSED rather than dropped on Demand Gen and
+	// Performance Max — neither takes campaign.selective_optimization. See
+	// validateConversionActions.
+	ConversionActions []string
 	// StartDate / EndDate are the campaign's flight window as YYYY-MM-DD, matching
 	// the vocabulary the meta and reddit dispatch configs already use. Each is
 	// INDEPENDENTLY optional: empty means the field is not sent, so an empty
@@ -196,10 +231,11 @@ type CampaignInput struct {
 	// ProximityTargets are radius targets — "within N miles of this point" —
 	// expressed as decimal degrees plus a radius and an explicit unit. Optional.
 	//
-	// SEARCH ONLY: refused at preflight on the Demand Gen path, because that channel
-	// attaches location criteria at the ad group level and this client has not
-	// verified a proximity criterion there. Refusing locally is free; discovering it
-	// after the campaign exists is not. See validateGeoPlan.
+	// Refused at preflight on DEMAND GEN only, because that channel attaches location
+	// criteria at the ad group level and this client has not verified a proximity
+	// criterion there. Accepted on Search, on Performance Max and on Video, all three
+	// of which attach location at the campaign level. Refusing locally is free; discovering it after the
+	// campaign exists is not. See validateGeoPlan.
 	ProximityTargets []ProximityTarget
 	// Languages are the languages a Search campaign serves in, as ISO 639-1 codes
 	// (EN, DE, JA) or raw numeric language constant ids. Optional; left empty the
@@ -226,6 +262,19 @@ type CampaignInput struct {
 	Sitelinks          []Sitelink
 	Callouts           []string
 	StructuredSnippets []StructuredSnippet
+	// CallExtensions, Promotions and Prices are the other three extension types
+	// this client creates, under exactly the same rules as the three above:
+	// optional, SEARCH ONLY, and account-level assets linked to the campaign.
+	// Their shapes and validators live in assets_extended.go, which also says
+	// why image and location extensions are not here.
+	CallExtensions []CallExtension
+	Promotions     []PromotionExtension
+	Prices         []PriceExtension
+	// LeadForms is the seventh extension type, and the only one that changes
+	// WHERE THE LEAD GOES: a lead form collects the user's details inside Google
+	// instead of sending them to the registration URL. Optional, SEARCH ONLY,
+	// and at most one per campaign — see assets_leadform.go.
+	LeadForms []LeadFormExtension
 	// AdGroups splits the campaign into one ad group per theme, each with its own
 	// keywords, bid and up to three responsive search ads. Optional and SEARCH
 	// ONLY (refused at preflight on Demand Gen, which builds its own ad group and
@@ -237,6 +286,51 @@ type CampaignInput struct {
 	// omits one. See adgroup_plan.go for why more than one group is worth having:
 	// Google scores Ad Rank per keyword against the ad that would serve for it.
 	AdGroups []AdGroupSpec
+	// DemandGenCreative is the image-and-text creative for the Demand Gen ad, and
+	// is the mirror image of the three fields above: optional and DEMAND GEN ONLY,
+	// refused at preflight on Search, which takes its creative as RSA copy plus
+	// campaign-level extension assets instead.
+	//
+	// Left empty the Demand Gen cascade creates no ad at all — the behaviour this
+	// client had before the creative existed, kept so that campaigns already in the
+	// database still validate. A Demand Gen campaign with no ad cannot serve; the
+	// closing steps say so. See demandgen_creative.go.
+	DemandGenCreative DemandGenCreative
+	// PerformanceMaxCreative is the asset group for a Performance Max campaign, and
+	// is the third member of the same family: optional and PERFORMANCE MAX ONLY,
+	// refused at preflight on every other channel.
+	//
+	// Left empty the Performance Max cascade creates the campaign and no asset group
+	// — which is a campaign that cannot serve, said so in the closing steps. That is
+	// kept rather than refused because it is also what ADOPTION of a campaign whose
+	// asset group was built by hand upstream looks like. See pmax_creative.go.
+	PerformanceMaxCreative PerformanceMaxCreative
+	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, and
+	// is the fourth member of the same family: optional and VIDEO ONLY, refused at
+	// preflight on every other channel.
+	//
+	// Left empty the Video cascade creates the campaign and its ad group and no ad —
+	// a campaign that cannot serve, said so in the closing steps, kept for the same
+	// reason the three above are kept: that shape is also what adoption of a campaign
+	// whose ad was built by hand upstream looks like.
+	//
+	// Unlike its three siblings it carries no image URLs at all: a YouTube video is
+	// referenced by id and stays on YouTube, so nothing here is fetched. See
+	// video_creative.go.
+	VideoCreative VideoCreative
+	// DisplayCreative is the responsive display ad for a Display campaign, and is the
+	// fifth member of the same family: optional and DISPLAY ONLY, refused at preflight
+	// on every other channel.
+	//
+	// Left empty the Display cascade creates the campaign and its ad group and no ad —
+	// a campaign that cannot serve, said so in the closing steps, kept for the same
+	// reason the four above are kept: that shape is also what adoption of a campaign
+	// whose ad was built by hand upstream looks like.
+	//
+	// Like the Demand Gen and Performance Max creatives and unlike the Video one, it
+	// carries image URLs, so its bytes ARE fetched before the budget mutate. See
+	// display_creative.go.
+	DisplayCreative DisplayCreative
 }
 
 // AdGroupResult is one ad group the cascade attempted, and everything created
@@ -355,8 +449,51 @@ type CampaignResult struct {
 	// ExtensionLinkIDs empty is exactly that case, and the returned error says so.
 	ExtensionAssetIDs []string `json:"extensionAssetIds,omitempty"`
 	ExtensionLinkIDs  []string `json:"extensionLinkIds,omitempty"`
-	GoogleAdsURL      string   `json:"googleAdsUrl"`
-	Steps             []string `json:"steps"`
+	// CreativeAssetIDs are the IMAGE assets created for a Demand Gen ad — marketing
+	// images, then logos, in the order demandGenImageSlots lists them.
+	//
+	// Kept separate from ExtensionAssetIDs rather than folded into it, even though
+	// both are account-level `assets` ids created by an `assets:mutate`: the two
+	// exist on different channels (extensions are Search-only, these Demand Gen-only)
+	// and are attached to different things — an extension is linked to the CAMPAIGN
+	// by a second mutate, an image is referenced by the AD itself. A reconciler
+	// chasing one would look in the wrong place for the other.
+	//
+	// Non-empty with AdID empty is the Demand Gen counterpart of the
+	// created-but-unlinked case ExtensionAssetIDs documents: the images exist
+	// account-wide and no ad references them. The returned error says so.
+	// On a Performance Max campaign the same field carries the ASSET GROUP's assets —
+	// text, then images in slot order, then videos — because they are created by the
+	// same assets:mutate and have the same reconcile story. What differs is the
+	// unlinked case: here it is AssetGroupID, not AdID, that is empty when the assets
+	// exist with nothing referencing them.
+	CreativeAssetIDs []string `json:"creativeAssetIds,omitempty"`
+	// AssetGroupID is the Performance Max asset group, empty on every other channel
+	// and on a Performance Max campaign created without a creative. Non-empty with a
+	// returned error means the group exists but some or all of its asset LINKS do not
+	// — the state that most needs finding, because an empty asset group looks
+	// finished in the Google Ads UI.
+	AssetGroupID string `json:"assetGroupId,omitempty"`
+	// AssetGroupAssetLinks is how many assetGroupAssets links Google CONFIRMED, and it
+	// exists because AssetGroupID alone cannot answer "can this campaign serve?".
+	//
+	// The group is created before its links, so the field above is set — and the id
+	// deliberately kept on the result, because an empty asset group is the state that most
+	// needs finding — even when the link mutate then fails and NOTHING is attached. An
+	// activation gate reading only AssetGroupID therefore says "provisioned" about a group
+	// with zero assets, un-pauses a campaign that cannot serve, and reports success.
+	//
+	// A POINTER, not a bare int, and the distinction is the whole value of the field. Nil
+	// means "this row predates the field" — every Performance Max campaign created before
+	// it has no such key, and reading absence as zero would refuse activation on campaigns
+	// that are provisioned correctly. Non-nil zero means "this client asked and Google
+	// confirmed none", which is the refusal. An ambiguous link mutate records zero rather
+	// than nothing, deliberately: links may exist, this client cannot say they do, and the
+	// safe reading of "cannot say" is to send the operator to the Google Ads UI rather than
+	// to claim a launch.
+	AssetGroupAssetLinks *int     `json:"assetGroupAssetLinks,omitempty"`
+	GoogleAdsURL         string   `json:"googleAdsUrl"`
+	Steps                []string `json:"steps"`
 }
 
 // mutateOperation is one {create: <resource>} entry in a :mutate request.
@@ -439,9 +576,11 @@ type campaignBudgetCreate struct {
 }
 
 // campaignCreate is the create payload for campaigns:mutate. Exactly one bidding
-// strategy is required; manualCpc{} is the dependency-free choice for a PAUSED
-// shell (maximizeConversions requires conversion tracking configured on the
-// account, which a generic broker can't assume).
+// strategy is required, and which one is now the caller's choice — see biddingFields
+// and validateBiddingPlan. manualCpc{} remains the DEFAULT because it is the
+// dependency-free choice for a PAUSED shell: every maximize-* strategy needs
+// conversion tracking configured on the account, which a generic broker cannot
+// assume, and it is also what this payload sent before the strategy was selectable.
 //
 // containsEuPoliticalAdvertising is REQUIRED on every v23 create: omitting it fails
 // with FieldError.REQUIRED, and since 2026-04-01 an account with any undeclared
@@ -465,7 +604,12 @@ type campaignCreate struct {
 	ContainsEuPoliticalAdvertising string               `json:"containsEuPoliticalAdvertising"`
 	NetworkSettings                networkSettings      `json:"networkSettings"`
 	GeoTargetTypeSetting           geoTargetTypeSetting `json:"geoTargetTypeSetting"`
-	ManualCPC                      json.RawMessage      `json:"manualCpc"`
+	// biddingFields is embedded ANONYMOUSLY so its keys flatten into the campaign
+	// object. It replaced a fixed `manualCpc` field: the strategy is a oneof, so the
+	// payload must be able to name a different one, and a struct that always sent
+	// manualCpc could only ever create a manually-bid campaign. Exactly one of its
+	// strategy pointers is non-nil — see biddingPlan.fields.
+	biddingFields
 	// StartDateTime/EndDateTime are campaign.start_date_time / campaign.end_date_time,
 	// formatted 'yyyy-MM-dd HH:mm:ss' and interpreted by Google in the ad ACCOUNT's
 	// timezone — NOT UTC and NOT the bare YYYY-MM-DD this service's config uses.
@@ -523,9 +667,14 @@ type targetRestriction struct {
 	BidOnly            bool   `json:"bidOnly"`
 }
 
-// networkSettings selects which networks a campaign's ads serve on. For a SEARCH
-// campaign, targetGoogleSearch MUST be true (see campaignCreate). The remaining flags
-// are sent explicitly as false rather than omitted so the payload is unambiguous.
+// networkSettings selects which networks a campaign's ads serve on. Exactly TWO of this
+// client's five channels send it: SEARCH, where targetGoogleSearch MUST be true (see
+// campaignCreate), and DISPLAY, where targetContentNetwork must be (see
+// displayCampaignCreate). The other three — Demand Gen, Performance Max and Video —
+// REJECT the field outright, because their network is implied by the channel. The
+// remaining flags are sent explicitly as false rather than omitted so the payload is
+// unambiguous, and because an all-false networkSettings is itself an error
+// (CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK) rather than a harmless default.
 type networkSettings struct {
 	TargetGoogleSearch   bool `json:"targetGoogleSearch"`
 	TargetSearchNetwork  bool `json:"targetSearchNetwork"`
@@ -717,6 +866,30 @@ type campaignPreflight struct {
 	// callout or a sitelink with no destination must fail before anything is paid
 	// for. See validateAssetPlan.
 	assets assetPlan
+	// creative is the validated Demand Gen ad creative — image URLs, headlines,
+	// descriptions and business name. Everything LOCALLY decidable is resolved here
+	// with the rest; the image bytes themselves are fetched by the Demand Gen
+	// cascade in a separate step that still runs before the budget mutate, because
+	// whether a URL serves a 600x314 JPEG is not knowable from the string. See
+	// validateDemandGenCreative and fetchDemandGenImages.
+	creative demandGenCreativePlan
+	// pmax is the validated Performance Max asset group — image URLs bucketed by
+	// slot, the three text field types, the business name and the group's own name
+	// and display paths. Resolved here with everything else for the same reason
+	// creative is, and its image bytes are fetched by the Performance Max cascade in
+	// the same pre-budget step. See validatePerformanceMaxCreative.
+	pmax performanceMaxPlan
+	// video is the validated responsive video ad — YouTube video ids and the four
+	// text field types. Resolved here with everything else, and unlike creative and
+	// pmax it needs no later fetch step at all, because this channel holds no binary
+	// assets. See validateVideoCreative.
+	video videoCreativePlan
+	// display is the validated responsive display ad — image URLs bucketed by slot,
+	// the short headlines, the single long headline, the descriptions and the business
+	// name. Resolved here with everything else, and like creative and pmax — but unlike
+	// video — its image bytes are fetched by the Display cascade in the same pre-budget
+	// step. See validateDisplayCreative and fetchDisplayImages.
+	display displayCreativePlan
 	// adGroups are the ad groups the cascade will create, always at least one. When
 	// the caller asked for none, it holds exactly the single group the fields above
 	// describe, so the cascade has one shape to walk rather than two. A duplicate
@@ -730,6 +903,13 @@ type campaignPreflight struct {
 	// fails before the budget mutate rather than after a paid campaign exists.
 	negativeKeywords []Keyword
 	cpcBidMicros     int64
+	// bidding is the resolved bidding strategy, its target if it takes one, and the
+	// conversion actions the campaign optimizes toward. Resolved here for the same
+	// reason everything else is: an unknown strategy name or a conversion action
+	// naming another account is rejected by Google AFTER the budget mutate, and a
+	// target silently dropped by the wrong strategy is never rejected at all. See
+	// validateBiddingPlan.
+	bidding biddingPlan
 	// startDateTime/endDateTime are the caller's YYYY-MM-DD flight window already
 	// rendered into the 'yyyy-MM-dd HH:mm:ss' form campaignCreate sends; empty means
 	// the corresponding field is omitted.
@@ -837,10 +1017,19 @@ func (c *Client) ValidateCampaignInput(in CampaignInput) error {
 //
 // The kind is load-bearing now in a way it was not when this entry point was written.
 // preflightCampaignKind used to take kind only to compose the name, so validating as
-// Search was harmless for every channel. It now GATES refusals — proximity targeting,
-// the four campaign criteria kinds, the extension assets, the ad-group list and the
-// CPC bid are all Search-only — so a Demand Gen request carrying one of those validates
-// clean as Search and is then refused by CreateDemandGenCampaign. On the create path
+// Search was harmless for every channel. It now GATES refusals, and those refusals are
+// PER CHANNEL rather than Search-versus-everything. Demand Gen refuses the widest set:
+// proximity targeting, all five campaign criteria kinds, the extension assets, the
+// ad-group list, the CPC bid, keywords and audience segments. Performance Max refuses
+// only the half it genuinely cannot carry — device bid modifiers and campaign-level
+// demographic exclusions, plus the Search-only targeting fields — and accepts proximity,
+// languages and ad schedules at the campaign level like Search. Video refuses the
+// narrowest set of the four — the Search-only targeting fields (keywords, audience
+// segments, the CPC bid, negative keywords, the extension assets and the ad-group
+// list) and nothing else, because it carries its location and its other campaign
+// criteria at the campaign level exactly as Search does. So a Demand Gen request
+// carrying one of those validates clean as Search and is then refused by
+// CreateDemandGenCampaign. On the create path
 // that is merely a late error; on the ADOPTION path, which returns before any create
 // runs, it is the exact defect this function exists to prevent: the same request
 // accepted when a campaign happens to exist and refused when it does not.
@@ -863,14 +1052,26 @@ func (c *Client) ValidateCampaignInputKind(kind string, in CampaignInput) error 
 // name itself from a local literal would look up a name the client never writes the moment
 // the two drift. One definition, both callers.
 const (
-	CampaignKindSearch    = "Search Campaign"
-	CampaignKindDemandGen = "DemandGen Campaign"
+	CampaignKindSearch         = "Search Campaign"
+	CampaignKindDemandGen      = "DemandGen Campaign"
+	CampaignKindPerformanceMax = "PerformanceMax Campaign"
+	// CampaignKindVideo is a Video (YouTube) campaign — advertisingChannelType VIDEO
+	// with sub-type VIDEO_ACTION. See video.go for why the sub-type is pinned rather
+	// than offered as an input.
+	CampaignKindVideo = "Video Campaign"
+	// CampaignKindDisplay is a standard Display campaign — advertisingChannelType
+	// DISPLAY with NO sub-type. See display.go for why omitting the sub-type is a
+	// choice rather than the oversight the Video constant above would suggest.
+	CampaignKindDisplay = "Display Campaign"
 )
 
 // Unexported aliases retained so this package's own call sites read unchanged.
 const (
-	campaignKindSearch    = CampaignKindSearch
-	campaignKindDemandGen = CampaignKindDemandGen
+	campaignKindSearch         = CampaignKindSearch
+	campaignKindDemandGen      = CampaignKindDemandGen
+	campaignKindPerformanceMax = CampaignKindPerformanceMax
+	campaignKindVideo          = CampaignKindVideo
+	campaignKindDisplay        = CampaignKindDisplay
 )
 
 // preflightCampaign validates the input and composes the names, for the given campaign
@@ -900,10 +1101,27 @@ func (c *Client) preflightCampaign(in CampaignInput) (*campaignPreflight, error)
 // that already had a Search campaign therefore failed at the BUDGET step with DUPLICATE_NAME
 // and never reached the campaign create at all.
 func budgetKindFor(campaignKind string) string {
-	if campaignKind == campaignKindDemandGen {
+	switch campaignKind {
+	case campaignKindDemandGen:
 		return "DemandGen Budget"
+	case campaignKindPerformanceMax:
+		// Same reasoning as Demand Gen's, and it applies to every channel added after
+		// Search: nothing has been created under this name yet, so it is free to take a
+		// distinct one, and sharing Search's would make the two collide on one brief.
+		return "PerformanceMax Budget"
+	case campaignKindVideo:
+		// Same reasoning again, and the same freedom: this channel has created nothing
+		// yet, so a distinct segment costs nothing and keeps a Video campaign on a brief
+		// that already has a Search one from colliding at the budget step.
+		return "Video Budget"
+	case campaignKindDisplay:
+		// Same reasoning once more: this channel has created nothing yet, so a distinct
+		// segment costs nothing and keeps a Display campaign on a brief that already has
+		// a Search one from colliding at the budget step.
+		return "Display Budget"
+	default:
+		return "Budget"
 	}
-	return "Budget"
 }
 
 func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaignPreflight, error) {
@@ -971,6 +1189,35 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	if err != nil {
 		return nil, err
 	}
+	// The Demand Gen creative is the mirror of the extension assets above: refused
+	// on Search for the same capability reason they are refused on Demand Gen. Only
+	// its locally decidable half is settled here — counts, display widths, business
+	// name, URL shape — so ValidateCampaignInputKind refuses exactly what the create
+	// cascade refuses. The bytes are fetched by that cascade, still before the budget
+	// mutate. See demandgen_creative.go.
+	creative, err := validateDemandGenCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	// The Performance Max asset group is the same shape of check on the third
+	// channel, and refuses off Performance Max exactly as the two above refuse off
+	// theirs. Its image bytes are fetched by that cascade, still before the budget
+	// mutate. See pmax_creative.go.
+	pmax, err := validatePerformanceMaxCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	video, err := validateVideoCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
+	// The responsive display ad is the fifth of these, and refuses off Display exactly
+	// as the four above refuse off their own channels. Its image bytes are fetched by
+	// that cascade, still before the budget mutate. See display_creative.go.
+	display, err := validateDisplayCreative(kind, in)
+	if err != nil {
+		return nil, err
+	}
 	// The three remaining inputs join the same pre-mutate block for the same
 	// orphan-avoidance reason: each is purely local, and each would otherwise be
 	// rejected by Google only at a mutate that runs after the budget and campaign have
@@ -987,7 +1234,16 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// STOP spend. Every other Search-only input in this block already refuses
 	// (proximity, the five criteria kinds, extension assets, the ad-group list, the
 	// bid); this was the one that neither refused nor applied.
-	if len(in.NegativeKeywords) > 0 && kind == campaignKindDemandGen {
+	//
+	// The fence is `!= campaignKindSearch` rather than `== campaignKindDemandGen`:
+	// createCampaignNegativeKeywords is reached only from CreateCampaign's cascade, so
+	// the drop this refusal exists to prevent happens on EVERY channel that is not
+	// Search, and a fence naming one channel would have silently admitted the next one
+	// added. Performance Max is the case that proves it — Google does accept a campaign
+	// negative keyword list there, but this client does not create one, and "Google
+	// would allow it" is no comfort to an operator whose exclusions were validated and
+	// discarded.
+	if len(in.NegativeKeywords) > 0 && kind != campaignKindSearch {
 		return nil, fmt.Errorf("google-ads: campaign-level negative keywords are not supported on %s (this client attaches them only on the Search cascade); omit NegativeKeywords, or create a Search campaign to exclude queries", kind)
 	}
 	negativeKeywords, err := validateNegativeKeywords(in.NegativeKeywords)
@@ -1001,10 +1257,40 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 	// this preflight refuses instead of ignoring. The refusal costs nothing upstream:
 	// Demand Gen bids via targetSpend and rejects manualCpc, so no bid supplied here
 	// could ever have reached a Google call that wanted it.
-	if in.CPCBid != 0 && kind == campaignKindDemandGen {
-		return nil, fmt.Errorf("google-ads: a CPC bid is not supported on %s (Demand Gen bids via targetSpend and rejects manualCpc); omit CPCBid, or create a Search campaign for manual bidding", kind)
+	// Widened from a Demand Gen test to every non-Search channel for the same reason
+	// the negatives above were: no other channel's payload carries an ad-group bid, and
+	// none of them has manual bidding at all, so accepting a bid there would validate a
+	// number and then discard it.
+	if in.CPCBid != 0 && kind != campaignKindSearch {
+		return nil, fmt.Errorf("google-ads: a CPC bid is not supported on %s (only Search bids manually here; the other channels have no manual bidding strategy and their ad-group payloads carry no bid); omit CPCBid, or create a Search campaign for manual bidding", kind)
 	}
 	cpcBidMicros, err := validateCPCBid(in.CPCBid)
+	if err != nil {
+		return nil, err
+	}
+	// Ad-group keywords and audience segments are REFUSED on every non-Search channel
+	// for the same reason the two fences above are, and they are the last pair in this
+	// preflight that still validated and then dropped. createAdGroupTargeting is called
+	// only from createAdGroupAndAd, which is on CreateCampaign's Search cascade;
+	// CreateDemandGenCampaign and CreatePerformanceMaxCampaign never read
+	// pf.keywords/pf.audienceSegments — Demand Gen's ad group takes no criteria at all,
+	// and Performance Max has no ad group to hang them on. Accepting them there would
+	// check every term and resource name and then discard the lot, leaving an operator
+	// who named an audience believing their campaign is targeted when it is not.
+	// `!= campaignKindSearch` rather than a per-channel list, for the same reason: the
+	// drop is a property of not being on the Search cascade, so a fence naming one
+	// channel would silently admit the next one added.
+	if len(keywords) > 0 && kind != campaignKindSearch {
+		return nil, fmt.Errorf("google-ads: ad-group keywords are not supported on %s (this client attaches keyword criteria only on the Search cascade); omit Keywords, or create a Search campaign to target queries", kind)
+	}
+	if len(audienceSegments) > 0 && kind != campaignKindSearch {
+		return nil, fmt.Errorf("google-ads: audience segments are not supported on %s (this client attaches audience criteria only on the Search cascade); omit AudienceSegments, or create a Search campaign to target audiences", kind)
+	}
+	// AFTER validateCPCBid, because the bidding plan refuses a CPC bid under an
+	// automated strategy and the caller is better served by hearing that their bid is
+	// out of range than that it is incompatible with a strategy they would then fix
+	// only to meet the range error on the next attempt.
+	bidding, err := validateBiddingPlan(kind, c.account.CustomerID, in)
 	if err != nil {
 		return nil, err
 	}
@@ -1040,9 +1326,14 @@ func (c *Client) preflightCampaignKind(kind string, in CampaignInput) (*campaign
 		geo:              geo,
 		criteria:         criteria,
 		assets:           assets,
+		creative:         creative,
+		pmax:             pmax,
+		video:            video,
+		display:          display,
 		adGroups:         adGroups,
 		negativeKeywords: negativeKeywords,
 		cpcBidMicros:     cpcBidMicros,
+		bidding:          bidding,
 		startDateTime:    startDateTime,
 		endDateTime:      endDateTime,
 	}, nil
@@ -1186,7 +1477,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// gains criteria later — by adoption, or by a human adding them in the Google Ads UI —
 		// then restricts by presence rather than silently reverting to the permissive default.
 		GeoTargetTypeSetting: geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
-		ManualCPC:            json.RawMessage(`{}`),
+		// Resolved in the preflight. With no BiddingStrategy supplied this is
+		// `manualCpc:{}` and nothing else — the exact payload this create sent before
+		// the strategy was selectable.
+		biddingFields: pf.bidding.fields(),
 		// Both omitempty: an empty string here is "the caller gave no such date", and the
 		// field disappears rather than being sent empty — which Google rejects outright.
 		StartDateTime: startDateTime,
@@ -1216,7 +1510,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := c.validateCampaignResource(campaignResource); err != nil {
 		return budgetPartial(), fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, manual CPC, %s)", campaignID, flightWindowStep(startDateTime, endDateTime)))
+	// The strategy is named from the PLAN, not from a literal: a step line that said
+	// "manual CPC" on a campaign created with maximize-conversions would be the only
+	// record of the bid an operator ever reads, and it would be wrong.
+	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, SEARCH, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(startDateTime, endDateTime)))
+	if n := len(pf.bidding.conversionActions); n > 0 {
+		steps = append(steps, fmt.Sprintf("Conversion actions attached: %d (campaign optimizes toward these instead of the account goals)", n))
+	}
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
@@ -1513,9 +1813,10 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// TestGoogleAds_ToggleStatus_AlreadyCanceledContextSendsNothing, which primes the token
 	// cache so it exercises exactly the cached path this note describes.
 
+	campaignResource := "customers/" + c.account.CustomerID + "/campaigns/" + id
 	req := mutateRequest{Operations: []mutateOperation{{
 		Update: campaignStatusUpdate{
-			ResourceName: "customers/" + c.account.CustomerID + "/campaigns/" + id,
+			ResourceName: campaignResource,
 			Status:       status,
 		},
 		UpdateMask: "status",
@@ -1540,7 +1841,7 @@ func (c *Client) UpdateCampaignStatus(ctx context.Context, campaignID, status st
 	// campaign flip taken as confirmed would send the children on from a state nobody
 	// verified. Wrapped in a dedicated type rather than partialCascadeError, which asserts
 	// the preceding stages succeeded — on PAUSE there are none, and the claim would be false.
-	if cErr := checkStatusMutateResults(resp, 1, "campaign"); cErr != nil {
+	if cErr := c.checkStatusMutateResults(resp, "campaigns", "campaign", []string{campaignResource}, true); cErr != nil {
 		return &unconfirmedCampaignStatusError{err: fmt.Errorf("google-ads campaign %s status update to %s: %w", id, status, cErr)}
 	}
 	return nil

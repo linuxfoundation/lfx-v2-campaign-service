@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/googleads"
-description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over that ad group/ad (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665)."
+description: "Google Ads API REST client: OAuth2 refresh-token auth, request layer with 429 retry, GAQL search (GA-1), PAUSED campaign creation via campaignBudget→campaign :mutate with the no-idempotency-key ambiguity contract (GA-2), Responsive Search Ad copy generation + redacted final-URL building (GA-3a), ad group + responsive search ad creation (Campaign->AdGroup->Ad, create-then-catch-duplicate idempotency, composite AdGroupAd resourceName) (GA-3b), a dispatcher-level status-toggle cascade over whichever serving resources the campaign actually has — the ad group/ad on Search, Demand Gen, Video and Display, the asset group on Performance Max — behind a channel-specific activation gate (GA-3c), keyword/audience-segment targeting on that ad group via adGroupCriteria:mutate, with ad-group-level targetingSetting keeping audience criteria observation-only rather than restrictive (GA-4), read-only campaign metrics via GAQL googleAds:search with a validated campaign id and window allow-list (GA-5), ad-account discovery — customers:listAccessibleCustomers plus manager (MCC) hierarchy expansion via customer_client, on an account-agnostic request path that validates only the manager id so a caller with no customer id yet can still enumerate; geo/location targeting from ISO alpha-2 country codes resolved to Google geo target constants, attached at campaign level for Search and ad-group level for Demand Gen (LFXV2-3283); project-scoped keyword-performance and age/gender/device audience reads plus atomic pause/remove keyword actions over adGroupCriteria:mutate, with a truncation-signalling row cap, per-dimension bucket aggregation, and resource-name verification on every applied mutation (LFXV2-2641); and a read-only campaign settings readback via GAQL with campaign_budget attributed from campaign, whose every field is optional so a setting Google did not return stays ABSENT rather than defaulting to zero (LFXV2-3067); and Search serving readiness — an optional manual CPC bid on the ad group (0 means unset, no default invented), an optional campaign flight window rendered into the v23 startDateTime/endDateTime request fields on both channels, and optional campaign-level negative keywords batched into one atomic campaignCriteria:mutate with negative:true, all three validated before the first paid mutate and each a no-op when absent; and Search campaign completeness — geo exclusions on both channels, raw geo target constant ids alongside country codes so a caller can target a city, region or postal code, Search-only proximity radius targeting, campaign-level language/ad-schedule/device/demographic criteria whose bid modifier is pointer-typed so an explicit 0 stays Google's -100% opt-out, sitelink/callout/structured-snippet extension assets linked by the resource name the create returned, and multiple themed ad groups each carrying multiple responsive search ads that inherit the campaign-level fields PER FIELD, every one of them optional, refused on Demand Gen where it is a Search capability, and validated before the first paid mutate (LFXV2-2665); and Demand Gen ad creation — an optional caller-supplied creative (marketing/square/portrait/tall-portrait/logo image URLs, 1-5 headlines and 1-5 descriptions refused rather than truncated, business name, call to action) whose locally-decidable half validates in the PURE preflight while its images are fetched by this service over a hardened credential-free transport (https only, no redirects, public-IP dial guard, 5 MiB cap, decoder-set format allowlist, geometry checked against the decoded image) and uploaded as base64 image assets still BEFORE the first budget mutate, then assembled into a PAUSED DemandGenMultiAssetAd whose asset ids are reported even when the ad create fails, refused on Search as the mirror of every Search-only field (LFXV2-2665); and selectable bidding with create-time conversion selection — one of six UI-vocabulary strategies (manual-cpc, maximize-clicks, maximize-conversions, target-cpa, maximize-conversion-value, target-roas) resolved in the pure preflight into a single proto oneof carried by an anonymously-embedded biddingFields on both channel payloads, defaulting byte-identically to the legacy per-channel payloads, with a target CPA in micros and a target ROAS as a RATIO inside Google's own documented bounds, a CPC bid refused under any automated strategy at campaign or ad-group level, Demand Gen fenced to maximize-clicks on recorded live-API evidence, and conversion actions attached at create time via campaign.selective_optimization (bare ids qualified to the campaign's account, foreign-account names refused, duplicates deduplicated) alongside a strictly read-only ListConversionActions for building a picker (LFXV2-2665); and Performance Max campaign creation — a third channel whose creative is an ASSET GROUP rather than an ad (assets, then the group, then assetGroupAssets links carrying an AssetFieldType) created over three mutates against a positional response, with both marketing image shapes and a square logo required rather than reciprocal, headlines/long headlines/descriptions kept as three distinct asset field types, a PERFORMANCE_MAX shell that opts out of URL expansion, sends no networkSettings and bids maximize-conversions by default, campaign-level geo as on Search, a PAUSED asset group, and an empty creative supported as a campaign that says NO ASSET GROUP rather than one that silently cannot serve (LFXV2-2665); and creative-URL containment across the three channels that carry caller-supplied URLs — Video is the exception, referencing a YouTube video by id and fetching nothing — every image-fetch error renders the URL through redactURLForError and wraps its cause in redactedCause so a signed query string reaches neither the message nor the *url.Error underneath it, Performance Max image assets carry NO caller-derived name so the URL is not exported to Google as a permanent asset label, a 64 MiB running total caps the whole creative rather than only each image, and a 5xx on the Demand Gen assets:mutate reports UNCONFIRMED rather than failed (LFXV2-2665); and Video (YouTube) — CREATION IS REFUSED, because the Google Ads API cannot create or mutate a Video campaign at all: CreateVideoCampaign returns the ErrVideoCreateUnsupported sentinel in its FIRST statement, before any request, so not one orphaned budget is stranded, while fetching, reporting, ADOPTION, the activation gate, the variant slot and monitoring are untouched — only creation is impossible; the cascade is RETAINED unexported, unreachable and still fully tested, preserving the channel's shape against the day Google supports it: a fourth channel whose shell is VIDEO/VIDEO_ACTION bidding maximize-conversions by default and accepting only that strategy or target-cpa, the narrowest set VIDEO_ACTION documents and one this client has NOT verified against the live API, whose creative is a VIDEO_RESPONSIVE ad built from YouTube video ids the caller already owns — no URL, no fetch phase and no network at all before the budget mutate, which is what lets the whole Video preflight stay pure — with 1-5 YouTube videos, 1-5 headlines (15), long headlines (90) and descriptions (70) each kept as its own asset field type and 0-5 call-to-action texts (10) where ABSENT means Google's default and empty means no text, campaign-level geo including proximity and the whole un-narrowed campaign-criteria set exactly as on Search, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords refused, an ENABLED ad group as on Demand Gen and a PAUSED ad over two mutates whose ids are reported even when the ad create fails, under a PAUSED campaign, and its own adoption slot so a VIDEO campaign is never filed as the default one (LFXV2-2665); and Display campaign creation — a fifth channel whose shell is DISPLAY with NO advertisingChannelSubType at all (the deliberate contrast with Video's pinned VIDEO_ACTION), an ENABLED DISPLAY_STANDARD ad group and a PAUSED responsive display ad whose longHeadline is a SCALAR rather than a list — the one place this channel's shape departs from its siblings — built from marketing, square marketing, logo and square logo images this service fetches over the same hardened transport BEFORE the first budget mutate, with a marketing or square marketing image RECIPROCALLY required, 1-5 headlines (30), 1-5 descriptions (90), a required long headline (90) and business name (25) and an optional call to action, campaign-level geo including proximity and the whole campaign-criteria set as on Video, conversion actions accepted, keywords/audience segments/CPC bid/negative keywords/extensions/multiple ad groups refused, five automated bidding strategies that are NOT live-verified, manual CPC and CONNECTED_TV refused as named limitations of this client rather than of Google, and its own adoption slot (LFXV2-2665); and the remaining extension types — call, promotion and price assets created and linked by the same two-mutate account-asset shape as sitelinks, with vanity phone numbers refused because Google rejects them, both of a promotion's Google oneofs enforced locally (exactly one discount arm, at most one eligibility arm), a percentage sent as micros of a FRACTION so 25% is 250,000, the serving and redemption windows ordered INDEPENDENTLY because an offer may outlive the ad, 3..8 price offerings each carrying its own tagged and bounded destination, and the occasion/type/qualifier/unit enums checked for SHAPE only on the structured-snippet-header precedent — all SEARCH only, and image and location extensions left as NAMED gaps because the first would give the Search preflight a fetch phase and the second cannot be created through this API at all (LFXV2-2665); and lead form extensions — the seventh asset type and the only one that changes WHERE THE LEAD GOES, collecting the user's details inside Google rather than at the registration URL, at most ONE per campaign because Google links a single form and a second would be created as an asset and then refused at the link, with business name/headline/description/call-to-action description required and rune-bounded, at least one de-duplicated input-type field because a form collecting nothing cannot generate a lead, a post-submit headline and description that are ALL-OR-NOTHING while the post-submit button stands alone, the call-to-action/intent/field enums SHAPE-checked on the same precedent, and a REQUIRED privacy-policy URL run through validateServableURL — split out of buildTaggedFinalURL so one implementation decides what this client will send — validated and snapshot-reduced like every other caller URL but deliberately NOT UTM-tagged, since a policy read is not an ad click (LFXV2-2665)."
 resource: "internal/platform/googleads"
 tags:
   - platform-client
@@ -315,8 +315,10 @@ be answering a database question with an ad-platform call.
 sequential `:mutate` calls: `campaignBudgets:mutate` (a non-shared `STANDARD`
 budget, `amountMicros` = budget × 1,000,000) then `campaigns:mutate` (status
 `PAUSED`, `advertisingChannelType` `SEARCH`, referencing the budget's
-`resourceName`, with a dependency-free `manualCpc {}` bidding strategy — a broker
-can't assume conversion tracking, which `maximizeConversions` requires). The
+`resourceName`, and a bidding strategy resolved in the preflight — `manualCpc {}`
+by default, because a broker can't assume conversion tracking, which
+`maximizeConversions` requires; see **Bidding strategies and conversion actions**
+below for the five other strategies a caller may name). The
 `CampaignInput.Budget` field is denominated in the ad ACCOUNT's currency, NOT USD —
 Google interprets the resulting `amountMicros` in the account's own currency and
 the client does no FX conversion, so a value of 50 is 50 of whatever the account is
@@ -333,7 +335,8 @@ omitted `networkSettings` resolves to (proto3 bools default false) — is reject
 committed, an avoidable orphan. Google Search only is the conservative choice for a
 PAUSED broker shell; `targetSearchNetwork` stays false because true would opt into
 Search Partners (and requires `targetGoogleSearch`), which a generic broker shouldn't
-assume. Both resource ids are
+assume. (Search is not the only channel that sends this field — Display does too, and the
+other three reject it; see the Display section for the full matrix.) Both resource ids are
 surfaced (`campaignBudgetId` + `campaignId`) via `firstResourceName`, which decodes
 `results[0].resourceName` and returns both the resource name and its trailing-id
 segment. It errors when the body is malformed, carries no result/resourceName, OR
@@ -443,6 +446,36 @@ or userinfo, and this error can be logged or persisted in a result
 step/snapshot. Mirrors the twitter client's `redactURLForError` and the
 reddit/meta clients' equivalent `redactURL` (userinfo/credentials-in-caller-
 URL pattern, see `docs/reviews/knowledge-base/credentials-and-untrusted-text.md`).
+
+**The same discipline applies to every caller-controlled string this package puts in an
+error, not only to URLs**, because these errors persist unencrypted as `Steps` entries.
+Two helpers, and which one applies is decided by what the surrounding code has already
+ESTABLISHED about the value:
+
+- `redactURLForError` where the value is, or may be, a URL. This includes arms that fire
+  *because* a value is URL-shaped — `validateYouTubeVideoIDs` refuses a pasted share link
+  and reports it reduced to scheme+host+path, since the `?si=…` or signing query it carries
+  is exactly what must not be written to the database, and the host alone already tells the
+  caller what they pasted.
+- `capForError` everywhere else: business names, asset-group names, display paths,
+  headlines, descriptions, calls to action, bidding strategies, conversion actions, and the
+  extension fields in `assets.go` / `assets_extended.go` / `assets_leadform.go` — country
+  codes, language tags, occasion names, price types, price qualifiers, unit names, currency
+  codes (`validateMoney`) and the asset date window (`validateAssetDateWindow`). A
+  SHAPE-anchored regex is not a length bound and does not exempt an arm: `enumShapeRE` in
+  `assets_leadform.go` matches `A` followed by any number of underscores, and
+  `currencyCodeRE` is checked on a value the error then echoes. These
+  arms have established the value is NOT a URL, but nothing bounds its LENGTH — and a
+  length-limit error is emitted in precisely the case where the value exceeds the limit, so
+  echoing it raw is unbounded by construction. `capForError` cuts on a rune boundary rather
+  than a byte one, because several of these fields are validated by DISPLAY WIDTH and
+  multibyte copy is expected in them.
+
+`validateEntityName` shows the third option, which remains available and is stricter still:
+report the measured width and the limit and do not echo the value at all. The LENGTH-LIMIT
+arms in the extension validators take that option rather than `capForError`: they already
+carry the extension's INDEX in the message, the index locates the offending entry on its own,
+and a capped echo of an over-long value adds nothing the caller does not already have.
 
 ## Ad group + responsive search ad creation (GA-3b)
 
@@ -561,8 +594,11 @@ single-pair wrapper over it with no logic of its own, so the two cannot drift.
 ## Status toggling (GA-3c)
 
 `GoogleAdsDispatcher.ToggleStatus` (`internal/dispatch/googleads.go`) implements
-PAUSE cascading for the campaign-level pause that GA-2 introduced down to the ad group +
-ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
+PAUSE cascading for the campaign-level pause that GA-2 introduced down to whichever serving
+resources the campaign actually has — the ad group + ad GA-3b creates on Search, Demand Gen and
+Display (and that an ADOPTED Video campaign carries, since GA-3b never creates one),
+or the asset group the Performance Max creative builds — mirroring the reddit adapter's
+child-cascade contract:
 
 - **PAUSE flips the campaign first**, then the ad group/ad. Pausing the
   parent stops delivery immediately regardless of whether the child update
@@ -597,14 +633,70 @@ ad GA-3b creates, mirroring the reddit adapter's child-cascade contract:
   failed group would strand a campaign that is otherwise ready.
 
 - **ACTIVATE is refused** with `domain.ErrCampaignNotProvisioned` (mapped to a 409 without
-  calling Google) unless at least one ad group/ad is fully provisioned AND GA-4's targeting
-  step persisted at least one keyword criterion in ANY of the campaign's groups — the gate
-  asks whether the campaign can deliver, and it delivers if one group has keywords, so
-  asking only about the first would refuse a campaign that would have served (audience criteria alone are observation-only and
-  don't qualify — see "Keyword + audience targeting (GA-4)" below). A campaign without keyword
-  targeting cannot deliver, so enabling it would report false success. When the guard passes,
-  ACTIVATE cascades children-first (children activated before campaign) so a campaign never
-  reports ENABLED before its ad group/ad already do.
+  calling Google) unless this campaign's own serving resources are fully provisioned. When the
+  guard passes, ACTIVATE cascades children-first (children activated before campaign) so a
+  campaign never reports ENABLED before the resources that actually deliver already do.
+
+- **What "fully provisioned" means is CHANNEL-SPECIFIC**, because the five channels this
+  dispatcher RESOLVES do not have the same serving resources. It creates four of them — Video
+  reaches this gate only by ADOPTION, because the Google Ads API cannot create a Video campaign. `googleAdsActivationGate` keys on
+  the campaign's `Variant` — part of its identity rather than its config, so a row cannot drift
+  into the wrong arm through a config edit — and a row written before variants existed
+  normalises to `VariantDefault` and keeps the Search rules it was created under:
+
+  - **Search** needs at least one fully-provisioned ad group/ad AND at least one keyword
+    criterion persisted by GA-4's targeting step in ANY of the campaign's groups — the gate asks
+    whether the campaign can deliver, and it delivers if one group has keywords, so asking only
+    about the first would refuse a campaign that would have served (audience criteria alone are
+    observation-only and don't qualify — see "Keyword + audience targeting (GA-4)" below). A
+    Search campaign without keyword targeting cannot deliver, so enabling it would report false
+    success.
+  - **Demand Gen** keeps the ad-group gate and drops the keyword one. Keywords are REFUSED on
+    this channel (the Search-only fence in `campaign.go`), so a keyword gate here is
+    unsatisfiable BY CONSTRUCTION: it would instruct the operator to supply the very field the
+    create path rejects, leaving every Demand Gen campaign this service can create permanently
+    un-launchable through this service. Its targeting is audience- and creative-driven.
+  - **Video** takes the same gate as Demand Gen, for the same reason: a Video campaign
+    serves from an ad group with an ad under it, so the ad-group and ad gates are both
+    meaningful — they are reached by ADOPTED Video campaigns only, since this service cannot
+    create one (see the Video section below) — but keywords are
+    REFUSED on this channel too (the same Search-only fence), so a keyword gate here would be
+    unsatisfiable by construction.
+  - **Display** takes that same gate again, and for the third time the same reason: it creates
+    an ad group and a responsive display ad, and keywords are refused on it as well.
+    `googleAdsActivationGate` says all of this by listing the THREE channels in one `case`,
+    rather than by repeating the Demand Gen arm twice — a second copy is where they would drift
+    apart.
+  - **Performance Max** has no ad groups and no ads at all, so the ad-group gate can never pass
+    and the resource whose absence means nothing can serve is the ASSET GROUP. The refusal names
+    the asset group in those words rather than describing an ad-group provisioning failure that
+    cannot have happened on this channel. **An asset group id is not enough**: the group is
+    created before its links, so a failed link mutate leaves an id recorded on a group with
+    nothing attached, and a gate reading only the id would un-pause a campaign that cannot
+    serve. It also reads `assetGroupAssetLinks` — the confirmed link count, written by the
+    create path on both its success and its failure arms — and refuses on a recorded zero. Nil
+    is NOT zero: a row written before the field existed cannot distinguish "no links" from "not
+    recorded", and refusing it would be an over-refusal on a campaign that is provisioned fine,
+    so absence activates.
+
+- **The Performance Max asset group cascades like an ad group, through its own mutate.**
+  Asset groups are created PAUSED (`performanceMaxAssetGroupPaused`), for the same reason every
+  other create in this client is paused — so without a way to un-pause one, the campaign
+  resource could be flipped to ENABLED while its asset group stayed PAUSED, reporting a launch
+  that cannot deliver: precisely the false success `ErrCampaignNotProvisioned` exists to
+  prevent. `Client.UpdateAssetGroupStatus` sends a single `assetGroups:mutate` UPDATE masked to
+  `status` — an update must send ONLY the masked field, because the create shape's required
+  name/campaign/finalUrls would either be rejected or, worse, rewrite them. It is held to the
+  same standard as `UpdateCampaignStatus`: sent idempotent so bounded 429 retries do not turn
+  ordinary throttling into an avoidable UNCONFIRMED, and a 2xx that does not acknowledge the one
+  operation is wrapped in `unconfirmedAssetGroupStatusError` — the Performance Max counterpart of
+  `unconfirmedCampaignStatusError`, satisfying the same `Unconfirmed() bool` interface. The
+  dispatcher reads the id from the persisted `Result` blob's `assetGroupId` and checks it FIRST:
+  a Performance Max campaign has an asset group and no ad groups, every other channel has ad
+  groups and no asset group, so the two are mutually exclusive by construction. Keying the
+  cascade on what the blob RECORDED rather than on the variant keeps it consistent with
+  `googleAdsToggleTargets`, which has always derived the cascade from what was created rather
+  than from what was asked for.
 
 - **Both directions are refused** with `domain.ErrCampaignAccountMismatch` (409, Google never
   contacted) when the campaign was created under a different customer than the project's
@@ -1013,6 +1105,13 @@ reached a Google call that wanted it. The ad-group step string says what was set
 does NOT claim a serving consequence; whether a bid is what makes a given ad
 group eligible has not been verified live.
 
+**A bid is also refused under an automated strategy**, for the same
+refuse-don't-drop reason: Google keeps an ad-group bid under `maximizeConversions`
+and friends but never bids it, so accepting one would take an instruction and
+make it inert. The check covers a per-group `cpcBid` in `AdGroups` as well as the
+campaign-level field, because a campaign-field-only check would miss exactly the
+override a caller reaches for first.
+
 **Flight window (`campaign.go`, `demandgen.go`).** `StartDate`/`EndDate` are
 `YYYY-MM-DD` — spelled as the meta and reddit configs spell them —
 and `validateFlightWindow` renders them into the **v23** `startDateTime` /
@@ -1225,13 +1324,23 @@ exists.
 The accepted device vocabulary is MOBILE, DESKTOP and TABLET. `OTHER` is absent
 because it is a reporting bucket rather than something a campaign bids on, and
 TV screens are absent because Google supports that device only on Display and
-Video campaigns — and since every criterion in this group is refused outright on
-Demand Gen, Search is the only kind that reaches the map. Offering it meant a
-knob whose best case was silently inert and whose worst case was a rejected
-`campaignCriteria:mutate` after the budget and campaign were committed. That is
-not the over-refusal this package guards against: over-refusal is failing a
-create Google would have accepted and MEANT, and a device Google documents as
-unsupported on this campaign type has no such create behind it.
+Video campaigns. When this vocabulary was written, Demand Gen refused every
+criterion in the group and Search was the only kind that reached the map, so the
+omission merely restated an upstream rule and cost nothing. **Video and Display
+now reach it too** (`validateCriteriaPlan` narrows only Demand Gen and
+Performance Max), and on exactly those two channels Google DOES support TV
+screens — so the omission has become this client's own limitation rather than
+Google's. It stays closed deliberately: Google's documentation does not settle
+whether a `CONNECTED_TV` campaign criterion carries a BID MODIFIER, this client
+cannot send the criterion without one, and a wrong guess lands at the
+`campaignCriteria:mutate` AFTER the budget and campaign are committed, with the
+only reachable account a production one where even a `validateOnly` mutate is a
+POST. Closing it needs a verification this client cannot currently run — which
+is a different thing from the Demand Gen case, where offering the knob meant a
+value whose best case was silently inert and whose worst case was a rejected
+mutate after the spend was committed. Neither is the over-refusal this package
+guards against: over-refusal is failing a create Google would have accepted and
+MEANT, and no caller has yet asked this service to bid on a TV screen.
 `maxDeviceBidModifiers` tracks the size of that vocabulary rather than Google's
 enum, and a test asserts the two agree — the cap's claim is "a longer list must
 contain a duplicate", which stops being true the moment the two drift.
@@ -1249,6 +1358,21 @@ nothing at all. `validateBidModifier` mirrors Google's own rule — exactly 0, o
 All five are refused on Demand Gen, for the reason proximity is: that channel
 attaches targeting on the ad group, and these criteria have not been verified
 there.
+
+**A device bid ADJUSTMENT is refused by the bidding strategy, not by the channel,
+and the two rules must not be folded together.** `validateBiddingPlan` refuses a
+NON-ZERO `DeviceBidModifier` whenever the strategy is anything but manual CPC: Google
+stores the adjustment and never bids it while the campaign bids automatically, so the
+operator who asked for "-30% on tablet" reads "campaign created" and gets neither the
+adjustment nor a signal. It is the `CPCBid` arm's rule one field over, and it is keyed
+on the strategy because that is where the constraint lives — Video and Display both
+default to `maximizeConversions`, and Search can be switched to one, so keying it on
+Performance Max (as the criteria-side arm reads) silently under-refused on three
+channels. A modifier of exactly `0` is NOT refused: that is the -100% opt-out, a device
+EXCLUSION is honoured under automated bidding, and refusing it would be the
+over-refusal these guards exist to avoid. The separate Performance Max arm in
+`campaign_criteria.go` stays, and is about the CHANNEL: Performance Max takes no device
+criteria at all, not even the exclusion, so it refuses the whole list.
 
 **Ad extensions (`assets.go`).** Sitelinks, callouts and structured snippets are
 created as account-level `assets:mutate` operations and then LINKED to the
@@ -1272,8 +1396,79 @@ values, below which Google will not serve it, and its header is checked for SHAP
 only — the valid header vocabulary is LANGUAGE-DEPENDENT and Google revises it, so
 a local allow-list would refuse headers Google accepts.
 
-Extensions are SEARCH only and refused on Demand Gen, which uses a different asset
-model entirely.
+**Call, promotion and price extensions (`assets_extended.go`).** The same two-mutate
+shape carries three more asset types, each its own `assetCreate` oneof arm.
+
+A call extension is a country code plus a phone number. Letters are REFUSED: Google
+rejects vanity numbers such as 1-800-FLOWERS, and accepting one locally would create
+an asset that can never serve. Numbers de-duplicate on country plus digits-only form,
+so the same line written two ways counts once.
+
+A promotion carries two Google oneofs, and both are enforced locally rather than left
+to upstream to pick: exactly one of `DiscountPercent` / `DiscountAmount` (both and
+neither are refused), and at most one of `PromotionCode` / `OrdersOverAmount` — an
+offer cannot be both code-gated and spend-gated. A percentage is sent as micros of a
+FRACTION (`percentOffScale = 10_000`, since Google's 1,000,000 means 100%), so 25%
+becomes 250,000; writing it as micros of a percentage would discount by a hundredth
+of what the caller asked.
+
+The promotion's two date windows — serving and redemption — are ordered
+INDEPENDENTLY, each requiring only its own start before its own end. Nesting one
+inside the other would refuse the ordinary case of an offer that stays redeemable
+after the ad stops running.
+
+A price extension needs 3..8 offerings, below which Google will not serve the table,
+and headers de-duplicate case-insensitively because Google serves one row per header.
+Every offering carries its OWN clickable destination, so each one is tagged by
+`buildTaggedFinalURL` and bounded by `maxFinalURLBytes` exactly as a sitelink is.
+
+`Occasion`, the price `Type`, `PriceQualifier` and an offering's `Unit` are checked
+for SHAPE only (`enumShapeRE`), on the same reasoning as structured-snippet headers:
+Google revises these enums, and a local allow-list would refuse values Google accepts.
+
+**Lead forms (`assets_leadform.go`).** The seventh asset type, and the only one that
+changes WHERE THE LEAD GOES: a sitelink sends the user to the advertiser's site, a
+lead form collects their name and email inside Google and holds them for retrieval.
+Attaching one silently changes what "a conversion" means for a campaign whose brief
+assumed site registrations, which is why the privacy-policy URL is required by Google
+rather than optional and why a form with NO fields is refused rather than created
+empty — a form that collects nothing cannot generate a lead.
+
+At most ONE per campaign. Google links a single lead form, so a second would be
+created as an account-level asset and only then refused at the LINK, leaving exactly
+the "litter rather than a leak" this package already names. `maxLeadFormExtensions`
+is therefore an UPSTREAM limit, not a payload bound.
+
+The post-submit headline and description are ALL-OR-NOTHING, on the sitelink
+description precedent: one without the other renders a half-written thank-you screen
+the caller cannot see before it is live. The post-submit BUTTON stands alone, because
+Google renders it on its own default screen too. `CallToActionType`,
+`PostSubmitCallToActionType`, `DesiredIntent` and every field's input type are
+SHAPE-checked only, like `Occasion` above.
+
+The privacy-policy URL is the reason `validateServableURL` exists. It must be held to
+exactly the same checks as an ad destination — http(s) only, host required, no
+embedded userinfo, no malformed query, never echoed back into an error — but must NOT
+be UTM-tagged: it is a link Google renders inside the form, not a destination this
+campaign claims a click on, and tagging it would attribute a policy read as an ad
+click and could break a query the policy host parses itself. Rather than write a
+second, laxer URL validator, the non-tagging half was split out of
+`buildTaggedFinalURL`, which now calls it and reuses the parsed `*url.URL` it returns.
+The validator is PURE, so Search's preflight stays pure.
+
+IMAGE and LOCATION extensions — and the lead form's optional BACKGROUND IMAGE — are
+deliberately absent. Each of the first two carries bytes, as does the background
+image, so supporting any of them would give the SEARCH preflight a network fetch phase
+it does not have today — a change to this package's central "Search preflight is PURE"
+claim, and so its own commit. A location extension cannot be created through this API
+at all: it is derived from a Business Profile linked to the account. A lead form
+without a background image renders on Google's default and is servable. All are named
+gaps, not oversights.
+
+All seven extension types are SEARCH only and refused on every other channel, which
+use different asset models entirely. The fence is `kind != campaignKindSearch`, so a
+sixth channel added later refuses them automatically rather than inheriting Search's
+treatment by default.
 
 **Multiple ad groups and multiple RSAs (`adgroup_plan.go`).**
 `CampaignInput.AdGroups` turns the single-group cascade into one group per theme,
@@ -1301,6 +1496,473 @@ The groups are created in order, and because every one of them is created after
 the campaign exists, the partial-result contract covers them: a failure at group
 N returns the error alongside the non-nil result, and says which group of how many
 failed with how many were created before it.
+
+## Demand Gen ad creation (LFXV2-2665)
+
+`demandgen_creative.go`. Before this, a Demand Gen campaign was a shell: budget,
+campaign, ad group, geo — and no ad, so it could not serve even once a human
+enabled it. `DemandGenCreative` on `CampaignInput` closes that, and is the
+**mirror** of every Search-only field above: supplying it on a Search campaign is
+REFUSED, not ignored, exactly as extensions and proximity are refused on Demand
+Gen. Absent, the old no-ad shape is produced byte for byte, which is what every
+caller written before this field still sends.
+
+**The file is split along the preflight boundary, and that split is the point.**
+`preflightCampaignKind` is PURE — no network, no `ctx` — because the orphan
+guarantee depends on everything being decidable before the first budget mutate
+spends money. Image bytes cannot be validated without fetching them, so the
+locally-decidable half (`validateDemandGenCreative`, counts, copy widths, URL
+shape) runs in the preflight, and the fetch (`fetchDemandGenImages(ctx, plan)`)
+runs in the cascade but **still before the budget mutate**. A bad image therefore
+fails with `result == nil` and nothing created, which
+`TestCreateDemandGenCampaign_BadImageFailsBeforeAnyMutate` pins.
+
+**The service fetches the images; Google never sees the URL.** Google Ads takes
+image assets as base64 bytes, so a caller-supplied https URL is downloaded here
+and uploaded as an `imageAsset`. That makes this the one place the service
+fetches a caller-controlled address, and the transport is hardened accordingly:
+
+- **https only**, refused at validation. A plaintext fetch is one an on-path
+  attacker can replace with an image of their choosing, which then becomes a real
+  ad creative under the Foundation's account.
+- **No credentials.** The creative transport is separate from the API client and
+  sends no `Authorization`, `developer-token` or `login-customer-id`.
+  `TestFetchOneImage_SendsNoCredentials` asserts all three.
+- **No redirects**, so a validated public host cannot bounce the fetch to an
+  internal one.
+- **`checkPublicIP` on every dial.** Loopback, RFC1918, link-local (including
+  `169.254.169.254`, the cloud metadata address), CGNAT, multicast, ULA, the
+  reserved and documentation ranges, and their IPv4-mapped IPv6 spellings are all
+  refused. It is wired as the `Client`'s `imageDialGuard` field, defaulting to the
+  real guard, so a zero-value `Client` is safe —
+  `TestImageFetchClient_DefaultsToTheRealGuard`.
+
+  **It is `eventurl`'s judgement, not a second one.** `checkPublicIP` is
+  `eventurl.NewAddressGuard()`, so this path and the event-URL fetcher judge the
+  same address space and a range added to `forbiddenNets` protects both. It was
+  previously a local enumeration of predicates, and the enumeration was wrong in a
+  way no list of predicates catches: none of them decode an RFC 6052 address, so
+  `64:ff9b::a9fe:a9fe` — the well-known NAT64 prefix naming `169.254.169.254` —
+  matched nothing and was allowed. `TestCheckPublicIP` pins that address, and pins
+  `64:ff9b::808:808` (public `8.8.8.8`) as still ALLOWED, because decoding the
+  prefix must not become refusing it.
+
+  **Operator-specific NAT64 prefixes must be declared.** The default judges the
+  well-known `/96` alone, which is NARROWER than the fetcher's. A deployment that
+  sets `EventURLNAT64Prefixes` must pass them to `googleads.WithNAT64Prefixes`, as
+  `internal/container` does; otherwise an address under an operator prefix cannot
+  be decoded and the private IPv4 it encodes is never seen. The option swaps the
+  ADDRESS JUDGEMENT rather than the whole client — unlike
+  `hubspot.WithNAT64Prefixes` — because this path needs its own transport (redirects
+  refused with a redacted target, a TLS config the tests inject).
+  `TestWithNAT64Prefixes_ReachesTheCreativeFetchGuard` asserts on ELAPSED TIME, not
+  just on an error: an undecodable address fails either way, and only refusal is
+  immediate.
+- **5 MiB cap** via `io.LimitReader(body, max+1)`, which binds whether or not a
+  `Content-Length` was declared.
+- **64 MiB running total** across every slot, checked as the walk goes rather than
+  after it, so an oversized creative never becomes resident.
+- **Half the caller's remaining deadline**, and no more, for the whole fetch phase.
+  The per-image timeout is 20s and the walk is sequential, so a 30-image group
+  against slow hosts is ten minutes — far past the dispatcher's per-provider
+  budget. Capping the phase moves that exhaustion to BEFORE the first mutate,
+  where it costs an error; without it the deadline expires inside the cascade,
+  which is the orphaned campaign the preflight guarantee exists to prevent. The
+  share is derived from what the caller has left, never a constant, so a caller
+  with no deadline is unaffected and nothing that used to fit is now refused.
+- **The decoder set IS the format allowlist.** Only `image/png`, `image/jpeg` and
+  `image/gif` are imported, so `image.DecodeConfig` fails on anything else; there
+  is no separate list to drift.
+
+`imageTLSConfig` and `imageDialGuard` are both **unexported** `Client` fields with
+unexported options. Tests use them to trust one `httptest` TLS certificate and to
+allow loopback for that one server; no caller outside the package can reach them,
+so there is no way to weaken either in a running service.
+
+**Geometry is checked against the decoded image, not trusted from the caller.**
+`demandGenImageSlots` carries each slot's ratio and minimum as the two documented
+integers (1.91:1 min 600x314, square 1:1 min 300x300, portrait 4:5 min 480x600,
+tall portrait 9:16 min 600x1067, logo 1:1 min 128x128); `checkImageGeometry`
+divides once, here, so the documented value stays the value in the code, and
+allows Google's documented ±1%.
+
+**The counts are NOT the RSA counts, and the coincidence is a trap.** Demand Gen
+takes 1–5 headlines and 1–5 descriptions where an RSA takes 3–15 and 2–4, but the
+display-width limits are the same 30 and 90. A width-only test would therefore
+pass even if `maxHeadlines` had been wired in by mistake, so
+`TestValidateDemandGenCreative_CountsAreNotTheRSACounts` asserts the constants
+differ and then refuses six headlines. The weighting helper IS shared
+(`googleAdsCharWeight`, `maxHeadlineWeight`, `maxDescriptionWeight`) because that
+contract genuinely is the same.
+
+The marketing ceiling of 20 is **combined across the four marketing arrays**, not
+per array — four arrays of 19 is 76 images and satisfies every per-array reading.
+Logos sit outside it, 1–5 and at least one required. At least one of
+`marketingImages` or `squareMarketingImages` must be present: Google's wording is
+reciprocal (each required when the other is absent), so neither alone is
+mandatory and the pair is.
+
+**Over-long copy is REFUSED, not truncated**, which is the opposite of the RSA
+path's deliberate truncate-and-pad. An RSA composes copy the service generated; a
+Demand Gen ad is built from exactly what the caller named, and silently shortening
+a headline there publishes something nobody wrote.
+
+The ad is created **PAUSED**, like everything else this client creates — and for a
+concrete reason beyond symmetry: `googleAdsToggleTargets` falls back to the scalar
+`AdGroupID`/`AdID` when the result carries no `AdGroups`, so a paused ad is one the
+existing toggle cascade can enable without any further change.
+
+`CampaignResult` gained `CreativeAssetIDs` alongside `AdID`, and the partial-result
+contract covers both: an ad create that fails after the assets uploaded still
+returns a non-nil result carrying the asset ids, so a retry does not lose them
+(`TestCreateDemandGenCampaign_AdFailureStillReportsTheAssets`). `demandGenClosingStep`
+now has four branches over (geo, ad) rather than one, so the step text stops
+telling an operator to upload images for a campaign that already has an ad.
+
+
+## Bidding strategies and conversion actions (LFXV2-2665)
+
+`bidding.go` makes the bidding strategy selectable. Until it existed the choice
+was hard-coded per channel — `manualCpc {}` on Search, `targetSpend {}` on Demand
+Gen — which is why no campaign this service created could bid toward a
+conversion at all.
+
+**A campaign carries EXACTLY ONE strategy.** It is a proto `oneof`: the create
+names one of `manualCpc`, `targetSpend`, `maximizeConversions`,
+`maximizeConversionValue`, and naming two is rejected — AFTER the budget mutate,
+which is why the resolution happens in the pure preflight. `biddingFields` is one
+shared type embedded ANONYMOUSLY into both channel payloads so its keys flatten
+into the campaign object, rather than a copy per channel: the oneof is a property
+of the campaign resource, not of a channel, and two copies would be two places to
+break it. `biddingPlan.fields()` sets exactly one pointer, and
+`TestBiddingPlan_SendsExactlyOneStrategy` is what holds that.
+
+**The vocabulary is the Google Ads UI's, not the proto's** — `manual-cpc`,
+`maximize-clicks`, `maximize-conversions`, `target-cpa`,
+`maximize-conversion-value`, `target-roas` — because the operator choosing one is
+reading that UI. `target-cpa`/`target-roas` are where the two vocabularies
+genuinely disagree: Google folded the standalone TargetCpa and TargetRoas
+strategies into MaximizeConversions and MaximizeConversionValue with a target
+set, and the UI still uses the old names. Both spellings resolve to the surviving
+strategy; the only difference is that the target is REQUIRED under the
+target-bearing label and optional under the maximize- one.
+
+**The defaults are byte-identical to the legacy payloads.**
+`defaultBiddingStrategy(kind)` returns exactly what each channel hard-coded, and
+`TestBiddingPlan_DefaultsAreTheLegacyPayloads` pins the marshalled JSON strings
+(`{"manualCpc":{}}` / `{"targetSpend":{}}`). Every campaign this service has
+created bid by manual CPC, so a default that drifted would silently re-bid them
+all. `manualCPC` and `targetSpend` are deliberately EMPTY structs: their only
+remaining proto fields are deprecated, and sending a deprecated field risks a
+rejection landing after the budget mutate. That is also why `cpcBidCeiling` is
+not offered — `target_spend.cpc_bid_ceiling_micros` is marked deprecated.
+
+**Demand Gen is fenced to `maximize-clicks` alone**, on recorded evidence rather
+than caution: a live `validateOnly` check (2026-08-14, v23) had DEMAND_GEN accept
+`targetSpend` with HTTP 200 and reject `maximizeConversions` with HTTP 400
+`BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET`. Widening
+`demandGenBiddingStrategies` is a live-API question, not a reading of the proto.
+
+**Targets.** `validateTargetCPA` is micros like every other currency field here,
+bounded `0.01`..`1_000_000.0` — this client's sanity bound, not a Google limit.
+`validateTargetROAS` is the exception: `target_roas` is a proto double and Google
+takes the RATIO as written, so it is NOT converted to micros, and its
+`0.01`..`1000.0` window is Google's own documented one. `400` is accepted even
+though it is also how `400%` is commonly mis-typed — refusing it would refuse a
+target Google accepts, the over-refusal these guards exist to avoid — so the
+ratio spelling is documented on the field and named in the out-of-range error
+instead. Both treat `0` as UNSET and reject NaN/Inf first, since those pass every
+ordered comparison. A target the named strategy cannot carry is REFUSED rather
+than dropped.
+
+**Conversion actions attach at CREATE time via
+`campaign.selective_optimization`,** not through `campaignConversionGoal`. That
+resource is update-only and addressed by a name containing the campaign id, so
+attaching goals through it would need a second mutate AFTER the campaign exists —
+a step that can fail and leave a campaign bidding toward the account's goals
+rather than the ones the operator chose, with nothing in the result to say so.
+`validateConversionActions` takes either a bare numeric id or the full
+`customers/<cid>/conversionActions/<id>` name, qualifies the bare one with the
+campaign's own account, and refuses a full name owned by a DIFFERENT customer —
+a conversion action cannot be shared across accounts. Duplicates across the two
+spellings are deduplicated rather than refused, since naming the same action
+twice is a caller typo and not an instruction to do anything different.
+
+**Refused on Demand Gen**, as the mirror of every other Search-only field: that
+channel does not accept `selective_optimization`, and its own mechanism
+(`conversion_goal_campaign_config`) is NOT implemented, pending a live-API check.
+
+`conversions.go` is the read half and is strictly read-only:
+`ListConversionActions` is one GAQL search returning id, resource name, name,
+status, type, category and `primaryForGoal`, so a caller can build a picker
+instead of hand-copying an id out of the Google Ads UI. REMOVED actions are
+excluded in the WHERE clause rather than row-side — a removed action cannot be
+attached at all, so returning it would offer a choice guaranteed to fail — while
+PAUSED ones are kept, since a paused action is attachable. A row missing its id
+or resource name fails the WHOLE response: both are what the caller sends back on
+a create, and an absent id means the SELECT and the row struct have drifted,
+which is a fact about every row. **Creating** a conversion action is deliberately
+not offered: it is half a measurement setup, and one created without its site tag
+reports as configured while recording nothing.
+
+
+## Performance Max campaign creation (LFXV2-2665)
+
+`pmax.go` and `pmax_creative.go` add the third channel. It is the first one whose
+creative is NOT an ad: **Performance Max has no ad groups and no ads at all.** Its
+creative is an ASSET GROUP — assets created first, then the group, then
+`assetGroupAssets` links carrying an `AssetFieldType` that says what each asset is
+for. Three mutates, in that order, and the order is forced: a group must exist
+before anything links to it and an asset before a link names it, but a group created
+first and then left unlinked is a visible empty container in the Google Ads UI while
+loose assets are merely account-level litter — so assets first fails in the less
+confusing place. `pmaxCascade` in `pmax_test.go` turns any ad-group or ad path into
+a test failure rather than serving it, so a cascade that grew one would be caught
+rather than quietly pass.
+
+**The assets:mutate response is POSITIONAL** — result *i* describes operation *i* —
+so the link step uses `assetResources[i]`, the resource name Google returned, never
+one rebuilt from the parsed id. Rebuilding would be this client asserting what Google
+said rather than repeating it. `c.assetID` checks kind, ACCOUNT and trailing numeric
+id and answers `""` for anything else, so a wrong-account asset can neither be linked
+into this campaign's group nor persisted as one of its ids; the ids parsed before the
+bad one are still returned, under the partial-result contract.
+
+**Google requires each of the two marketing shapes, not either.** Unlike Demand Gen's
+reciprocal pair, `marketingImages` (1.91:1) AND `squareMarketingImages` (1:1) are both
+mandatory, `logoImages` (1:1) is 1–5 with at least one, and `portraitImages` (4:5) and
+`landscapeLogoImages` (4:1) are optional. The three marketing shapes share one combined
+cap of 20. Headlines (3–15), long headlines (1–5) and descriptions (2–5, at least one
+inside the short slot's display width) are **three distinct asset field types**, not one
+list bucketed by length, and a business name is required. Everything above is validated
+in the PURE preflight; the image bytes are fetched by `fetchSlotImages` through the same
+hardened credential-free transport Demand Gen uses, still BEFORE the first budget
+mutate, so a bad image fails with `result == nil` and nothing created.
+
+**The campaign shell differs from Search's in four ways that all matter.**
+`advertisingChannelType: PERFORMANCE_MAX`; `urlExpansionOptOut: true`, so the campaign
+serves the final URL it was given rather than URLs Google picks off the site; no
+`networkSettings`, which Performance Max does not take; and `maximizeConversions` by
+default — `defaultBiddingStrategy` answers a different strategy per channel, and manual
+CPC and maximize-clicks are both REFUSED here because Performance Max does not offer
+them. Geo is attached at CAMPAIGN level, as on Search, which is why proximity stays
+allowed on this channel while every other Search-only field is refused.
+
+**Asset groups are created PAUSED**, matching the campaign — the same intent every
+other create in this client has: nothing serves until a human enables it.
+
+An EMPTY creative is a supported input, not a half-finished one: the campaign is
+created with no asset group and the closing step says `NO ASSET GROUP` loudly, because
+a Performance Max campaign without one cannot serve and an operator reading a quiet
+success would not know that.
+
+**A group id alone cannot answer "can this campaign serve?", so the result carries the
+LINK COUNT too.** `createPerformanceMaxAssetGroup` returns the group id even when the
+link mutate fails — an empty group is the state most worth finding, and clearing the id
+would hide it — but that left the one campaign that cannot serve looking, to the
+activation gate, exactly like one that can. `CampaignResult.AssetGroupAssetLinks` records
+how many `assetGroupAssets` links Google CONFIRMED, written on BOTH paths in `pmax.go`
+and written even when it is zero, which is what lets the gate tell the two apart. It is a
+`*int`: **nil means "this row predates the field"** — every Performance Max campaign
+created before it has no such key, and reading absence as zero would refuse activation on
+correctly provisioned campaigns, which is an over-refusal and the one failure mode these
+guards must never have. A non-nil zero is the refusal. An UNCONFIRMED link mutate —
+a 2xx with a short or malformed mutate response — records zero rather than nothing:
+links may exist, this client cannot say they do, and "cannot say" belongs in the Google
+Ads UI, not in a claimed launch.
+
+
+## Video (YouTube) campaign creation (LFXV2-2665)
+
+**CREATION IS REFUSED. The Google Ads API cannot create a Video campaign.** Google's
+[Video overview](https://developers.google.com/google-ads/api/docs/video/overview) says it
+without qualification — "You cannot create new Video campaigns or update existing ones
+using the Google Ads API", and "Video campaigns cannot be created or mutated using the
+Google Ads API" — and directs new video creation to Google Ads scripts or Demand Gen.
+FETCHING and REPORTING on Video campaigns *are* supported, which is why adoption, the
+activation gate, the variant slot and monitoring below are all untouched: only creation is
+impossible.
+
+So `CreateVideoCampaign`'s first statement returns `ErrVideoCreateUnsupported`, a sentinel
+rather than a bare `fmt.Errorf` so dispatch and its tests can tell "Google cannot do this"
+apart from "this request was malformed". The refusal is placed there and not in
+`preflightCampaignKind`/`ValidateCampaignInputKind`, because that validator runs BEFORE the
+adoption branch (`internal/dispatch/googleads.go`) and a refusal inside it would kill
+legitimate Video ADOPTION along with creation.
+
+Refusing in the FIRST statement is the whole point, and the cost of refusing one step later
+is money rather than an error: the budget is step 1 and `campaigns:mutate` is step 2, so
+every Video request would leave a real `CampaignBudget` behind on the account before
+failing — one orphaned budget per attempt — and a retry composes the same budget name and
+fails at `DUPLICATE_NAME` instead, so the retry path never reconciles the orphan it made.
+That is exactly the stranding the refuse-don't-drop doctrine exists to prevent, and it does
+not become acceptable because the refusal comes from upstream rather than from a field
+value. `TestCreateVideoCampaign_RefusesWithoutSendingAnything` fails the test if Google is
+contacted at all, and the dispatch-level test asserts `!cap.sawBudget`, because "returns an
+error" is satisfied equally well by a cascade that bought a budget first.
+
+The cascade below is RETAINED, unexported and unreachable, as
+`createVideoCampaignCascade`, and `video_test.go` still exercises it in full. It is kept
+rather than deleted so that the day Google opens creation the change is removing one block
+and re-verifying `videoBiddingStrategies` — not rebuilding a channel from the documentation
+a second time. Everything the rest of this section describes is a description of that
+retained cascade.
+
+`video.go` and `video_creative.go` add the fourth channel, and it is the first one whose
+creative costs this service **no network at all**. A YouTube video is referenced by its
+eleven-character id, which the caller already owns and Google already hosts, so there is
+no fetch phase, no transport to harden, no byte cap to enforce and no URL to redact. That
+is not a simplification of the Demand Gen and Performance Max paths — it is what makes the
+whole Video preflight PURE, with every refusal decided before the first budget mutate
+rather than merely before it by construction.
+
+**The shell is VIDEO plus VIDEO_ACTION.** `advertisingChannelType: VIDEO` on its own is
+ambiguous — it covers reach, views and action products that bid toward entirely different
+things — so the sub-type is sent with it and the wiring test asserts both. The campaign
+bids `maximizeConversions` by default, as Performance Max does, and
+`validateBiddingPlan` accepts only that strategy or `target-cpa` on this channel: the
+narrowest pair VIDEO_ACTION documents. Unlike the Demand Gen fence, that pair is **NOT
+backed by live-API evidence from this client** — no Video campaign has been created
+against a real account from here — so the refusal says `NOT yet verified a wider set
+against the live API` rather than borrowing the `only combination verified against the
+live API` wording the other two channels earned. The distinction is load-bearing: a reader
+widening the set later needs to know which channels have evidence behind them and which
+have only Google's documentation. Conversion actions ARE accepted here, so
+`campaign.selective_optimization` rides the Video shell exactly as it does on Search.
+
+**Targeting is the un-narrowed Search set, deliberately.** Geo is attached at CAMPAIGN
+level, proximity included, and all five campaign-criteria kinds — languages, ad schedules,
+device bid modifiers, excluded age ranges, excluded genders — are attached on the criteria
+step. That is why the two fences that name Demand Gen by name (`geo.go`'s proximity
+refusal and `validateCriteriaPlan`'s narrowing) still name one channel rather than every
+non-Search one: widening either to `!= campaignKindSearch` would refuse a campaign Google
+creates happily, which is the over-refusal these guards exist to avoid. Keywords, audience
+segments, a CPC bid and campaign-level negative keywords are all REFUSED — refused, not
+silently dropped, under the same doctrine as every other channel-incapable input.
+
+**The creative is a VIDEO_RESPONSIVE ad over two mutates.** Each YouTube id becomes a
+`youtubeVideoAsset` in one `assets:mutate` against the same positional response contract
+Performance Max reads, then the ad is assembled in one `adGroupAds:mutate`. Four text
+lists stay four distinct asset field types — headlines (display width 15, not the RSA's
+30), long headlines (90), descriptions (70), call-to-action texts (10) — because merging
+any two would still produce an ad Google accepts, with the wrong field type on half the
+copy. Counts are 1–5 videos, 1–5 headlines, 1–5 long headlines and 1–5 descriptions, all
+required; call-to-action texts are **0–5, and absent is not empty**: an omitted list means
+Google supplies its own default, while an empty one would mean no text at all. The AD is
+created PAUSED; the AD GROUP is created ENABLED, exactly as Demand Gen's is — Search is the
+only channel here that pauses its ad group. The campaign is PAUSED either way, so nothing
+serves, but the distinction is what a reconciler reads: an ENABLED ad group under a PAUSED
+Video campaign is correctly created, not half-enabled. Both ids are reported even when the
+ad create fails, under the partial-result contract.
+
+**Video has its own adoption slot.** `googleAdsVariantForChannelType` maps `VIDEO` to
+`video`, so adopting an upstream Video campaign fills the Video slot rather than the
+default one — the mis-filing that would otherwise leave the real slot open and let the
+next dispatch create a second paid campaign for the same brief.
+
+
+## Display campaign creation (LFXV2-2665)
+
+`display.go` and `display_creative.go` add the fifth channel, and the shell is defined as
+much by what it does NOT carry as by what it does: `advertisingChannelType: DISPLAY` with
+**no** `advertisingChannelSubType` at all. That is the deliberate contrast with Video,
+which pins `VIDEO_ACTION`, and the wiring test asserts the ABSENCE — a cascade copied from
+the Video shell would send a sub-type Google reads as a different product. The campaign
+bids `maximizeConversions` by default. The ad group is typed `DISPLAY_STANDARD`
+(`adGroupTypeDisplayStandard`) and is created ENABLED, as Demand Gen's and Video's are;
+the AD is created PAUSED and the campaign is PAUSED, so nothing serves either way.
+
+**Display is the ONLY non-Search channel that sends `networkSettings`, and the obvious
+inference is the wrong one.** Exactly two of the five channels carry the field: SEARCH with
+`targetGoogleSearch: true`, and DISPLAY with `targetContentNetwork: true` — the Google
+Display Network *is* the content network. Demand Gen, Performance Max and Video all REJECT
+it outright, because their network is implied by the channel and has no knobs, and each of
+those three has a test asserting the field is ABSENT from its campaign create. So "Display
+is not Search, therefore omit it like the other three" reads as the consistent choice and
+is a shipping defect: an omitted `networkSettings` is not a benign default. The flags are
+proto3 bools, so absent resolves to a campaign targeting NO network, which Google rejects
+with `CampaignError.CAMPAIGN_MUST_TARGET_AT_LEAST_ONE_NETWORK` — AFTER the budget mutate
+has committed. That is a stranded billable budget, exactly the orphan this cascade's
+ordering exists to prevent, and it never reconciles itself: a retry composes the same
+budget name and dies at `DUPLICATE_NAME`. `targetGoogleSearch` and `targetSearchNetwork`
+stay explicitly false, because a Display campaign has no business opting itself into Search
+inventory. `TestCreateDisplayCampaign_HappyPath` asserts all three flags by name rather
+than the field's mere presence, so a later "simplify" that flips one fails locally instead
+of at Google.
+
+**`longHeadline` is a SCALAR, and it is the one place this channel's shape departs from
+its siblings.** A responsive display ad takes exactly one long headline, not a list, so
+`DisplayCreative.LongHeadline` is a `string` where Performance Max and Video both carry
+`[]string`. A mapper copied from either compiles, and either drops the field or keeps only
+its first element — which is why both the dispatch mapper test and the wiring fixture spell
+it out as a string rather than reusing a sibling's helper.
+
+**Images are fetched, so the preflight is not pure — but the fetch still precedes the
+budget.** `fetchDisplayImages` runs over `displayImageSlots` through the same hardened
+transport Demand Gen and Performance Max use (https only, no redirects, public-IP dial
+guard, 5 MiB per image and 64 MiB across the creative, decoder-set format allowlist,
+geometry checked against the decoded image within Google's documented ±1%), and it runs
+BEFORE the first budget mutate, so a refused image strands nothing. The four slots are
+marketing 1.91:1 ≥600x314, square marketing 1:1 ≥300x300, logo 4:1 ≥512x128 and square
+logo 1:1 ≥128x128; at most 15 marketing images COMBINED across the two marketing arrays
+and 5 logos per array. A marketing image **or** a square marketing image is required and
+either satisfies the requirement — RECIPROCAL, as on Demand Gen and unlike Performance
+Max, where both shapes are required. Both logo arrays are optional.
+
+Text counts are Display's own: 1–5 headlines (≤30 weighted), 1–5 descriptions (≤90), a
+REQUIRED long headline (≤90) and a REQUIRED business name (≤25). `callToActionText` is
+optional and ≤30 runes — a payload bound this client sets, not an upstream limit, and the
+comment says so. Over-long copy is REFUSED, not truncated.
+
+**Targeting is the un-narrowed Search set, as on Video.** Campaign-level geo INCLUDING
+proximity, and all five campaign-criteria kinds. Conversion actions are ACCEPTED, so
+`campaign.selective_optimization` rides the Display shell — Google documents that field for
+SEARCH, DISPLAY, VIDEO and APP campaigns. Keywords, audience segments, campaign-level
+negative keywords, a CPC bid, extension assets and multiple ad groups are all REFUSED by
+the pre-existing `!= campaignKindSearch` fences, which Display inherits correctly.
+
+**Named gaps, each a client limitation rather than Google's rule — and said so in place.**
+Google accepts MANUAL CPC on Display; this client refuses it, because the Display ad-group
+payload carries no bid field and `cpcBid` is refused off Search. The five automated
+strategies it does accept are **not live-verified**, on Video's terms and for the same
+reason. `CONNECTED_TV` is the second: Google supports TV screens on Display and Video
+campaigns, so the `deviceTypes` omission that merely restated an upstream rule while Search
+and Demand Gen were the only kinds reaching that map became this client's own limitation
+the moment Video and Display started reaching it. It stays closed because the documentation
+does not settle whether a CONNECTED_TV campaign criterion carries a BID MODIFIER, this
+client cannot send one without, and a wrong guess lands at the `campaignCriteria:mutate`
+AFTER the budget and campaign are committed — the orphan the preflight exists to prevent —
+with the only reachable account a production one where a `validateOnly` mutate is still a
+POST. The comment names the closing procedure rather than leaving the next reader to
+rediscover it. `youtubeVideos` on a responsive display ad and the `pricePrefix`/`promoText`
+fields are not sent at all.
+
+**Display's ad group is named `"<event> - Display Network"`, not `"<event> - Display"`.**
+Demand Gen has composed `"<event> - Display"` off the same `EventName` since it *was* the
+Display channel, so once both can sit under one brief the two names are equal byte for
+byte and the name-based reconciliation each relies on stops distinguishing them. Demand
+Gen's suffix is the one already attached to live campaigns, so the new channel is the side
+that moves. All three new channels compose their group name through `sanitizeNamePart`
+rather than a bare `TrimSpace`, for the reason `campaign.go` gives: a control character
+inside `EventName` survives a trim and is rejected at `adGroups:mutate`, which runs after
+the budget and campaign are committed and paid for. Demand Gen is deliberately NOT
+converted — its names are on live campaigns and the whitespace-run collapse would rename
+them — so that stranding stays open on that one channel as a recorded gap, and
+`demandGenAdGroupName` exists so the Display collision test asserts against the real
+composition instead of a literal that goes stale silently.
+
+**Derived names are sanitized; caller-supplied names are refused.** Performance Max is the
+only path taking an operator's own `AssetGroupName`, and `sanitizeNamePart` would hand back
+a different name than they typed — it also maps `|` to a space and collapses whitespace
+runs, neither of which Google rejects in an asset group name. That branch therefore refuses
+exactly NUL, LF and CR (the three runes `returnedCampaignName` names) and passes TAB, `|`
+and format characters through unchanged. Widening it to `unicode.IsControl` or to
+`sanitizeNamePart`'s rule would be over-refusal — a create upstream accepts, stopped here.
+
+**Display has its own adoption slot**, keyed on `advertising_channel_type` alone like every
+other: ANY `DISPLAY` campaign fills the `display` slot. One slot per channel TYPE is the
+model, not a Display-specific gap.
+
 
 ## Scope
 

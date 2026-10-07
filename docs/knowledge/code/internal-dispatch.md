@@ -289,6 +289,64 @@ load-bearing half: the config is passed by value but its slice shares a backing 
 the caller's, so sanitizing in place would redact the URL the create path is about to send to
 Google and break the sitelink — a worse defect than the one being fixed.
 
+**The Demand Gen creative's five image lists are sanitized the same way.**
+`sanitizeSnapshotURLs` applies `sanitizeSnapshotURL` across a list, returning nil for an
+empty one so an absent list stays absent in the row, and `googleAdsSnapshotConfig`
+deep-copies the whole `demandGenCreative` block before reducing all five. Creative URLs
+are the case the signed-URL risk is sharpest: a CDN asset link often carries its
+credential IN the query string, so the unencrypted row would otherwise hold a working
+key to the asset. Each list is asserted individually in
+`TestGoogleAdsSnapshotConfig_SanitizesEveryCreativeURLList` rather than in aggregate —
+a helper applied to four of five lists passes any "no secrets anywhere" check as long as
+the fifth happens to be empty in the fixture, which is exactly how the fifth list gets
+missed. The deep copy matters here more than for sitelinks: the fetch that downloads
+these images runs AFTER the snapshot is taken, so sanitizing in place would leave the
+create path trying to download a URL with its credentials stripped.
+
+**The Performance Max asset group has five URL lists of its own, and they are not the
+same five.** `portraitImages` is shared, `tallPortraitImages` does not exist on an asset
+group and `landscapeLogoImages` does not exist on a Demand Gen ad, so
+`googleAdsSnapshotConfig` sanitizes its own block rather than reusing the Demand Gen
+one, and `TestGoogleAdsSnapshotConfig_SanitizesEveryPerformanceMaxURLList` asserts all
+five individually for the reason the Demand Gen test gives.
+
+**The responsive display ad has FOUR URL lists, and they are neither of those sets.**
+There is no portrait slot on a display ad, and `squareLogoImages` exists on neither
+sibling, so `googleAdsSnapshotConfig` sanitizes a third block of its own and
+`TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList` asserts all four individually,
+one more time for the same reason.
+
+**Promotion and price extensions carry destinations too.** A promotion has one
+`finalUrl`; a price extension has one per OFFERING, which is where its deep copy has to
+reach. `googleAdsPriceConfig` copied at the top level still shares its `Offerings`
+backing array with the caller's config, so sanitizing a row in place would strip the
+path off a URL the create path is about to send — the sitelink trap one level deeper.
+`TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersPriceOfferings` pins that, and
+`..._SanitizesEveryPriceOfferingURL` asserts every row rather than the first, for the
+reason the creative-list tests give. Call extensions are NOT sanitized and NOT part of
+the early return's condition set: a phone number is not a URL and carries no query to
+strip.
+
+**A lead form carries a URL that is never tagged, and is persisted all the same.** The
+privacy-policy URL is the one caller URL the client validates but deliberately does not
+UTM-tag, because it is a link Google renders inside the form rather than an ad
+destination. That changes nothing here: `config_snapshot` is plaintext either way, so
+`googleAdsSnapshotConfig` reduces it on a copied slice like every other caller URL, and
+`TestGoogleAdsSnapshotConfig_SanitizesTheLeadFormPrivacyPolicyURL` pins both halves —
+the snapshot loses the signing query, and the caller's config keeps the full URL Google
+requires. A shallow slice copy suffices here; only the price extension's nested
+`Offerings` needs the deep one.
+
+The early return that skips the whole copy names SEVEN fields now — sitelinks,
+promotions, prices, lead forms, the Demand Gen creative, the asset group and the Display
+creative, and deliberately NOT `videoCreative`, which carries YouTube video ids and text
+and no URL of any kind, so a config holding only a video creative has nothing to
+sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
+`..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone` and
+`..._SanitizesTheLeadFormPrivacyPolicyURL` pin the last five, because a config carrying
+only one of them taking that return is precisely the bug each condition was added to
+prevent.
+
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
 denylist that cannot name every credential parameter a registration page might use, and it
@@ -592,12 +650,22 @@ from an observation that never happened.
 The Google Ads adapter compares `budget_amount`, `budget_type`, `campaign_name`,
 `advertising_channel_type`, `start_date` and `end_date`, and reports four settings
 **upstream-only** — `status`, `budget_delivery_method`, `budget_explicitly_shared` and
-`bidding_strategy_type`. Those four share a verdict but NOT a reason, and collapsing the two
+`bidding_strategy_type`. Those four share a verdict but NOT a reason, and collapsing the
 reasons into one is the mistake to avoid here. Nothing in a Google Ads dispatch config can
-express `budget_delivery_method`, `budget_explicitly_shared` or `bidding_strategy_type`, so
-those three have no recorded side at all; they are reported anyway because a budget that
-reads as expected while being `ACCELERATED` or shared across campaigns is exactly the state
-that explains a spend anomaly the compared fields cannot. **`status` is upstream-only for an
+express `budget_delivery_method` or `budget_explicitly_shared`, so those two have no
+recorded side at all; they are reported anyway because a budget that reads as expected
+while being `ACCELERATED` or shared across campaigns is exactly the state that explains a
+spend anomaly the compared fields cannot. **`bidding_strategy_type` is a third reason
+again:** `googleAdsConfig.BiddingStrategy` now DOES record one, so the recorded side exists
+and the field is nonetheless left uncompared on purpose. Comparing it would require mapping
+this client's caller vocabulary onto Google's OUTPUT_ONLY `BiddingStrategyTypeEnum`, and
+that mapping is unverified exactly where it is ambiguous — `target-cpa` and
+`maximize-conversions` are both sent as `maximize_conversions`, and which enum Google
+reports back for the targeted one has not been observed — while on the adopt path the row
+records a strategy that was never pushed upstream, so the two sides are expected to
+disagree. A guessed mapping would report a false divergence on campaigns set exactly as
+asked; `unknown` under-informs, a false divergence misinforms, and only the second costs the
+operator an investigation. **`status` is upstream-only for an
 entirely different reason: the campaign row HAS a `status` column.** It carries this
 service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`,
 `created_degraded`, `deleted`) and only sometimes a run state set by the status toggle —
@@ -613,7 +681,8 @@ whose recorded side comes from `config_snapshot` rather than from a column.
 on both the create and the adoption path, so the row DOES record which channel was asked for.
 `googleAdsRecordedChannelType` decodes it and expresses it in Google's own vocabulary —
 `search` and an ABSENT channel both map to `SEARCH` (absence has meant Search since before the
-field existed), `demand-gen` maps to `DEMAND_GEN`. A campaign recorded as demand-gen and
+field existed), `demand-gen` maps to `DEMAND_GEN`, `performance-max` to `PERFORMANCE_MAX`, `video` to `VIDEO` and
+`display` to `DISPLAY`. A campaign recorded as demand-gen and
 running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
 side made it permanently `unknown` — the finding could not be produced at all. The recorded
 side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
@@ -802,6 +871,68 @@ reads as "inherit the campaign-level value", so the distinction is not cosmetic.
 `adSchedules[].bidModifier` is a POINTER on the wire type as well as in the client, because an
 explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
 indistinguishable from an instruction to stop serving in that interval.
+
+`demandGenCreative` follows the same pattern one level deeper: a `*googleAdsDemandGenCreativeConfig`
+POINTER on the config, so absent and present-but-empty stay distinguishable, mapped by
+`googleAdsDemandGenCreative` which answers the zero `googleads.DemandGenCreative` for nil —
+the value the platform layer reads as "no creative asked for", which is the pre-existing
+no-ad behaviour every Demand Gen campaign created before this feature relies on. Its test
+asserts each of the seven lists lands in its OWN slot rather than counting images: a mapper
+that crossed `portraitImages` with `tallPortraitImages` would satisfy any count-based check
+— both lists non-empty, totals matching — and build the campaign with 4:5 images where
+Google wants 9:16.
+
+`performanceMaxCreative` is the same shape again — a pointer on the config, a mapper that
+validates nothing, the zero value for nil — and its test asserts nine lists into nine
+slots plus four scalars. The trap there is the three TEXT lists rather than the images:
+headlines, longHeadlines and descriptions are three distinct Google asset field types, so
+a mapper that merged any two would still produce a campaign Google creates, with the
+wrong field type on assets it renders differently. `googleads_pmax_wiring_test.go` proves
+the wire config actually reaches the client without exercising the asset-group mutates —
+reaching those needs real image bytes, and the creative fetch's dial guard and TLS roots
+are relaxable only from inside the googleads package, which is the one hole that must not
+be opened for a test. It asserts instead that `channel: "performance-max"` reaches the
+campaign shell (`PERFORMANCE_MAX`, `maximizeConversions`, no ad group and no ad) and that
+a complete asset group gets past every bound and into the fetch, with each list omitted in
+turn producing that list's own refusal.
+
+`videoCreative` is the same shape a fourth time — a pointer, a mapper that validates nothing,
+the zero `googleads.VideoCreative` for nil — but `googleads_video_wiring_test.go` is the one
+file of the five that cannot assert a campaign body, because **the Google Ads API cannot
+create a Video campaign at all** and dispatch refuses the channel before anything is sent
+(see `googleads.CreateVideoCampaign`). It asserts the two things that are still reachable
+and still matter. First, the refusal itself: `channel: "video"` must come back wrapping
+`googleads.ErrVideoCreateUnsupported` with a nil campaign and — the binding assertion —
+`!cap.sawBudget`, because the budget is step 1 and `campaigns:mutate` is step 2, so a
+refusal one step late leaves a real billable budget behind per attempt and a retry composes
+the same budget name and dies at `DUPLICATE_NAME` instead of reconciling it. Second, the
+mapper, proved by WHICH refusal each wire shape produces: omitting any of the four required
+lists gives that list's own validation refusal (the validator runs at
+`ValidateCampaignInputKind`, ahead of the channel refusal), while omitting the optional
+`callToActions` reaches the channel refusal instead — which is what now pins the required
+set, and keeps the validator honest while the create path is closed. The cascade's own
+payload proofs moved down into the googleads package, where `video_test.go` runs them
+against `createVideoCampaignCascade` directly.
+
+The refusal lives in the create switch rather than in `ValidateCampaignInputKind` because
+that validator runs BEFORE the adoption branch, and Video ADOPTION and reporting are
+legitimately supported — only creation is impossible, so refusing earlier would break a
+path Google does serve.
+
+`displayCreative` is the shape a fifth time, and the one that breaks the pattern:
+`longHeadline` is a SCALAR here, not a list, so a mapper copied from Performance Max or
+Video compiles and silently drops the field or keeps only its first element.
+`googleads_display_creative_test.go` pins each of the nine fields to its own slot for that
+reason. `googleads_display_wiring_test.go` goes back to the Performance Max shape rather
+than Video's — Display fetches image bytes, so the ad mutate is out of reach from here
+without opening the dial-guard hole — and asserts that `channel: "display"` reaches the
+shell as `DISPLAY` with **no** `advertisingChannelSubType` (the deliberate contrast with
+Video's pinned `VIDEO_ACTION`), with one ad group and no ad; that a complete creative gets
+past every bound and into the fetch; and that each field omitted in turn produces its own
+refusal. The two marketing arrays are omitted TOGETHER in that table, because the
+requirement is reciprocal — either one alone satisfies it — and a table that omitted just
+one would pass against a mapper that never read that array at all. The logo arrays and the
+call-to-action text are omitted together too, to prove optional means optional.
 
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account
@@ -2933,10 +3064,49 @@ type, so the only evidence is what the platform reports: the lookup selects
 `PlatformCampaignRef.Variant`, which the adopt path persists. Before this, every adopted Google
 campaign was stored as `default` whatever it was — so adopting a Demand Gen campaign left the
 `demand-gen` slot free and the next Demand Gen dispatch created a SECOND paid campaign for the
-same brief. The mapping fails CLOSED: only the types this service can create are mappable, and
-`PERFORMANCE_MAX`, `VIDEO`, an unrecognised future value or an absent field are refused rather
-than defaulted, since defaulting is what produces the duplicate. An adapter that returns an empty
+same brief. The mapping fails CLOSED: only the types this service can create OR ADOPT are mappable — `SEARCH`,
+`DEMAND_GEN`, `PERFORMANCE_MAX` and, since the Video and Display paths landed, `VIDEO` and
+`DISPLAY` — while `SHOPPING`,
+`HOTEL`, an unrecognised future value or an absent field are refused rather than defaulted, since
+defaulting is what produces the duplicate. **`VIDEO` is ADOPT-ONLY**, and it is why the invariant
+reads "create or adopt" rather than "create": the Google Ads API cannot create a Video campaign at
+all, so `CreateVideoCampaign` refuses before sending anything — but a Video campaign built in the
+Google Ads UI is a real campaign this service must be able to adopt, and adopting it into the
+`default` slot is the very duplicate this mapping exists to prevent. A type leaves the refused set
+the moment this service can PLACE it, which a create path or an adoption path each establish on
+their own. The mappable set is one of the SIX places the channel list is
+duplicated and has to grow together; see `googleAdsChannelIsSupported`, `AdoptableVariants`,
+`googleAdsRecordedChannelType`, the dispatch create switch and the monitor GAQL's
+`advertising_channel_type IN (...)` list.
+
+Adoption establishes the slot and nothing else. `campaignFromGoogleAdsAdoption` writes
+provenance only — customer id, campaign id and name — and no ad group, ad or asset group ids,
+because the service did not create them and the lookup does not read them. The status toggle
+therefore REFUSES to activate an adopted campaign on every channel: `googleAdsActivationGate`
+asks what the `Result` blob recorded, and for an adopted row that set is empty whichever arm
+the variant selects. That is the correct answer — a cascade can only flip resources it has ids
+for — so each arm's message names adoption explicitly and points the operator at the Google Ads
+UI, rather than describing a provisioning failure in records this service never wrote. PAUSE is
+unaffected: the gate runs only on ACTIVATE, and pausing the campaign resource alone always
+stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
+
+**A Performance Max asset group id is not a serving campaign, and the gate stopped treating it as
+one.** `createPerformanceMaxAssetGroup` returns the group id even when the LINK mutate fails,
+deliberately — a group that exists with no assets attached is the state an operator most needs to
+find, and clearing the id would hide it. But the activation gate used to key on that id alone, so
+exactly the campaign that cannot serve was the one it called provisioned: it un-paused a campaign
+whose asset group was empty and reported success. The gate now reads a second recorded fact,
+`CampaignResult.AssetGroupAssetLinks`, the number of `assetGroupAssets` links Google CONFIRMED,
+which `googleAdsToggleAssetGroup` decodes from the same `Result` blob as the id. Zero links refuses
+with `domain.ErrCampaignNotProvisioned` and sends the operator to the Google Ads UI. The field is a
+`*int` and the distinction is the whole point: **nil is not zero.** Every Performance Max row
+written before the field existed has no such key, and reading absence as zero would refuse
+activation on campaigns that are provisioned correctly — an over-refusal, the one failure mode
+these gates must never have. Nil therefore activates, a recorded zero refuses. An UNCONFIRMED link
+mutate records zero rather than nothing, also deliberately: links may exist, this client cannot say
+they do, and the safe reading of "cannot say" is the UI rather than a claimed launch. PAUSE is
+untouched by all of it — refusing to pause is refusing to stop spend.
 
 The Google dispatcher resolves the CHANNEL before it composes the campaign name, before adoption
 looks anything up, and before any create. Each of those depends on which campaign type is being
