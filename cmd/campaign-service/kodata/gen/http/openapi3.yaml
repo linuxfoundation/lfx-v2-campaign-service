@@ -8240,6 +8240,151 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-hubspot/account-monitor:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: monitor-hubspot-account lfx-v2-campaign-service-connections
+            description: 'Read the statistics of the HubSpot marketing emails THIS SERVICE created for the project and sent within the trailing `days` (today inclusive, UTC), with findings from this service''s email rules (high bounce, spam-complaint or unsubscribe rate, low open or click rate, sent but nothing delivered). The HubSpot sibling of the monitor-*-ads-account reads, with one deliberate difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is shared across projects and has no per-project account, so there is no account_id; the scope is the email ids this service recorded for the project, each read by itself from HubSpot''s marketing-email statistics endpoint — never a portal-wide read. Resolved from the project''s OWN connection only (no LF system fallback: 404 without one). A project that has recorded no HubSpot email gets an empty 200 without HubSpot being called. Any upstream failure — including a 401/403, a 429 still refused after retries, or a malformed or untrustworthy response — is a 503 with no partial result. There are no cost fields: HubSpot bills nothing per send. A pure read: nothing is persisted.'
+            operationId: lfx-v2-campaign-service-connections#monitor-hubspot-account
+            parameters:
+                - name: days
+                  in: query
+                  description: Trailing days (UTC, today inclusive) whose sends to read.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: integer
+                    description: Trailing days (UTC, today inclusive) whose sends to read.
+                    example: 30
+                    format: int64
+                    minimum: 7
+                    maximum: 90
+                  example: 30
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/HubspotEmailMonitor'
+                            example:
+                                action_items:
+                                    - action: Review the send list for stale or unverified contacts
+                                      campaign_id: "112233445566"
+                                      campaign_name: KubeCon NA 2026 — registration open
+                                      issue: Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level
+                                      priority: MED
+                                days: 30
+                                emails:
+                                    - ab_variant: false
+                                      bounce_rate: 0.03
+                                      bounces: 150
+                                      campaign_id: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
+                                      click_rate: 0.04
+                                      clicks: 194
+                                      delivered: 4850
+                                      email_id: "112233445566"
+                                      name: KubeCon NA 2026 — registration open
+                                      open_rate: 0.3
+                                      opens: 1455
+                                      sent: 5000
+                                      spam_reports: 1
+                                      unsubscribe_rate: 0.004948453608247423
+                                      unsubscribes: 24
+                                emails_checked: 3
+                                emails_not_sent_in_window: 2
+                                emails_truncated: false
+                                emails_unattributable: 0
+                                metrics_as_of: "2026-10-08T14:30:00Z"
+                                metrics_window_end: "2026-10-08"
+                                metrics_window_start: "2026-09-09"
+                                totals:
+                                    bounce_rate: 0.03
+                                    bounces: 150
+                                    click_rate: 0.04
+                                    clicks: 194
+                                    delivered: 4850
+                                    email_count: 1
+                                    open_rate: 0.3
+                                    opens: 1455
+                                    sent: 5000
+                                    spam_reports: 1
+                                    unsubscribe_rate: 0.004948453608247423
+                                    unsubscribes: 24
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError116'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-hubspot/campaigns:
         get:
             tags:
@@ -21070,6 +21215,323 @@ components:
                 private_app_token: Veniam aut.
             required:
                 - private_app_token
+        HubspotEmailMonitor:
+            type: object
+            properties:
+                action_items:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorActionItem'
+                    description: Findings across the emails, HIGH first. campaign_id is the HubSpot email id the finding is about and campaign_name its name. Every threshold is a deliverability heuristic, not a HubSpot limit.
+                    example:
+                        - action: Review the send list for stale or unverified contacts
+                          campaign_id: "112233445566"
+                          campaign_name: KubeCon NA 2026 — registration open
+                          issue: Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level
+                          priority: MED
+                days:
+                    type: integer
+                    description: The REQUESTED trailing-days window (today inclusive, UTC), echoed back.
+                    example: 30
+                    format: int64
+                emails:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/HubspotEmailMonitorEmail'
+                    description: The project's own HubSpot marketing emails that HubSpot reports as SENT inside the window, newest-recorded campaign first. The window selects emails by SEND date; each email's counters are its totals to metrics_as_of, not only the events inside the window.
+                    example:
+                        - ab_variant: false
+                          bounce_rate: 0.03
+                          bounces: 150
+                          campaign_id: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
+                          click_rate: 0.04
+                          clicks: 194
+                          delivered: 4850
+                          email_id: "112233445566"
+                          name: KubeCon NA 2026 — registration open
+                          open_rate: 0.3
+                          opens: 1455
+                          sent: 5000
+                          spam_reports: 1
+                          unsubscribe_rate: 0.004948453608247423
+                          unsubscribes: 24
+                emails_checked:
+                    type: integer
+                    description: 'How many of the project''s recorded emails HubSpot was asked about: the emails array plus emails_not_sent_in_window.'
+                    example: 3
+                    format: int64
+                emails_not_sent_in_window:
+                    type: integer
+                    description: How many checked emails HubSpot reported no send of inside the window — sent outside it, never sent (a staged draft), or no longer existing; HubSpot's answer does not tell these apart. Never reported as zeros.
+                    example: 2
+                    format: int64
+                emails_truncated:
+                    type: boolean
+                    description: 'True when the project has recorded more than 50 HubSpot campaigns: only the 50 most recently recorded (and their A/B variants) were checked, so totals may omit older emails sent inside the window.'
+                    example: false
+                emails_unattributable:
+                    type: integer
+                    description: 'How many recorded emails were NOT read because they cannot be read safely: the campaign row does not record which HubSpot portal the email was created in, records a different portal than the one the project''s token reaches now, or holds a malformed id. An email id means something only inside its own portal.'
+                    example: 0
+                    format: int64
+                metrics_as_of:
+                    type: string
+                    description: When the counters were read from HubSpot; each email's counters are its totals to this instant. ABSENT when HubSpot was not called because the project has recorded no HubSpot email.
+                    example: "2026-10-08T14:30:00Z"
+                    format: date-time
+                metrics_window_end:
+                    type: string
+                    description: The LAST UTC calendar day (inclusive, today) of the send-date window. Absent exactly when metrics_as_of is.
+                    example: "2026-10-08"
+                    format: date
+                metrics_window_start:
+                    type: string
+                    description: The FIRST UTC calendar day (inclusive) of the send-date window. Absent exactly when metrics_as_of is.
+                    example: "2026-09-09"
+                    format: date
+                totals:
+                    $ref: '#/components/schemas/HubspotEmailMonitorTotals'
+            example:
+                action_items:
+                    - action: Review the send list for stale or unverified contacts
+                      campaign_id: "112233445566"
+                      campaign_name: KubeCon NA 2026 — registration open
+                      issue: Bounce rate is 3.0% (150 of 5000 sent) — above the 2% healthy-list level
+                      priority: MED
+                days: 30
+                emails:
+                    - ab_variant: false
+                      bounce_rate: 0.03
+                      bounces: 150
+                      campaign_id: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
+                      click_rate: 0.04
+                      clicks: 194
+                      delivered: 4850
+                      email_id: "112233445566"
+                      name: KubeCon NA 2026 — registration open
+                      open_rate: 0.3
+                      opens: 1455
+                      sent: 5000
+                      spam_reports: 1
+                      unsubscribe_rate: 0.004948453608247423
+                      unsubscribes: 24
+                emails_checked: 3
+                emails_not_sent_in_window: 2
+                emails_truncated: false
+                emails_unattributable: 0
+                metrics_as_of: "2026-10-08T14:30:00Z"
+                metrics_window_end: "2026-10-08"
+                metrics_window_start: "2026-09-09"
+                totals:
+                    bounce_rate: 0.03
+                    bounces: 150
+                    click_rate: 0.04
+                    clicks: 194
+                    delivered: 4850
+                    email_count: 1
+                    open_rate: 0.3
+                    opens: 1455
+                    sent: 5000
+                    spam_reports: 1
+                    unsubscribe_rate: 0.004948453608247423
+                    unsubscribes: 24
+            required:
+                - days
+                - emails
+                - action_items
+                - totals
+                - emails_checked
+                - emails_not_sent_in_window
+                - emails_unattributable
+                - emails_truncated
+        HubspotEmailMonitorEmail:
+            type: object
+            properties:
+                ab_variant:
+                    type: boolean
+                    description: True for an A/B test's variant (B) email, which is recorded on its parent campaign; false for the campaign's own email.
+                    example: false
+                bounce_rate:
+                    type: number
+                    description: bounces / sent, as a fraction. ABSENT when sent is 0.
+                    example: 0.03
+                    format: double
+                bounces:
+                    type: integer
+                    description: HubSpot's `bounce` counter, to date.
+                    example: 150
+                    format: int64
+                campaign_id:
+                    type: string
+                    description: This service's campaign UUID the email belongs to.
+                    example: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
+                    format: uuid
+                click_rate:
+                    type: number
+                    description: clicks / delivered, as a fraction. ABSENT when delivered is 0.
+                    example: 0.04
+                    format: double
+                clicks:
+                    type: integer
+                    description: HubSpot's `click` counter, to date.
+                    example: 194
+                    format: int64
+                delivered:
+                    type: integer
+                    description: HubSpot's `delivered` counter, to date.
+                    example: 4850
+                    format: int64
+                email_id:
+                    type: string
+                    description: The HubSpot marketing-email id.
+                    example: "112233445566"
+                name:
+                    type: string
+                    description: The email's name as this service recorded it when the email was created.
+                    example: KubeCon NA 2026 — registration open
+                open_rate:
+                    type: number
+                    description: opens / delivered, as a fraction (0.3 = 30%). ABSENT when delivered is 0 — a rate over nothing is unknown, not 0.
+                    example: 0.3
+                    format: double
+                opens:
+                    type: integer
+                    description: HubSpot's `open` counter, to date. Inflated by mail clients that pre-fetch images (e.g. Apple Mail Privacy Protection).
+                    example: 1455
+                    format: int64
+                sent:
+                    type: integer
+                    description: HubSpot's `sent` counter for the email, to date.
+                    example: 5000
+                    format: int64
+                spam_reports:
+                    type: integer
+                    description: HubSpot's `spamreport` counter, to date.
+                    example: 1
+                    format: int64
+                unsubscribe_rate:
+                    type: number
+                    description: unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.
+                    example: 0.004948453608247423
+                    format: double
+                unsubscribes:
+                    type: integer
+                    description: HubSpot's `unsubscribed` counter, to date.
+                    example: 24
+                    format: int64
+            example:
+                ab_variant: false
+                bounce_rate: 0.03
+                bounces: 150
+                campaign_id: 6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f
+                click_rate: 0.04
+                clicks: 194
+                delivered: 4850
+                email_id: "112233445566"
+                name: KubeCon NA 2026 — registration open
+                open_rate: 0.3
+                opens: 1455
+                sent: 5000
+                spam_reports: 1
+                unsubscribe_rate: 0.004948453608247423
+                unsubscribes: 24
+            required:
+                - campaign_id
+                - email_id
+                - name
+                - ab_variant
+                - sent
+                - delivered
+                - opens
+                - clicks
+                - bounces
+                - unsubscribes
+                - spam_reports
+        HubspotEmailMonitorTotals:
+            type: object
+            properties:
+                bounce_rate:
+                    type: number
+                    description: Summed bounces / summed sent. ABSENT when that denominator is 0.
+                    example: 0.03
+                    format: double
+                bounces:
+                    type: integer
+                    description: Sum of the emails' bounces.
+                    example: 150
+                    format: int64
+                click_rate:
+                    type: number
+                    description: Summed clicks / summed delivered. ABSENT when that denominator is 0.
+                    example: 0.04
+                    format: double
+                clicks:
+                    type: integer
+                    description: Sum of the emails' clicks.
+                    example: 194
+                    format: int64
+                delivered:
+                    type: integer
+                    description: Sum of the emails' delivered counters.
+                    example: 4850
+                    format: int64
+                email_count:
+                    type: integer
+                    description: 'How many emails the totals sum: the length of the emails array.'
+                    example: 1
+                    format: int64
+                open_rate:
+                    type: number
+                    description: Summed opens / summed delivered. ABSENT when that denominator is 0.
+                    example: 0.3
+                    format: double
+                opens:
+                    type: integer
+                    description: Sum of the emails' opens.
+                    example: 1455
+                    format: int64
+                sent:
+                    type: integer
+                    description: Sum of the emails' sent counters.
+                    example: 5000
+                    format: int64
+                spam_reports:
+                    type: integer
+                    description: Sum of the emails' spam reports.
+                    example: 1
+                    format: int64
+                unsubscribe_rate:
+                    type: number
+                    description: Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.
+                    example: 0.004948453608247423
+                    format: double
+                unsubscribes:
+                    type: integer
+                    description: Sum of the emails' unsubscribes.
+                    example: 24
+                    format: int64
+            example:
+                bounce_rate: 0.03
+                bounces: 150
+                click_rate: 0.04
+                clicks: 194
+                delivered: 4850
+                email_count: 1
+                open_rate: 0.3
+                opens: 1455
+                sent: 5000
+                spam_reports: 1
+                unsubscribe_rate: 0.004948453608247423
+                unsubscribes: 24
+            required:
+                - email_count
+                - sent
+                - delivered
+                - opens
+                - clicks
+                - bounces
+                - unsubscribes
+                - spam_reports
         InternalServerError:
             type: object
             properties:
@@ -26115,6 +26577,24 @@ components:
                 - code
                 - message
         UnauthorizedError115:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError116:
             type: object
             properties:
                 code:

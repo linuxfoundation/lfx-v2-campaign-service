@@ -101,7 +101,8 @@ spec:
           # Account-scoped monitor reads — a live, credential-scoped read of every
           # campaign under one raw ad account plus derived pacing/action-item rules
           # (ported from the LFX One BFF's four rule engines). Ruled for exactly the
-          # six providers with a monitor dispatcher: google-ads, linkedin-ads,
+          # six ad providers with a monitor dispatcher (hubspot's email monitor is ruled
+          # with the other hubspot paths below): google-ads, linkedin-ads,
           # meta-ads and reddit-ads implement AccountMetricsReader, and microsoft-ads
           # and twitter-ads implement AccountReportReader (their metrics come from
           # asynchronous platform reports — Microsoft's Reporting service, X's stats
@@ -145,6 +146,10 @@ spec:
           # token; the CREATE writes into a namespace shared portal-wide, which is why
           # the design description requires the caller to warn first.
           - path: /projects/:projectId/connection-hubspot/campaigns
+          # Email account monitor (LFXV2-2665): the statistics of the HubSpot emails this
+          # service created for the project, plus email findings. A read; project-scoped (the
+          # project's own recorded email ids), so it carries no account_id.
+          - path: /projects/:projectId/connection-hubspot/account-monitor
           # Briefs (+ nested campaigns) and jobs. A single-segment capture (:rest)
           # would only match /briefs/{id}; the routed contract has DEEPER paths —
           # /briefs/{id}/approve and /briefs/{id}/campaigns/{campaignId} (per the

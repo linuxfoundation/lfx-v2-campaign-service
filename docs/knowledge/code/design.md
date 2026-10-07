@@ -264,4 +264,13 @@ Narrowing the description rather than making every probe enforce lifecycle usabi
 deliberate half: the alternative changes six probes' behaviour to satisfy a sentence, and
 "suspended account" is not something re-testing a connection repairs.
 
+## `monitor-hubspot-account` (LFXV2-2665)
+
+`HubSpotEmailMonitor`, `HubSpotEmailMonitorEmail` and `HubSpotEmailMonitorTotals` carry
+TYPE-LEVEL examples built from shared helpers (`hubspotMonitorEmailExample` and friends) so the
+row, totals and envelope examples describe the same send and the published action item is the
+one the rules raise for it; the `emails` and `action_items` attributes carry their own examples
+so Goa does not repeat an item. `TestPublishedHubSpotMonitorExamplesArePossible` walks all four
+generated specs. No cost attribute exists on any of the three types.
+
 See [design](../../../design).

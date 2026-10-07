@@ -439,6 +439,15 @@ func (d upstreamCapableDispatcher) ListAccountCampaignMetrics(context.Context, s
 	return []model.AccountCampaignMetrics{}, nil
 }
 
+// ReadEmailMonitor implements EmailMonitorReader so this fake drives the HubSpot email monitor's
+// upstream call.
+func (d upstreamCapableDispatcher) ReadEmailMonitor(context.Context, string, model.Provider, []*model.Campaign, int) (*model.HubSpotEmailMonitorRead, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.HubSpotEmailMonitorRead{Emails: []model.HubSpotMonitorEmail{}}, nil
+}
+
 // WriteBudget implements BudgetWriter (an optional dispatcher capability) so this same fake
 // drives the budget-write upstream call the orchestrator instruments. It is a mutation that
 // changes how much money is spent, so its latency and failure count are exactly what an
@@ -665,6 +674,16 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			},
 		},
 		{
+			// The email monitor answers an empty scope without an upstream call, so the fake
+			// repo below carries one recorded campaign.
+			name: "read email monitor",
+			op:   opReadEmailMonitor,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadHubSpotEmailMonitor(ctx, "p1", platform, 30)
+				return err
+			},
+		},
+		{
 			name: "write budget",
 			op:   opWriteBudget,
 			call: func(ctx context.Context, o *Orchestrator) error {
@@ -740,7 +759,7 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				// WITHOUT an upstream call, so with the default fake they would record
 				// nothing and this instrumentation assertion would fail for the right
 				// reason but the wrong cause.
-				orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"555"}}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"555"}, recent: []*model.Campaign{{ID: "c1", PlatformCampaignID: "555"}}}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 					platform: upstreamCapableDispatcher{err: arm.platformErr},
 				})
 				orch.SetMetrics(rec)

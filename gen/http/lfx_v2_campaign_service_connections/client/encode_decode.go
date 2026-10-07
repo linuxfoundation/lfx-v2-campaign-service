@@ -13071,6 +13071,199 @@ func DecodeMonitorTwitterAdsAccountResponse(decoder func(*http.Response) goahttp
 	}
 }
 
+// BuildMonitorHubspotAccountRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "monitor-hubspot-account" endpoint
+func (c *Client) BuildMonitorHubspotAccountRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.MonitorHubspotAccountPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "monitor-hubspot-account", "*lfxv2campaignserviceconnections.MonitorHubspotAccountPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: MonitorHubspotAccountLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "monitor-hubspot-account", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeMonitorHubspotAccountRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections monitor-hubspot-account server.
+func EncodeMonitorHubspotAccountRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.MonitorHubspotAccountPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "monitor-hubspot-account", "*lfxv2campaignserviceconnections.MonitorHubspotAccountPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("days", fmt.Sprintf("%v", p.Days))
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeMonitorHubspotAccountResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections monitor-hubspot-account endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeMonitorHubspotAccountResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeMonitorHubspotAccountResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body MonitorHubspotAccountResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			err = ValidateMonitorHubspotAccountResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			res := NewMonitorHubspotAccountHubspotEmailMonitorOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body MonitorHubspotAccountBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			err = ValidateMonitorHubspotAccountBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			return nil, NewMonitorHubspotAccountBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body MonitorHubspotAccountServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			err = ValidateMonitorHubspotAccountServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			return nil, NewMonitorHubspotAccountServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body MonitorHubspotAccountInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			err = ValidateMonitorHubspotAccountInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			return nil, NewMonitorHubspotAccountInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body MonitorHubspotAccountNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			err = ValidateMonitorHubspotAccountNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			return nil, NewMonitorHubspotAccountNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body MonitorHubspotAccountPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			err = ValidateMonitorHubspotAccountPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			return nil, NewMonitorHubspotAccountPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body MonitorHubspotAccountUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			err = ValidateMonitorHubspotAccountUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
+			}
+			return nil, NewMonitorHubspotAccountUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "monitor-hubspot-account", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // marshalLfxv2campaignserviceconnectionsGoogleAdsConnectionConfigToGoogleAdsConnectionConfigRequestBody
 // builds a value of type *GoogleAdsConnectionConfigRequestBody from a value of
 // type *lfxv2campaignserviceconnections.GoogleAdsConnectionConfig.
@@ -13627,6 +13820,55 @@ func unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsA
 		Clicks:        *v.Clicks,
 		Conversions:   v.Conversions,
 		CampaignCount: *v.CampaignCount,
+	}
+
+	return res
+}
+
+// unmarshalHubspotEmailMonitorEmailResponseBodyToLfxv2campaignserviceconnectionsHubspotEmailMonitorEmail
+// builds a value of type
+// *lfxv2campaignserviceconnections.HubspotEmailMonitorEmail from a value of
+// type *HubspotEmailMonitorEmailResponseBody.
+func unmarshalHubspotEmailMonitorEmailResponseBodyToLfxv2campaignserviceconnectionsHubspotEmailMonitorEmail(v *HubspotEmailMonitorEmailResponseBody) *lfxv2campaignserviceconnections.HubspotEmailMonitorEmail {
+	res := &lfxv2campaignserviceconnections.HubspotEmailMonitorEmail{
+		CampaignID:      *v.CampaignID,
+		EmailID:         *v.EmailID,
+		Name:            *v.Name,
+		AbVariant:       *v.AbVariant,
+		Sent:            *v.Sent,
+		Delivered:       *v.Delivered,
+		Opens:           *v.Opens,
+		Clicks:          *v.Clicks,
+		Bounces:         *v.Bounces,
+		Unsubscribes:    *v.Unsubscribes,
+		SpamReports:     *v.SpamReports,
+		OpenRate:        v.OpenRate,
+		ClickRate:       v.ClickRate,
+		BounceRate:      v.BounceRate,
+		UnsubscribeRate: v.UnsubscribeRate,
+	}
+
+	return res
+}
+
+// unmarshalHubspotEmailMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsHubspotEmailMonitorTotals
+// builds a value of type
+// *lfxv2campaignserviceconnections.HubspotEmailMonitorTotals from a value of
+// type *HubspotEmailMonitorTotalsResponseBody.
+func unmarshalHubspotEmailMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsHubspotEmailMonitorTotals(v *HubspotEmailMonitorTotalsResponseBody) *lfxv2campaignserviceconnections.HubspotEmailMonitorTotals {
+	res := &lfxv2campaignserviceconnections.HubspotEmailMonitorTotals{
+		EmailCount:      *v.EmailCount,
+		Sent:            *v.Sent,
+		Delivered:       *v.Delivered,
+		Opens:           *v.Opens,
+		Clicks:          *v.Clicks,
+		Bounces:         *v.Bounces,
+		Unsubscribes:    *v.Unsubscribes,
+		SpamReports:     *v.SpamReports,
+		OpenRate:        v.OpenRate,
+		ClickRate:       v.ClickRate,
+		BounceRate:      v.BounceRate,
+		UnsubscribeRate: v.UnsubscribeRate,
 	}
 
 	return res

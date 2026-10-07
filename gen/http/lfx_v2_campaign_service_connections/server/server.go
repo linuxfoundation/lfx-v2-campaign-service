@@ -86,6 +86,7 @@ type Server struct {
 	MonitorRedditAdsAccount     http.Handler
 	MonitorMicrosoftAdsAccount  http.Handler
 	MonitorTwitterAdsAccount    http.Handler
+	MonitorHubspotAccount       http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -182,6 +183,7 @@ func New(
 			{"MonitorRedditAdsAccount", "GET", "/projects/{project_id}/connection-reddit-ads/account-monitor"},
 			{"MonitorMicrosoftAdsAccount", "GET", "/projects/{project_id}/connection-microsoft-ads/account-monitor"},
 			{"MonitorTwitterAdsAccount", "GET", "/projects/{project_id}/connection-twitter-ads/account-monitor"},
+			{"MonitorHubspotAccount", "GET", "/projects/{project_id}/connection-hubspot/account-monitor"},
 		},
 		CreateGoogleAds:             NewCreateGoogleAdsHandler(e.CreateGoogleAds, mux, decoder, encoder, errhandler, formatter),
 		GetGoogleAds:                NewGetGoogleAdsHandler(e.GetGoogleAds, mux, decoder, encoder, errhandler, formatter),
@@ -249,6 +251,7 @@ func New(
 		MonitorRedditAdsAccount:     NewMonitorRedditAdsAccountHandler(e.MonitorRedditAdsAccount, mux, decoder, encoder, errhandler, formatter),
 		MonitorMicrosoftAdsAccount:  NewMonitorMicrosoftAdsAccountHandler(e.MonitorMicrosoftAdsAccount, mux, decoder, encoder, errhandler, formatter),
 		MonitorTwitterAdsAccount:    NewMonitorTwitterAdsAccountHandler(e.MonitorTwitterAdsAccount, mux, decoder, encoder, errhandler, formatter),
+		MonitorHubspotAccount:       NewMonitorHubspotAccountHandler(e.MonitorHubspotAccount, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -323,6 +326,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.MonitorRedditAdsAccount = m(s.MonitorRedditAdsAccount)
 	s.MonitorMicrosoftAdsAccount = m(s.MonitorMicrosoftAdsAccount)
 	s.MonitorTwitterAdsAccount = m(s.MonitorTwitterAdsAccount)
+	s.MonitorHubspotAccount = m(s.MonitorHubspotAccount)
 }
 
 // MethodNames returns the methods served.
@@ -397,6 +401,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountMonitorRedditAdsAccountHandler(mux, h.MonitorRedditAdsAccount)
 	MountMonitorMicrosoftAdsAccountHandler(mux, h.MonitorMicrosoftAdsAccount)
 	MountMonitorTwitterAdsAccountHandler(mux, h.MonitorTwitterAdsAccount)
+	MountMonitorHubspotAccountHandler(mux, h.MonitorHubspotAccount)
 }
 
 // Mount configures the mux to serve the lfx-v2-campaign-service-connections
@@ -3979,6 +3984,61 @@ func NewMonitorTwitterAdsAccountHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "monitor-twitter-ads-account")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountMonitorHubspotAccountHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint.
+func MountMonitorHubspotAccountHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/connection-hubspot/account-monitor", f)
+}
+
+// NewMonitorHubspotAccountHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "monitor-hubspot-account" endpoint.
+func NewMonitorHubspotAccountHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeMonitorHubspotAccountRequest(mux, decoder)
+		encodeResponse = EncodeMonitorHubspotAccountResponse(encoder)
+		encodeError    = EncodeMonitorHubspotAccountError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "monitor-hubspot-account")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

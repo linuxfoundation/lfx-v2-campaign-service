@@ -152,6 +152,14 @@ type CampaignReader interface {
 	// precisely when an unscoped query would expose everyone else's.
 	ListProjectPlatformCampaignIDs(ctx context.Context, projectID string, platform model.Provider) ([]model.ProjectCampaignScope, error)
 
+	// ListRecentProjectPlatformCampaigns returns at most limit of the project's live campaigns
+	// on platform that have an upstream id, NEWEST FIRST (created_at, then id, descending).
+	// Scoped by project_id in SQL like the read above. It feeds the HubSpot email account
+	// monitor, which reads per recorded email and must bound how many it asks about: the caller
+	// passes its cap plus one and reads an extra row as "truncated". Returns an EMPTY slice,
+	// not an error, when there are none.
+	ListRecentProjectPlatformCampaigns(ctx context.Context, projectID string, platform model.Provider, limit int) ([]*model.Campaign, error)
+
 	// ResolvePlatformCampaign maps ONE upstream campaign id back to this service's own
 	// campaign rows, so a caller holding a keyword row (which carries the platform's numeric
 	// campaign id) can address the brief-scoped mutation routes.

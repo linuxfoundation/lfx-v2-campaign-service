@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Account-Monitor Endpoints"
-description: "Six account-scoped monitor endpoints, one per ad platform: four ported from the LFX One BFF's rule engines and read live, and Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request."
+description: "Seven monitor endpoints: six account-scoped ones, one per ad platform (four ported from the LFX One BFF's rule engines and read live, Microsoft Ads and X served from saved asynchronous reports because their metrics cannot be read inside one request), and a project-scoped HubSpot email monitor that reads only the marketing emails this service recorded for the project."
 resource: "internal/service/connection_monitor.go"
 ---
 
@@ -11,8 +11,11 @@ resource: "internal/service/connection_monitor.go"
 
 Microsoft Ads and X joined later and are the two REPORT-BACKED monitors — see
 [Microsoft: a report-backed monitor](#microsoft-a-report-backed-monitor) and
-[X: a second report-backed monitor](#x-a-second-report-backed-monitor). Everything below
-that is not in those sections describes the four live reads.
+[X: a second report-backed monitor](#x-a-second-report-backed-monitor). HubSpot's
+`GET /projects/{project_id}/connection-hubspot/account-monitor?days=` is the seventh and the
+only PROJECT-scoped one — see
+[HubSpot: a project-scoped email monitor](#hubspot-a-project-scoped-email-monitor). Everything
+below that is not in those sections describes the four live reads.
 
 Ports the LFX One BFF's `/api/campaigns/monitor` family (Google, LinkedIn,
 Meta, Reddit — Meta ships with a pagination fix, not a verbatim port; see
@@ -731,3 +734,65 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   against a live X account; the specific open points (the queued and failed status spellings,
   whether job creation counts as a write) are marked UNVERIFIED in
   `internal/platform/twitter/monitor.go`.
+
+## HubSpot: a project-scoped email monitor
+
+`monitor-hubspot-account` (LFXV2-2665),
+`GET /projects/{project_id}/connection-hubspot/account-monitor?days=`, `campaign_manager`.
+Same route shape and `days` rule (7–90, 400 outside it, re-checked by the dispatcher) as the six
+ad monitors, and the same handler guards (`rejectSystemScope`, `validateMonitorDays`,
+`resolveBackendWithOrch`, `classifyDiscoveryError` with an `"account monitor"` descriptor). What
+differs, and why:
+
+- **No `account_id`; the scope is the project's own emails.** A HubSpot portal is shared across
+  projects and has no per-project account, so an account-scoped read would report other
+  projects' sends. The scope is the emails THIS SERVICE recorded for the project:
+  `CampaignReader.ListRecentProjectPlatformCampaigns` (project_id and platform in the SQL,
+  live rows with an upstream id, `created_at DESC, id DESC`, `LIMIT` cap+1) — each row's own
+  email plus its recorded A/B variant (`Result.abTestVariant`). The cap is
+  `hubspotMonitorMaxCampaigns` = 50 campaigns (≤ 100 emails); an extra row sets
+  `emails_truncated` and the 50 newest are read.
+- **Empty scope** → 200 with empty `emails`/`action_items`, zero totals, and NO
+  `metrics_as_of`/window, without resolving a connection or calling HubSpot — the same early
+  return the project-scoped keyword and audience reads make.
+- **Upstream.** One token-info call (`POST /oauth/v2/private-apps/get/access-token-info`, the
+  token's portal), then per email `GET /marketing/v3/emails/statistics/list?startTimestamp&
+  endTimestamp&emailIds=<one id>` — the endpoint the per-campaign metrics read already uses,
+  through the same `readEmailCounters` guards (filter must cover exactly that id, recognised
+  counter vocabulary, rename signature, no negative). At most four in flight
+  (`hubspotMonitorConcurrency`), inside `accountsCallTimeout` (20s).
+- **Window.** `hubspot.Client.MonitorSpan`: the trailing `days` UTC days including today, from
+  the client's injected clock. HubSpot's span selects emails by SEND date and the counters are
+  each email's totals to the read, so the response states `metrics_as_of` (the read instant) and
+  `metrics_window_start`/`_end` (the send-date span) — the latter mean "sent in", not "events
+  in".
+- **Attribution.** An email id means something only inside the portal that minted it. A row
+  whose recorded `portalId` is absent or differs from the token's portal, or whose id is not a
+  canonical positive integer, is counted in `emails_unattributable` and never sent upstream.
+  An email HubSpot reports no send of inside the span (`ErrNoSentEmailInWindow`) is counted in
+  `emails_not_sent_in_window`, never reported as zeros. `emails_checked` = rows + not-sent.
+- **Definite or nothing.** Any failure — transport, 5xx, a 429 still refused after the client's
+  retries, 401/403, malformed JSON, a filter-violating response, a null counter, or bytes
+  `identityjson.Check` refuses (duplicate keys, bad UTF-8, unpaired surrogates — checked on the
+  raw bytes of every statistics AND token-info response before decoding) — fails the whole read:
+  503 via the default arm, fixed text, no partial rows. Own connection only (`resolveOwned`): no
+  connection is 404, an unusable one 400, a decryption failure 500.
+- **Counters and rates.** `sent`, `delivered`, `opens`, `clicks`, `bounces`, `unsubscribes`,
+  `spam_reports` (`spamreport`, now watched by the rename guard for this read only). An ABSENT
+  counter is HubSpot's omitted zero (the existing rule); an explicit `null` is refused. Rates are
+  fractions computed after summing — open/click/unsubscribe over delivered, bounce over sent —
+  and ABSENT when the denominator is 0; totals' rates come from the summed counters. No cost
+  field: HubSpot bills nothing per send.
+- **Rules.** `rules.EvaluateHubSpotMonitor` (no pacing: an email has no budget), on the shared
+  HIGH/MED/LOW `sortByPriority`. Thresholds are heuristics, named constants in
+  `internal/service/rules/monitor_hubspot.go`: sent > 0 with 0 delivered HIGH; bounce rate >5%
+  HIGH, >2% MED (≥100 sent); spam rate ≥0.3% HIGH, >0.1% MED; unsubscribe rate >1% MED; open
+  rate <15% MED; click rate <1% LOW (all ≥100 delivered). `campaign_id` on a finding is the
+  HubSpot email id.
+- **Types.** `HubSpotEmailMonitor`, `HubSpotEmailMonitorEmail`, `HubSpotEmailMonitorTotals`
+  (type-level examples; `TestPublishedHubSpotMonitorExamplesArePossible` walks every published
+  example in all four specs and requires rates to follow from counters, totals to be the sum,
+  completeness counts to add up, the window to cover `days`, no cost field, and the published
+  findings to be exactly what the rules produce).
+- **Unverified.** Built from HubSpot's published v3 statistics contract and the existing client's
+  verified behaviour; not exercised against a live portal for multi-email reads or `spamreport`.

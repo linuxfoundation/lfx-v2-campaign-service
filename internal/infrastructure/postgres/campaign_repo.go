@@ -417,6 +417,56 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 	return out, nil
 }
 
+// listRecentProjectPlatformCampaignsQuery returns a project's live, dispatched campaigns on one
+// provider, NEWEST FIRST, at most $3 of them. It feeds the HubSpot email account monitor
+// (LFXV2-2665), which reads statistics per recorded email and so must bound how many it asks
+// about.
+//
+// project_id and platform are in the WHERE clause for the reason given on
+// listProjectPlatformCampaignIDsQuery: a Go-side filter over an unscoped read is the cross-tenant
+// exposure one layer up. Rows with no upstream id are excluded (nothing to read), and so are
+// soft-deleted ones (invisible to every read).
+//
+// Whole rows, unlike the scope query above: the monitor needs the campaign's own id and name to
+// label each email, and the Result blob for the creating portal and any A/B variant email.
+//
+// The caller passes its cap PLUS ONE as $3 and treats an extra row as "there were more" — the
+// plus-one read is how it learns it truncated without counting the whole table. The ORDER BY is
+// total: created_at alone is not (rows dispatched in one transaction share now()), so id breaks
+// the tie and a repeated read selects the same rows.
+const listRecentProjectPlatformCampaignsQuery = `SELECT ` + campaignCols + ` FROM campaigns
+	WHERE project_id=$1 AND platform=$2 AND status <> 'deleted'
+	  AND platform_campaign_id IS NOT NULL AND platform_campaign_id <> ''
+	ORDER BY created_at DESC, id DESC
+	LIMIT $3`
+
+// ListRecentProjectPlatformCampaigns returns at most limit of the project's live, dispatched
+// campaigns on platform, newest first. An EMPTY slice, not an error, when there are none. A
+// non-positive limit is refused rather than read as "no limit".
+func (r *CampaignRepo) ListRecentProjectPlatformCampaigns(ctx context.Context, projectID string, platform model.Provider, limit int) ([]*model.Campaign, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("list recent project platform campaigns: limit must be positive, got %d", limit)
+	}
+	rows, err := r.db.Query(ctx, listRecentProjectPlatformCampaignsQuery, projectID, string(platform), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent project platform campaigns: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*model.Campaign, 0)
+	for rows.Next() {
+		c, serr := scanCampaign(rows)
+		if serr != nil {
+			return nil, fmt.Errorf("scan recent project platform campaign: %w", serr)
+		}
+		out = append(out, c)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, fmt.Errorf("iterate recent project platform campaigns: %w", rerr)
+	}
+	return out, nil
+}
+
 // resolvePlatformCampaignQuery finds the campaign rows a project owns for one upstream id.
 //
 // It selects the BRIEF and the campaign's own id, which is what makes an action addressable:

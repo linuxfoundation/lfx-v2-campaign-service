@@ -340,3 +340,8 @@ func MonitorMicrosoftAdsAccountLfxV2CampaignServiceConnectionsPath(projectID str
 func MonitorTwitterAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-twitter-ads/account-monitor", projectID)
 }
+
+// MonitorHubspotAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-hubspot-account HTTP endpoint.
+func MonitorHubspotAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-hubspot/account-monitor", projectID)
+}

@@ -476,6 +476,23 @@ type Service interface {
 	// crosses a DST fall-back covers the trailing 89 whole local days, because 90
 	// such days are 90 days and an hour, over X's 90-day limit.
 	MonitorTwitterAdsAccount(context.Context, *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error)
+	// Read the statistics of the HubSpot marketing emails THIS SERVICE created for
+	// the project and sent within the trailing `days` (today inclusive, UTC), with
+	// findings from this service's email rules (high bounce, spam-complaint or
+	// unsubscribe rate, low open or click rate, sent but nothing delivered). The
+	// HubSpot sibling of the monitor-*-ads-account reads, with one deliberate
+	// difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is
+	// shared across projects and has no per-project account, so there is no
+	// account_id; the scope is the email ids this service recorded for the
+	// project, each read by itself from HubSpot's marketing-email statistics
+	// endpoint — never a portal-wide read. Resolved from the project's OWN
+	// connection only (no LF system fallback: 404 without one). A project that has
+	// recorded no HubSpot email gets an empty 200 without HubSpot being called.
+	// Any upstream failure — including a 401/403, a 429 still refused after
+	// retries, or a malformed or untrustworthy response — is a 503 with no partial
+	// result. There are no cost fields: HubSpot bills nothing per send. A pure
+	// read: nothing is persisted.
+	MonitorHubspotAccount(context.Context, *MonitorHubspotAccountPayload) (res *HubspotEmailMonitor, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -498,7 +515,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [66]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
+var MethodNames = [67]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1151,6 +1168,114 @@ type HubspotCredentials struct {
 	PrivateAppToken string
 }
 
+// HubspotEmailMonitor is the result type of the
+// lfx-v2-campaign-service-connections service monitor-hubspot-account method.
+type HubspotEmailMonitor struct {
+	// The REQUESTED trailing-days window (today inclusive, UTC), echoed back.
+	Days int
+	// The project's own HubSpot marketing emails that HubSpot reports as SENT
+	// inside the window, newest-recorded campaign first. The window selects emails
+	// by SEND date; each email's counters are its totals to metrics_as_of, not
+	// only the events inside the window.
+	Emails []*HubspotEmailMonitorEmail
+	// Findings across the emails, HIGH first. campaign_id is the HubSpot email id
+	// the finding is about and campaign_name its name. Every threshold is a
+	// deliverability heuristic, not a HubSpot limit.
+	ActionItems []*AccountMonitorActionItem
+	// The sum of the emails array, with rates from the summed counters.
+	Totals *HubspotEmailMonitorTotals
+	// When the counters were read from HubSpot; each email's counters are its
+	// totals to this instant. ABSENT when HubSpot was not called because the
+	// project has recorded no HubSpot email.
+	MetricsAsOf *string
+	// The FIRST UTC calendar day (inclusive) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowStart *string
+	// The LAST UTC calendar day (inclusive, today) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowEnd *string
+	// How many of the project's recorded emails HubSpot was asked about: the
+	// emails array plus emails_not_sent_in_window.
+	EmailsChecked int
+	// How many checked emails HubSpot reported no send of inside the window — sent
+	// outside it, never sent (a staged draft), or no longer existing; HubSpot's
+	// answer does not tell these apart. Never reported as zeros.
+	EmailsNotSentInWindow int
+	// How many recorded emails were NOT read because they cannot be read safely:
+	// the campaign row does not record which HubSpot portal the email was created
+	// in, records a different portal than the one the project's token reaches now,
+	// or holds a malformed id. An email id means something only inside its own
+	// portal.
+	EmailsUnattributable int
+	// True when the project has recorded more than 50 HubSpot campaigns: only the
+	// 50 most recently recorded (and their A/B variants) were checked, so totals
+	// may omit older emails sent inside the window.
+	EmailsTruncated bool
+}
+
+type HubspotEmailMonitorEmail struct {
+	// This service's campaign UUID the email belongs to.
+	CampaignID string
+	// The HubSpot marketing-email id.
+	EmailID string
+	// The email's name as this service recorded it when the email was created.
+	Name string
+	// True for an A/B test's variant (B) email, which is recorded on its parent
+	// campaign; false for the campaign's own email.
+	AbVariant bool
+	// HubSpot's `sent` counter for the email, to date.
+	Sent int64
+	// HubSpot's `delivered` counter, to date.
+	Delivered int64
+	// HubSpot's `open` counter, to date. Inflated by mail clients that pre-fetch
+	// images (e.g. Apple Mail Privacy Protection).
+	Opens int64
+	// HubSpot's `click` counter, to date.
+	Clicks int64
+	// HubSpot's `bounce` counter, to date.
+	Bounces int64
+	// HubSpot's `unsubscribed` counter, to date.
+	Unsubscribes int64
+	// HubSpot's `spamreport` counter, to date.
+	SpamReports int64
+	// opens / delivered, as a fraction (0.3 = 30%). ABSENT when delivered is 0 — a
+	// rate over nothing is unknown, not 0.
+	OpenRate *float64
+	// clicks / delivered, as a fraction. ABSENT when delivered is 0.
+	ClickRate *float64
+	// bounces / sent, as a fraction. ABSENT when sent is 0.
+	BounceRate *float64
+	// unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.
+	UnsubscribeRate *float64
+}
+
+type HubspotEmailMonitorTotals struct {
+	// How many emails the totals sum: the length of the emails array.
+	EmailCount int
+	// Sum of the emails' sent counters.
+	Sent int64
+	// Sum of the emails' delivered counters.
+	Delivered int64
+	// Sum of the emails' opens.
+	Opens int64
+	// Sum of the emails' clicks.
+	Clicks int64
+	// Sum of the emails' bounces.
+	Bounces int64
+	// Sum of the emails' unsubscribes.
+	Unsubscribes int64
+	// Sum of the emails' spam reports.
+	SpamReports int64
+	// Summed opens / summed delivered. ABSENT when that denominator is 0.
+	OpenRate *float64
+	// Summed clicks / summed delivered. ABSENT when that denominator is 0.
+	ClickRate *float64
+	// Summed bounces / summed sent. ABSENT when that denominator is 0.
+	BounceRate *float64
+	// Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.
+	UnsubscribeRate *float64
+}
+
 // LinkedinAdsConnection is the result type of the
 // lfx-v2-campaign-service-connections service create-linkedin-ads method.
 type LinkedinAdsConnection struct {
@@ -1521,6 +1646,17 @@ type MonitorGoogleAdsAccountPayload struct {
 	// The Google Ads account to read.
 	AccountID string
 	// Trailing days to read metrics over.
+	Days int
+}
+
+// MonitorHubspotAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-hubspot-account method.
+type MonitorHubspotAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Trailing days (UTC, today inclusive) whose sends to read.
 	Days int
 }
 

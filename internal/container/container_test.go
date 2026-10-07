@@ -180,6 +180,10 @@ func (stubCampaignRepo) ListProjectPlatformCampaignIDs(context.Context, string, 
 	return nil, nil
 }
 
+func (stubCampaignRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
+	return nil, nil
+}
+
 func (stubCampaignRepo) ResolvePlatformCampaign(context.Context, string, model.Provider, string) ([]model.LocalCampaignRef, error) {
 	return nil, nil
 }

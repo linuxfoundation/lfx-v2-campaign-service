@@ -55,16 +55,18 @@ spec:
     # account-monitor architecture concept).
     #
     # The branch still names its providers rather than matching any connection-*: hubspot
-    # must not gain /accounts or /account-monitor (see below), and a path the RuleSet does
-    # not rule is a route/rule parity violation.
+    # must not gain /accounts (see below), and a path the RuleSet does not rule is a
+    # route/rule parity violation.
     #
     # hubspot is spelled out separately for the same reason, but its extra sub-paths are
-    # /emails and /campaigns, NOT /accounts: a HubSpot connection is already scoped to the
-    # portal its token authenticates against, so there is no account to discover — what the
-    # caller picks is which marketing email a campaign clones (LFXV2-3197) and which existing
-    # HubSpot campaign owns the UTM token (LFXV2-2641). It therefore cannot join the discovery
-    # branch; admitting /accounts for hubspot would rule a path the service does not serve, and
-    # /emails or /campaigns for google-ads or meta-ads the same.
+    # /emails, /campaigns and /account-monitor, NOT /accounts: a HubSpot connection is already
+    # scoped to the portal its token authenticates against, so there is no account to discover —
+    # what the caller picks is which marketing email a campaign clones (LFXV2-3197) and which
+    # existing HubSpot campaign owns the UTM token (LFXV2-2641). Its /account-monitor
+    # (LFXV2-2665) is the email monitor: project-scoped to the emails this service recorded, with
+    # no account_id. It therefore cannot join the discovery branch; admitting /accounts for
+    # hubspot would rule a path the service does not serve, and /emails or /campaigns for
+    # google-ads or meta-ads the same.
     #
     # audience-builder (LFXV2-2770) is a sibling of /briefs, not a descendant, so it
     # inherits nothing and needs its own alternation branch here plus its own RuleSet
@@ -76,7 +78,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|campaign-ref)|meta-ads/audience|(meta-ads|reddit-ads|twitter-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|campaign-ref)|meta-ads/audience|(meta-ads|reddit-ads|twitter-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

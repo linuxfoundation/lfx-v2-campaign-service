@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -101,6 +102,12 @@ var (
 	// impressions and a nonsensical CTR that reads as authoritative to every consumer.
 	// The LinkedIn, Meta and Reddit readers reject negatives for the same reason.
 	ErrNegativeCounter = errors.New("hubspot: statistics response carried a negative counter")
+
+	// ErrNullCounter reports a counter whose value is an explicit JSON null. Decoded into an
+	// integer it would silently read as 0 — an authoritative "none" for a value HubSpot did not
+	// give — so it is refused. An ABSENT counter is a different case and keeps its documented
+	// meaning (see ErrRenamedCounter).
+	ErrNullCounter = errors.New("hubspot: statistics response carried a null counter")
 )
 
 // The counters this client maps onto its result. HubSpot's v3 schema types `counters` as
@@ -115,6 +122,8 @@ const (
 	counterClick        = "click"
 	counterBounce       = "bounce"
 	counterUnsubscribed = "unsubscribed"
+	// counterSpamReport is read by GetEmailCounters (the account monitor) only.
+	counterSpamReport = "spamreport"
 )
 
 // knownCounterVocabulary is the PROBE set for the ErrUnrecognizedCounters guard, and is
@@ -142,15 +151,18 @@ var knownCounterVocabulary = map[string]struct{}{
 	counterBounce: {}, counterUnsubscribed: {},
 	"contactslost": {}, "deferred": {}, "dropped": {}, "hardbounced": {},
 	"notsent": {}, "pending": {}, "reply": {}, "selected": {},
-	"softbounced": {}, "spamreport": {}, "suppressed": {},
+	"softbounced": {}, counterSpamReport: {}, "suppressed": {},
 }
 
 // statisticsData mirrors HubSpot's EmailStatisticsData. Only `counters` is decoded:
 // `ratios` is discarded because Ctr is COMPUTED here from clicks and opens, keeping one
 // definition of the ratio across every platform rather than adopting each platform's own;
 // `deviceBreakdown` and `qualifierStats` have no consumer.
+//
+// Values are POINTERS so an explicit JSON null stays distinguishable from a number: decoded into
+// int64 a null becomes 0 with no error. nonNullCounters refuses it.
 type statisticsData struct {
-	Counters map[string]int64 `json:"counters"`
+	Counters map[string]*int64 `json:"counters"`
 }
 
 // aggregateStatistics mirrors HubSpot's AggregateEmailStatistics.
@@ -241,7 +253,49 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	if err != nil {
 		return nil, err
 	}
+	counters, err := c.readEmailCounters(ctx, id, start, end, mappedCounters)
+	if err != nil {
+		return nil, err
+	}
 
+	opens := counters[counterOpen]
+	clicks := counters[counterClick]
+	return &model.CampaignMetrics{
+		CampaignID:  emailID,
+		Window:      window,
+		Impressions: opens,
+		Clicks:      clicks,
+		// Zero, always. HubSpot charges nothing per send, so there is no platform-reported
+		// cost to read — see the concept doc on why this must not be blended into a
+		// cross-channel cost-per-acquisition.
+		CostMicros: 0,
+		Ctr:        ratio(clicks, opens),
+		// Conversions is LEFT NIL, and unlike CostMicros above it is not set to zero. The two
+		// absences are different facts and the types say so. CostMicros=0 is a MEASUREMENT —
+		// HubSpot genuinely bills nothing per send, so zero is the true cost. A conversion
+		// count has no such true value here: the statistics endpoint's counter vocabulary
+		// (sent, delivered, open, click, bounce, unsubscribed, and the wider probe set above)
+		// contains no conversion counter at all, because a marketing email send has no
+		// campaign-level conversion concept to report. Writing 0 would claim this email
+		// converted nobody, when the honest claim is that this channel does not measure it.
+		Conversions: nil,
+		Email: &model.EmailMetrics{
+			Sent:         counters[counterSent],
+			Delivered:    counters[counterDelivered],
+			Opens:        opens,
+			Clicks:       clicks,
+			Bounces:      counters[counterBounce],
+			Unsubscribes: counters[counterUnsubscribed],
+		},
+	}, nil
+}
+
+// readEmailCounters is the statistics read both GetEmailMetrics and GetEmailCounters stand on:
+// one GET filtered to exactly one email over [start, end], every fail-closed guard this file
+// documents, and the counter map back. `read` names the counters the CALLER will look up, which
+// is the set renamedCounter watches (see ErrRenamedCounter): a key a caller never reads can
+// vanish without changing any number it reports, and one it does read must not.
+func (c *Client) readEmailCounters(ctx context.Context, id int64, start, end time.Time, read []string) (map[string]int64, error) {
 	q := url.Values{}
 	// RFC3339 in UTC. The API documents these as ISO-8601 and the two agree for this shape.
 	//
@@ -250,13 +304,23 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	// of it. Under an inclusive bound that is a real hole at the end of every window, and
 	// it contradicts the last-millisecond contract timeRangeForWindow documents. Nano emits
 	// only the digits present, so `start` (exactly midnight) is unchanged.
-	q.Set("startTimestamp", start.Format(time.RFC3339Nano))
-	q.Set("endTimestamp", end.Format(time.RFC3339Nano))
+	q.Set("startTimestamp", start.UTC().Format(time.RFC3339Nano))
+	q.Set("endTimestamp", end.UTC().Format(time.RFC3339Nano))
 	q.Set("emailIds", strconv.FormatInt(id, 10))
 
 	raw, err := c.doRequest(ctx, http.MethodGet, statisticsPath+"?"+q.Encode(), nil, true)
 	if err != nil {
 		return nil, err
+	}
+
+	// The raw bytes are checked BEFORE decoding (LFXV2-2665, the email account monitor):
+	// encoding/json silently resolves a key repeated inside one object to its LAST value and
+	// silently replaces malformed UTF-8 and unpaired surrogate escapes with U+FFFD. A response
+	// carrying `"sent":1000,"sent":0`, or an `emails` list declared twice, describes two
+	// answers, and the decoder would pick one without saying so. identityjson's refusal text
+	// is its own sentence and carries no byte of the response.
+	if err := identityjson.Check(raw); err != nil {
+		return nil, fmt.Errorf("hubspot: email statistics response refused: %w", err)
 	}
 
 	var resp aggregateStatistics
@@ -307,6 +371,16 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 			ErrStatisticsFilterNotHonored, id, len(emails))
 	}
 
+	// An EXPLICIT null counter is refused before anything else reads the map. Decoded into
+	// int64 it would become an authoritative 0 with no error — `"bounce":null` reading as "no
+	// bounces" — while an ABSENT key keeps the meaning HubSpot's omission of a zero counter
+	// gives it (see ErrRenamedCounter for why absence alone is not evidence of anything).
+	// A null is neither: HubSpot said the key exists and declined to give it a value.
+	counters, err := nonNullCounters(resp.Aggregate.Counters)
+	if err != nil {
+		return nil, err
+	}
+
 	// The vocabulary guard, and the reason it is not `len(counters) > 0`: a MISSING or
 	// renamed `counters` field decodes to a nil map, which that form waves through — every
 	// lookup returns 0 and an email HubSpot has just told us it covers reports as having
@@ -317,25 +391,24 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 	// carry a `|| len(resp.Emails) > 0` term to let zeros through for that case, on the
 	// mistaken reading that an empty list meant "no activity". There is no longer any path
 	// here on which an all-zero counter map is a legitimate answer.
-	counters := resp.Aggregate.Counters
 	if !hasKnownCounter(counters) {
 		return nil, ErrUnrecognizedCounters
 	}
 	// The guard above answers "is the vocabulary recognizable AT ALL"; this one answers
 	// "is the part of it we READ still here". A rename that leaves any one known key
 	// standing satisfies the first and is invisible to it.
-	// `missing` comes from the static mappedCounters list, so naming it is safe and it is
+	// `missing` comes from the static read list, so naming it is safe and it is
 	// the half of the diagnosis that tells an operator what to go look at. The unrecognized
 	// key does NOT get named: it is arbitrary text from an open response map, and it would
 	// travel into the service's logged error summary. Its COUNT carries the part of the
 	// signal that matters — that the conjunction fired — without the payload.
-	if missing, unknownCount, ok := renamedCounter(counters); ok {
+	if missing, unknownCount, ok := renamedCounter(counters, read); ok {
 		return nil, fmt.Errorf("%w: %q is absent while %d unrecognized counter(s) are present",
 			ErrRenamedCounter, missing, unknownCount)
 	}
 	// Counts, so a negative is malformed upstream data rather than a small number. Checked
-	// across the WHOLE map, not just the six mapped keys: a negative anywhere in the
-	// counter set is evidence the payload is wrong, and the six keys read below would be
+	// across the WHOLE map, not just the mapped keys: a negative anywhere in the
+	// counter set is evidence the payload is wrong, and the keys read below would be
 	// no more trustworthy for having stayed positive.
 	// Neither the key nor the value is interpolated when the key is not one this client
 	// knows: both are arbitrary response content, and this error reaches a log line. A key
@@ -349,37 +422,110 @@ func (c *Client) GetEmailMetrics(ctx context.Context, emailID string, window mod
 			return nil, fmt.Errorf("%w: an unrecognized counter is negative", ErrNegativeCounter)
 		}
 	}
+	return counters, nil
+}
 
-	opens := counters[counterOpen]
-	clicks := counters[counterClick]
-	return &model.CampaignMetrics{
-		CampaignID:  emailID,
-		Window:      window,
-		Impressions: opens,
-		Clicks:      clicks,
-		// Zero, always. HubSpot charges nothing per send, so there is no platform-reported
-		// cost to read — see the concept doc on why this must not be blended into a
-		// cross-channel cost-per-acquisition.
-		CostMicros: 0,
-		Ctr:        ratio(clicks, opens),
-		// Conversions is LEFT NIL, and unlike CostMicros above it is not set to zero. The two
-		// absences are different facts and the types say so. CostMicros=0 is a MEASUREMENT —
-		// HubSpot genuinely bills nothing per send, so zero is the true cost. A conversion
-		// count has no such true value here: the statistics endpoint's counter vocabulary
-		// (sent, delivered, open, click, bounce, unsubscribed, and the wider probe set above)
-		// contains no conversion counter at all, because a marketing email send has no
-		// campaign-level conversion concept to report. Writing 0 would claim this email
-		// converted nobody, when the honest claim is that this channel does not measure it.
-		Conversions: nil,
-		Email: &model.EmailMetrics{
-			Sent:         counters[counterSent],
-			Delivered:    counters[counterDelivered],
-			Opens:        opens,
-			Clicks:       clicks,
-			Bounces:      counters[counterBounce],
-			Unsubscribes: counters[counterUnsubscribed],
-		},
+// nonNullCounters converts the decoded counter map, refusing any key whose value was an
+// explicit JSON null. A nil map stays nil: an absent or null `counters` field is the
+// vocabulary guard's case (ErrUnrecognizedCounters), not this one's. The offending key is named
+// only when it is one this client knows, for the same reason the negative-counter guard names
+// only known keys — anything else is arbitrary response text bound for a log line.
+func nonNullCounters(in map[string]*int64) (map[string]int64, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := make(map[string]int64, len(in))
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := in[k]
+		if v == nil {
+			if _, known := knownCounterVocabulary[k]; known {
+				return nil, fmt.Errorf("%w: %q is null", ErrNullCounter, k)
+			}
+			return nil, fmt.Errorf("%w: an unrecognized counter is null", ErrNullCounter)
+		}
+		out[k] = *v
+	}
+	return out, nil
+}
+
+// EmailCounters is one marketing email's statistics counters as the account monitor reads them
+// (GetEmailCounters). Every field is HubSpot's own counter for the email, to date — see
+// GetEmailMetrics on why the span selects emails by SEND date rather than scoping the counts.
+// There is no cost field: HubSpot bills nothing per send.
+type EmailCounters struct {
+	Sent         int64
+	Delivered    int64
+	Opens        int64
+	Clicks       int64
+	Bounces      int64
+	Unsubscribes int64
+	// SpamReports is HubSpot's `spamreport` counter. Absent reads as 0 under exactly the rule
+	// the six counters above follow (an omitted zero), and is watched by the rename guard the
+	// same way, because this read looks it up.
+	SpamReports int64
+}
+
+// monitorCounters are the keys GetEmailCounters reads: the six GetEmailMetrics maps plus
+// `spamreport`, which was already in the probe vocabulary.
+var monitorCounters = append(append([]string{}, mappedCounters...), counterSpamReport)
+
+// GetEmailCounters reads one marketing email's counters for the email account monitor
+// (LFXV2-2665), over an explicit [start, end] SEND-time span rather than a model.MetricsWindow:
+// the monitor's `days` is a bounded integer, as on every sibling monitor, and a closed window
+// enum cannot express it. Every guard GetEmailMetrics applies applies here too — this is the same
+// request and the same readEmailCounters — so ErrNoSentEmailInWindow still means "no email with
+// this id was sent in the span", which the monitor counts rather than reporting as zeros.
+func (c *Client) GetEmailCounters(ctx context.Context, emailID string, start, end time.Time) (*EmailCounters, error) {
+	id, err := parseEmailID(emailID)
+	if err != nil {
+		return nil, err
+	}
+	if !start.Before(end) {
+		return nil, fmt.Errorf("hubspot: email statistics span is empty or inverted")
+	}
+	counters, err := c.readEmailCounters(ctx, id, start, end, monitorCounters)
+	if err != nil {
+		return nil, err
+	}
+	return &EmailCounters{
+		Sent:         counters[counterSent],
+		Delivered:    counters[counterDelivered],
+		Opens:        counters[counterOpen],
+		Clicks:       counters[counterClick],
+		Bounces:      counters[counterBounce],
+		Unsubscribes: counters[counterUnsubscribed],
+		SpamReports:  counters[counterSpamReport],
 	}, nil
+}
+
+// MonitorSpan is the SEND-time span the email account monitor reads for `days`, and the instant
+// it is read as of, both from the client's injected clock: the trailing `days` UTC calendar days
+// including today, from midnight of the first to the final millisecond of today — the same
+// inclusive-of-today convention every sibling monitor uses and the same last-millisecond bound
+// timeRangeForWindow documents. asOf is "now": HubSpot's counters are each email's totals to the
+// moment they are read, so that instant is what they describe.
+func (c *Client) MonitorSpan(days int) (start, end, asOf time.Time, err error) {
+	if days < 1 {
+		return time.Time{}, time.Time{}, time.Time{}, fmt.Errorf("hubspot: monitor span needs at least one day")
+	}
+	now := c.now().UTC()
+	y, m, d := now.Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	return today.AddDate(0, 0, -(days - 1)), today.Add(24*time.Hour - time.Millisecond), now, nil
+}
+
+// ValidateEmailID reports whether id is a canonical positive decimal HubSpot marketing-email id,
+// the only shape GetEmailMetrics and GetEmailCounters will interpolate into a request. Exported so
+// a caller holding a stored id can set aside a malformed one before contacting HubSpot rather than
+// failing the whole read on it.
+func ValidateEmailID(id string) error {
+	_, err := parseEmailID(id)
+	return err
 }
 
 // parseEmailID accepts only a canonical positive decimal integer. The round-trip compare
@@ -428,7 +574,7 @@ var mappedCounters = []string{
 	counterSent, counterDelivered, counterOpen, counterClick, counterBounce, counterUnsubscribed,
 }
 
-// renamedCounter reports a mapped key that is absent while at least one unrecognized key
+// renamedCounter reports a key in `read` (the counters the caller looks up) that is absent while at least one unrecognized key
 // is present, returning the absent key and HOW MANY unrecognized keys there were. See
 // ErrRenamedCounter for why NEITHER condition is sufficient alone.
 //
@@ -436,8 +582,8 @@ var mappedCounters = []string{
 // content and the caller renders this into a logged error. Iteration over mapped keys is
 // in declaration order and the count is order-independent, so the message is stable for a
 // given input — one that varies run to run is one nobody can grep for.
-func renamedCounter(counters map[string]int64) (missing string, unknownCount int, ok bool) {
-	for _, k := range mappedCounters {
+func renamedCounter(counters map[string]int64, read []string) (missing string, unknownCount int, ok bool) {
+	for _, k := range read {
 		if _, present := counters[k]; !present {
 			missing = k
 			break

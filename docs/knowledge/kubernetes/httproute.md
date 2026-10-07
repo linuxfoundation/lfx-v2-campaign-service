@@ -43,14 +43,16 @@ sub-path each carries:
   service, X's stats jobs). twitter-ads joined this branch with its monitor; reddit-ads
   joined it when it gained discovery (LFXV2-2665) — until then it was a third branch
   carrying `/account-monitor` only.
-- `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197) — and
-  **`/campaigns`** — campaign UTM lookup and create (LFXV2-2641). NOT `/accounts`: a
-  HubSpot connection is already scoped to the portal its token authenticates against, so
-  there is no account to discover. What the caller picks is which marketing email a
-  campaign clones, and which existing HubSpot campaign owns the UTM token.
+- `connection-hubspot` adds **`/emails`** — marketing-email search (LFXV2-3197) —
+  **`/campaigns`** — campaign UTM lookup and create (LFXV2-2641) — and
+  **`/account-monitor`** — the email account monitor (LFXV2-2665), which shares the ad
+  monitors' path but is project-scoped (the emails this service recorded, no `account_id`).
+  NOT `/accounts`: a HubSpot connection is already scoped to the portal its token
+  authenticates against, so there is no account to discover. What the caller picks is which
+  marketing email a campaign clones, and which existing HubSpot campaign owns the UTM token.
 
-Folding these together would admit `/accounts` for hubspot, `/emails` for
-google-ads, and `/account-monitor` for hubspot, none of which is served — and a path the
+Folding these together would admit `/accounts` for hubspot and `/emails` for
+google-ads, neither of which is served — and a path the
 RuleSet does not rule is a route/rule parity violation, which is what `parity_test` exists
 to catch. It has both positive and negative rows for this reason: a widened alternation
 passes every positive test.

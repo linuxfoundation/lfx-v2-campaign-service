@@ -4106,3 +4106,15 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
 fetched from HubSpot once per `RunQA` call, not once per reference.
 
+## HubSpot email account monitor (`hubspot_monitor.go`, LFXV2-2665)
+
+`HubSpotDispatcher.ReadEmailMonitor` implements `service.EmailMonitorReader`. Order: `days`
+re-checked (`validateMonitorDays`); the project's OWN connection via `resolveHubSpotClientVia`
+with `d.creds.resolveOwned` (no LF system fallback → `ErrNotFound`); `MonitorSpan(days)`; the
+token's portal via `AuthenticatedPortalID` on its own `portalLookupTimeout`; then
+`hubspotMonitorTargets` turns the campaigns the orchestrator passed into emails — each row's own
+email then its recorded `Result.abTestVariant`, deduplicated by email id (first, newest row
+wins) — counting as unattributable any whose row records no `portalId`, another portal, or a
+non-canonical id; those are never sent upstream. One `GetEmailCounters` per email through an
+`errgroup` limited to `hubspotMonitorConcurrency` (4). `ErrNoSentEmailInWindow` is counted
+(`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
