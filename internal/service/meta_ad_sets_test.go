@@ -58,6 +58,15 @@ func (d *noAdSetDispatcher) Dispatch(context.Context, *model.CampaignBrief, mode
 type adSetRepo struct {
 	*toggleCampaignRepo
 	cooldowns int
+	// verifyErr, when set, is what VerifyClaimedVersion returns after the write.
+	verifyErr error
+}
+
+func (r *adSetRepo) VerifyClaimedVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64, tok domain.CampaignLockToken) (*model.Campaign, error) {
+	if r.verifyErr != nil {
+		return nil, r.verifyErr
+	}
+	return r.toggleCampaignRepo.VerifyClaimedVersion(ctx, projectID, briefID, campaignID, expectedVersion, tok)
 }
 
 func (r *adSetRepo) ReleaseCampaignLockAfterCooldown(tok domain.CampaignLockToken, d time.Duration) {
@@ -393,4 +402,36 @@ func errMessage(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// After an APPLIED write the row is verified at the claimed version. A concurrent change or delete
+// is a 409 that says the change WAS applied on Meta, and carries no result (so no ETag).
+func TestToggleMetaAdSetStatus_AppliedButRowChangedIs409(t *testing.T) {
+	for name, verr := range map[string]error{
+		"precondition failed": fmt.Errorf("claimed version: %w", domain.ErrPreconditionFailed),
+		"row deleted":         fmt.Errorf("claimed row: %w", domain.ErrNotFound),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &adSetDispatcher{toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+			s, repo := adSetService(metaCampaignRow(), model.ProviderMetaAds, d)
+			repo.verifyErr = verr
+			res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+			msg := errMessage(err)
+			if res != nil || !isStatus(err, 409) || !strings.Contains(msg, "was changed on Meta") || !strings.Contains(msg, "modified or deleted") {
+				t.Fatalf("got %+v, %T %q; want a 409 stating the change was applied on Meta", res, err, msg)
+			}
+		})
+	}
+}
+
+// A verification that itself fails is a 503 that still says the change was applied on Meta.
+func TestToggleMetaAdSetStatus_AppliedButVerificationFailedIs503(t *testing.T) {
+	d := &adSetDispatcher{toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+	s, repo := adSetService(metaCampaignRow(), model.ProviderMetaAds, d)
+	repo.verifyErr = errors.New("connection reset")
+	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	msg := errMessage(err)
+	if res != nil || !isStatus(err, 503) || !strings.Contains(msg, "was changed on Meta") || !strings.Contains(msg, "verifying the campaign row failed") {
+		t.Fatalf("got %+v, %T %q; want a 503 stating the change was applied on Meta", res, err, msg)
+	}
 }

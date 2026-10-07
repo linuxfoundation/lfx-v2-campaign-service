@@ -10,8 +10,8 @@
   set that delivered but is no longer listed. 404 only for a missing row; 100/33 is 503.
 - `toggle-meta-ad-set-status` (`POST .../meta-ad-sets/{ad_set_id}/status`): If-Match like the
   campaign toggle, provenance and ad-set ownership proven before ONE unretried write, adopted
-  ACTIVATE refused, outcomes APPLIED / UNCONFIRMED / ALREADY_IN_STATE; nothing persisted, ETag
-  returned unchanged.
+  ACTIVATE refused, outcomes APPLIED / ALREADY_IN_STATE; an unconfirmed write is answered 503;
+  nothing persisted, ETag returned unchanged.
 - New `MetaAdSetReader` / `MetaAdSetStatusToggler` capabilities (Meta only), domain sentinels,
   chart comments and parity rows, api-catalog rows, and the
   [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md) concept.
