@@ -921,7 +921,10 @@ announcement makes `CAMPAIGN` the default and the two models exclusive (under `L
 daily budget must be on the line item and absent from the campaign); the current reference page
 instead lists `LINE_ITEM` as the only value and default. The dispatcher therefore writes only on a
 reported `CAMPAIGN` and refuses a campaign reporting `LINE_ITEM` or omitting the field (409)
-before any write.
+before any write. `CreateCampaign` deliberately keeps omitting `budget_optimization` rather than sending
+`CAMPAIGN`: the current reference lists `LINE_ITEM` as the only POST value, so an explicit
+`CAMPAIGN` is undocumented and could fail every create. `TestCreateSendsQueryParams` pins the
+omission; the settings readback likewise compares the budget only on a REPORTED `CAMPAIGN`.
 
 ## Metrics reads
 

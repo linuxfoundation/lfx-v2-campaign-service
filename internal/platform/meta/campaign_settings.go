@@ -87,13 +87,15 @@ type adSetSettingsWire struct {
 // GetCampaignSettings reads the campaign node and, when adSetID is non-empty, that ad set. Both
 // are PURE READS (GETs retried on throttle by doRequest), so every failure is definite.
 //
-//   - Graph code 100 / subcode 33 on the CAMPAIGN → (nil, nil) ONLY when one account-scoped
-//     probe (GET /{act_id}?fields=id, same token) then loads the connection's own ad account.
-//     Meta documents 100/33 as "does not exist, cannot be loaded due to missing permissions, or
-//     does not support this operation", and GET /{id} is not account-scoped, so on its own it
-//     cannot tell a deleted campaign from one a token that lost the account cannot see — the
-//     false 404 the readback must not produce. If the account itself does not load (100/33,
-//     401/403, 5xx, a malformed or wrong-id answer) the absence is unproven and it is an error.
+//   - Graph code 100 / subcode 33 on the CAMPAIGN → an ERROR (unverifiable, 503), on EVERY HTTP
+//     status, exactly as the adoption read (GetCampaign) treats it. Meta documents 100/33 as
+//     "does not exist, cannot be loaded due to missing permissions, or does not support this
+//     operation", and no further read resolves which: GET /{id} is not account-scoped, and an
+//     account that loads says nothing about whether THIS campaign is hidden from the token or
+//     refused for the operation. Reporting it absent would be the false 404 the readback must
+//     not produce, so this read never returns (nil, nil): Meta's readback never answers 404
+//     from the platform. A campaign Meta has deleted or archived still answers 200 with that
+//     status (below), which is the only "gone" this read can prove.
 //   - code 100 / 33 on the AD SET → the campaign is returned with AdSet nil: the campaign exists,
 //     only the recorded child is gone, so the ad-set fields are absent rather than the whole read
 //     failing or the campaign being reported absent.
@@ -118,15 +120,7 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID, adSetID st
 
 	var raw json.RawMessage
 	if err := c.doRequest(ctx, http.MethodGet, "/"+campaignID+"?fields="+settingsCampaignFields, nil, &raw); err != nil {
-		if graphObjectMissing(err) {
-			// 100/33 alone cannot tell "no such campaign" from "this token cannot load it" —
-			// GET /{id} is not account-scoped — so absence is reported only once the account
-			// the read is held to is proven loadable by this same token.
-			if perr := c.proveAccountLoads(ctx); perr != nil {
-				return nil, fmt.Errorf("meta campaign settings read for %s: Graph reported the campaign cannot be loaded, and the ad account could not be confirmed loadable, so absence is unproven: %w", campaignID, perr)
-			}
-			return nil, nil
-		}
+		// Every Graph error — 100/33 included, see above — is unverifiable: none proves absence.
 		return nil, fmt.Errorf("meta campaign settings read for %s: %w", campaignID, err)
 	}
 	if err := identityjson.Check(raw); err != nil {
@@ -209,39 +203,16 @@ func (c *Client) AccountCurrencyOffset(ctx context.Context) (offset int64, known
 
 // graphCodeInvalidParameter + graphSubcodeObjectMissing is Graph's structured "this node does not
 // exist, cannot be loaded with this token, or does not support this operation" answer (code 100,
-// error_subcode 33). It does NOT by itself prove absence — see GetCampaignSettings.
+// error_subcode 33). It does NOT prove absence — see GetCampaignSettings — so it is read only on
+// the recorded AD SET, where it leaves the ad-set fields absent (`unknown`) rather than claiming
+// anything about the campaign.
 const (
 	graphCodeInvalidParameter = 100
 	graphSubcodeObjectMissing = 33
 )
 
-// proveAccountLoads confirms, with one account-scoped GET under this client's token, that the
-// connection's ad account loads and is the account asked for. It is the evidence that turns a
-// campaign's 100/33 into a proven absence: the token can see the account, so a campaign it
-// cannot load is not one hidden by lost access to the account.
-func (c *Client) proveAccountLoads(ctx context.Context) error {
-	accountID := strings.TrimSpace(c.account.AccountID)
-	if accountID == "" {
-		return fmt.Errorf("meta: no ad account is selected to confirm against")
-	}
-	var raw json.RawMessage
-	if err := c.doRequest(ctx, http.MethodGet, "/"+accountID+"?fields=id", nil, &raw); err != nil {
-		return fmt.Errorf("meta: confirm ad account %s loads: %w", accountID, err)
-	}
-	if err := identityjson.Check(raw); err != nil {
-		return fmt.Errorf("meta: confirm ad account %s loads: %w", accountID, err)
-	}
-	var wire struct {
-		ID *string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &wire); err != nil || wire.ID == nil || canonicalAccountID(*wire.ID) != canonicalAccountID(accountID) || canonicalAccountID(accountID) == "" {
-		return fmt.Errorf("meta: confirm ad account %s loads: the answer does not describe that account", accountID)
-	}
-	return nil
-}
-
 // graphObjectMissing reports Graph's structured "this node does not exist or cannot be loaded"
-// answer (code 100 / error_subcode 33) on a 4xx — the one answer this package reads as absence.
+// answer (code 100 / error_subcode 33) on a 4xx. Only the recorded ad set's read consults it.
 func graphObjectMissing(err error) bool {
 	var ae *APIError
 	return errors.As(err, &ae) && ae.StatusCode >= 400 && ae.StatusCode < 500 &&
