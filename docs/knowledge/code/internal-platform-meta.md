@@ -563,9 +563,10 @@ ISO 4217 code, each breakdown value present and matching `^[A-Za-z0-9][A-Za-z0-9
 counters via `parseMetricInt`/`parseSpendMicros` (spend → micros, the helper the metrics read
 now shares). The counters are decoded RAW: an ABSENT `impressions`/`clicks`/`spend` is a measured
 0, as in the metrics read (Meta omits zero counters), but an explicit JSON `null` or a non-string
-value fails the read rather than publishing an authoritative zero. Rows are summed per segment across campaigns with an overflow check; CTR is computed
-after aggregation; order is impressions descending then values. Any failure — including either
-breakdown's — returns no rows. No conversions: Meta has no scalar conversions metric.
+value fails the read rather than publishing an authoritative zero. Rows are summed per segment
+across campaigns with an overflow check; CTR is computed after aggregation; order is impressions
+descending then values. Any failure — including either breakdown's — returns no rows. No
+conversions: Meta has no scalar conversions metric.
 
 The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both breakdowns, up to
 2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
