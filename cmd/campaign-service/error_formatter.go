@@ -69,6 +69,10 @@ const fieldName = `([A-Za-z0-9_.\[\]-]+)`
 // echoingPartFormats recognizes, by its fixed PREFIX, each of Goa's value-echoing messages
 // (goa.design/goa/v3/pkg/error.go). Only the prefix is matched — it precedes the value — and the
 // whole part is replaced, so nothing after the field name survives.
+// formatPart is the invalid_format prefix; see sanitizeValidationMessage for why a format part
+// ends the message.
+var formatPart = regexp.MustCompile(`^` + fieldName + ` must be formatted as a `)
+
 var echoingPartFormats = []struct {
 	re       *regexp.Regexp
 	sentence string
@@ -114,12 +118,27 @@ func nonEchoingResponseEncoder(ctx context.Context, w http.ResponseWriter) goaht
 // each part is rewritten on its own: an echoing part becomes "<field> <sentence>", a
 // missing-field or missing-payload part is kept, and anything else becomes a fixed generic
 // sentence.
+//
+// A FORMAT error ends the message. Goa's format validators append the parse error to the
+// quoted value UNQUOTED — FormatUUID's is "uuid: <value>: <cause>" — so everything after a
+// format part's quoted value is caller-controlled text that can carry its own "; " and forge a
+// "kept" part (a brief_id of `bad; "X" is missing from path` would otherwise survive as
+// `"X" is missing from path`). None of it is trusted: the format part is rewritten, and if
+// anything followed it, one generic sentence stands in for all of it.
 func sanitizeValidationMessage(msg string) string {
 	parts := splitValidationParts(msg)
+	out := make([]string, 0, len(parts))
 	for i, part := range parts {
-		parts[i] = sanitizeValidationPart(part)
+		if formatPart.MatchString(part) {
+			out = append(out, sanitizeValidationPart(part))
+			if i < len(parts)-1 {
+				out = append(out, unrecognizedValidationPart)
+			}
+			break
+		}
+		out = append(out, sanitizeValidationPart(part))
 	}
-	return strings.Join(parts, "; ")
+	return strings.Join(out, "; ")
 }
 
 func sanitizeValidationPart(part string) string {

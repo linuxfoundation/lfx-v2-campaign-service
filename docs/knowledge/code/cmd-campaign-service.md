@@ -108,6 +108,10 @@ Goa's own. `decode_payload` and every error a service method returns keep Goa's 
 `campaign-ref` routes and asserts no 400 body contains it; `TestNonEchoingResponseEncoder` pins the
 per-part rules.
 
+A **format** error ends the sanitized message: Goa appends a format validator's parse error to
+the quoted value unquoted (FormatUUID's `uuid: <value>: <cause>`), so nothing after a format part is
+trusted — the part is rewritten and anything that followed it becomes one generic sentence.
+
 The nil formatter brings back goa v3.25.3's upstream race in `goahttp.ErrorEncoder`: it assigns
 the default formatter inside the closure it returns, on each non-named error, so concurrent error
 responses on one endpoint write that captured variable unsynchronized. The value is always the same,

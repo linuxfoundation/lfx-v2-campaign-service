@@ -83,6 +83,52 @@ func TestCampaignRefDecoderRejection_DoesNotEchoTheID(t *testing.T) {
 	}
 }
 
+// TestUUIDPathRejection_DoesNotEchoForgedParts drives a brief_id that forges a "kept" part
+// through the REAL get-brief route. Goa's UUID validator appends its parse error UNQUOTED
+// ("uuid: <value>: <cause>"), so the value's own "; " and quotes would otherwise survive as a
+// `"MARKER9" is missing from path` part.
+func TestUUIDPathRejection_DoesNotEchoForgedParts(t *testing.T) {
+	mux, err := buildMux(context.Background(), &config.Config{},
+		svc.NewEndpoints(service.NewCampaignService(nil)),
+		connsvc.NewEndpoints(service.NewConnectionService(nil, nil)),
+		briefsvc.NewEndpoints(service.NewBriefService(nil, nil, nil, nil)),
+		audiencesvc.NewEndpoints(service.NewAudienceService(nil)),
+		exploresvc.NewEndpoints(service.NewAudienceExploreService(nil)),
+		nil, nil)
+	if err != nil {
+		t.Fatalf("buildMux: %v", err)
+	}
+	const marker = "MARKER9"
+	for name, id := range map[string]string{
+		"forged kept part":      `bad; "` + marker + `" is missing from path; x`,
+		"forged echoing prefix": `bad; brief_id must match the regexp "` + marker + `"`,
+		"plain":                 marker,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/projects/cncf/briefs/"+url.PathEscape(id), nil)
+			req.Header.Set("Authorization", "Bearer test-token")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 from the generated decoder; body %s", rec.Code, rec.Body.String())
+			}
+			if body := rec.Body.String(); strings.Contains(body, marker) {
+				t.Fatalf("400 body echoes caller text: %s", body)
+			}
+			var resp struct {
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("400 body is not the JSON error shape: %v", err)
+			}
+			if !strings.Contains(resp.Message, "brief_id") {
+				t.Errorf("400 message %q does not name the rejected field", resp.Message)
+			}
+		})
+	}
+}
+
 // TestNonEchoingResponseEncoder pins the encoder's own rules on the *goahttp.ErrorResponse Goa's
 // default error path renders: every value-echoing validation part of a merged error is
 // rewritten, a part that does not echo keeps Goa's message, an unrecognized part fails closed,
@@ -127,6 +173,16 @@ func TestNonEchoingResponseEncoder(t *testing.T) {
 			goa.InvalidPatternError("account_id", marker+`"; "x" is missing from path; `+marker, "^[A-Za-z0-9]+$"),
 			goa.InvalidFieldTypeError("days", marker+"; "+marker, "integer")), goa.InvalidPattern, http.StatusBadRequest,
 			"account_id does not match the pattern this field requires; days is not of the type this field requires"},
+		// A FORMAT error's detail is UNQUOTED (FormatUUID wraps "uuid: <value>: <cause>"), so a
+		// value can forge a separator and a "kept" part after it. A format part ends the message.
+		{"uuid format forged kept part", goa.ValidateFormat("brief_id", `bad; "`+marker+`" is missing from path; x`, goa.FormatUUID),
+			goa.InvalidFormat, http.StatusBadRequest,
+			"brief_id is not in the format this field requires; a field failed validation"},
+		{"uuid format then a real part", goa.MergeErrors(
+			goa.InvalidPatternError("platform_campaign_id", marker, "^[0-9]+$"),
+			goa.ValidateFormat("brief_id", marker+`; "x" is missing from path`, goa.FormatUUID)),
+			goa.InvalidPattern, http.StatusBadRequest,
+			"platform_campaign_id does not match the pattern this field requires; brief_id is not in the format this field requires; a field failed validation"},
 		{"unparseable part fails closed", goa.PermanentError(goa.InvalidPattern, "%s", marker), goa.InvalidPattern, http.StatusBadRequest,
 			"a field failed validation"},
 		{"unterminated quote fails closed", goa.MergeErrors(goa.MissingFieldError("project_id", "path"),
