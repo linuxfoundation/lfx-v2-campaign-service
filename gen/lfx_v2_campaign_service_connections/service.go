@@ -216,6 +216,45 @@ type Service interface {
 	// caller receiving more than one must refuse rather than choose. Not a list
 	// endpoint under rule 3: a keyed lookup for one supplied id.
 	ResolveMicrosoftAdsCampaign(context.Context, *ResolveMicrosoftAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
+	// Resolve one Meta campaign id to this service's own campaign and brief. The
+	// Meta twin of resolve-microsoft-ads-campaign: same payload shape, result and
+	// errors. A pure READ of this service's own tables: Meta is never contacted,
+	// no connection is resolved, and nothing is mutated. Scoped to the project's
+	// own campaigns by the same `project_id` predicate, so it cannot answer
+	// whether ANOTHER project holds a given id. **An unowned id is 200 with an
+	// empty `matches`, not 404.** **`matches` CAN hold more than one entry:**
+	// migration 000020's unique index covers Google Ads only, so a project whose
+	// connection was re-pointed between accounts can hold two live rows with the
+	// same id. A caller receiving more than one must refuse rather than choose. A
+	// malformed id is refused with 400 before any lookup. Not a list endpoint
+	// under rule 3: a keyed lookup for one supplied id.
+	ResolveMetaAdsCampaign(context.Context, *ResolveMetaAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
+	// Resolve one Reddit campaign id to this service's own campaign and brief. The
+	// Reddit twin of resolve-microsoft-ads-campaign: same payload shape, result
+	// and errors. A pure READ of this service's own tables: Reddit is never
+	// contacted, no connection is resolved, and nothing is mutated. Scoped to the
+	// project's own campaigns by the same `project_id` predicate, so it cannot
+	// answer whether ANOTHER project holds a given id. **An unowned id is 200 with
+	// an empty `matches`, not 404.** **`matches` CAN hold more than one entry:**
+	// migration 000020's unique index covers Google Ads only, so a project whose
+	// connection was re-pointed between accounts can hold two live rows with the
+	// same id. A caller receiving more than one must refuse rather than choose. A
+	// malformed id is refused with 400 before any lookup. Not a list endpoint
+	// under rule 3: a keyed lookup for one supplied id.
+	ResolveRedditAdsCampaign(context.Context, *ResolveRedditAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
+	// Resolve one X/Twitter campaign id to this service's own campaign and brief.
+	// The X/Twitter twin of resolve-microsoft-ads-campaign: same payload shape,
+	// result and errors. A pure READ of this service's own tables: X/Twitter is
+	// never contacted, no connection is resolved, and nothing is mutated. Scoped
+	// to the project's own campaigns by the same `project_id` predicate, so it
+	// cannot answer whether ANOTHER project holds a given id. **An unowned id is
+	// 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one
+	// entry:** migration 000020's unique index covers Google Ads only, so a
+	// project whose connection was re-pointed between accounts can hold two live
+	// rows with the same id. A caller receiving more than one must refuse rather
+	// than choose. A malformed id is refused with 400 before any lookup. Not a
+	// list endpoint under rule 3: a keyed lookup for one supplied id.
+	ResolveTwitterAdsCampaign(context.Context, *ResolveTwitterAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the
 	// connection's account_id. Accounts Meta reports as disabled, unsettled or
@@ -243,6 +282,15 @@ type Service interface {
 	// The per-row deleted flag is still honoured defensively, so a row X flags
 	// anyway is labelled rather than passing as live.
 	ListTwitterAdsAccounts(context.Context, *ListTwitterAdsAccountsPayload) (res *ListTwitterAdsAccountsResult, err error)
+	// Enumerate the Reddit ad accounts accessible via the stored connection
+	// credential: every business the credential can access, then each business's
+	// ad accounts. Returns account ids in the form the connection's account_id
+	// stores. The label carries the account name, its currency when reported, and
+	// the business it was listed under. All or nothing: an upstream failure, a
+	// throttle that outlasts the bounded retry, a malformed response or a walk
+	// past its page or item bound is a 503, never a short or empty list. An
+	// account reachable through two businesses is listed once.
+	ListRedditAdsAccounts(context.Context, *ListRedditAdsAccountsPayload) (res *ListRedditAdsAccountsResult, err error)
 	// Search the marketing emails reachable via the stored HubSpot connection,
 	// most-recently-updated first. This is a TEMPLATE picker, not an account
 	// picker: a HubSpot connection is already scoped to the portal its private-app
@@ -435,14 +483,15 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [61]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
+var MethodNames = [65]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
 	// connection's account_id verbatim. The format is per-provider and is whatever
 	// that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads;
-	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a
-	// caller must treat it as an OPAQUE string and must not validate, normalise or
+	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter; a
+	// letters-digits-underscores id such as `t2_gv9wtbfa` on Reddit — so a caller
+	// must treat it as an OPAQUE string and must not validate, normalise or
 	// re-derive it. Each discovery method's own example shows its provider's form.
 	// Storing it unchanged is what matters: the connection validation for each
 	// provider accepts only its own format.
@@ -1212,6 +1261,21 @@ type ListMicrosoftAdsAccountsResult struct {
 	Accounts []*AccessibleAccount
 }
 
+// ListRedditAdsAccountsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts method.
+type ListRedditAdsAccountsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+}
+
+// ListRedditAdsAccountsResult is the result type of the
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts method.
+type ListRedditAdsAccountsResult struct {
+	Accounts []*AccessibleAccount
+}
+
 // ListTwitterAdsAccountsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service list-twitter-ads-accounts method.
 type ListTwitterAdsAccountsPayload struct {
@@ -1530,6 +1594,18 @@ type ResolveGoogleAdsCampaignPayload struct {
 	PlatformCampaignID string
 }
 
+// ResolveMetaAdsCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign method.
+type ResolveMetaAdsCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The Meta campaign id to resolve. Digits only, no leading zero, at most 32
+	// digits.
+	PlatformCampaignID string
+}
+
 // ResolveMicrosoftAdsCampaignPayload is the payload type of the
 // lfx-v2-campaign-service-connections service resolve-microsoft-ads-campaign
 // method.
@@ -1540,6 +1616,32 @@ type ResolveMicrosoftAdsCampaignPayload struct {
 	ProjectID string
 	// The Microsoft Advertising campaign id to resolve. Digits only, no leading
 	// zero, and within int64.
+	PlatformCampaignID string
+}
+
+// ResolveRedditAdsCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// method.
+type ResolveRedditAdsCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The Reddit campaign id to resolve. Letters, digits and underscores, at most
+	// 64 characters.
+	PlatformCampaignID string
+}
+
+// ResolveTwitterAdsCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// method.
+type ResolveTwitterAdsCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The X/Twitter campaign id to resolve. Letters and digits, at most 64
+	// characters.
 	PlatformCampaignID string
 }
 

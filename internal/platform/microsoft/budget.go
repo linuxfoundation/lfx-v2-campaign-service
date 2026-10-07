@@ -173,6 +173,12 @@ type msCampaignBudgetRead struct {
 	ExperimentId  *json.Number    `json:"ExperimentId"`
 	BiddingScheme json.RawMessage `json:"BiddingScheme"`
 	BidStrategyId json.RawMessage `json:"BidStrategyId"`
+	// Name, Status and CampaignType are read only by the adoption lookup (campaign_lookup.go) and are kept RAW
+	// for the same reason as the two fields above: a shape this package does not expect in either
+	// fails the adoption read without ever failing the budget or bid read that shares this decode.
+	Name         json.RawMessage `json:"Name"`
+	Status       json.RawMessage `json:"Status"`
+	CampaignType json.RawMessage `json:"CampaignType"`
 }
 
 // queryCampaignsByIDsResponse is the (subset of the) 200 body. Campaigns is a pointer so an
@@ -232,6 +238,18 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 // a PartialError of any other kind — a guard reasoning about a campaign it did not actually read
 // is a guard in name only.
 func (c *Client) queryCampaignByID(ctx context.Context, campaignID, what, additionalFields string) (*msCampaignBudgetRead, string, error) {
+	return c.queryCampaignByIDGuarded(ctx, campaignID, what, campaignTypeSearch, additionalFields, nil)
+}
+
+// queryCampaignByIDGuarded is queryCampaignByID with an optional guard run over the RAW 200 body
+// BEFORE it is decoded. The adoption lookup passes identityjson.Check, so a body encoding/json
+// would silently rewrite (a substituted name, a duplicated Id) is refused rather than read; the
+// budget and bid reads pass nil and are byte-for-byte what they were.
+//
+// campaignTypes is the CampaignType filter sent. The budget and bid reads send Search, the only
+// type this service creates; the adoption lookup sends every documented type so it can tell a
+// non-Search campaign apart from an absent one (see GetCampaign).
+func (c *Client) queryCampaignByIDGuarded(ctx context.Context, campaignID, what, campaignTypes, additionalFields string, guard func([]byte) error) (*msCampaignBudgetRead, string, error) {
 	id := strings.TrimSpace(campaignID)
 	if !idRE.MatchString(id) {
 		return nil, id, fmt.Errorf("microsoft-ads: campaign id %q is not a numeric id", campaignID)
@@ -239,7 +257,7 @@ func (c *Client) queryCampaignByID(ctx context.Context, campaignID, what, additi
 	body, err := c.doRequest(ctx, http.MethodPost, "Campaigns/QueryByIds", queryCampaignsByIDsRequest{
 		AccountId:              json.Number(c.account.AccountID),
 		CampaignIds:            []json.Number{json.Number(id)},
-		CampaignType:           campaignTypeSearch,
+		CampaignType:           campaignTypes,
 		ReturnAdditionalFields: additionalFields,
 	}, true)
 	if err != nil {
@@ -251,6 +269,11 @@ func (c *Client) queryCampaignByID(ctx context.Context, campaignID, what, additi
 			return nil, id, nil
 		}
 		return nil, id, err
+	}
+	if guard != nil {
+		if gerr := guard(body); gerr != nil {
+			return nil, id, fmt.Errorf("Campaigns/QueryByIds response for campaign %s: %w", id, gerr)
+		}
 	}
 	var resp queryCampaignsByIDsResponse
 	if uerr := json.Unmarshal(body, &resp); uerr != nil {

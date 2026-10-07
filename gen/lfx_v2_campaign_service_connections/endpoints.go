@@ -64,10 +64,14 @@ type Endpoints struct {
 	GetMicrosoftAdsKeywords     goa.Endpoint
 	ResolveGoogleAdsCampaign    goa.Endpoint
 	ResolveMicrosoftAdsCampaign goa.Endpoint
+	ResolveMetaAdsCampaign      goa.Endpoint
+	ResolveRedditAdsCampaign    goa.Endpoint
+	ResolveTwitterAdsCampaign   goa.Endpoint
 	ListMetaAdsAccounts         goa.Endpoint
 	ListLinkedinAdsAccounts     goa.Endpoint
 	ListMicrosoftAdsAccounts    goa.Endpoint
 	ListTwitterAdsAccounts      goa.Endpoint
+	ListRedditAdsAccounts       goa.Endpoint
 	ListHubspotEmails           goa.Endpoint
 	SearchHubspotCampaigns      goa.Endpoint
 	CreateHubspotCampaign       goa.Endpoint
@@ -133,10 +137,14 @@ func NewEndpoints(s Service) *Endpoints {
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsEndpoint(s, a.JWTAuth),
 		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignEndpoint(s, a.JWTAuth),
 		ResolveMicrosoftAdsCampaign: NewResolveMicrosoftAdsCampaignEndpoint(s, a.JWTAuth),
+		ResolveMetaAdsCampaign:      NewResolveMetaAdsCampaignEndpoint(s, a.JWTAuth),
+		ResolveRedditAdsCampaign:    NewResolveRedditAdsCampaignEndpoint(s, a.JWTAuth),
+		ResolveTwitterAdsCampaign:   NewResolveTwitterAdsCampaignEndpoint(s, a.JWTAuth),
 		ListMetaAdsAccounts:         NewListMetaAdsAccountsEndpoint(s, a.JWTAuth),
 		ListLinkedinAdsAccounts:     NewListLinkedinAdsAccountsEndpoint(s, a.JWTAuth),
 		ListMicrosoftAdsAccounts:    NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
 		ListTwitterAdsAccounts:      NewListTwitterAdsAccountsEndpoint(s, a.JWTAuth),
+		ListRedditAdsAccounts:       NewListRedditAdsAccountsEndpoint(s, a.JWTAuth),
 		ListHubspotEmails:           NewListHubspotEmailsEndpoint(s, a.JWTAuth),
 		SearchHubspotCampaigns:      NewSearchHubspotCampaignsEndpoint(s, a.JWTAuth),
 		CreateHubspotCampaign:       NewCreateHubspotCampaignEndpoint(s, a.JWTAuth),
@@ -200,10 +208,14 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetMicrosoftAdsKeywords = m(e.GetMicrosoftAdsKeywords)
 	e.ResolveGoogleAdsCampaign = m(e.ResolveGoogleAdsCampaign)
 	e.ResolveMicrosoftAdsCampaign = m(e.ResolveMicrosoftAdsCampaign)
+	e.ResolveMetaAdsCampaign = m(e.ResolveMetaAdsCampaign)
+	e.ResolveRedditAdsCampaign = m(e.ResolveRedditAdsCampaign)
+	e.ResolveTwitterAdsCampaign = m(e.ResolveTwitterAdsCampaign)
 	e.ListMetaAdsAccounts = m(e.ListMetaAdsAccounts)
 	e.ListLinkedinAdsAccounts = m(e.ListLinkedinAdsAccounts)
 	e.ListMicrosoftAdsAccounts = m(e.ListMicrosoftAdsAccounts)
 	e.ListTwitterAdsAccounts = m(e.ListTwitterAdsAccounts)
+	e.ListRedditAdsAccounts = m(e.ListRedditAdsAccounts)
 	e.ListHubspotEmails = m(e.ListHubspotEmails)
 	e.SearchHubspotCampaigns = m(e.SearchHubspotCampaigns)
 	e.CreateHubspotCampaign = m(e.CreateHubspotCampaign)
@@ -1338,6 +1350,78 @@ func NewResolveMicrosoftAdsCampaignEndpoint(s Service, authJWTFn security.AuthJW
 	}
 }
 
+// NewResolveMetaAdsCampaignEndpoint returns an endpoint function that calls
+// the method "resolve-meta-ads-campaign" of service
+// "lfx-v2-campaign-service-connections".
+func NewResolveMetaAdsCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ResolveMetaAdsCampaignPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ResolveMetaAdsCampaign(ctx, p)
+	}
+}
+
+// NewResolveRedditAdsCampaignEndpoint returns an endpoint function that calls
+// the method "resolve-reddit-ads-campaign" of service
+// "lfx-v2-campaign-service-connections".
+func NewResolveRedditAdsCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ResolveRedditAdsCampaignPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ResolveRedditAdsCampaign(ctx, p)
+	}
+}
+
+// NewResolveTwitterAdsCampaignEndpoint returns an endpoint function that calls
+// the method "resolve-twitter-ads-campaign" of service
+// "lfx-v2-campaign-service-connections".
+func NewResolveTwitterAdsCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ResolveTwitterAdsCampaignPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ResolveTwitterAdsCampaign(ctx, p)
+	}
+}
+
 // NewListMetaAdsAccountsEndpoint returns an endpoint function that calls the
 // method "list-meta-ads-accounts" of service
 // "lfx-v2-campaign-service-connections".
@@ -1431,6 +1515,30 @@ func NewListTwitterAdsAccountsEndpoint(s Service, authJWTFn security.AuthJWTFunc
 			return nil, err
 		}
 		return s.ListTwitterAdsAccounts(ctx, p)
+	}
+}
+
+// NewListRedditAdsAccountsEndpoint returns an endpoint function that calls the
+// method "list-reddit-ads-accounts" of service
+// "lfx-v2-campaign-service-connections".
+func NewListRedditAdsAccountsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListRedditAdsAccountsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListRedditAdsAccounts(ctx, p)
 	}
 }
 

@@ -1268,3 +1268,22 @@ classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), se
 `ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
 `deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
 targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
+
+`ValidateCampaignID` is the id rule `resolve-twitter-ads-campaign` applies before any lookup:
+the package's `campaignIDRe` (`^[A-Za-z0-9]+$`) and at most 64 characters, untrimmed. Returns
+`ErrInvalidCampaignID`. It contacts nothing.
+
+## Adoption read (`campaign_lookup.go`, LFXV2-2665)
+
+`GetCampaign` is the read `TwitterDispatcher.LookupCampaign` makes to adopt an existing campaign:
+one `GET accounts/:account_id/campaigns/:campaign_id` — the resource the budget read and the toggle
+address — through `request()`, so a 429 is retried (and a declared reset past the wait cap ends the
+read at once) and an exhausted one is an error. `ValidateCampaignID` (alphanumeric, ≤64, no
+padding) runs first and returns `ErrInvalidCampaignID` with no request. A 404 and `deleted: true`
+are `(nil, nil)`; `entity_status` `ACTIVE`, `PAUSED` or `DRAFT` is a ref (a draft campaign exists);
+any other status, a missing name, an id echo that differs, an empty `data`, a 401/403, and a body
+`identityjson.Check` refuses or that does not decode are errors. The read is path-scoped; X's
+campaign object is not documented to carry `account_id`, and when a response does carry one it is
+returned for the dispatcher to compare.

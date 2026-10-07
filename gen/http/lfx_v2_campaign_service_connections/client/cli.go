@@ -1633,6 +1633,108 @@ func BuildResolveMicrosoftAdsCampaignPayload(lfxV2CampaignServiceConnectionsReso
 	return v, nil
 }
 
+// BuildResolveMetaAdsCampaignPayload builds the payload for the
+// lfx-v2-campaign-service-connections resolve-meta-ads-campaign endpoint from
+// CLI flags.
+func BuildResolveMetaAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignProjectID string, lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignPlatformCampaignID string, lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignBearerToken string) (*lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignProjectID
+	}
+	var platformCampaignID string
+	{
+		platformCampaignID = lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignPlatformCampaignID
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,31}$"))
+		if utf8.RuneCountInString(platformCampaignID) > 32 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 32, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildResolveRedditAdsCampaignPayload builds the payload for the
+// lfx-v2-campaign-service-connections resolve-reddit-ads-campaign endpoint
+// from CLI flags.
+func BuildResolveRedditAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignProjectID string, lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignPlatformCampaignID string, lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignBearerToken string) (*lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignProjectID
+	}
+	var platformCampaignID string
+	{
+		platformCampaignID = lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignPlatformCampaignID
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[A-Za-z0-9_]+$"))
+		if utf8.RuneCountInString(platformCampaignID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildResolveTwitterAdsCampaignPayload builds the payload for the
+// lfx-v2-campaign-service-connections resolve-twitter-ads-campaign endpoint
+// from CLI flags.
+func BuildResolveTwitterAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignProjectID string, lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignPlatformCampaignID string, lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignBearerToken string) (*lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignProjectID
+	}
+	var platformCampaignID string
+	{
+		platformCampaignID = lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignPlatformCampaignID
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[A-Za-z0-9]+$"))
+		if utf8.RuneCountInString(platformCampaignID) > 64 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 64, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListMetaAdsAccountsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-meta-ads-accounts endpoint from CLI
 // flags.
@@ -1711,6 +1813,27 @@ func BuildListTwitterAdsAccountsPayload(lfxV2CampaignServiceConnectionsListTwitt
 		}
 	}
 	v := &lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildListRedditAdsAccountsPayload builds the payload for the
+// lfx-v2-campaign-service-connections list-reddit-ads-accounts endpoint from
+// CLI flags.
+func BuildListRedditAdsAccountsPayload(lfxV2CampaignServiceConnectionsListRedditAdsAccountsProjectID string, lfxV2CampaignServiceConnectionsListRedditAdsAccountsBearerToken string) (*lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload, error) {
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsListRedditAdsAccountsProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsListRedditAdsAccountsBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsListRedditAdsAccountsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 

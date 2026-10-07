@@ -711,12 +711,14 @@ exists to prevent.
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts`, `ListMetaAdsAccounts`, `ListLinkedinAdsAccounts`,
-`ListMicrosoftAdsAccounts` and `ListTwitterAdsAccounts` (backing
-`GET .../connection-{google-ads,meta-ads,linkedin-ads,microsoft-ads,twitter-ads}/accounts`)
+`ListMicrosoftAdsAccounts`, `ListTwitterAdsAccounts` and `ListRedditAdsAccounts` (backing
+`GET .../connection-{google-ads,meta-ads,linkedin-ads,microsoft-ads,twitter-ads,reddit-ads}/accounts`)
 enumerate the ad accounts reachable UPSTREAM with the connection's stored credential, so an
 operator can pick one instead of pasting an account id by hand. LinkedIn and Microsoft joined in
-LFXV2-3064 and X in LFXV2-3319; Reddit has no handler because its client exposes no
-`ListAdAccounts`, so there is nothing for one to call.
+LFXV2-3064, X in LFXV2-3319 and Reddit in LFXV2-2665. Reddit's handler uses its own
+`redditAdsListDiscovery` descriptor (operation "account discovery", remedy naming
+`client_id`, `client_secret`, `refresh_token`) rather than connection_monitor.go's
+`redditAdsAccountDiscovery`, which names the account-monitor operation.
 
 X's ids are ALPHANUMERIC handles (e.g. `18ce54d4x5t`), not digits like LinkedIn's and
 Microsoft's, and are returned verbatim because that is the form its `account_id` stores. Its
@@ -1963,3 +1965,19 @@ did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
 `RemoveKeywordTargeting` type-assert the capabilities, instrument `read_keyword_targeting` /
 `remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
+
+`ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
+`ResolveRedditAdsCampaign` and `ResolveTwitterAdsCampaign` (`GET .../{platform}/campaign-ref`)
+map one platform campaign id to this service's own campaign + brief. All five are one helper,
+`resolvePlatformCampaignRef(ctx, projectID, platform, id, validateID)` in
+`connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any
+lookup), then the backend check (503 when not wired), then the project-scoped DB read (500 on a
+storage fault; 200 with an empty `matches` for an unowned id; every live match returned, never
+one picked). The platform and the id rule are fixed by the method, never by the request. Google
+and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta, Reddit and X
+(LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
+`platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
+platform error. `internal/apivalidation/campaign_ref_id_drift_test.go` pins that the Goa
+Pattern/MaxLength and the platform validator accept the same ids.

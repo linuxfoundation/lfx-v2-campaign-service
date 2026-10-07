@@ -481,9 +481,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // account-less system row for one of them is installable, reports success, and then fails
 // every dispatch. (X still guards on it at DISPATCH — being credentials-first relaxes what may
 // be INSTALLED, not what may be dispatched with; the guard is what names the missing choice.)
-// What differs is whether the operator can RECOVER. Reddit has no discovery
-// endpoint, so an account-less row is unrecoverable from inside this API. LinkedIn
-// does have one — call discovery, rerun bootstrap with the chosen id — so its row is
+// What differs is whether the operator can RECOVER. Reddit had no discovery
+// endpoint until LFXV2-2665, so an account-less row was unrecoverable from inside this API.
+// LinkedIn does have one — call discovery, rerun bootstrap with the chosen id — so its row is
 // recoverable; what it lacks is DIAGNOSIS, because the create failure names nothing, leaving
 // the operator with no reason to go looking. Microsoft is excluded by neither: it has
 // both halves and its absence is sequencing alone. X held both too and was ADMITTED in
@@ -518,9 +518,14 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // (X discovery, and X's admission to this map) — the providers outside this map are not outside
 // it for the same reason, and the difference is what tells you how far each is from qualifying:
 //
-//   - Reddit lacks the FIRST half. Its platform client has no ListAdAccounts, so no
-//     discovery endpoint exists and nothing inside this API could tell an operator what to put
-//     in the account id.
+//   - Reddit has BOTH halves as of LFXV2-2665, which added reddit.ListAdAccounts and
+//     RedditDispatcher.ListAccounts (list-reddit-ads-accounts). The second half it already had:
+//     resolveRedditClientWithCredsCache, which Dispatch calls, tags an empty account id with
+//     ErrConnectionNotUsable and ErrAccountNotSelected. It is ELIGIBLE and deliberately NOT
+//     admitted here: admission changes what this CLI accepts, and Reddit's public connection
+//     config still Requires account_id (design/connection.go), so admitting it here alone
+//     would make it credentials-first for the CLI and not over HTTP — half a flow, the
+//     mismatch X's admission was careful to avoid.
 //   - X has BOTH halves as of LFXV2-3319, which added twitter.ListAdAccounts and
 //     TwitterDispatcher.ListAccounts. The second half it already had, and had had all
 //     along: validateTwitterConnection tags an empty account id with BOTH

@@ -1923,9 +1923,17 @@ zero upstream calls, the provenance filter, the system-fallback refusal, the sub
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
 of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher`, `MicrosoftDispatcher` and
-`TwitterDispatcher` implement it too — five in total, two added in LFXV2-3064 and X in
-LFXV2-3319. Reddit does not, because its platform client exposes no `ListAdAccounts` for a
-dispatcher method to call.
+`TwitterDispatcher` implement it too, and `RedditDispatcher` since LFXV2-2665 — six in total,
+two added in LFXV2-3064, X in LFXV2-3319 and Reddit in LFXV2-2665.
+
+`RedditDispatcher.ListAccounts` resolves through `d.creds.resolve` (the discovery entry point)
+and applies `validateRedditCredentials` — the active / decodable / complete checks
+`resolveRedditClientWithCredsCache` also runs for `Dispatch` — but not the account-id check, so
+the account-less connection discovery exists for is served while every other refusal keeps its
+sentinel. It builds a fresh, uncached client with a zero `AccountConfig` and caller-scoped token
+refresh, calls `reddit.Client.ListAdAccounts` (businesses, then each business's ad accounts), and
+labels each row `name [currency] (business)` via `redditAccountLabel`, falling back to the id
+for a nameless account.
 
 `TwitterDispatcher.ListAccounts` shares `validateTwitterConnection` with `Dispatch` and
 `ToggleStatus`, tolerating exactly one of its outcomes — `ErrAccountNotSelected`, the state the
@@ -2998,8 +3006,9 @@ answers **400, not 409**: the update endpoints declare `BadRequest` but not `Con
 `CampaignAdopter` is a fourth OPTIONAL dispatcher interface, alongside `StatusToggler`,
 `MetricsReader` and `AccountLister`, declared in `internal/service/orchestrator.go` and
 discovered by the same type assertion. A dispatcher that does not implement it makes the
-platform answer `ErrAdoptionUnsupported` (400) with no network call. **Google Ads is the
-only implementation today.**
+platform answer `ErrAdoptionUnsupported` (400) with no network call. **Google Ads, Microsoft
+Advertising, Meta, Reddit and X implement it** (the last four since LFXV2-2665 — see "Microsoft,
+Meta, Reddit and X adopters" below); LinkedIn and HubSpot do not.
 
 ```go
 LookupCampaign(ctx, projectID, platform, platformCampaignID) (*model.PlatformCampaignRef, error)
@@ -3107,6 +3116,78 @@ these gates must never have. Nil therefore activates, a recorded zero refuses. A
 mutate records zero rather than nothing, also deliberately: links may exist, this client cannot say
 they do, and the safe reading of "cannot say" is the UI rather than a claimed launch. PAUSE is
 untouched by all of it — refusing to pause is refusing to stop spend.
+
+### Microsoft, Meta, Reddit and X adopters (LFXV2-2665)
+
+`MicrosoftDispatcher`, `MetaDispatcher`, `RedditDispatcher` and `TwitterDispatcher` implement
+`LookupCampaign` (`microsoft_adopt.go`, `meta_adopt.go`, `reddit_adopt.go`, `twitter_adopt.go`),
+which is all it took to take them off the `ErrAdoptionUnsupported` path — the orchestrator gate is a
+type assertion. `adopt.go` holds what the four share and states the order each follows, because the
+order is the safety argument:
+
+1. **Validate the id as an identity before any connection work** — `microsoft.ValidateCampaignID`
+   (canonical positive int64, no leading zero, no padding), `meta.ValidateCampaignID` (decimal node
+   id, no leading zero, ≤32 digits), `reddit.ValidateCampaignID` (letters/digits/underscore, ≤64)
+   and `twitter.ValidateCampaignID` (alphanumeric, ≤64). A failure is re-tagged
+   `domain.ErrInvalidPlatformCampaignID` (400) with no repository read and no request.
+2. **Resolve the project's own connection only** — `credsSource.resolveOwnedForAdoption`, which is
+   `resolveOwned` with absence translated to `domain.ErrAdoptionRequiresOwnConnection` (409), the
+   same translation `resolveOwnedGoogleAdsClient` applies. It has the `credsResolver` shape, so Meta
+   (`resolveMetaCredentials`) and Reddit (`resolveRedditClient`) take it directly. The connection is
+   then validated by the platform's toggle-path rules; an account id the client cannot address is
+   `ErrConnectionNotUsable` + `ErrProviderConfigInvalid` (409, `adoptionAccountIDUnusable`), never
+   an unverifiable 503.
+3. **One read by id** under that connection: Microsoft `GetCampaignsByIds` (the existing
+   `Campaigns/QueryByIds` read, account-scoped by body and header, asking for EVERY campaign type
+   so a live non-Search campaign is refused DEFINITELY — `domain.ErrAdoptionCampaignTypeUnsupported`,
+   409 — rather than read as absent), Meta
+   `GET /{campaign_id}?fields=id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy`,
+   Reddit `GET /ad_accounts/{account}/campaigns/{id}`, X `GET accounts/:account_id/campaigns/:id`.
+   Meta's campaign-only fields (`objective`, the budget fields, `bid_strategy`) are load-bearing:
+   they make Graph refuse an ad set or ad id read through the same `GET /{id}`. Reddit and X run
+   `identityjson.Check` over the RAW response body (`apiResponse.raw`), not the decoded `data`, so a
+   duplicated `data` envelope key is refused rather than resolved last-wins; their bare-404 absence
+   is judged on the status alone (a revoked account would also read absent — low harm, since any
+   dispatch to that account fails the same way).
+4. **Prove provenance.** Microsoft's read is account-scoped and its Campaign object carries no
+   account id, so — as on Google — the request's scope is the proof and a foreign campaign is
+   answered absent. Meta's node read is NOT account-scoped (one token reaches many accounts), so the
+   answer's `account_id` must equal the connection's account through `normalizeMetaAccountID`, and
+   the client refuses an answer with no readable `account_id` as unverifiable. Reddit and X are
+   path-scoped; an `ad_account_id`/`account_id` in the answer is compared when present (the Reddit
+   budget writer's check-don't-assume rule). A mismatch is `domain.ErrCampaignAccountMismatch`,
+   which `BriefService.AdoptCampaign` answers **409** — not 404 (the campaign exists; "absent"
+   invites a duplicate) and not 503 (the answer is definite).
+5. **Record provenance only.** The `Result` blob is the platform's own `CampaignResult` with the
+   account, id, name and an adoption Steps line — no ad group, ad, ad set, line item or keyword id —
+   so each platform's creation-account reader (`microsoftCreationAccountID`,
+   `metaCreationAccountID`, `redditCreationAccountID`, `twitterCreationAccountID`) holds every later
+   read, toggle and lever on the row to the verified account, and each toggle refuses ACTIVATE
+   (`ErrCampaignNotProvisioned`, now naming adoption in the message as Google's gate does) while
+   PAUSE addresses the campaign alone. The LEVERS follow from the same missing children: the bid
+   writer is refused on all four (`ErrBidUnwritable` — the manual bid lives on the ad group, ad set
+   or line item), and the budget writer is refused on Meta (`ErrCampaignNotProvisioned` — the
+   budget lives on the ad set) but WORKS on Microsoft, Reddit and X, whose budget is the campaign's
+   own, so the write changes the adopted campaign's live budget behind the usual provenance and
+   shared-budget/pacing guards. Every one of those refusals names adoption. So "an adopted row is
+   an ordinary row" holds for the reads, delete and pause — not for activation or the child-level
+   levers. The variant is `VariantDefault`: every platform but Google
+   has one slot per brief (`model.AdoptableVariants`).
+
+Definite vs unverifiable, per client (`GetCampaign` in each `campaign_lookup.go`): **absent
+(nil, nil)** is Microsoft `CampaignServiceInvalidCampaignId` (fault or PartialError) or status
+`Deleted`; Meta Graph code 100 + `error_subcode` 33 or status `DELETED`/`ARCHIVED`; Reddit 404 or
+`configured_status` `DELETED`/`ARCHIVED`; X 404 or `deleted: true`. A terminal state reads absent for
+the reason Google's `REMOVED` does — it cannot spend, so "absent" licenses no duplicate of anything
+serving. **Everything else is an error** the service answers 503 "could not be verified":
+transport, 5xx, an exhausted or over-cap throttle, 401/403, an id echo that differs, a missing name,
+a status outside the documented set (Microsoft Active/Paused/BudgetPaused/BudgetAndManualPaused/
+Suspended; Meta ACTIVE/PAUSED; Reddit ACTIVE/PAUSED; X ACTIVE/PAUSED/DRAFT), and any body
+`internal/platform/identityjson` refuses — malformed UTF-8, an unpaired surrogate escape, or a key
+declared twice, the three ways encoding/json silently rewrites identity evidence. Matching is on
+codes, statuses and fields only; upstream text never reaches a client. Pinned by
+`internal/dispatch/adopt_test.go` (all four through one table, including through the real
+orchestrator) and each client's `campaign_lookup_test.go`.
 
 The Google dispatcher resolves the CHANNEL before it composes the campaign name, before adoption
 looks anything up, and before any create. Each of those depends on which campaign type is being
