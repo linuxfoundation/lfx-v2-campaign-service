@@ -176,7 +176,7 @@ func assertSettings503(t *testing.T, err error) {
 		domain.ErrPlatformCampaignAbsent, domain.ErrCampaignAccountMismatch, domain.ErrCampaignProvenanceUnknown,
 		domain.ErrNotFound, domain.ErrConnectionNotUsable, domain.ErrSystemConnectionNotUsable,
 		domain.ErrSystemConnectionMissing, domain.ErrAccountNotSelected, domain.ErrCredentialDecryptionFailed,
-		domain.ErrSettingsReadbackUnsupported, service.ErrCampaignNotProvisioned,
+		domain.ErrSettingsReadbackUnsupported, domain.ErrCampaignUpstreamIdentityMismatch, service.ErrCampaignNotProvisioned,
 	} {
 		if errors.Is(err, s) {
 			t.Fatalf("err %v matches %v, so it would not be answered 503", err, s)
@@ -199,6 +199,16 @@ func assertMismatch(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, domain.ErrCampaignAccountMismatch) || errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
 		t.Fatalf("err = %v, want ErrCampaignAccountMismatch alone", err)
+	}
+}
+
+// assertUpstreamIdentityMismatch pins the 409 for a platform answer that contradicts the recorded
+// identity while the connection IS the recorded account: its own sentinel, never the account
+// mismatch (whose "reconnect the original account" remedy would be unactionable here).
+func assertUpstreamIdentityMismatch(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, domain.ErrCampaignUpstreamIdentityMismatch) || errors.Is(err, domain.ErrCampaignAccountMismatch) || errors.Is(err, domain.ErrCampaignProvenanceUnknown) {
+		t.Fatalf("err = %v, want ErrCampaignUpstreamIdentityMismatch alone", err)
 	}
 }
 
@@ -311,6 +321,9 @@ func TestCompareNudgedStart(t *testing.T) {
 		{"next day at dispatch is the nudge", at("2026-08-02T00:08:00Z"), created, model.SettingsUnknown},
 		{"an earlier day is a divergence", at("2026-07-31T00:00:00Z"), created, model.SettingsDiverged},
 		{"a later day far from dispatch is a divergence", at("2026-08-09T00:00:00Z"), created, model.SettingsDiverged},
+		// The nudge moves a start to dispatch time + minutes, so it can never land BEFORE the
+		// creation day: a later-than-recorded day earlier than that is an edit, not a nudge.
+		{"a later day before the creation day is a divergence", at("2026-08-02T00:00:00Z"), time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC), model.SettingsDiverged},
 		{"no CreatedAt cannot bound the nudge", at("2026-08-09T00:00:00Z"), time.Time{}, model.SettingsUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -59,13 +59,14 @@ func TestReddit_ReadSettings_MatchWhenBothAgree(t *testing.T) {
 		t.Fatalf("ReadSettings: %v", err)
 	}
 	assertSettingsFields(t, rb, map[string]fieldWant{
-		settingsFieldBudgetAmount:    {"2500.00", "2500.00", model.SettingsMatch},
-		settingsFieldBudgetType:      {"lifetime", "lifetime", model.SettingsMatch},
-		settingsFieldName:            {"KubeCon — Traffic", "KubeCon — Traffic", model.SettingsMatch},
-		settingsFieldStatus:          {"", "PAUSED", model.SettingsUnknown},
-		settingsFieldStartDate:       {"2026-08-01", "2026-08-01", model.SettingsMatch},
-		settingsFieldEndDate:         {"2026-08-31", "2026-08-31", model.SettingsMatch},
-		settingsFieldBiddingStrategy: {"", "BIDLESS", model.SettingsUnknown},
+		settingsFieldBudgetAmount:               {"2500.00", "2500.00", model.SettingsMatch},
+		settingsFieldBudgetType:                 {"lifetime", "lifetime", model.SettingsMatch},
+		settingsFieldName:                       {"KubeCon — Traffic", "KubeCon — Traffic", model.SettingsMatch},
+		settingsFieldStatus:                     {"", "PAUSED", model.SettingsUnknown},
+		settingsFieldStartDate:                  {"2026-08-01", "2026-08-01", model.SettingsMatch},
+		settingsFieldEndDate:                    {"2026-08-31", "2026-08-31", model.SettingsMatch},
+		settingsFieldBiddingStrategy:            {"", "BIDLESS", model.SettingsUnknown},
+		settingsFieldCampaignBudgetOptimization: {"", "true", model.SettingsUnknown},
 	})
 	if rb.PlatformCampaignID != "t3_c" || !rb.ReadAt.Equal(settingsClock) {
 		t.Errorf("readback header = %+v", rb)
@@ -107,12 +108,17 @@ func TestReddit_ReadSettings_Cases(t *testing.T) {
 			want: map[string]fieldWant{
 				settingsFieldBudgetAmount: {"2500.00", "", model.SettingsUnknown},
 				settingsFieldBudgetType:   {"lifetime", "", model.SettingsUnknown},
+				// Reported upstream-only, so the operator can see WHY the budget is unknown.
+				settingsFieldCampaignBudgetOptimization: {"", "false", model.SettingsUnknown},
 			},
 		},
 		{
 			name: "an unreported CBO flag is not assumed on",
 			body: redditBody(`,"goal_type":"LIFETIME_SPEND","goal_value":2500000000`),
-			want: map[string]fieldWant{settingsFieldBudgetAmount: {"2500.00", "", model.SettingsUnknown}},
+			want: map[string]fieldWant{
+				settingsFieldBudgetAmount:               {"2500.00", "", model.SettingsUnknown},
+				settingsFieldCampaignBudgetOptimization: {"", "", model.SettingsUnknown},
+			},
 		},
 		{
 			name: "an unmapped goal type is unknown",
@@ -183,13 +189,14 @@ func TestReddit_ReadSettings_AdoptedRowReadsAtTheCampaignLevel(t *testing.T) {
 		t.Fatalf("ReadSettings: %v", err)
 	}
 	assertSettingsFields(t, rb, map[string]fieldWant{
-		settingsFieldBudgetAmount:    {"", "2500.00", model.SettingsUnknown},
-		settingsFieldBudgetType:      {"", "lifetime", model.SettingsUnknown},
-		settingsFieldName:            {"KubeCon — Traffic", "KubeCon — Traffic", model.SettingsMatch},
-		settingsFieldStatus:          {"", "PAUSED", model.SettingsUnknown},
-		settingsFieldStartDate:       {"", "2026-08-01", model.SettingsUnknown},
-		settingsFieldEndDate:         {"", "2026-08-31", model.SettingsUnknown},
-		settingsFieldBiddingStrategy: {"", "BIDLESS", model.SettingsUnknown},
+		settingsFieldBudgetAmount:               {"", "2500.00", model.SettingsUnknown},
+		settingsFieldBudgetType:                 {"", "lifetime", model.SettingsUnknown},
+		settingsFieldName:                       {"KubeCon — Traffic", "KubeCon — Traffic", model.SettingsMatch},
+		settingsFieldStatus:                     {"", "PAUSED", model.SettingsUnknown},
+		settingsFieldStartDate:                  {"", "2026-08-01", model.SettingsUnknown},
+		settingsFieldEndDate:                    {"", "2026-08-31", model.SettingsUnknown},
+		settingsFieldBiddingStrategy:            {"", "BIDLESS", model.SettingsUnknown},
+		settingsFieldCampaignBudgetOptimization: {"", "true", model.SettingsUnknown},
 	})
 }
 
@@ -222,7 +229,7 @@ func TestReddit_ReadSettings_AccountMismatches(t *testing.T) {
 	t.Run("Reddit reports the campaign under another account", func(t *testing.T) {
 		d, _ := redditSettingsDispatcher(t, 200, `{"data":{"id":"t3_c","ad_account_id":"t2_other","name":"n"}}`)
 		_, err := d.ReadSettings(context.Background(), "proj", model.ProviderRedditAds, redditSettingsRow())
-		assertMismatch(t, err)
+		assertUpstreamIdentityMismatch(t, err)
 	})
 }
 

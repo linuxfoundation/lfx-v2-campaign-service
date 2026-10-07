@@ -103,6 +103,7 @@ func TestMetaGetCampaignSettings_Outcomes(t *testing.T) {
 		name       string
 		campaign   settingsReply
 		adSet      settingsReply
+		account    settingsReply
 		absent     bool
 		noAdSet    bool
 		wantErr    bool
@@ -110,7 +111,14 @@ func TestMetaGetCampaignSettings_Outcomes(t *testing.T) {
 		wantStatus string
 	}{
 		{name: "an archived campaign is reported, not absent", campaign: settingsReply{200, `{"id":"555","name":"n","status":"ARCHIVED","account_id":"777"}`}, adSet: settingsReply{200, metaSettingsAdSet}, wantStatus: "ARCHIVED"},
-		{name: "a missing campaign is absent", campaign: settingsReply{400, metaObjectMissing}, absent: true},
+		{name: "a missing campaign is absent once the account is proven loadable", campaign: settingsReply{400, metaObjectMissing}, account: settingsReply{200, `{"id":"act_777"}`}, absent: true},
+		// 100/33 cannot tell "deleted" from "this token lost the account": unless the account
+		// itself loads, the absence is unproven and the read is an error (503), never a 404.
+		{name: "100/33 with the account also not loadable is unproven", campaign: settingsReply{400, metaObjectMissing}, account: settingsReply{400, metaObjectMissing}, wantErr: true},
+		{name: "100/33 with the account forbidden is unproven", campaign: settingsReply{400, metaObjectMissing}, account: settingsReply{403, `{"error":{"message":"denied","code":200}}`}, wantErr: true},
+		{name: "100/33 with the account 5xx is unproven", campaign: settingsReply{400, metaObjectMissing}, account: settingsReply{500, `{"error":{"message":"boom","code":1}}`}, wantErr: true},
+		{name: "100/33 with a malformed account answer is unproven", campaign: settingsReply{400, metaObjectMissing}, account: settingsReply{200, `{"id":`}, wantErr: true},
+		{name: "100/33 with another account answering is unproven", campaign: settingsReply{400, metaObjectMissing}, account: settingsReply{200, `{"id":"act_778"}`}, wantErr: true},
 		{name: "a missing ad set leaves the campaign readable", campaign: settingsReply{200, metaSettingsCampaign}, adSet: settingsReply{400, metaObjectMissing}, noAdSet: true},
 		{name: "an ad set of another campaign is refused", campaign: settingsReply{200, metaSettingsCampaign}, adSet: settingsReply{200, `{"id":"888","campaign_id":"556","daily_budget":"5000"}`}, wantErr: true, wantNotIn: true},
 		{name: "an ad set with no campaign_id is refused", campaign: settingsReply{200, metaSettingsCampaign}, adSet: settingsReply{200, `{"id":"888","daily_budget":"5000"}`}, wantErr: true, wantNotIn: true},
@@ -134,7 +142,10 @@ func TestMetaGetCampaignSettings_Outcomes(t *testing.T) {
 			if tc.adSet.status != 0 {
 				routes["/888"] = tc.adSet
 			}
-			c, _ := settingsTestClient(t, routes)
+			if tc.account.status != 0 {
+				routes["/act_777"] = tc.account
+			}
+			c, seen := settingsTestClient(t, routes)
 			got, err := c.GetCampaignSettings(context.Background(), "555", "888")
 			switch {
 			case tc.wantErr:
@@ -151,6 +162,13 @@ func TestMetaGetCampaignSettings_Outcomes(t *testing.T) {
 			default:
 				if err != nil || got == nil {
 					t.Fatalf("GetCampaignSettings: %+v, %v", got, err)
+				}
+				// The account probe is only for an unproven absence: a campaign that answered
+				// 200 needs no proof, and none is sent.
+				for _, r := range seen() {
+					if strings.HasPrefix(r, "GET /act_777") {
+						t.Fatalf("a campaign that answered still probed the account: %q", seen())
+					}
 				}
 				if tc.noAdSet != (got.AdSet == nil) {
 					t.Fatalf("AdSet = %+v, want absent=%v", got.AdSet, tc.noAdSet)

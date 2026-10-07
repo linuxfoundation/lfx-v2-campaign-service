@@ -1017,12 +1017,15 @@ recorded side encoded as `round(amount × offset)`, exactly what `budgetToMinorU
 CBO campaign's ad-set budget is `unknown`, not substituted with the shared campaign budget.
 Reddit: one campaign read (the create path puts goal, flight and bid strategy on the campaign,
 so no ad group is read); the budget is read only when `is_campaign_budget_optimization` is
-true. X: campaign (budget) + the recorded line item (flight, bid strategy).
+true, and that flag is reported upstream-only so an `unknown` budget is explained. X: campaign
+(budget) + the recorded line item (flight, bid strategy); the budget is compared only under
+`budget_optimization` `CAMPAIGN` (a LINE_ITEM campaign's total cap is not the recorded daily
+amount), and `budget_optimization` is reported upstream-only.
 
 **Flight dates compare as UTC calendar dates**, because every create path sends UTC instants
 (Meta's end is `23:59:59+0000`). Meta and Reddit nudge a start whose day has begun to dispatch
-time + a buffer; `compareNudgedStart` reports a LATER upstream day within a day of the row's
-`CreatedAt` with both sides and an `unknown` verdict (via `model.UncomparableSettingsField`,
+time + a buffer; `compareNudgedStart` reports a LATER upstream day that is the row's
+`CreatedAt` day or the day after (the only days a minutes-long nudge can produce) with both sides and an `unknown` verdict (via `model.UncomparableSettingsField`,
 which can only ever say `unknown`) rather than a false `diverged`. An earlier day, or a later
 one far from dispatch, stays `diverged`.
 
@@ -1031,11 +1034,17 @@ joined with `ErrCampaignAccountMismatch`, BEFORE the connection is resolved (pin
 whose connection reader fails if consulted). A recorded account that differs → mismatch,
 before the campaign is read. Where the read answers with an account (Meta's `account_id` —
 `GET /{id}` is not account-scoped — Reddit's `ad_account_id`, X's `account_id`) a different
-one is the same mismatch, and so is a recorded ad set / line item that belongs to another
-campaign upstream (`meta.ErrAdSetNotInCampaign`, `twitter.ErrLineItemNotInCampaign`).
+one, or a recorded ad set / line item that belongs to another campaign upstream
+(`meta.ErrAdSetNotInCampaign`, `twitter.ErrLineItemNotInCampaign`), is NOT the account
+mismatch: the connection already IS the recorded account, so "reconnect the original account"
+would be unactionable. It is `domain.ErrCampaignUpstreamIdentityMismatch` (409, fixed
+re-dispatch message).
 **Adopted rows** read at the campaign level: the child-dependent fields are absent, not errors.
 
-**Definite vs unknown.** A 404 (Reddit, X), Graph 100/33 (Meta), `CampaignServiceInvalidCampaignId`
+**Definite vs unknown.** A 404 (Reddit, X), Graph 100/33 (Meta — only after one account-scoped
+probe, `GET /{act_id}?fields=id`, proves the same token loads the account; 100/33 alone cannot
+tell a deleted campaign from one a token that lost the account cannot see, so an unloadable
+account makes it 503), `CampaignServiceInvalidCampaignId`
 (Microsoft) or a deleted X campaign is `ErrPlatformCampaignAbsent` → 404. A missing CHILD (ad
 set / line item) only blanks its fields. Every other failure — transport, 5xx, 401/403, an
 exhausted 429, a body `identityjson.Check` refuses, a wrong id echoed, a non-integer or

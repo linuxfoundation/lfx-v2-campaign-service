@@ -30,7 +30,7 @@ func metaSettingsRoutes() map[string]settingsRoute {
 	return map[string]settingsRoute{
 		metaSettingsCampaignPath: {status: 200, body: metaSettingsCampaignBody},
 		metaSettingsAdSetPath:    {status: 200, body: metaSettingsAdSetBody},
-		metaSettingsAccountPath:  {status: 200, body: `{"currency":"USD"}`},
+		metaSettingsAccountPath:  {status: 200, body: `{"id":"act_777","currency":"USD"}`},
 	}
 }
 
@@ -258,15 +258,26 @@ func TestMeta_ReadSettings_AccountMismatches(t *testing.T) {
 		routes[metaSettingsCampaignPath] = settingsRoute{status: 200, body: `{"id":"555","name":"n","status":"PAUSED","account_id":"999"}`}
 		d, _ := metaSettingsDispatcher(t, routes)
 		_, err := d.ReadSettings(context.Background(), "proj", model.ProviderMetaAds, metaSettingsRow())
-		assertMismatch(t, err)
+		assertUpstreamIdentityMismatch(t, err)
 	})
 	t.Run("the recorded ad set belongs to another campaign", func(t *testing.T) {
 		routes := metaSettingsRoutes()
 		routes[metaSettingsAdSetPath] = settingsRoute{status: 200, body: `{"id":"888","campaign_id":"556","daily_budget":"5000"}`}
 		d, _ := metaSettingsDispatcher(t, routes)
 		_, err := d.ReadSettings(context.Background(), "proj", model.ProviderMetaAds, metaSettingsRow())
-		assertMismatch(t, err)
+		assertUpstreamIdentityMismatch(t, err)
 	})
+}
+
+// Graph 100/33 on the campaign is only an absence once the account is proven loadable by the same
+// token; with the account itself unreadable it is unproven — a 503, never a false 404.
+func TestMeta_ReadSettings_UnprovenAbsenceIs503(t *testing.T) {
+	routes := metaSettingsRoutes()
+	routes[metaSettingsCampaignPath] = settingsRoute{status: 400, body: metaSettingsMissing}
+	routes[metaSettingsAccountPath] = settingsRoute{status: 403, body: `{"error":{"message":"denied","code":200}}`}
+	d, _ := metaSettingsDispatcher(t, routes)
+	_, err := d.ReadSettings(context.Background(), "proj", model.ProviderMetaAds, metaSettingsRow())
+	assertSettings503(t, err)
 }
 
 func TestMeta_ReadSettings_NoSuchCampaignIs404(t *testing.T) {

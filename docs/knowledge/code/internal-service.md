@@ -1435,6 +1435,10 @@ wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything
 Microsoft Advertising, Meta, Reddit and X are wired (the last four by LFXV2-2665); LinkedIn and
 HubSpot still answer 400. `TestOrchestrator_ReadCampaignSettings_MicrosoftMetaRedditXAreWired`
 (internal/dispatch) drives the real orchestrator with the four real dispatchers.
+`ErrCampaignUpstreamIdentityMismatch` has its own 409 arm, ahead of the account-mismatch arm,
+with a fixed "re-dispatch the campaign" message: it is raised when the platform's answer
+contradicts the recorded identity while the connection already IS the recorded account, where
+"reconnect the original account" would be unactionable.
 
 **It never writes back onto the row, and that is the point.** The row records what a dispatch
 ASKED FOR; writing an observation into those columns would change their meaning from request to

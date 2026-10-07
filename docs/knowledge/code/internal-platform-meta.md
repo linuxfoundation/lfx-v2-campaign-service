@@ -777,8 +777,11 @@ the client, decides the account matches the connection.
 node) and, when the row recorded one, the ad set (`id,campaign_id,daily_budget,lifetime_budget,
 start_time,end_time,bid_strategy`). Both bodies pass `identityjson.Check` and a strict id echo;
 the campaign must report a readable `account_id` (GET /{id} is not account-scoped, so this is
-the read's provenance proof). Graph 100/33 on the campaign is `(nil, nil)`; on the ad set it
-only leaves `AdSet` nil. An ad set whose `campaign_id` is another campaign is
+the read's provenance proof). Graph 100/33 on the campaign is `(nil, nil)` ONLY after
+`proveAccountLoads` (one `GET /{act_id}?fields=id`, same token, strict id echo) shows the
+account loads; otherwise it is an error, because 100/33 alone also means "this token cannot
+load it". On the ad set 100/33 only leaves `AdSet` nil (its fields read `unknown`, a claim of
+nothing). An ad set whose `campaign_id` is another campaign is
 `ErrAdSetNotInCampaign`; both budgets on one ad set, or a non-integer budget, is an error.
 Unlike adoption, DELETED/ARCHIVED is returned with its status, not as absent.
 `AccountCurrencyOffset` is the read half of `ResolveBudgetMinorUnits`: the account currency's

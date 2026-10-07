@@ -25,6 +25,16 @@ import (
 // The field names (settingsFieldBudgetAmount, ...) are declared once, in googleads.go, and shared
 // with the Google reader so every platform reports in the same vocabulary.
 
+// Upstream-only fields only these readers report. Each says WHERE a platform holds the budget,
+// which is what explains a budget field reading `unknown` when the campaign-level amount is not
+// the one the row recorded.
+const (
+	// settingsFieldCampaignBudgetOptimization is Reddit's is_campaign_budget_optimization.
+	settingsFieldCampaignBudgetOptimization = "is_campaign_budget_optimization"
+	// settingsFieldBudgetOptimization is X's budget_optimization (CAMPAIGN or LINE_ITEM).
+	settingsFieldBudgetOptimization = "budget_optimization"
+)
+
 // settingsRecorded is the campaign row's recorded side of a readback, shaped once.
 type settingsRecorded struct {
 	budget     *string
@@ -107,8 +117,8 @@ func settingsMicrosToUnits(micros *int64) *string {
 // because this service's own create path put it there. Reporting that as `diverged` would send
 // an operator after a campaign that is set exactly as this service made it.
 //
-// So a later upstream day that lands within a day of when the row was created — the only window
-// the nudge can produce — is reported with BOTH values and an `unknown` verdict: the readback
+// So a later upstream day that is the row's creation day or the day after — the only window the
+// nudge (dispatch time + a buffer of minutes) can produce — is reported with BOTH values and an `unknown` verdict: the readback
 // cannot tell a nudge from a later edit, and says so. Everything else keeps the ordinary verdict:
 // an EARLIER upstream day, or a later one far from the dispatch, is a real divergence the nudge
 // cannot explain. A row with no CreatedAt cannot bound the window, so any later day is `unknown`.
@@ -127,7 +137,7 @@ func compareNudgedStart(recorded, upstream *time.Time, createdAt time.Time) mode
 		return model.UncomparableSettingsField(settingsFieldStartDate, rec, up)
 	}
 	created := utcDay(createdAt)
-	if !upDay.Before(created.AddDate(0, 0, -1)) && !upDay.After(created.AddDate(0, 0, 1)) {
+	if !upDay.Before(created) && !upDay.After(created.AddDate(0, 0, 1)) {
 		return model.UncomparableSettingsField(settingsFieldStartDate, rec, up)
 	}
 	return f

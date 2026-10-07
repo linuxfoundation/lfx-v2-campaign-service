@@ -28,8 +28,9 @@ import (
 //
 //   - compared: budget_amount, budget_type, campaign_name, start_date, end_date.
 //   - upstream-only: status (configured_status — a different axis from the row's lifecycle
-//     status, exactly as on Google) and bidding_strategy_type (bid_strategy; the create path
-//     always sends BIDLESS and records nothing to compare it to).
+//     status, exactly as on Google), bidding_strategy_type (bid_strategy; the create path
+//     always sends BIDLESS and records nothing to compare it to) and
+//     is_campaign_budget_optimization (which explains an `unknown` budget, below).
 //
 // UNITS. goal_value is in MICRO-units of the account currency, the unit the create path converts
 // the caller's budgetUsd into, so it is rendered exactly as Google's micros are — two decimal
@@ -46,8 +47,9 @@ import (
 //
 // PROVENANCE. Unknown provenance fails closed before any credential is resolved (409); a recorded
 // account that differs from the connection's is a mismatch (409). The read is account-scoped by
-// its path; an ad_account_id in the answer that names a different account is the same mismatch
-// rather than a configuration to report.
+// its path; an ad_account_id in the answer that names a different account is refused with
+// ErrCampaignUpstreamIdentityMismatch (409) — the connection already IS the recorded account, so
+// the remedy is to re-dispatch, not to reconnect.
 func (d *RedditDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
 	created := redditCreationAccountID(campaign)
 	if created == "" {
@@ -75,7 +77,7 @@ func (d *RedditDispatcher) ReadSettings(ctx context.Context, projectID string, p
 	}
 	if settings.AdAccountID != "" && settings.AdAccountID != strings.TrimSpace(client.AccountID()) {
 		return nil, fmt.Errorf("read reddit campaign settings: campaign %s is reported under ad account %s, not the connection's account %s: %w",
-			campaign.PlatformCampaignID, settings.AdAccountID, client.AccountID(), domain.ErrCampaignAccountMismatch)
+			campaign.PlatformCampaignID, settings.AdAccountID, client.AccountID(), domain.ErrCampaignUpstreamIdentityMismatch)
 	}
 
 	rec := recordedSettings(campaign)
@@ -109,6 +111,9 @@ func (d *RedditDispatcher) ReadSettings(ctx context.Context, projectID string, p
 		startField,
 		model.CompareSettingsField(settingsFieldEndDate, rec.end, settingsUTCDate(upstreamEnd)),
 		model.CompareSettingsField(settingsFieldBiddingStrategy, nil, settings.BidStrategy),
+		// Upstream-only, and the explanation for the two budget fields: with it false (or
+		// absent) goal_value is not the budget the row recorded, so they read `unknown`.
+		model.CompareSettingsField(settingsFieldCampaignBudgetOptimization, nil, boolToStrPtr(settings.CampaignBudgetOptimization)),
 	}
 	rb.SummariseSettings()
 	return rb, nil

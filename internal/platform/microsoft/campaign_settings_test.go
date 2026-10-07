@@ -29,7 +29,7 @@ func TestGetCampaignSettings_ReadsOneCampaignOfAnyType(t *testing.T) {
 	if len(reqs) != 1 || reqs[0].method != http.MethodPost || !strings.HasSuffix(reqs[0].path, "/Campaigns/QueryByIds") {
 		t.Fatalf("want exactly one POST .../Campaigns/QueryByIds, got %+v", reqs)
 	}
-	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App"}`; reqs[0].body != want {
+	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"` + allCampaignTypes + `"}`; reqs[0].body != want {
 		t.Errorf("body = %s, want %s", reqs[0].body, want)
 	}
 }

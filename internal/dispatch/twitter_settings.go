@@ -29,11 +29,14 @@ import (
 //   - compared: budget_amount, budget_type, campaign_name (campaign), start_date, end_date (line
 //     item).
 //   - upstream-only: status (entity_status — a different axis from the row's lifecycle status,
-//     exactly as on Google) and bidding_strategy_type (the line item's bid_strategy; the create
-//     path always sends AUTO and records nothing to compare it to).
+//     exactly as on Google), bidding_strategy_type (the line item's bid_strategy; the create
+//     path always sends AUTO and records nothing to compare it to) and budget_optimization.
 //
 // An ADOPTED row records no line item, so its flight and bid strategy are ABSENT and `unknown`;
 // the campaign-level fields still read normally.
+//
+// The budget is compared only under budget_optimization CAMPAIGN; otherwise both budget fields
+// are `unknown`.
 //
 // UNITS. X budgets are MICRO-units of the ad account's currency, the unit the create path converts
 // the caller's daily budgetAmount into, so they are rendered exactly as Google's micros are. The
@@ -47,8 +50,9 @@ import (
 // PROVENANCE. Unknown provenance fails closed before any credential is resolved (409); a recorded
 // account that differs from the connection's is a mismatch (409). Both reads are account-scoped by
 // their path; an account_id in the campaign answer naming a different account, and a recorded line
-// item that belongs to another campaign, are the same mismatch rather than a configuration to
-// report.
+// item that belongs to another campaign, are refused with ErrCampaignUpstreamIdentityMismatch (409)
+// rather than reported: the connection already IS the recorded account, so the remedy is to
+// re-dispatch, not to reconnect.
 func (d *TwitterDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
 	created := twitterCreationAccountID(campaign)
 	if created == "" {
@@ -71,7 +75,7 @@ func (d *TwitterDispatcher) ReadSettings(ctx context.Context, projectID string, 
 				domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, err))
 		case errors.Is(err, twitter.ErrLineItemNotInCampaign):
 			return nil, fmt.Errorf("read x ads campaign settings: the line item recorded for campaign %s belongs to a different campaign upstream, so its configuration is not this campaign's; re-dispatch the campaign to repair the recorded line item: %w",
-				campaign.PlatformCampaignID, domain.ErrCampaignAccountMismatch)
+				campaign.PlatformCampaignID, domain.ErrCampaignUpstreamIdentityMismatch)
 		}
 		return nil, fmt.Errorf("read x ads campaign settings: %w", err)
 	}
@@ -80,12 +84,19 @@ func (d *TwitterDispatcher) ReadSettings(ctx context.Context, projectID string, 
 	}
 	if settings.AccountID != "" && settings.AccountID != strings.TrimSpace(client.AccountID()) {
 		return nil, fmt.Errorf("read x ads campaign settings: campaign %s is reported under ad account %s, not the connection's account %s: %w",
-			campaign.PlatformCampaignID, settings.AccountID, client.AccountID(), domain.ErrCampaignAccountMismatch)
+			campaign.PlatformCampaignID, settings.AccountID, client.AccountID(), domain.ErrCampaignUpstreamIdentityMismatch)
 	}
 
 	rec := recordedSettings(campaign)
+	// The campaign-level amounts are the campaign's budget only under CAMPAIGN budget
+	// optimization. Under LINE_ITEM (or an unreported model) each line item governs its own
+	// spend, and a campaign-level total cap compared against the recorded daily amount would be
+	// two different quantities, so both budget fields stay `unknown`; budget_optimization is
+	// reported upstream-only to say why.
 	var upstreamBudget, upstreamBudgetType *string
+	campaignBudget := settings.BudgetOptimization != nil && *settings.BudgetOptimization == twitter.BudgetOptimizationCampaign
 	switch {
+	case !campaignBudget:
 	case settings.DailyMicros != nil:
 		upstreamBudgetType = strPtr(string(model.BudgetDaily))
 		upstreamBudget = settingsMicrosToUnits(settings.DailyMicros)
@@ -109,6 +120,7 @@ func (d *TwitterDispatcher) ReadSettings(ctx context.Context, projectID string, 
 		model.CompareSettingsField(settingsFieldStartDate, rec.start, upstreamStart),
 		model.CompareSettingsField(settingsFieldEndDate, rec.end, upstreamEnd),
 		model.CompareSettingsField(settingsFieldBiddingStrategy, nil, upstreamBid),
+		model.CompareSettingsField(settingsFieldBudgetOptimization, nil, settings.BudgetOptimization),
 	}
 	rb.SummariseSettings()
 	return rb, nil

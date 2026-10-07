@@ -60,13 +60,14 @@ func TestTwitter_ReadSettings_MatchWhenBothAgree(t *testing.T) {
 		t.Fatalf("ReadSettings: %v", err)
 	}
 	assertSettingsFields(t, rb, map[string]fieldWant{
-		settingsFieldBudgetAmount:    {"50.00", "50.00", model.SettingsMatch},
-		settingsFieldBudgetType:      {"daily", "daily", model.SettingsMatch},
-		settingsFieldName:            {"KubeCon — Awareness", "KubeCon — Awareness", model.SettingsMatch},
-		settingsFieldStatus:          {"", "PAUSED", model.SettingsUnknown},
-		settingsFieldStartDate:       {"2026-08-01", "2026-08-01", model.SettingsMatch},
-		settingsFieldEndDate:         {"2026-08-31", "2026-08-31", model.SettingsMatch},
-		settingsFieldBiddingStrategy: {"", "AUTO", model.SettingsUnknown},
+		settingsFieldBudgetAmount:       {"50.00", "50.00", model.SettingsMatch},
+		settingsFieldBudgetType:         {"daily", "daily", model.SettingsMatch},
+		settingsFieldName:               {"KubeCon — Awareness", "KubeCon — Awareness", model.SettingsMatch},
+		settingsFieldStatus:             {"", "PAUSED", model.SettingsUnknown},
+		settingsFieldStartDate:          {"2026-08-01", "2026-08-01", model.SettingsMatch},
+		settingsFieldEndDate:            {"2026-08-31", "2026-08-31", model.SettingsMatch},
+		settingsFieldBiddingStrategy:    {"", "AUTO", model.SettingsUnknown},
+		settingsFieldBudgetOptimization: {"", "CAMPAIGN", model.SettingsUnknown},
 	})
 	if rb.PlatformCampaignID != "cmp1" || !rb.ReadAt.Equal(settingsClock) {
 		t.Errorf("readback header = %+v", rb)
@@ -88,7 +89,7 @@ func TestTwitter_ReadSettings_Cases(t *testing.T) {
 	}{
 		{
 			name:     "budget and name diverge",
-			campaign: `{"data":{"id":"cmp1","name":"Renamed","entity_status":"ACTIVE","daily_budget_amount_local_micro":75500000}}`,
+			campaign: `{"data":{"id":"cmp1","name":"Renamed","entity_status":"ACTIVE","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":75500000}}`,
 			want: map[string]fieldWant{
 				settingsFieldBudgetAmount: {"50.00", "75.50", model.SettingsDiverged},
 				settingsFieldName:         {"KubeCon — Awareness", "Renamed", model.SettingsDiverged},
@@ -97,15 +98,34 @@ func TestTwitter_ReadSettings_Cases(t *testing.T) {
 		},
 		{
 			name:     "a sub-cent upstream budget is not rounded into a match",
-			campaign: `{"data":{"id":"cmp1","daily_budget_amount_local_micro":50004000}}`,
+			campaign: `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","daily_budget_amount_local_micro":50004000}}`,
 			want:     map[string]fieldWant{settingsFieldBudgetAmount: {"50.00", "50.004", model.SettingsDiverged}},
 		},
 		{
 			name:     "a total-only budget is lifetime",
-			campaign: `{"data":{"id":"cmp1","total_budget_amount_local_micro":500000000}}`,
+			campaign: `{"data":{"id":"cmp1","budget_optimization":"CAMPAIGN","total_budget_amount_local_micro":500000000}}`,
 			want: map[string]fieldWant{
 				settingsFieldBudgetAmount: {"50.00", "500.00", model.SettingsDiverged},
 				settingsFieldBudgetType:   {"daily", "lifetime", model.SettingsDiverged},
+			},
+		},
+		{
+			// Under LINE_ITEM optimization each line item governs its own spend: a campaign-level
+			// total cap is not the recorded daily amount, so neither budget field is compared.
+			name:     "line-item budget optimization leaves the budget unknown",
+			campaign: `{"data":{"id":"cmp1","budget_optimization":"LINE_ITEM","total_budget_amount_local_micro":500000000}}`,
+			want: map[string]fieldWant{
+				settingsFieldBudgetAmount:       {"50.00", "", model.SettingsUnknown},
+				settingsFieldBudgetType:         {"daily", "", model.SettingsUnknown},
+				settingsFieldBudgetOptimization: {"", "LINE_ITEM", model.SettingsUnknown},
+			},
+		},
+		{
+			name:     "an unreported budget optimization is not assumed CAMPAIGN",
+			campaign: `{"data":{"id":"cmp1","daily_budget_amount_local_micro":50000000}}`,
+			want: map[string]fieldWant{
+				settingsFieldBudgetAmount:       {"50.00", "", model.SettingsUnknown},
+				settingsFieldBudgetOptimization: {"", "", model.SettingsUnknown},
 			},
 		},
 		{
@@ -181,13 +201,14 @@ func TestTwitter_ReadSettings_AdoptedRowReadsAtTheCampaignLevel(t *testing.T) {
 		t.Fatalf("ReadSettings: %v", err)
 	}
 	assertSettingsFields(t, rb, map[string]fieldWant{
-		settingsFieldBudgetAmount:    {"", "50.00", model.SettingsUnknown},
-		settingsFieldBudgetType:      {"", "daily", model.SettingsUnknown},
-		settingsFieldName:            {"KubeCon — Awareness", "KubeCon — Awareness", model.SettingsMatch},
-		settingsFieldStatus:          {"", "PAUSED", model.SettingsUnknown},
-		settingsFieldStartDate:       {"", "", model.SettingsUnknown},
-		settingsFieldEndDate:         {"", "", model.SettingsUnknown},
-		settingsFieldBiddingStrategy: {"", "", model.SettingsUnknown},
+		settingsFieldBudgetAmount:       {"", "50.00", model.SettingsUnknown},
+		settingsFieldBudgetType:         {"", "daily", model.SettingsUnknown},
+		settingsFieldName:               {"KubeCon — Awareness", "KubeCon — Awareness", model.SettingsMatch},
+		settingsFieldStatus:             {"", "PAUSED", model.SettingsUnknown},
+		settingsFieldStartDate:          {"", "", model.SettingsUnknown},
+		settingsFieldEndDate:            {"", "", model.SettingsUnknown},
+		settingsFieldBiddingStrategy:    {"", "", model.SettingsUnknown},
+		settingsFieldBudgetOptimization: {"", "CAMPAIGN", model.SettingsUnknown},
 	})
 	if reqs := api.requests(); len(reqs) != 1 || reqs[0].Path != xSettingsCampaignPath {
 		t.Fatalf("an adopted row must read the campaign alone, got %+v", reqs)
@@ -224,14 +245,14 @@ func TestTwitter_ReadSettings_AccountMismatches(t *testing.T) {
 		routes[xSettingsCampaignPath] = settingsRoute{status: 200, body: `{"data":{"id":"cmp1","account_id":"acc9"}}`}
 		d, _ := xSettingsDispatcher(t, routes)
 		_, err := d.ReadSettings(context.Background(), "proj", model.ProviderTwitterAds, xSettingsRow())
-		assertMismatch(t, err)
+		assertUpstreamIdentityMismatch(t, err)
 	})
 	t.Run("the recorded line item belongs to another campaign", func(t *testing.T) {
 		routes := xSettingsRoutes()
 		routes[xSettingsLineItemPath] = settingsRoute{status: 200, body: `{"data":{"id":"li1","campaign_id":"cmp9"}}`}
 		d, _ := xSettingsDispatcher(t, routes)
 		_, err := d.ReadSettings(context.Background(), "proj", model.ProviderTwitterAds, xSettingsRow())
-		assertMismatch(t, err)
+		assertUpstreamIdentityMismatch(t, err)
 	})
 }
 

@@ -5139,6 +5139,23 @@ func TestGetCampaignSettings_PermanentConnectionDefectsAreNot503(t *testing.T) {
 			assert: wantConflict,
 		},
 		{
+			// The connection IS the recorded account, so the account-mismatch message
+			// ("reconnect the original account") would be unactionable; this has its own
+			// fixed message telling the operator to re-dispatch, with no ids or account text.
+			name: "an upstream identity mismatch is 409 with a re-dispatch remedy",
+			err:  fmt.Errorf("meta reports campaign 555 under act_999: %w", domain.ErrCampaignUpstreamIdentityMismatch),
+			assert: func(t *testing.T, err error) {
+				var c *briefs.ConflictError
+				if !errors.As(err, &c) {
+					t.Fatalf("want 409, got %T: %v", err, err)
+				}
+				if !strings.Contains(c.Message, "re-dispatch") || strings.Contains(c.Message, "reconnect") ||
+					strings.Contains(c.Message, "555") || strings.Contains(c.Message, "act_999") {
+					t.Fatalf("message = %q, want the fixed re-dispatch remedy with no upstream text", c.Message)
+				}
+			},
+		},
+		{
 			name:   "no ad account selected is 409",
 			err:    fmt.Errorf("no account: %w: %w", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected),
 			assert: wantConflict,

@@ -60,7 +60,9 @@ const metaGraphTimeLayout = "2006-01-02T15:04:05-0700"
 // account that differs from the connection's is a mismatch (409). GET /{id} is NOT account-scoped,
 // so the account Meta reports the campaign under is ALSO compared with the recorded one — the
 // read's own proof that the id named this account's campaign — and an ad set the row recorded
-// that belongs to another campaign upstream is the same mismatch the budget write refuses.
+// that belongs to another campaign upstream is refused too — both with
+// ErrCampaignUpstreamIdentityMismatch (409), not the account mismatch: the connection already IS
+// the recorded account, so the remedy is to re-dispatch, not to reconnect.
 func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
 	created := metaCreationAccountID(campaign)
 	if created == "" {
@@ -84,7 +86,7 @@ func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, pla
 	if err != nil {
 		if errors.Is(err, meta.ErrAdSetNotInCampaign) {
 			return nil, fmt.Errorf("read meta campaign settings: the ad set recorded for campaign %s belongs to a different campaign upstream, so its configuration is not this campaign's; re-dispatch the campaign to repair the recorded ad set: %w",
-				campaign.PlatformCampaignID, domain.ErrCampaignAccountMismatch)
+				campaign.PlatformCampaignID, domain.ErrCampaignUpstreamIdentityMismatch)
 		}
 		return nil, fmt.Errorf("read meta campaign settings: %w", err)
 	}
@@ -93,7 +95,7 @@ func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, pla
 	}
 	if settings.AccountID != created {
 		return nil, fmt.Errorf("read meta campaign settings: campaign %s is reported under ad account %s, not the account %s it was created under: %w",
-			campaign.PlatformCampaignID, settings.AccountID, created, domain.ErrCampaignAccountMismatch)
+			campaign.PlatformCampaignID, settings.AccountID, created, domain.ErrCampaignUpstreamIdentityMismatch)
 	}
 
 	rec := recordedSettings(campaign)

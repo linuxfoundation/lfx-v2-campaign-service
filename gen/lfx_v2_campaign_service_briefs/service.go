@@ -784,8 +784,12 @@ type CampaignSettingsField struct {
 	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
 	// dates, so they are not reported there); `status` and `bidding_strategy_type`
 	// are upstream-only on all four (none of their create paths records a
-	// strategy), and Microsoft also reports `budget_explicitly_shared`
-	// upstream-only. A Meta or Reddit start that the create path itself nudged
+	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
+	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
+	// last two say where the budget lives, and explain a budget that reads
+	// `unknown` because the campaign-level amount is not the one the row recorded
+	// (Reddit with campaign budget optimization off, X under anything but
+	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
 	// forward past UTC midnight (because the requested day had already begun at
 	// dispatch) is shown with both sides and an `unknown` verdict rather than a
 	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
