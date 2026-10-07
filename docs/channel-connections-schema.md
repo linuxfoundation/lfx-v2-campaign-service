@@ -271,6 +271,7 @@ CREATE TABLE campaign_audiences (
     created_by              JSONB,
     updated_by              JSONB,
     built_in_portal_id      TEXT,
+    include_list_ids        JSONB,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -312,6 +313,14 @@ It is appended LAST in `audienceCols` rather than placed beside `platform_master
 belongs by meaning: `scanAudience` reads positionally, so a mid-list insert would shift every later
 column into the wrong destination — a defect that compiles, runs, and surfaces as a status parsed
 from a timestamp.
+
+`include_list_ids` (migration `000040`) records the existing lists an audience attached with
+`include_list_ids` sends to directly — HubSpot's `contactIlsLists.include` is an array, so several
+lists can be the recipients with no composed master. When it is set, `platform_master_list_id`
+holds only the first of them, and a PATCH that would change the master is refused `409` even on an
+unstamped row. NULL means the master alone is the send set, which is every row written before the
+column existed. It is also appended after `built_in_portal_id` in `audienceCols` for the same
+positional-scan reason.
 
 ### campaign_jobs
 

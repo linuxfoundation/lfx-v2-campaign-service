@@ -69,6 +69,16 @@ earlier cut recorded the FIRST inclusion list as the master — groups 5 and 7 w
 in the portal and never emailed, a build reporting success while reaching a fraction of the
 intended people.
 
+The exception is an audience ATTACHED from several existing lists (`include_list_ids`, migration
+`000040`): there is no composed master, so the send set is the recorded include lists themselves
+and HubSpot unions them (`contactIlsLists.include` is an array). `platform_master_list_id` then
+holds the FIRST include id only as a display/compatibility value. Every reader that decides who an
+email reaches goes through `model.CampaignAudience.SendListIDs()` — the include lists when any are
+recorded, otherwise the master alone — never the master column directly, or a multi-list audience
+would silently send to its first list. Corrupt include ids are an error, not a fall back to the
+master. `UniqueIDs` (trim + order-preserving de-dup) and `ExclusionIDs` (suppressions minus the
+include set) are the shared helpers for both the explorer and the service.
+
 ## Post-create writes are detached
 
 Once the HubSpot lists exist, the row recording them is written on a context DETACHED from the
