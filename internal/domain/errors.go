@@ -451,17 +451,22 @@ var (
 	// the rest of the project as all of it. The message is fixed, client-safe text.
 	ErrKeywordReportScopeInvalid = errors.New("a campaign in this project has a stored platform id the keyword report cannot be scoped to")
 
-	// ErrAudienceScopeTooLarge indicates the Meta audience read refused because the project owns
-	// more campaigns on the platform than one Insights campaign-id filter is bounded to
-	// (meta.MaxAudienceCampaigns, a local bound on the request URL). Refused before any upstream
-	// call and PERMANENT while the project stays that large, for ErrKeywordReportScopeTooLarge's
-	// reasons. The message is fixed, client-safe text: it reaches the HTTP body.
+	// ErrAudienceScopeTooLarge indicates a project-scoped audience read refused because the
+	// project owns more campaigns on the platform than one audience request can be scoped to.
+	// The ceiling is per platform: Meta's is meta.MaxAudienceCampaigns (a local bound on the
+	// Insights campaign-id filter in the request URL); Microsoft's is
+	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
+	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
+	// counted over DISTINCT campaign ids. Refused before any upstream call and PERMANENT while the
+	// project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message is fixed,
+	// client-safe text: it reaches the HTTP body.
 	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
 
-	// ErrAudienceScopeInvalid indicates the Meta audience read refused because a campaign in the
-	// project's scope has a stored platform id that is not a valid Meta campaign id. Refused
-	// before any upstream call, PERMANENT until the row is corrected, for
-	// ErrKeywordReportScopeInvalid's reasons. The message is fixed, client-safe text.
+	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta or Microsoft)
+	// refused because a campaign in the project's scope has a stored platform id that is not a
+	// valid campaign id for that platform. Refused before any upstream call, PERMANENT until the
+	// row is corrected, for ErrKeywordReportScopeInvalid's reasons. The message is fixed,
+	// client-safe text.
 	ErrAudienceScopeInvalid = errors.New("a campaign in this project has a stored platform id the audience read cannot be scoped to")
 
 	// ErrKeywordActionsUnsupported indicates the platform cannot pause or remove keywords.

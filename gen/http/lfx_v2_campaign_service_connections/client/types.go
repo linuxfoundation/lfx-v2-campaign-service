@@ -889,6 +889,34 @@ type GetMicrosoftAdsKeywordsResponseBody struct {
 	DataIncomplete *bool `form:"data_incomplete,omitempty" json:"data_incomplete,omitempty" xml:"data_incomplete,omitempty"`
 }
 
+// GetMicrosoftAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body.
+type GetMicrosoftAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// One bucket per (age_group, gender), summed over the campaigns this project
+	// owns, from the last finished Microsoft age/gender report that covers every
+	// one of them; ordered by impressions descending. Every bucket covers a
+	// disjoint slice of the same traffic, so counters may be totalled across
+	// buckets. Empty while no such report has finished (metrics_as_of absent).
+	Buckets []*MicrosoftAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+	// When the Microsoft report these buckets come from was requested (not when it
+	// was collected). ABSENT when no finished report covers every campaign this
+	// project now owns — the first read, or the first after a campaign was added —
+	// and `buckets` is then empty rather than a partial picture.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer buckets (or the first ones, when metrics_as_of is absent).
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete (the window's last day may still be aggregating): its counters
+	// may still rise. False when no report is served.
+	DataIncomplete *bool `form:"data_incomplete,omitempty" json:"data_incomplete,omitempty" xml:"data_incomplete,omitempty"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -4369,6 +4397,79 @@ type GetMicrosoftAdsKeywordsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetMicrosoftAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMicrosoftAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMicrosoftAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMicrosoftAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMicrosoftAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMicrosoftAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMicrosoftAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5827,6 +5928,28 @@ type MetaAdsAudienceBucketResponseBody struct {
 	// (see account_currency). This service performs no FX conversion.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsAudienceBucketResponseBody struct {
+	// Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34,
+	// 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown
+	// bucket, is passed through rather than dropped).
+	AgeGroup *string `form:"age_group,omitempty" json:"age_group,omitempty" xml:"age_group,omitempty"`
+	// Microsoft's Gender, verbatim (documented as male or female; any other value
+	// Microsoft reports is passed through rather than dropped).
+	Gender *string `form:"gender,omitempty" json:"gender,omitempty" xml:"gender,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window in micro-units of the ad account's own currency
+	// (Microsoft's Spend times 10^6). This service performs no FX conversion and
+	// does not know the currency.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
@@ -10366,6 +10489,115 @@ func NewGetMicrosoftAdsKeywordsUnauthorized(body *GetMicrosoftAdsKeywordsUnautho
 	return v
 }
 
+// NewGetMicrosoftAdsAudienceMicrosoftAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetMicrosoftAdsAudienceMicrosoftAdsAudienceOK(body *GetMicrosoftAdsAudienceResponseBody) *lfxv2campaignserviceconnections.MicrosoftAdsAudience {
+	v := &lfxv2campaignserviceconnections.MicrosoftAdsAudience{
+		Window:         *body.Window,
+		BucketCount:    *body.BucketCount,
+		MetricsAsOf:    body.MetricsAsOf,
+		MetricsPending: *body.MetricsPending,
+		DataIncomplete: *body.DataIncomplete,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.MicrosoftAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalMicrosoftAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint BadRequest error.
+func NewGetMicrosoftAdsAudienceBadRequest(body *GetMicrosoftAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceConflict builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint Conflict error.
+func NewGetMicrosoftAdsAudienceConflict(body *GetMicrosoftAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint ServiceUnavailable error.
+func NewGetMicrosoftAdsAudienceServiceUnavailable(body *GetMicrosoftAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint InternalServerError error.
+func NewGetMicrosoftAdsAudienceInternalServerError(body *GetMicrosoftAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceNotFound builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint NotFound error.
+func NewGetMicrosoftAdsAudienceNotFound(body *GetMicrosoftAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint PayloadTooLarge error.
+func NewGetMicrosoftAdsAudiencePayloadTooLarge(body *GetMicrosoftAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint Unauthorized error.
+func NewGetMicrosoftAdsAudienceUnauthorized(body *GetMicrosoftAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewResolveGoogleAdsCampaignPlatformCampaignResolutionOK builds a
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint result from a HTTP "OK" response.
@@ -13002,6 +13234,42 @@ func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsRe
 	for _, e := range body.Rows {
 		if e != nil {
 			if err2 := ValidateGoogleAdsKeywordResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceResponseBody runs the validations defined on
+// Get-Microsoft-Ads-AudienceResponseBody
+func ValidateGetMicrosoftAdsAudienceResponseBody(body *GetMicrosoftAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.MetricsPending == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("metrics_pending", "body"))
+	}
+	if body.DataIncomplete == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("data_incomplete", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := ValidateMicrosoftAdsAudienceBucketResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -17229,6 +17497,98 @@ func ValidateGetMicrosoftAdsKeywordsUnauthorizedResponseBody(body *GetMicrosoftA
 	return
 }
 
+// ValidateGetMicrosoftAdsAudienceBadRequestResponseBody runs the validations
+// defined on get-microsoft-ads-audience_BadRequest_response_body
+func ValidateGetMicrosoftAdsAudienceBadRequestResponseBody(body *GetMicrosoftAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceConflictResponseBody runs the validations
+// defined on get-microsoft-ads-audience_Conflict_response_body
+func ValidateGetMicrosoftAdsAudienceConflictResponseBody(body *GetMicrosoftAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on
+// get-microsoft-ads-audience_ServiceUnavailable_response_body
+func ValidateGetMicrosoftAdsAudienceServiceUnavailableResponseBody(body *GetMicrosoftAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on
+// get-microsoft-ads-audience_InternalServerError_response_body
+func ValidateGetMicrosoftAdsAudienceInternalServerErrorResponseBody(body *GetMicrosoftAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceNotFoundResponseBody runs the validations
+// defined on get-microsoft-ads-audience_NotFound_response_body
+func ValidateGetMicrosoftAdsAudienceNotFoundResponseBody(body *GetMicrosoftAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudiencePayloadTooLargeResponseBody runs the
+// validations defined on
+// get-microsoft-ads-audience_PayloadTooLarge_response_body
+func ValidateGetMicrosoftAdsAudiencePayloadTooLargeResponseBody(body *GetMicrosoftAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on get-microsoft-ads-audience_Unauthorized_response_body
+func ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody(body *GetMicrosoftAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateResolveGoogleAdsCampaignBadRequestResponseBody runs the validations
 // defined on resolve-google-ads-campaign_BadRequest_response_body
 func ValidateResolveGoogleAdsCampaignBadRequestResponseBody(body *ResolveGoogleAdsCampaignBadRequestResponseBody) (err error) {
@@ -18907,6 +19267,30 @@ func ValidateMetaAdsAudienceBucketResponseBody(body *MetaAdsAudienceBucketRespon
 		if !(*body.Dimension == "age_gender" || *body.Dimension == "placement") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"age_gender", "placement"}))
 		}
+	}
+	return
+}
+
+// ValidateMicrosoftAdsAudienceBucketResponseBody runs the validations defined
+// on microsoft-ads-audience-bucketResponseBody
+func ValidateMicrosoftAdsAudienceBucketResponseBody(body *MicrosoftAdsAudienceBucketResponseBody) (err error) {
+	if body.AgeGroup == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("age_group", "body"))
+	}
+	if body.Gender == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("gender", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
 	}
 	return
 }

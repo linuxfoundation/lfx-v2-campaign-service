@@ -9387,6 +9387,216 @@ func DecodeGetMicrosoftAdsKeywordsResponse(decoder func(*http.Response) goahttp.
 	}
 }
 
+// BuildGetMicrosoftAdsAudienceRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-microsoft-ads-audience" endpoint
+func (c *Client) BuildGetMicrosoftAdsAudienceRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", "*lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetMicrosoftAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetMicrosoftAdsAudienceRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections get-microsoft-ads-audience server.
+func EncodeGetMicrosoftAdsAudienceRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", "*lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetMicrosoftAdsAudienceResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// get-microsoft-ads-audience endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeGetMicrosoftAdsAudienceResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetMicrosoftAdsAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetMicrosoftAdsAudienceResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudienceResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			res := NewGetMicrosoftAdsAudienceMicrosoftAdsAudienceOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetMicrosoftAdsAudienceBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudienceBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			return nil, NewGetMicrosoftAdsAudienceBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetMicrosoftAdsAudienceConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudienceConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			return nil, NewGetMicrosoftAdsAudienceConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetMicrosoftAdsAudienceServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudienceServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			return nil, NewGetMicrosoftAdsAudienceServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetMicrosoftAdsAudienceInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudienceInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			return nil, NewGetMicrosoftAdsAudienceInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetMicrosoftAdsAudienceNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudienceNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			return nil, NewGetMicrosoftAdsAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetMicrosoftAdsAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			return nil, NewGetMicrosoftAdsAudiencePayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetMicrosoftAdsAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			err = ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
+			}
+			return nil, NewGetMicrosoftAdsAudienceUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildResolveGoogleAdsCampaignRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "resolve-google-ads-campaign" endpoint
@@ -13526,6 +13736,23 @@ func unmarshalMetaAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnections
 		Clicks:            *v.Clicks,
 		CostMicros:        *v.CostMicros,
 		Ctr:               *v.Ctr,
+	}
+
+	return res
+}
+
+// unmarshalMicrosoftAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsAudienceBucket
+// builds a value of type
+// *lfxv2campaignserviceconnections.MicrosoftAdsAudienceBucket from a value of
+// type *MicrosoftAdsAudienceBucketResponseBody.
+func unmarshalMicrosoftAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsAudienceBucket(v *MicrosoftAdsAudienceBucketResponseBody) *lfxv2campaignserviceconnections.MicrosoftAdsAudienceBucket {
+	res := &lfxv2campaignserviceconnections.MicrosoftAdsAudienceBucket{
+		AgeGroup:    *v.AgeGroup,
+		Gender:      *v.Gender,
+		Impressions: *v.Impressions,
+		Clicks:      *v.Clicks,
+		CostMicros:  *v.CostMicros,
+		Ctr:         *v.Ctr,
 	}
 
 	return res

@@ -988,6 +988,20 @@ A new table, so expand-only; no FK and no `requiredIndexes` entry, for 000035's 
 Complete/Fail compare-and-set on `pending_report_id`, Fail never touches the ready half, empty
 rows stored as `[]` — and reuses its window/date/failure-text helpers.
 
+**Migration 000041** makes that store hold a second report KIND, `age_gender` (the Microsoft
+age/gender audience read): an `age_gender_`-prefixed READY/PENDING/last-failure column set on the
+SAME row, nullable with no default, with all-or-nothing and array CHECKs mirroring 000038's. Not a
+`report_kind` discriminator, because that would have to join the primary key the N-1 binary's
+`ON CONFLICT` infers — not expand-only. `KeywordReportRepo` now runs both kinds through generic
+helpers (`getInsightReport`, `markInsightReportPending`, `completeInsightReport`,
+`failInsightReport`, `scanInsightReport`) parameterised by an `insightReportStatements` set; the
+keyword statements are byte-identical to 000038's, and the audience statements
+(`audience_report_repo.go`, implementing `domain.AudienceReportRepository`) name only
+`age_gender_` columns — pinned by `TestInsightReportKindsNeverShareColumns`, and live by
+`TestLiveAudienceReportRoundTripAndKindSeparation` (a keyword report never reads back as an
+audience report, neither kind's pending id completes or fails the other's, one kind's mark never
+blocks the other's).
+
 **Migration 000035** creates `account_monitor_reports`, the saved-report store behind the
 report-backed account monitor (Microsoft; see
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md#microsoft-a-report-backed-monitor)).
