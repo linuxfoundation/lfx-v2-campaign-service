@@ -711,9 +711,10 @@ var MetaAdsAudience = Type("meta-ads-audience", func() {
 })
 
 // twitterAudienceWindowEnum is the subset of metricsWindowEnum the X audience read serves: the
-// three windows the X campaign metrics read serves (twitterMetricsWindow), so every X read speaks
-// one window vocabulary. Longer windows are refused by the decoder here rather than reaching a
-// runtime 400 the design did not declare.
+// three window NAMES the X campaign metrics read serves (twitterMetricsWindow). The names match;
+// the instants do not on a non-UTC account — the audience read takes the days on the account's
+// calendar, the metrics read as UTC days. Longer windows are refused by the decoder here rather
+// than reaching a runtime 400 the design did not declare.
 func twitterAudienceWindowEnum() {
 	Enum("today", "yesterday", "last_7_days")
 }
@@ -768,7 +769,7 @@ var (
 // There is deliberately NO conversions field: X splits conversions across per-event-type metric
 // objects under metric groups this read does not request (see TwitterDispatcher.ReadMetrics).
 var TwitterAdsAudience = Type("twitter-ads-audience", func() {
-	Attribute("window", String, "The reporting window these counters cover", twitterAudienceWindowEnum)
+	Attribute("window", String, "The reporting window these counters cover, as days on the ad ACCOUNT's calendar (its timezone) — not the UTC days the X campaign metrics read uses for the same window name", twitterAudienceWindowEnum)
 	Attribute("buckets", ArrayOf(TwitterAdsAudienceBucket), "Every bucket across the three segmentations, discriminated by `dimension`. Ordered by dimension (age, gender, platform), then impressions descending, then value.", func() {
 		Example([]map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample})
 	})
@@ -777,13 +778,15 @@ var TwitterAdsAudience = Type("twitter-ads-audience", func() {
 		Pattern("^[A-Z]{3}$")
 		Example("USD")
 	})
-	Required("window", "buckets", "bucket_count")
+	Attribute("all_counters_null", Boolean, "True when, for at least one dimension, X returned segment rows whose every counter was null or absent. The zeros in that dimension are then NOT a measurement: it is either no delivery in the window or X's reported defect where segmented stats jobs succeed with all-null metrics, and the two cannot be told apart.", func() { Example(false) })
+	Required("window", "buckets", "bucket_count", "all_counters_null")
 	// Type-level so bucket_count equals len(buckets) and the dimensions appear in order.
 	Example(map[string]any{
-		"window":           "last_7_days",
-		"buckets":          []map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample},
-		"bucket_count":     3,
-		"account_currency": "USD",
+		"window":            "last_7_days",
+		"all_counters_null": false,
+		"buckets":           []map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample},
+		"bucket_count":      3,
+		"account_currency":  "USD",
 	})
 })
 

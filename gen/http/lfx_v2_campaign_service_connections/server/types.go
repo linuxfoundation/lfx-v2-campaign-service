@@ -852,7 +852,9 @@ type GetMetaAdsAudienceResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
 // endpoint HTTP response body.
 type GetTwitterAdsAudienceResponseBody struct {
-	// The reporting window these counters cover
+	// The reporting window these counters cover, as days on the ad ACCOUNT's
+	// calendar (its timezone) — not the UTC days the X campaign metrics read uses
+	// for the same window name
 	Window string `form:"window" json:"window" xml:"window"`
 	// Every bucket across the three segmentations, discriminated by `dimension`.
 	// Ordered by dimension (age, gender, platform), then impressions descending,
@@ -866,6 +868,12 @@ type GetTwitterAdsAudienceResponseBody struct {
 	// reports it on the account. ABSENT when X was not contacted (the project has
 	// no X campaigns of its own) or the account carries no currency.
 	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
+	// True when, for at least one dimension, X returned segment rows whose every
+	// counter was null or absent. The zeros in that dimension are then NOT a
+	// measurement: it is either no delivery in the window or X's reported defect
+	// where segmented stats jobs succeed with all-null metrics, and the two cannot
+	// be told apart.
+	AllCountersNull bool `form:"all_counters_null" json:"all_counters_null" xml:"all_counters_null"`
 }
 
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
@@ -6632,6 +6640,7 @@ func NewGetTwitterAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.T
 		Window:          res.Window,
 		BucketCount:     res.BucketCount,
 		AccountCurrency: res.AccountCurrency,
+		AllCountersNull: res.AllCountersNull,
 	}
 	if res.Buckets != nil {
 		body.Buckets = make([]*TwitterAdsAudienceBucketResponseBody, len(res.Buckets))

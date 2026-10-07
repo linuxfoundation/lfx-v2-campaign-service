@@ -46,10 +46,16 @@ import (
 // UNVERIFIED CONTRACT: no X Ads credentials were available when this was written. The segmented
 // file shape — id_data[].segment.segment_name naming the bucket — follows X's documentation and
 // developer forum, not a live account; every field is optional-and-checked and decoding fails
-// closed. The X developer forum also reports segmented jobs whose files carry null metrics
-// ("[Ads API v12] Metrics return NULL when using segmentation in Stats Jobs"); X documents null
-// as "no activity", so such a file reads as zeros. The dispatcher gates this read behind
-// TWITTER_METRICS_ENABLED for that reason.
+// closed. The dispatcher gates this read behind TWITTER_METRICS_ENABLED for that reason.
+//
+// ALL-NULL FILES. X's developer forum reports segmented jobs that reach SUCCESS with every metric
+// null ("[Ads API v12] Metrics return NULL when using segmentation in Stats Jobs"). That cannot be
+// told apart from a genuinely idle campaign set: this package already treats null as X's "no
+// activity" (statsFold, and the X metrics read's firstOrZero, both read X's null for an idle
+// entity as a real zero), and nothing in X's documentation says an idle entity is OMITTED rather
+// than returned with null metrics. Failing closed on all-null rows would therefore 503 every read
+// of an idle project forever. Instead the read succeeds and AllCountersNull flags it, so a caller
+// never takes those zeros for a measurement.
 
 // Audience dimension tokens: this broker's vocabulary, one per X segmentation_type.
 const (
@@ -126,10 +132,17 @@ type AudienceInsights struct {
 	Window MetricsWindow
 	// Currency is the ad account's ISO 4217 currency; "" when the account carries none.
 	Currency string
-	// WindowStart / WindowEnd are the [start, end) instants queried (account-local day starts).
+	// WindowStart / WindowEnd are the [start, end) instants queried (account-local day starts),
+	// and Location is the account zone they were computed in, so a caller holding this result can
+	// tell (AudienceWindowBounds) whether the same window NAME still means the same instants.
 	WindowStart time.Time
 	WindowEnd   time.Time
-	Buckets     []AudienceBucket
+	Location    *time.Location
+	// AllCountersNull is true when, for at least one dimension, X returned segment rows and every
+	// counter in every one of them was null or absent: either no delivery in the window, or X's
+	// reported all-null segmented-stats defect. The zeros are then not a measurement.
+	AllCountersNull bool
+	Buckets         []AudienceBucket
 }
 
 // audienceJob is one created stats job: which dimension it reads and which campaigns it covers.
@@ -142,13 +155,15 @@ type audienceJob struct {
 // GetAudienceInsights reads the AGE, GENDER and PLATFORMS segmentations over window (default
 // WindowLast7Days) across campaignIDs on the client's account — NOT the whole account.
 //
-// The window is the campaign metrics read's (YESTERDAY, TODAY, LAST_7_DAYS — the same days
-// dateRangeForWindow selects: today; yesterday; today and the six days before it), computed on
-// the ACCOUNT's calendar (AccountTimezone's zone): [start of the first day, start of the day
-// after the last). Longer windows are ErrUnsupportedWindow — X's segmented-job ceiling is 45 days,
-// but one window vocabulary across X's reads keeps an audience panel comparable with the metrics
-// beside it. A zone whose day starts are not whole UTC hours is ErrReportWindowNotWholeHours,
-// as on the monitor: X accepts whole hours only, and a shifted window would misattribute days.
+// The window NAMES are the campaign metrics read's (YESTERDAY, TODAY, LAST_7_DAYS: today;
+// yesterday; today and the six days before it), but the INSTANTS differ: this read takes those
+// days on the ACCOUNT's calendar ([start of the first day, start of the day after the last) in
+// the account's zone), while GetCampaignMetrics (dateRangeForWindow) takes them as UTC days. On a
+// non-UTC account the two reads therefore cover windows offset by the zone's UTC offset and their
+// totals are not directly comparable. Longer windows are ErrUnsupportedWindow — X's
+// segmented-job ceiling is 45 days; the limit keeps one window vocabulary across X's reads. A
+// zone whose day starts are not whole UTC hours is ErrReportWindowNotWholeHours, as on the
+// monitor: X accepts whole hours only, and a shifted window would misattribute days.
 //
 // All or nothing: any failed request, failed or unfinished job, untrustworthy body, foreign
 // entity, duplicated row or out-of-charset segment fails the whole call; no partial buckets.
@@ -173,7 +188,7 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 	if err != nil {
 		return nil, err
 	}
-	start, end, err := audienceWindow(w, c.timeFn(), loc)
+	start, end, err := AudienceWindowBounds(w, c.timeFn(), loc)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +232,10 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 			return nil, fmt.Errorf("get x audience insights (%s): %w", job.dimension, ferr)
 		}
 	}
-	return &AudienceInsights{Window: w, Currency: currency, WindowStart: start, WindowEnd: end, Buckets: fold.finish()}, nil
+	return &AudienceInsights{
+		Window: w, Currency: currency, WindowStart: start, WindowEnd: end, Location: loc,
+		AllCountersNull: fold.allNull(), Buckets: fold.finish(),
+	}, nil
 }
 
 // audienceBatches validates and deduplicates the scope and splits it into job-sized batches.
@@ -248,11 +266,11 @@ func audienceBatches(campaignIDs []string) ([][]string, error) {
 	return batches, nil
 }
 
-// audienceWindow is window's [start, end) on the account's calendar: TODAY is today, YESTERDAY
+// AudienceWindowBounds is window's [start, end) on the account's calendar: TODAY is today, YESTERDAY
 // is yesterday, LAST_7_DAYS is today and the six days before it — dateRangeForWindow's days —
 // each day starting at localDayStart. Refused (ErrReportWindowNotWholeHours) when either bound is
 // not a whole UTC hour.
-func audienceWindow(w MetricsWindow, now time.Time, loc *time.Location) (start, end time.Time, err error) {
+func AudienceWindowBounds(w MetricsWindow, now time.Time, loc *time.Location) (start, end time.Time, err error) {
 	var first, afterLast int
 	switch w {
 	case WindowToday:
@@ -469,10 +487,29 @@ type audienceFold struct {
 	rows map[string]struct{}
 	// entities is every (dimension, campaign) seen: a campaign appears once per segmentation.
 	entities map[string]struct{}
+	// dimRows counts segment rows per dimension; dimMeasured records whether any counter in
+	// that dimension carried a value (a literal 0 included). See allNull.
+	dimRows     map[string]int
+	dimMeasured map[string]bool
 }
 
 func newAudienceFold() *audienceFold {
-	return &audienceFold{totals: map[string]*AudienceBucket{}, rows: map[string]struct{}{}, entities: map[string]struct{}{}}
+	return &audienceFold{
+		totals: map[string]*AudienceBucket{}, rows: map[string]struct{}{}, entities: map[string]struct{}{},
+		dimRows: map[string]int{}, dimMeasured: map[string]bool{},
+	}
+}
+
+// allNull reports whether any dimension returned rows whose every counter was null or absent.
+// Per dimension, not per job: a second batch of idle campaigns beside a measured first batch is
+// ordinary, while a whole segmentation with no measurement is the defect's signature.
+func (f *audienceFold) allNull() bool {
+	for dim, n := range f.dimRows {
+		if n > 0 && !f.dimMeasured[dim] {
+			return true
+		}
+	}
+	return false
 }
 
 // add folds one job's decompressed file. Every message is this package's own text; no byte of
@@ -528,17 +565,21 @@ func (f *audienceFold) addSegment(dimension, campaignID string, seg audienceIDDa
 		return errors.New("duplicate row for one campaign and segment")
 	}
 	f.rows[rowKey] = struct{}{}
-	impressions, err := audienceCounter(seg.Metrics.Impressions)
+	impressions, mI, err := audienceCounter(seg.Metrics.Impressions)
 	if err != nil {
 		return fmt.Errorf("impressions %w", err)
 	}
-	clicks, err := audienceCounter(seg.Metrics.Clicks)
+	clicks, mC, err := audienceCounter(seg.Metrics.Clicks)
 	if err != nil {
 		return fmt.Errorf("clicks %w", err)
 	}
-	cost, err := audienceCounter(seg.Metrics.BilledChargeLocalMicro)
+	cost, mS, err := audienceCounter(seg.Metrics.BilledChargeLocalMicro)
 	if err != nil {
 		return fmt.Errorf("billed_charge_local_micro %w", err)
+	}
+	f.dimRows[dimension]++
+	if mI || mC || mS {
+		f.dimMeasured[dimension] = true
 	}
 	key := dimension + "\x00" + name
 	b, ok := f.totals[key]
@@ -556,32 +597,33 @@ func (f *audienceFold) addSegment(dimension, campaignID string, seg audienceIDDa
 	return nil
 }
 
-// audienceCounter reads one TOTAL-granularity metric. Absent or null (the whole metric, or its
-// one bucket) is X's "no activity" and reads 0, exactly as the monitor's fold treats it; an array
-// of any other length, a non-integer, a negative or an int64 overflow is an error.
-func audienceCounter(raw json.RawMessage) (int64, error) {
+// audienceCounter reads one TOTAL-granularity metric and reports whether it carried a value.
+// Absent or null (the whole metric, or its one bucket) is X's "no activity" and reads 0 with
+// measured=false, exactly as the monitor's fold treats it; an array of any other length, a
+// non-integer, a negative or an int64 overflow is an error.
+func audienceCounter(raw json.RawMessage) (n int64, measured bool, err error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return 0, nil
+		return 0, false, nil
 	}
 	var buckets []json.RawMessage
 	if err := json.Unmarshal(raw, &buckets); err != nil {
-		return 0, errors.New("is not an array")
+		return 0, false, errors.New("is not an array")
 	}
 	if len(buckets) != 1 {
-		return 0, fmt.Errorf("has %d buckets, want exactly 1 for granularity TOTAL", len(buckets))
+		return 0, false, fmt.Errorf("has %d buckets, want exactly 1 for granularity TOTAL", len(buckets))
 	}
 	v := strings.TrimSpace(string(buckets[0]))
 	if v == "null" {
-		return 0, nil
+		return 0, false, nil
 	}
 	if !audienceCounterRE.MatchString(v) {
-		return 0, fmt.Errorf("is not a non-negative integer (%d bytes)", len(v))
+		return 0, false, fmt.Errorf("is not a non-negative integer (%d bytes)", len(v))
 	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("overflows int64 (%d bytes)", len(v))
+	n, perr := strconv.ParseInt(v, 10, 64)
+	if perr != nil {
+		return 0, false, fmt.Errorf("overflows int64 (%d bytes)", len(v))
 	}
-	return n, nil
+	return n, true, nil
 }
 
 // audienceDimensionRank orders the response's dimensions.

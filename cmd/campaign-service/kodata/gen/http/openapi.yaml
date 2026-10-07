@@ -10495,7 +10495,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: get-twitter-ads-audience lfx-v2-campaign-service-connections
-            description: 'Read X (Twitter) Ads audience insights — age, gender and device platform — for this project''s own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `buckets` array and X is not contacted. The window is the X metrics read''s — today, yesterday or the last 7 days including today — in the ad ACCOUNT''s timezone; longer windows are refused (400). All three segmentations must load or the request fails (503). Billed charge is in the account''s own currency (`account_currency`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.'
+            description: 'Read X (Twitter) Ads audience insights — age, gender and device platform — for this project''s own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `buckets` array and X is not contacted. The window NAMES are the X metrics read''s — today, yesterday or the last 7 days including today — but the days are taken on the ad ACCOUNT''s calendar (its timezone), whereas the metrics read uses UTC days, so on a non-UTC account the two cover different instants and their totals are not directly comparable; longer windows are refused (400). Identical reads are shared and successful results reused for a few minutes, and at most one read per ad account runs at a time, because each read holds stats-job slots on an account shared across foundations. `all_counters_null` flags segment rows that carried no measurement. All three segmentations must load or the request fails (503). Billed charge is in the account''s own currency (`account_currency`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.'
             operationId: lfx-v2-campaign-service-connections#get-twitter-ads-audience
             parameters:
                 - name: window
@@ -10526,6 +10526,7 @@ paths:
                             - window
                             - buckets
                             - bucket_count
+                            - all_counters_null
                 "400":
                     description: Bad Request response.
                     schema:
@@ -17417,6 +17418,10 @@ definitions:
                 description: ISO 4217 currency of the ad account that cost_micros is denominated in, as X reports it on the account. ABSENT when X was not contacted (the project has no X campaigns of its own) or the account carries no currency.
                 example: USD
                 pattern: ^[A-Z]{3}$
+            all_counters_null:
+                type: boolean
+                description: 'True when, for at least one dimension, X returned segment rows whose every counter was null or absent. The zeros in that dimension are then NOT a measurement: it is either no delivery in the window or X''s reported defect where segmented stats jobs succeed with all-null metrics, and the two cannot be told apart.'
+                example: false
             bucket_count:
                 type: integer
                 description: How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.
@@ -17448,7 +17453,7 @@ definitions:
                       value: iOS
             window:
                 type: string
-                description: The reporting window these counters cover
+                description: The reporting window these counters cover, as days on the ad ACCOUNT's calendar (its timezone) — not the UTC days the X campaign metrics read uses for the same window name
                 example: last_7_days
                 enum:
                     - today
@@ -17456,6 +17461,7 @@ definitions:
                     - last_7_days
         example:
             account_currency: USD
+            all_counters_null: false
             bucket_count: 3
             buckets:
                 - clicks: 270
@@ -17481,6 +17487,7 @@ definitions:
             - window
             - buckets
             - bucket_count
+            - all_counters_null
     TwitterAdsAudienceBucket:
         title: TwitterAdsAudienceBucket
         type: object

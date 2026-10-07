@@ -186,13 +186,19 @@ type Service interface {
 	// campaigns (at most 40 campaigns), waits for them inside the request and
 	// downloads the results; nothing is persisted. A project with no X campaigns
 	// of its own receives an empty `buckets` array and X is not contacted. The
-	// window is the X metrics read's — today, yesterday or the last 7 days
-	// including today — in the ad ACCOUNT's timezone; longer windows are refused
-	// (400). All three segmentations must load or the request fails (503). Billed
-	// charge is in the account's own currency (`account_currency`); no FX
-	// conversion is performed. There is no conversions counter. Disabled (400 not
-	// supported) unless TWITTER_METRICS_ENABLED is "true", like the X account
-	// monitor that shares the stats-jobs contract.
+	// window NAMES are the X metrics read's — today, yesterday or the last 7 days
+	// including today — but the days are taken on the ad ACCOUNT's calendar (its
+	// timezone), whereas the metrics read uses UTC days, so on a non-UTC account
+	// the two cover different instants and their totals are not directly
+	// comparable; longer windows are refused (400). Identical reads are shared and
+	// successful results reused for a few minutes, and at most one read per ad
+	// account runs at a time, because each read holds stats-job slots on an
+	// account shared across foundations. `all_counters_null` flags segment rows
+	// that carried no measurement. All three segmentations must load or the
+	// request fails (503). Billed charge is in the account's own currency
+	// (`account_currency`); no FX conversion is performed. There is no conversions
+	// counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is
+	// "true", like the X account monitor that shares the stats-jobs contract.
 	GetTwitterAdsAudience(context.Context, *GetTwitterAdsAudiencePayload) (res *TwitterAdsAudience, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
@@ -1917,7 +1923,9 @@ type TestTwitterAdsPayload struct {
 // TwitterAdsAudience is the result type of the
 // lfx-v2-campaign-service-connections service get-twitter-ads-audience method.
 type TwitterAdsAudience struct {
-	// The reporting window these counters cover
+	// The reporting window these counters cover, as days on the ad ACCOUNT's
+	// calendar (its timezone) — not the UTC days the X campaign metrics read uses
+	// for the same window name
 	Window string
 	// Every bucket across the three segmentations, discriminated by `dimension`.
 	// Ordered by dimension (age, gender, platform), then impressions descending,
@@ -1931,6 +1939,12 @@ type TwitterAdsAudience struct {
 	// reports it on the account. ABSENT when X was not contacted (the project has
 	// no X campaigns of its own) or the account carries no currency.
 	AccountCurrency *string
+	// True when, for at least one dimension, X returned segment rows whose every
+	// counter was null or absent. The zeros in that dimension are then NOT a
+	// measurement: it is either no delivery in the window or X's reported defect
+	// where segmented stats jobs succeed with all-null metrics, and the two cannot
+	// be told apart.
+	AllCountersNull bool
 }
 
 type TwitterAdsAudienceBucket struct {

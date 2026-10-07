@@ -18,6 +18,7 @@ import (
 // twitterAudienceDispatcher implements ONLY TwitterAudienceReader (plus Dispatch). calls,
 // gotWindow and gotScope let a test assert whether, and with what, X was contacted.
 type twitterAudienceDispatcher struct {
+	disabled  error
 	err       error
 	result    *model.TwitterAudienceInsights
 	nilOut    bool
@@ -29,6 +30,8 @@ type twitterAudienceDispatcher struct {
 func (d *twitterAudienceDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
 }
+
+func (d *twitterAudienceDispatcher) AudienceEnabled() error { return d.disabled }
 
 func (d *twitterAudienceDispatcher) ReadTwitterAudienceInsights(_ context.Context, _ string, _ model.Provider, w model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error) {
 	d.calls++
@@ -226,5 +229,22 @@ func TestOrchestratorReadTwitterAudience_NilResultAndNilSlice(t *testing.T) {
 	}
 	if ai.Buckets == nil {
 		t.Error("Buckets is nil; it must be an empty slice so the wire shape is [] not null")
+	}
+}
+
+// The flag gate is checked BEFORE the scope lookup: a project with no X campaigns must get the
+// same 400 as any other while the read is off, not a 200 with empty buckets.
+func TestGetTwitterAdsAudience_DisabledIs400EvenWithEmptyScope(t *testing.T) {
+	for name, scope := range map[string][]string{"empty scope": nil, "with campaigns": {"c555"}} {
+		t.Run(name, func(t *testing.T) {
+			d := &twitterAudienceDispatcher{disabled: domain.ErrKeywordInsightsUnsupported}
+			_, err := twitterAudienceService(t, d, scope...).GetTwitterAdsAudience(context.Background(), &conn.GetTwitterAdsAudiencePayload{ProjectID: "cncf"})
+			if _, ok := err.(*conn.BadRequestError); !ok {
+				t.Fatalf("error = %T (%v), want *conn.BadRequestError", err, err)
+			}
+			if d.calls != 0 {
+				t.Errorf("the read ran %d time(s) while disabled", d.calls)
+			}
+		})
 	}
 }

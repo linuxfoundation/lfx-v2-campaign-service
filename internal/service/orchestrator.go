@@ -2885,7 +2885,13 @@ type MetaAudienceReader interface {
 // differs (one value per X segment, not Meta's combined breakdowns). scope carries
 // KeywordInsightsReader's contract: never empty from the orchestrator, and the adapter refuses
 // the whole read on any provenance mismatch rather than dropping entries.
+//
+// AudienceEnabled reports whether the read is switched on. The orchestrator asks it BEFORE the
+// scope lookup: readScopedAudience answers an empty scope without calling the adapter, so a gate
+// checked only inside ReadTwitterAudienceInsights would let a disabled read answer 200 with empty
+// buckets for every project with no X campaigns, instead of the documented 400.
 type TwitterAudienceReader interface {
+	AudienceEnabled() error
 	ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error)
 }
 
@@ -3087,6 +3093,9 @@ func (o *Orchestrator) ReadTwitterAudienceInsights(ctx context.Context, projectI
 	reader, ok := d.(TwitterAudienceReader)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	if err := reader.AudienceEnabled(); err != nil {
+		return nil, err
 	}
 	return readScopedAudience(ctx, o, projectID, platform,
 		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error) {

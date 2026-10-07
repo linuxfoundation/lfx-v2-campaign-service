@@ -2043,6 +2043,23 @@ unclassified (503). Tests: `twitter_audience_test.go` (mapping and account-tz jo
 refusal with zero upstream calls, flag values, partial mismatch, own and LF-fallback reads,
 fractional-offset zone creates no job, 403 unclassified).
 
+`AudienceEnabled()` is the same flag check exposed on the capability: the orchestrator calls it
+BEFORE the scope lookup, because `readScopedAudience` answers an empty scope without reaching the
+adapter — checked only inside the read, a disabled read answered 200 `[]` to every project with
+no X campaigns. The client call runs through `twitterAudienceGuard` (`twitter_audience_guard.go`),
+one per dispatcher (so per process), because every read holds stats-job slots on an ad account
+that other foundations and the X account monitor share (X: 100 concurrent jobs per account) and
+a timed-out read's jobs keep running until X expires them. Keyed by account + window + sorted
+de-duplicated scope: identical concurrent reads share one call (singleflight; a joiner whose ctx
+ends first gets its own ctx error); a SUCCESSFUL result is reused for 5 minutes (at most 256
+entries; failures never cached) while `twitter.AudienceWindowBounds` at the dispatcher clock
+(`audienceNow`) still gives the result's own instants, so "today" is never served across the
+account's midnight; and a per-account slot (`twitterAudienceAccountConcurrency` = 1) runs one read
+at a time, a waiter giving up with its context (503). The scope in the key means a cached result
+is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
+(N callers → one set of jobs, a second account read refused while the first runs, cache hit
+creates no jobs and expires by TTL and by account-local day, failures not cached).
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`

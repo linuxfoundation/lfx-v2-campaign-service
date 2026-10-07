@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,13 @@ type twitterAudienceServer struct {
 	// tz is the account's timezone.
 	tz string
 
+	// gate, when set before the first request, holds every account read until it is closed;
+	// entered receives one value per account read that reached the gate. Both are read outside
+	// mu so a held request never blocks the others' bookkeeping.
+	gate    chan struct{}
+	entered chan struct{}
+	release func()
+
 	mu     sync.Mutex
 	reqs   []string
 	posts  []string // segmentation_type of each job POST, in order
@@ -45,6 +53,10 @@ func newTwitterAudienceServer(t *testing.T, tz string) *twitterAudienceServer {
 	t.Helper()
 	s := &twitterAudienceServer{tz: tz, jobSeg: map[string]string{}, next: 700}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.gate != nil && r.Method == http.MethodGet && r.URL.Path == "/12/accounts/acc1" {
+			s.entered <- struct{}{}
+			<-s.gate
+		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.reqs = append(s.reqs, r.Method+" "+r.URL.Path)
@@ -302,5 +314,161 @@ func TestTwitter_ReadTwitterAudienceInsights_UpstreamFailureIsUnclassified(t *te
 		if errors.Is(err, s) {
 			t.Errorf("upstream failure classified as %v", s)
 		}
+	}
+}
+
+func (s *twitterAudienceServer) count(prefix string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, r := range s.reqs {
+		if strings.HasPrefix(r, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func newGatedTwitterAudience(t *testing.T) (*twitterAudienceServer, *TwitterDispatcher) {
+	t.Helper()
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	s := newTwitterAudienceServer(t, "UTC")
+	s.gate = make(chan struct{})
+	s.entered = make(chan struct{}, 16)
+	// Registered after the server's own Cleanup, so it runs FIRST: a test that fails before
+	// releasing the gate must not leave handlers blocked, or srv.Close would wait forever.
+	var once sync.Once
+	release := func() { once.Do(func() { close(s.gate) }) }
+	t.Cleanup(release)
+	s.release = release
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, s.opts(twitterAudienceNow)...)
+	d.audienceNow = func() time.Time { return twitterAudienceNow }
+	return s, d
+}
+
+func waitFor(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// N concurrent identical reads share ONE set of stats jobs.
+func TestTwitter_AudienceGuard_ConcurrentIdenticalReadsShareJobs(t *testing.T) {
+	s, d := newGatedTwitterAudience(t)
+	joined := make(chan struct{}, 16)
+	d.audience.onJoin = func() { joined <- struct{}{} }
+	const n = 5
+	errs := make(chan error, n)
+	read := func() {
+		_, err := d.ReadTwitterAudienceInsights(context.Background(), "proj", model.ProviderTwitterAds, model.MetricsWindowToday, twitterScope("c1"))
+		errs <- err
+	}
+	go read()
+	waitFor(t, s.entered, "the leader's account read")
+	for i := 1; i < n; i++ {
+		go read()
+	}
+	for i := 1; i < n; i++ {
+		waitFor(t, joined, "a follower to join the in-flight read")
+	}
+	s.release()
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("read %d: %v", i, err)
+		}
+	}
+	if posts := s.count(http.MethodPost); posts != 3 {
+		t.Errorf("%d stats jobs for %d identical reads, want one set of 3", posts, n)
+	}
+}
+
+// At most one audience read runs per ad account: a second, different read waits, and gives up
+// with its context rather than creating jobs of its own.
+func TestTwitter_AudienceGuard_OneReadPerAccount(t *testing.T) {
+	s, d := newGatedTwitterAudience(t)
+	first := make(chan error, 1)
+	go func() {
+		_, err := d.ReadTwitterAudienceInsights(context.Background(), "proj", model.ProviderTwitterAds, model.MetricsWindowToday, twitterScope("c1"))
+		first <- err
+	}()
+	waitFor(t, s.entered, "the first read's account read")
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := d.ReadTwitterAudienceInsights(ctx, "proj", model.ProviderTwitterAds, model.MetricsWindowToday, twitterScope("c2"))
+	if err == nil || !strings.Contains(err.Error(), "still running") {
+		t.Errorf("second read: err = %v, want the busy-account refusal", err)
+	}
+	select {
+	case <-s.entered:
+		t.Error("the second read reached X while the first was running")
+	default:
+	}
+	s.release()
+	if err := <-first; err != nil {
+		t.Errorf("first read: %v", err)
+	}
+}
+
+// A successful result is reused within the TTL and for the same account-local window: a refresh
+// creates zero jobs. Past the TTL, or across the account's midnight, the read runs again.
+func TestTwitter_AudienceGuard_CacheHitCreatesNoJobs(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	s := newTwitterAudienceServer(t, "UTC")
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, s.opts(twitterAudienceNow)...)
+	clock := time.Date(2026, 10, 5, 23, 50, 0, 0, time.UTC)
+	d.audienceNow = func() time.Time { return clock }
+	read := func(scope ...string) {
+		t.Helper()
+		if _, err := d.ReadTwitterAudienceInsights(context.Background(), "proj", model.ProviderTwitterAds, model.MetricsWindowToday, twitterScope(scope...)); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+	}
+	read("c1")
+	clock = clock.Add(2 * time.Minute)
+	read("c1", "c1") // same scope after de-duplication
+	if posts := s.count(http.MethodPost); posts != 3 {
+		t.Fatalf("%d jobs after a cached refresh, want 3", posts)
+	}
+	read("c1", "c2") // a different scope is never served from another's entry
+	if posts := s.count(http.MethodPost); posts != 6 {
+		t.Fatalf("%d jobs after a different scope, want 6", posts)
+	}
+	clock = time.Date(2026, 10, 5, 23, 55, 30, 0, time.UTC) // 5.5 minutes after c1 was stored
+	read("c1")
+	if posts := s.count(http.MethodPost); posts != 9 {
+		t.Fatalf("%d jobs after the TTL, want 9", posts)
+	}
+	// The client's clock is pinned to Oct 5 12:00, so its "today" is Oct 5. Stored at 23:59 and
+	// asked again at 00:01 on Oct 6 (inside the TTL), that entry names yesterday's instants on the
+	// account's calendar and must not be served.
+	clock = time.Date(2026, 10, 5, 23, 59, 0, 0, time.UTC)
+	read("c1", "c3")
+	clock = time.Date(2026, 10, 6, 0, 1, 0, 0, time.UTC)
+	read("c1", "c3")
+	if posts := s.count(http.MethodPost); posts != 15 {
+		t.Errorf("%d jobs after the account's midnight, want 15", posts)
+	}
+}
+
+// Failures are never cached.
+func TestTwitter_AudienceGuard_FailuresAreNotCached(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithBaseURL(srv.URL), twitter.WithWriteDelay(0))
+	for i := 0; i < 2; i++ {
+		if _, err := d.ReadTwitterAudienceInsights(context.Background(), "proj", model.ProviderTwitterAds, model.MetricsWindowToday, twitterScope("c1")); err == nil {
+			t.Fatal("expected an error")
+		}
+	}
+	if calls.Load() < 2 {
+		t.Errorf("%d upstream calls; a failure was served from the cache", calls.Load())
 	}
 }

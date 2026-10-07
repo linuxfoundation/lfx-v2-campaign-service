@@ -2017,7 +2017,11 @@ the shared `readScopedAudience` (empty scope → 200 empty, X not contacted; `me
 `domain.ErrAccountTimezoneUnsupported` (409, the sentinel's fixed text, shared `ConflictError`)
 alongside the audience-scope arms. Buckets are `dimension` (`age` | `gender` | `platform`) +
 `value` (X's segment name, verbatim); the envelope adds `account_currency` (absent when X was not
-contacted or the account carries none). Tests: `twitter_audience_test.go`;
+contacted or the account carries none) and `all_counters_null`. The orchestrator asks the
+reader's `AudienceEnabled()` BEFORE the scope lookup, so `TWITTER_METRICS_ENABLED` off is 400 even
+for a project with no X campaigns (`TestGetTwitterAdsAudience_DisabledIs400EvenWithEmptyScope`).
+Window NAMES match the X metrics read's; the instants do not on a non-UTC account (account-local
+days here, UTC days there), so the two reads' totals are not directly comparable. Tests: `twitter_audience_test.go`;
 `twitter_audience_wire_example_test.go` (`TestPublishedTwitterAudienceExamplesArePossible`) walks
 every generated OpenAPI document and fails on an X audience example no response could contain.
 

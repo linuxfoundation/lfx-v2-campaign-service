@@ -1320,8 +1320,10 @@ shared with the monitor's `createStatsJob`: `entity=CAMPAIGN`, `granularity=TOTA
 id: unfinished jobs are `ErrAudienceJobsUnfinished` (503) and are left to expire on X.
 Scope: non-empty, every id `ValidateCampaignID` (`ErrAudienceScopeInvalid`), de-duplicated, at
 most `MaxAudienceCampaigns` (40 — a local bound: two batches, six jobs; `ErrAudienceScopeTooLarge`).
-Window: the metrics read's days (today; yesterday; today and the six before) on the ACCOUNT's
-calendar via `localDayStart`, `[start, end)`; non-whole-hour bounds are
+Window (`AudienceWindowBounds`, exported so the dispatcher's cache can tell whether a result's
+window still names the same instants): the metrics read's window NAMES (today; yesterday; today
+and the six before) but on the ACCOUNT's calendar via `localDayStart`, `[start, end)` — the
+metrics read (`dateRangeForWindow`) uses UTC days, so on a non-UTC account the instants differ; non-whole-hour bounds are
 `ErrReportWindowNotWholeHours`; other windows `ErrUnsupportedWindow`. Trust: `identityjson.Check`
 on every job, status and file body; a status answer naming an unasked or repeated job, a
 FAILED/CANCELLED job or a SUCCESS without url fails; every file entity must be in THAT job's
@@ -1332,5 +1334,13 @@ guard; CTR after summing. Ordered by dimension, impressions desc, value. Tests:
 `audience_test.go` (stateful stub; segmentation params, batching and bound, account-tz windows
 incl. DST and a UTC/local day split, polling bound and deadline, duplicate/case-folded keys at
 every level, null counters, malformed files, 401/403/429/5xx, job defects, budget check).
-UNVERIFIED against a live account: the segmented file shape and `segment_name` vocabulary, and
-X's forum reports segmented files with all-null metrics, which would read as zeros.
+`AllCountersNull` is set when a whole dimension (all batches) returned rows with no measured
+counter (`audienceCounter` reports `measured`; a literal 0 counts): X's forum reports segmented
+jobs that succeed with every metric null, and that is indistinguishable from an idle campaign set
+(this package reads X's null as "no activity" — `statsFold`, `firstOrZero` — and X does not
+document idle entities as omitted), so failing closed would 503 every idle project; the flag
+keeps the zeros from passing as a measurement instead. `statsJobsFitBudget` (shared with the
+monitor) now adds the pacer's backlog (`nextWriteAt` − now) to the paced POSTs, so a read queued
+behind other writes on the client refuses (`ErrStatsJobBudget`) before its first job POST rather
+than abandoning jobs mid-loop. UNVERIFIED against a live account: the segmented file shape and
+`segment_name` vocabulary.

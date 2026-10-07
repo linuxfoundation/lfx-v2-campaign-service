@@ -761,9 +761,13 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 	return strings.Join(jobIDs, ","), firstDay, lastDay, nil
 }
 
-// statsJobsFitBudget refuses (ErrStatsJobBudget) when ctx's deadline is closer than `jobs`
-// pacer intervals plus statsJobSubmitMargin. The deadline is wall-clock, so it is measured with
-// time.Until, not the injectable clock. With no deadline there is nothing to fit.
+// statsJobsFitBudget refuses (ErrStatsJobBudget) when ctx's deadline is closer than the pacer's
+// current BACKLOG (writes other callers on this client have already reserved: nextWrite - now)
+// plus `jobs` pacer intervals plus statsJobSubmitMargin. Without the backlog, a caller queued
+// behind another reader's job POSTs would pass the check and then run out of time mid-loop,
+// abandoning the jobs it had created. The deadline is wall-clock, so it is measured with
+// time.Until; the backlog is in the pacer's own (injectable) clock. With no deadline there is
+// nothing to fit.
 func (c *Client) statsJobsFitBudget(ctx context.Context, jobs int) error {
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -772,6 +776,9 @@ func (c *Client) statsJobsFitBudget(ctx context.Context, jobs int) error {
 	pacing := time.Duration(0)
 	if c.writeDelay > 0 {
 		pacing = time.Duration(jobs) * c.writeDelay
+		if backlog := c.nextWriteAt().Sub(c.timeFn()); backlog > 0 {
+			pacing += backlog
+		}
 	}
 	need := pacing + statsJobSubmitMargin
 	if left := time.Until(deadline); left < need {

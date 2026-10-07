@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -34,6 +35,12 @@ func twitterAudienceEnabled() error {
 	return nil
 }
 
+// AudienceEnabled implements service.TwitterAudienceReader: the gate the orchestrator checks
+// BEFORE the scope lookup, so a project with no X campaigns gets the same 400 as any other while
+// the read is off. ReadTwitterAudienceInsights re-checks it for a caller that skips the
+// orchestrator.
+func (d *TwitterDispatcher) AudienceEnabled() error { return twitterAudienceEnabled() }
+
 // ReadTwitterAudienceInsights implements service.TwitterAudienceReader: X's AGE, GENDER and
 // PLATFORMS segmentations over window, confined to the campaigns in scope.
 //
@@ -54,6 +61,9 @@ func twitterAudienceEnabled() error {
 //
 // The CACHED client is used, as by the monitor: job creation goes through the client's write
 // pacer, which bounds the account's write rate only if every caller for the connection shares it.
+// The call itself goes through d.audience (twitterAudienceGuard): a cached result, a shared
+// in-flight read, or one read per ad account at a time — each read holds stats-job slots on an
+// account shared across foundations and with the X account monitor.
 func (d *TwitterDispatcher) ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error) {
 	if err := twitterAudienceEnabled(); err != nil {
 		return nil, err
@@ -79,7 +89,14 @@ func (d *TwitterDispatcher) ReadTwitterAudienceInsights(ctx context.Context, pro
 	}
 	client := d.cachedTwitterClient(projectID, platform, res, creds, accountID,
 		strings.TrimSpace(res.providerConfig["funding_instrument_id"]))
-	ai, err := client.GetAudienceInsights(ctx, xWindow, campaignIDs)
+	now := d.audienceNow
+	if now == nil {
+		now = time.Now
+	}
+	ai, err := d.audience.read(ctx, accountID, twitterAudienceKey(accountID, xWindow, campaignIDs), now,
+		func(callCtx context.Context) (*twitter.AudienceInsights, error) {
+			return client.GetAudienceInsights(callCtx, xWindow, campaignIDs)
+		})
 	if err != nil {
 		switch {
 		case errors.Is(err, twitter.ErrAudienceScopeTooLarge):
@@ -104,7 +121,7 @@ func (d *TwitterDispatcher) ReadTwitterAudienceInsights(ctx context.Context, pro
 	}
 	// The REQUEST window, not the client's literal: the API contract is the platform-agnostic
 	// vocabulary.
-	return &model.TwitterAudienceInsights{Window: window, Currency: ai.Currency, Buckets: buckets}, nil
+	return &model.TwitterAudienceInsights{Window: window, Currency: ai.Currency, AllCountersNull: ai.AllCountersNull, Buckets: buckets}, nil
 }
 
 // twitterScopeForAccount is metaScopeForAccount for X: the campaign ids in scope, provided every

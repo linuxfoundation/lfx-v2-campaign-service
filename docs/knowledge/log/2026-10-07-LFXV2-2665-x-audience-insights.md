@@ -1,4 +1,4 @@
-# 2026-10-08 — LFXV2-2665 X audience insights read
+# 2026-10-07 — LFXV2-2665 X audience insights read
 
 **Update** — New `campaign_manager` read `get-twitter-ads-audience`,
 `GET /projects/{projectId}/twitter-ads/audience`, the X sibling of `get-meta-ads-audience`.

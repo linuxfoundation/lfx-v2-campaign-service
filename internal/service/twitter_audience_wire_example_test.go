@@ -113,6 +113,9 @@ func TestPublishedTwitterAudienceExamplesArePossible(t *testing.T) {
 							if count, ok := n["bucket_count"].(float64); !ok || int(count) != len(buckets) {
 								t.Errorf("%s: bucket_count %v beside %d buckets", path, n["bucket_count"], len(buckets))
 							}
+							if _, ok := n["all_counters_null"].(bool); !ok {
+								t.Errorf("%s: all_counters_null %v is not a boolean", path, n["all_counters_null"])
+							}
 							if w, _ := n["window"].(string); !twitterAudienceWindowValues[w] {
 								t.Errorf("%s: window %q is not one X serves", path, w)
 							}

@@ -84,5 +84,6 @@ func (s *ConnectionService) GetTwitterAdsAudience(ctx context.Context, p *conn.G
 		Buckets:         buckets,
 		BucketCount:     len(buckets),
 		AccountCurrency: optionalString(ai.Currency),
+		AllCountersNull: ai.AllCountersNull,
 	}, nil
 }

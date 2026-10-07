@@ -472,7 +472,10 @@ type TwitterAudienceInsights struct {
 	// Currency is the ad account's ISO 4217 code as X reports it on the account; "" when X was
 	// not contacted or the account carries none.
 	Currency string
-	Buckets  []TwitterAudienceBucket
+	// AllCountersNull: at least one dimension returned rows with no measured counter (see
+	// twitter.AudienceInsights.AllCountersNull) — its zeros are not a measurement.
+	AllCountersNull bool
+	Buckets         []TwitterAudienceBucket
 }
 
 // KeywordAction is one requested keyword mutation on a live campaign.

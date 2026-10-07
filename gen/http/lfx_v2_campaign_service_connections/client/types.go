@@ -852,7 +852,9 @@ type GetMetaAdsAudienceResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
 // endpoint HTTP response body.
 type GetTwitterAdsAudienceResponseBody struct {
-	// The reporting window these counters cover
+	// The reporting window these counters cover, as days on the ad ACCOUNT's
+	// calendar (its timezone) — not the UTC days the X campaign metrics read uses
+	// for the same window name
 	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
 	// Every bucket across the three segmentations, discriminated by `dimension`.
 	// Ordered by dimension (age, gender, platform), then impressions descending,
@@ -866,6 +868,12 @@ type GetTwitterAdsAudienceResponseBody struct {
 	// reports it on the account. ABSENT when X was not contacted (the project has
 	// no X campaigns of its own) or the account carries no currency.
 	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
+	// True when, for at least one dimension, X returned segment rows whose every
+	// counter was null or absent. The zeros in that dimension are then NOT a
+	// measurement: it is either no delivery in the window or X's reported defect
+	// where segmented stats jobs succeed with all-null metrics, and the two cannot
+	// be told apart.
+	AllCountersNull *bool `form:"all_counters_null,omitempty" json:"all_counters_null,omitempty" xml:"all_counters_null,omitempty"`
 }
 
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
@@ -10378,6 +10386,7 @@ func NewGetTwitterAdsAudienceTwitterAdsAudienceOK(body *GetTwitterAdsAudienceRes
 		Window:          *body.Window,
 		BucketCount:     *body.BucketCount,
 		AccountCurrency: body.AccountCurrency,
+		AllCountersNull: *body.AllCountersNull,
 	}
 	v.Buckets = make([]*lfxv2campaignserviceconnections.TwitterAdsAudienceBucket, len(body.Buckets))
 	for i, val := range body.Buckets {
@@ -13203,6 +13212,9 @@ func ValidateGetTwitterAdsAudienceResponseBody(body *GetTwitterAdsAudienceRespon
 	}
 	if body.BucketCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.AllCountersNull == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("all_counters_null", "body"))
 	}
 	if body.Window != nil {
 		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days") {

@@ -4,6 +4,8 @@
 package twitter
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -45,10 +47,13 @@ type fakeXAudience struct {
 	statusBody func(ids []string) string
 	// statusReject, when set, answers every status read instead of the normal body.
 	statusReject func(w http.ResponseWriter)
+	// firstJobOnly leaves every job but the first PROCESSING on every status read.
+	firstJobOnly bool
 	// file builds a job's results file from its segmentation and entity ids.
 	file func(segmentation string, ids []string) string
 
 	posts       []url.Values
+	downloads   int
 	statusReads int
 	accountGets int
 	jobs        map[string]url.Values
@@ -105,7 +110,7 @@ func (f *fakeXAudience) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		els := make([]string, 0, len(ids))
 		for _, id := range ids {
-			if f.pendingReads < 0 || f.statusReads <= f.pendingReads {
+			if f.pendingReads < 0 || f.statusReads <= f.pendingReads || (f.firstJobOnly && id != ids[0]) {
 				els = append(els, fmt.Sprintf(`{"id_str":%q,"status":"PROCESSING","url":null}`, id))
 				continue
 			}
@@ -113,6 +118,7 @@ func (f *fakeXAudience) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(els, ","))
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/files/"):
+		f.downloads++
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/files/"), ".json.gz")
 		q, ok := f.jobs[id]
 		if !ok {
@@ -121,7 +127,21 @@ func (f *fakeXAudience) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(gz(f.t, f.file(q.Get("segmentation_type"), strings.Split(q.Get("entity_ids"), ","))))
+		// Compressed HERE with handler-safe error handling, never through gz(t, …): a t.Fatalf on
+		// a server goroutine does not stop the test and can race its end.
+		var b bytes.Buffer
+		zw := gzip.NewWriter(&b)
+		if _, err := zw.Write([]byte(f.file(q.Get("segmentation_type"), strings.Split(q.Get("entity_ids"), ",")))); err != nil {
+			f.t.Errorf("gzip results file: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if err := zw.Close(); err != nil {
+			f.t.Errorf("gzip results file: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(b.Bytes())
 	default:
 		f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
@@ -634,5 +654,106 @@ func TestGetAudienceInsights_BudgetCheckedBeforeJobs(t *testing.T) {
 	}
 	if posts, _, _ := f.snapshot(); len(posts) != 0 {
 		t.Errorf("%d jobs created on a budget that could not fit them", len(posts))
+	}
+}
+
+// Some jobs finished, others still building when the deadline arrives: the read fails whole
+// (no partial buckets) and downloads nothing, not even the finished jobs' files.
+func TestGetAudienceInsights_PartiallyFinishedJobsAtDeadlineFail(t *testing.T) {
+	f := newFakeXAudience(t)
+	f.set(func(f *fakeXAudience) { f.firstJobOnly = true })
+	c := f.client(audienceNow)
+	c.audiencePollInterval = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	ai, err := c.GetAudienceInsights(ctx, WindowToday, []string{"c1"})
+	if !errors.Is(err, ErrAudienceJobsUnfinished) || ai != nil {
+		t.Fatalf("ai, err = %+v, %v; want nil and ErrAudienceJobsUnfinished", ai, err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.downloads != 0 {
+		t.Errorf("%d results files downloaded while some jobs were unfinished", f.downloads)
+	}
+	if f.statusReads < 2 {
+		t.Errorf("%d status reads; the mixed state was not polled", f.statusReads)
+	}
+}
+
+// Segment rows whose every counter is null (X's reported segmented defect, or a genuinely idle
+// set — indistinguishable) succeed with AllCountersNull set; a measured zero does not set it, and
+// one idle batch beside a measured one does not either.
+func TestGetAudienceInsights_AllCountersNullFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file func(seg string, ids []string) string
+		want bool
+	}{
+		{"every counter null", func(string, []string) string {
+			return `{"data":[{"id":"c1","id_data":[{"segment":{"segment_name":"Male"},"metrics":{"impressions":null,"clicks":[null]}}]}]}`
+		}, true},
+		{"one segmentation all null", func(seg string, ids []string) string {
+			if seg == "GENDER" {
+				return `{"data":[{"id":"c1","id_data":[{"segment":{"segment_name":"Male"},"metrics":{}}]}]}`
+			}
+			return defaultAudienceFile(seg, ids)
+		}, true},
+		{"measured zeros", func(string, []string) string {
+			return `{"data":[{"id":"c1","id_data":[{"segment":{"segment_name":"Male"},"metrics":{"impressions":[0]}}]}]}`
+		}, false},
+		{"no rows", func(string, []string) string { return `{"data":[]}` }, false},
+		{"normal", defaultAudienceFile, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeXAudience(t)
+			f.set(func(f *fakeXAudience) { f.file = tc.file })
+			ai, err := f.client(audienceNow).GetAudienceInsights(context.Background(), WindowToday, []string{"c1"})
+			if err != nil {
+				t.Fatalf("GetAudienceInsights: %v", err)
+			}
+			if ai.AllCountersNull != tc.want {
+				t.Errorf("AllCountersNull = %v, want %v", ai.AllCountersNull, tc.want)
+			}
+		})
+	}
+	// An idle second batch beside a measured first one is ordinary.
+	f := newFakeXAudience(t)
+	f.set(func(f *fakeXAudience) {
+		f.file = func(seg string, ids []string) string {
+			if ids[0] == "c20" {
+				return `{"data":[{"id":"c20","id_data":[{"segment":{"segment_name":"Male"},"metrics":{}}]}]}`
+			}
+			return defaultAudienceFile(seg, ids)
+		}
+	})
+	ai, err := f.client(audienceNow).GetAudienceInsights(context.Background(), WindowToday, audienceIDs(21))
+	if err != nil {
+		t.Fatalf("GetAudienceInsights: %v", err)
+	}
+	if ai.AllCountersNull {
+		t.Error("an idle batch beside a measured one set AllCountersNull")
+	}
+}
+
+// Writes already reserved on the client's pacer count against the budget: a read queued behind
+// them refuses BEFORE its first job POST rather than creating jobs it cannot finish.
+func TestGetAudienceInsights_PacerBacklogRefusesBeforeAnyPost(t *testing.T) {
+	f := newFakeXAudience(t)
+	c := f.client(audienceNow)
+	c.writeDelay = 10 * time.Millisecond
+	c.writeMu.Lock()
+	c.nextWrite = audienceNow.Add(30 * time.Second)
+	c.writeMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	if _, err := c.GetAudienceInsights(ctx, WindowToday, []string{"c1"}); !errors.Is(err, ErrStatsJobBudget) {
+		t.Errorf("err = %v, want ErrStatsJobBudget", err)
+	}
+	if posts, _, _ := f.snapshot(); len(posts) != 0 {
+		t.Errorf("%d jobs created behind a pacer backlog longer than the budget", len(posts))
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Error("the refusal waited on the pacer instead of being decided up front")
 	}
 }
