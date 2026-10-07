@@ -1527,6 +1527,24 @@ const googleAdsChannelSearchName = "search"
 // package, so the dependency cannot run the other way.
 const googleAdsChannelDemandGenName = "demand-gen"
 
+// googleAdsChannelPerformanceMaxName mirrors internal/dispatch's
+// googleAdsChannelPerformanceMax, for the same reason as the two above.
+//
+// This list is not optional upkeep. A channel the dispatcher creates but this file has
+// not heard of resolves to VariantInvalid and is refused BEFORE the dispatcher ever
+// runs — so the create path exists, builds and tests green, and is nonetheless
+// unreachable through the orchestrator. Any new channel must be added here in the same
+// commit as its dispatch arm.
+const googleAdsChannelPerformanceMaxName = "performance-max"
+
+// googleAdsChannelVideoName mirrors internal/dispatch's googleAdsChannelVideo, under the
+// same rule the comment above states.
+const googleAdsChannelVideoName = "video"
+
+// googleAdsChannelDisplayName mirrors internal/dispatch's googleAdsChannelDisplay, under
+// the same rule.
+const googleAdsChannelDisplayName = "display"
+
 // variantForDispatch reads WHICH of a platform's campaign types this dispatch is for,
 // out of the same config envelope the dispatcher will read.
 //
@@ -1607,7 +1625,12 @@ func googleAdsChannelIsSupported(ch string) bool {
 	// before the channel field existed sends, and the dispatcher's own switch has the same
 	// empty-string arm. Treating it as unsupported would file every one of those on
 	// VariantInvalid and refuse the platform's most common create.
-	return ch == "" || ch == googleAdsChannelSearchName || ch == googleAdsChannelDemandGenName
+	return ch == "" ||
+		ch == googleAdsChannelSearchName ||
+		ch == googleAdsChannelDemandGenName ||
+		ch == googleAdsChannelPerformanceMaxName ||
+		ch == googleAdsChannelVideoName ||
+		ch == googleAdsChannelDisplayName
 }
 
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor, opts StartOptions) platformResult {

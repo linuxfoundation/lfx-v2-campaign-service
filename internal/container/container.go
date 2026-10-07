@@ -28,6 +28,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/metrics"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/googleads"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/llm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
@@ -535,7 +536,7 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
 		model.ProviderMetaAds:      metaDispatcher,
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
-		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc),
+		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
 		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
 	}

@@ -146,19 +146,30 @@ var adScheduleMinutes = map[int]string{
 //
 // OTHER is a reporting bucket rather than something a campaign bids on.
 //
-// CONNECTED_TV is a device this client cannot usefully offer on EITHER channel it
-// creates. Google's own device-targeting documentation says of TV screens: "This
-// targeting option is only available for Display and Video campaigns." Every
-// criterion in this file is refused outright on Demand Gen (see
-// validateCriteriaPlan), so Search is the only kind that reaches this map — and
-// Search is not a campaign type Google supports it on. Accepting it meant offering
-// a knob whose best case is silently inert and whose worst case is a rejected
-// campaignCriteria:mutate, which lands AFTER the budget and campaign are committed.
+// CONNECTED_TV is a NAMED GAP, and the reasoning behind it changed when this client
+// gained the two channels Google supports it on. Google's own device-targeting
+// documentation says of TV screens: "This targeting option is only available for
+// Display and Video campaigns." While Search and Demand Gen were the only kinds that
+// reached this map — every criterion in this file is refused outright on Demand Gen,
+// see validateCriteriaPlan — the omission restated an upstream rule and cost a caller
+// nothing. Video and Display now reach it too, and on those two Google DOES accept the
+// device, so on those two the omission is this client's limitation rather than
+// Google's, and is stated as one — the same distinction displayBiddingStrategies draws
+// about manual CPC, and for the same reason: a reader widening this set later needs to
+// know which of the two they are arguing with.
 //
-// This is not the over-refusal this package otherwise guards against. Over-refusal
-// means failing a create Google would have accepted and MEANT; a device criterion
-// Google documents as unsupported on this campaign type has no such create behind
-// it, so the only thing a caller loses is a setting that never did anything.
+// It stays closed because opening it is a live-API question, not a code-reading one.
+// What is NOT established from the documentation alone is whether a CONNECTED_TV
+// campaign criterion carries a BID MODIFIER on those channels, and this client has no
+// way to send a criterion without one. Guessing wrong lands at the
+// campaignCriteria:mutate, which runs AFTER the budget and campaign are committed —
+// precisely the orphan the preflight exists to prevent — and the only reachable Google
+// account is a production one, where a validateOnly mutate is still a POST. Under-
+// refusing is safe; stranding a paid campaign is not.
+//
+// Closing it means running that validateOnly campaignCriteria:mutate for CONNECTED_TV
+// on a non-production DISPLAY and VIDEO campaign and admitting the device here for
+// those kinds alone — Search, which Google does not support it on, keeps refusing it.
 var deviceTypes = map[string]struct{}{
 	"MOBILE": {}, "DESKTOP": {}, "TABLET": {},
 }
@@ -277,6 +288,41 @@ func validateCriteriaPlan(kind string, in CampaignInput) (criteriaPlan, error) {
 		len(in.ExcludedAgeRanges) + len(in.ExcludedGenders)
 	if asked > 0 && kind == campaignKindDemandGen {
 		return criteriaPlan{}, fmt.Errorf("google-ads: language, ad schedule, device and demographic criteria are not supported on %s (Demand Gen attaches targeting at the ad group level, where this client has not verified these criteria); create a Search campaign for them", kind)
+	}
+	// Performance Max SPLITS this set rather than refusing it whole, which is why the
+	// Demand Gen check above could not simply be widened to every non-Search channel.
+	// Google documents LANGUAGE, LOCATION and AD_SCHEDULE as campaign criteria on
+	// Performance Max, so refusing a language there would be the over-refusal these
+	// guards exist to avoid — it would reject a campaign Google creates happily.
+	//
+	// Device BID MODIFIERS and campaign-level demographic exclusions are the half that
+	// is genuinely absent: Performance Max sets no device bid adjustments (the
+	// automated strategy owns the bid entirely) and excludes demographics through
+	// asset-group signals rather than campaign criteria. Both are refused, not dropped,
+	// so an operator never reads "campaign created" while an exclusion they asked for
+	// is nowhere upstream.
+	// Video and Display both take the UN-NARROWED set — every one of the five kinds,
+	// exactly as Search does — and that is why the Demand Gen fence above still names one
+	// channel rather than every non-Search one. A VIDEO or DISPLAY campaign carries
+	// LANGUAGE, AD_SCHEDULE, DEVICE (with a bid modifier) and campaign-level
+	// AGE_RANGE/GENDER exclusions as campaign criteria, and video.go and display.go each
+	// attach all five on their criteria step, so nothing accepted here is dropped. Widening the Demand Gen refusal to `!= Search` would
+	// have refused a campaign Google creates happily — the over-refusal these guards
+	// exist to avoid.
+	// This arm is about the CHANNEL, not about automated bidding — Performance Max takes
+	// no device criteria at all, not even the 0 exclusion, so it refuses the whole list.
+	// The adjustment-is-ignored-under-automated-bidding rule is a different rule with a
+	// different shape, it applies to Video, Display and an automated Search campaign too,
+	// and it lives in validateBiddingPlan where the strategy is actually known. Do not
+	// fold one into the other: widening this one to every automated channel would refuse
+	// device EXCLUSIONS that Google honours.
+	if kind == campaignKindPerformanceMax {
+		if len(in.DeviceBidModifiers) > 0 {
+			return criteriaPlan{}, fmt.Errorf("google-ads: device bid modifiers are not supported on %s (its automated bidding owns the bid and sets no device adjustment); omit DeviceBidModifiers, or create a Search campaign to bid by device", kind)
+		}
+		if len(in.ExcludedAgeRanges)+len(in.ExcludedGenders) > 0 {
+			return criteriaPlan{}, fmt.Errorf("google-ads: campaign-level demographic exclusions are not supported on %s (it takes demographics as asset-group signals, which this client does not create); omit ExcludedAgeRanges and ExcludedGenders, or create a Search campaign to exclude demographics", kind)
+		}
 	}
 
 	var plan criteriaPlan
@@ -520,7 +566,7 @@ func validateDeviceBidModifiers(devices []DeviceBidModifier) ([]deviceInfo, []fl
 	for i, d := range devices {
 		device := strings.ToUpper(strings.TrimSpace(d.Device))
 		if _, ok := deviceTypes[device]; !ok {
-			return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET (Google supports TV screens only on Display and Video campaigns, not Search)", i, d.Device)
+			return nil, nil, fmt.Errorf("google-ads: device bid modifier %d device %q must be one of MOBILE, DESKTOP, TABLET (Google supports TV screens on Display and Video campaigns only, and this client sends that device on no channel at all — a named gap, see deviceTypes)", i, d.Device)
 		}
 		if _, dup := seen[device]; dup {
 			return nil, nil, fmt.Errorf("google-ads: device %s appears more than once in the device bid modifiers — Google accepts one criterion per device, and the second value would be the one silently dropped", device)

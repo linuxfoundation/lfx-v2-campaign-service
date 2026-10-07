@@ -105,8 +105,8 @@ type AccountCampaignMetrics struct {
 	// CampaignSettingsReadback's `unknown` verdict.
 	PacingUnknown bool
 	// IsSearchChannel is Google Ads only: true when campaign.advertising_channel_type is
-	// SEARCH (false for DEMAND_GEN and every other platform). The BFF derives its equivalent
-	// "isSearch" flag by parsing the campaign NAME through a naming-convention parser
+	// SEARCH (false for DEMAND_GEN, PERFORMANCE_MAX, VIDEO, DISPLAY and every other platform). The BFF derives
+	// its equivalent "isSearch" flag by parsing the campaign NAME through a naming-convention parser
 	// (parseCampaignName(name).adFormat.toLowerCase().includes('search')) — this port reads
 	// the channel type field directly instead of re-implementing that naming convention
 	// parser. This is a disclosed, deliberate deviation (not a preserved bug): for any

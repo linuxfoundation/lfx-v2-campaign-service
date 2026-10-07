@@ -553,14 +553,30 @@ func TestAdoptCampaign_OccupiedBriefReturns409WithoutPlatformCall(t *testing.T) 
 
 	// Pre-populate the campaign repo with an existing campaign for this (brief, platform) pair
 	// The key format is briefID|platformString
-	// BOTH Google slots, because the fast-path 409 fires only when every adoptable slot is
-	// taken — with demand-gen free, the correct answer is to contact the platform and find
-	// out which slot this campaign wants. Filling both is what makes "occupied" unambiguous
-	// and keeps this test about the no-platform-call guarantee it is named for.
+	// EVERY Google slot, because the fast-path 409 fires only when all of them are taken —
+	// with one free, the correct answer is to contact the platform and find out which slot
+	// this campaign wants. Filling them all is what makes "occupied" unambiguous and keeps
+	// this test about the no-platform-call guarantee it is named for. The list must grow
+	// with model.AdoptableVariants, or this test silently stops exercising the fast path.
 	camps.existing["b1|google-ads|demand-gen"] = &model.Campaign{
 		ID: "existing-demandgen", ProjectID: "cncf", BriefID: "b1",
 		Platform: model.ProviderGoogleAds, Variant: "demand-gen",
 		PlatformCampaignID: "6666666666", Status: model.CampaignStatusCreated,
+	}
+	camps.existing["b1|google-ads|performance-max"] = &model.Campaign{
+		ID: "existing-pmax", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "performance-max",
+		PlatformCampaignID: "7777777777", Status: model.CampaignStatusCreated,
+	}
+	camps.existing["b1|google-ads|video"] = &model.Campaign{
+		ID: "existing-video", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "video",
+		PlatformCampaignID: "8888888888", Status: model.CampaignStatusCreated,
+	}
+	camps.existing["b1|google-ads|display"] = &model.Campaign{
+		ID: "existing-display", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "display",
+		PlatformCampaignID: "9999999999", Status: model.CampaignStatusCreated,
 	}
 	camps.existing["b1|google-ads"] = &model.Campaign{
 		ID:                 "existing-campaign",

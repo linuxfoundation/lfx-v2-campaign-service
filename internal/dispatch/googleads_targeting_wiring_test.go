@@ -33,6 +33,7 @@ import (
 // whichever happened to run last.
 type targetingCapture struct {
 	mu               sync.Mutex
+	campaigns        [][]byte
 	campaignCriteria [][]byte
 	adGroups         [][]byte
 	adGroupAds       [][]byte
@@ -87,6 +88,7 @@ func targetingServers(t *testing.T) ([]googleads.Option, *targetingCapture) {
 			cap.mu.Unlock()
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaignBudgets/111"}]}`)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+			cap.add(&cap.campaigns, body)
 			_, _ = io.WriteString(w, `{"results":[{"resourceName":"customers/1234567890/campaigns/222"}]}`)
 		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
 			cap.add(&cap.adGroups, body)
