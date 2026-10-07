@@ -237,21 +237,23 @@ func TestFoldAgeGenderReportRows_RefusesMalformed(t *testing.T) {
 		tooManyPairs += "\n" + fmt.Sprintf(`"1","age-%d","g","1","1","1"`, i)
 	}
 	for name, body := range map[string]string{
-		"missing Gender column":   `"CampaignId","AgeGroup","Impressions","Clicks","Spend"` + "\n" + `"1","25-34","1","1","1"`,
-		"missing Spend column":    `"CampaignId","AgeGroup","Gender","Impressions","Clicks"` + "\n" + `"1","25-34","Male","1","1"`,
-		"repeated column":         `"CampaignId","AgeGroup","Gender","Gender","Impressions","Clicks","Spend"` + "\n" + `"1","25-34","Male","Female","1","1","1"`,
-		"blank campaign id":       header + "\n" + `"","25-34","Male","1","1","1"`,
-		"non-id campaign":         header + "\n" + `"abc","25-34","Male","1","1","1"`,
-		"blank age group":         header + "\n" + `"1","","Male","1","1","1"`,
-		"blank gender":            header + "\n" + `"1","25-34"," ","1","1","1"`,
-		"invalid utf-8 gender":    header + "\n" + "\"1\",\"25-34\",\"Ma\xffle\",\"1\",\"1\",\"1\"",
-		"control char in age":     header + "\n" + "\"1\",\"25\x0134\",\"Male\",\"1\",\"1\",\"1\"",
-		"over-long label":         header + "\n" + `"1","` + strings.Repeat("a", maxAudienceLabelBytes+1) + `","Male","1","1","1"`,
-		"negative impressions":    header + "\n" + `"1","25-34","Male","-1","1","1"`,
-		"negative spend":          header + "\n" + `"1","25-34","Male","1","1","-0.5"`,
-		"non-numeric clicks":      header + "\n" + `"1","25-34","Male","1","x","1"`,
-		"short row":               header + "\n" + `"1","25-34"`,
-		"too many distinct pairs": tooManyPairs,
+		"missing Gender column":    `"CampaignId","AgeGroup","Impressions","Clicks","Spend"` + "\n" + `"1","25-34","1","1","1"`,
+		"missing Spend column":     `"CampaignId","AgeGroup","Gender","Impressions","Clicks"` + "\n" + `"1","25-34","Male","1","1"`,
+		"repeated column":          `"CampaignId","AgeGroup","Gender","Gender","Impressions","Clicks","Spend"` + "\n" + `"1","25-34","Male","Female","1","1","1"`,
+		"blank campaign id":        header + "\n" + `"","25-34","Male","1","1","1"`,
+		"non-id campaign":          header + "\n" + `"abc","25-34","Male","1","1","1"`,
+		"blank age group":          header + "\n" + `"1","","Male","1","1","1"`,
+		"blank gender":             header + "\n" + `"1","25-34"," ","1","1","1"`,
+		"invalid utf-8 gender":     header + "\n" + "\"1\",\"25-34\",\"Ma\xffle\",\"1\",\"1\",\"1\"",
+		"control char in age":      header + "\n" + "\"1\",\"25\x0134\",\"Male\",\"1\",\"1\",\"1\"",
+		"bidi override in gender":  header + "\n" + "\"1\",\"25-34\",\"\u202eelaM\",\"1\",\"1\",\"1\"",
+		"zero-width joiner in age": header + "\n" + "\"1\",\"25\u200d-34\",\"Male\",\"1\",\"1\",\"1\"",
+		"over-long label":          header + "\n" + `"1","` + strings.Repeat("a", maxAudienceLabelBytes+1) + `","Male","1","1","1"`,
+		"negative impressions":     header + "\n" + `"1","25-34","Male","-1","1","1"`,
+		"negative spend":           header + "\n" + `"1","25-34","Male","1","1","-0.5"`,
+		"non-numeric clicks":       header + "\n" + `"1","25-34","Male","1","x","1"`,
+		"short row":                header + "\n" + `"1","25-34"`,
+		"too many distinct pairs":  tooManyPairs,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := foldAgeGenderReportRows(csvRecords(t, body)); err == nil {

@@ -112,6 +112,30 @@ func TestMicrosoftAudience_RefusalsMakeNoUpstreamCall(t *testing.T) {
 	}
 }
 
+// A malformed stored id is refused through the AUDIENCE client check, so the whole error chain
+// names the audience scope — never the keyword report's — on both local paths.
+func TestMicrosoftAudience_InvalidIDNamesTheAudienceScope(t *testing.T) {
+	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
+	_, opts := newMSKeywordServer(t)
+	d := msKeywordDispatcher(opts)
+	scope := []model.ProjectCampaignScope{msScope("0222", "")}
+	_, aerr := d.AudienceReportAccount(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days, scope)
+	_, serr := d.SubmitAudienceReport(context.Background(), "cncf", model.ProviderMicrosoftAds, "1234567", model.MetricsWindowLast30Days, scope)
+	for name, err := range map[string]error{"account": aerr, "submit": serr} {
+		if !errors.Is(err, domain.ErrAudienceScopeInvalid) || !errors.Is(err, microsoft.ErrAudienceReportScope) {
+			t.Errorf("%s: err = %v, want ErrAudienceScopeInvalid wrapping microsoft.ErrAudienceReportScope", name, err)
+		}
+		if errors.Is(err, microsoft.ErrKeywordReportScope) || strings.Contains(fmt.Sprint(err), "keyword") {
+			t.Errorf("%s: the audience chain must not name the keyword report scope: %v", name, err)
+		}
+	}
+	// And the keyword chain still names the keyword scope.
+	_, kerr := d.KeywordReportAccount(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days, scope)
+	if !errors.Is(kerr, microsoft.ErrKeywordReportScope) || errors.Is(kerr, microsoft.ErrAudienceReportScope) {
+		t.Errorf("keyword: err = %v, want only microsoft.ErrKeywordReportScope", kerr)
+	}
+}
+
 func TestMicrosoftAudience_AccountAndSubmitScope(t *testing.T) {
 	t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
 	m, opts := newMSKeywordServer(t)

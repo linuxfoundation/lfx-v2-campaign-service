@@ -1997,7 +1997,9 @@ zero upstream calls, the provenance filter, the system-fallback refusal, the sub
 The scope rules, gate and connection resolution are shared helpers parameterised by the read
 (`microsoftReportScopeIDs` / `microsoftReportScope` over `microsoftReportScopeRules`,
 `microsoftInsightsEnabled`, `resolveMicrosoftInsightsClient`); the keyword functions are thin
-wrappers with unchanged behaviour.
+wrappers with unchanged behaviour. Each kind's rules carry its own platform id check
+(`validateID`: `ValidateKeywordReportCampaignID` / `ValidateAudienceReportCampaignID`), so a
+refused id's error chain names that kind's scope sentinel.
 
 ## Report-backed age/gender audience read (Microsoft, LFXV2-2665)
 

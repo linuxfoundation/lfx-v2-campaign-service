@@ -1,4 +1,4 @@
-# 2026-10-08 — LFXV2-2665 Microsoft age/gender audience insights
+# 2026-10-07 — LFXV2-2665 Microsoft age/gender audience insights
 
 **Update** — Added `get-microsoft-ads-audience` (`GET /projects/{project_id}/microsoft-ads/audience?window=`,
 `campaign_manager`): Microsoft Advertising age/gender buckets (`age_group`, `gender`, impressions,

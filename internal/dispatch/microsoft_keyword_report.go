@@ -111,13 +111,17 @@ type microsoftReportScopeRules struct {
 	empty    error
 	invalid  error
 	tooLarge error
+	// validateID is the kind's own platform-client id check, so a refused id's error chain names
+	// that kind's scope sentinel (microsoft.ErrKeywordReportScope / ErrAudienceReportScope).
+	validateID func(string) error
 }
 
 var microsoftKeywordScopeRules = microsoftReportScopeRules{
-	read:     "read microsoft keyword performance",
-	empty:    microsoft.ErrKeywordReportScope,
-	invalid:  domain.ErrKeywordReportScopeInvalid,
-	tooLarge: domain.ErrKeywordReportScopeTooLarge,
+	read:       "read microsoft keyword performance",
+	empty:      microsoft.ErrKeywordReportScope,
+	invalid:    domain.ErrKeywordReportScopeInvalid,
+	tooLarge:   domain.ErrKeywordReportScopeTooLarge,
+	validateID: microsoft.ValidateKeywordReportCampaignID,
 }
 
 // microsoftReportScopeIDs is microsoftKeywordScopeIDs' rule for any campaign-scoped report kind.
@@ -128,7 +132,7 @@ func microsoftReportScopeIDs(scope []model.ProjectCampaignScope, rules microsoft
 	ids := make([]string, 0, len(scope))
 	seen := make(map[string]bool, len(scope))
 	for _, s := range scope {
-		if err := microsoft.ValidateKeywordReportCampaignID(s.PlatformCampaignID); err != nil {
+		if err := rules.validateID(s.PlatformCampaignID); err != nil {
 			return nil, fmt.Errorf("%s: %w: %w", rules.read, rules.invalid, err)
 		}
 		if !seen[s.PlatformCampaignID] {

@@ -1040,7 +1040,7 @@ the `Campaigns`-only scope, `Summary`, `ReturnOnlyCompleteData=false`, no `Filte
 `ErrAudienceReportScopeRejected`. `CheckAgeGenderReport(reportID)` — one Poll, then
 `foldAgeGenderReportRows`: one row per (campaign, age group, gender), repeats summed, every column
 required by name (a repeated header refused), and the whole read refused for a non-id campaign, a
-blank / invalid-UTF-8 / control-character / over-64-byte label (identityjson's raw-bytes
+blank / invalid-UTF-8 / control- or format-character (Cc/Cf, e.g. a bidi override) / over-64-byte label (identityjson's raw-bytes
 discipline in CSV form: the JSON encoder would otherwise silently substitute U+FFFD), a negative
 or non-finite counter, an overflow, or more than `MaxAgeGenderBuckets` (64) distinct pairs.
 Verified against learn.microsoft.com on 2026-10-07 (AgeGenderAudienceReportRequest,

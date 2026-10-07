@@ -67,7 +67,7 @@ keyword read (`Orchestrator.ReadReportedAudience`, `service.AudienceReportReader
   can drift onto a wider scope.
 - **Fold:** one row per (campaign, age group, gender), columns by header name (all six required, a
   repeated header refused), a repeated key SUMMED as the keyword fold sums; a non-id campaign, a
-  blank/invalid-UTF-8/control-character/over-64-byte label, a negative or non-finite counter, an
+  blank/invalid-UTF-8/control-or-format-character/over-64-byte label, a negative or non-finite counter, an
   overflow or more than 64 distinct (age, gender) pairs fails the WHOLE read (no partial rows).
 - **Response** (`MicrosoftAdsAudience`): `buckets` of `{age_group, gender, impressions, clicks,
   cost_micros, ctr}` summed over the campaigns the project owns NOW, impressions-descending;

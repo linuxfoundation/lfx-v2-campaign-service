@@ -28,10 +28,11 @@ import (
 var _ service.AudienceReportReader = (*MicrosoftDispatcher)(nil)
 
 var microsoftAudienceScopeRules = microsoftReportScopeRules{
-	read:     "read microsoft audience",
-	empty:    microsoft.ErrAudienceReportScope,
-	invalid:  domain.ErrAudienceScopeInvalid,
-	tooLarge: domain.ErrAudienceScopeTooLarge,
+	read:       "read microsoft audience",
+	empty:      microsoft.ErrAudienceReportScope,
+	invalid:    domain.ErrAudienceScopeInvalid,
+	tooLarge:   domain.ErrAudienceScopeTooLarge,
+	validateID: microsoft.ValidateAudienceReportCampaignID,
 }
 
 // AudienceReportEnabled implements service.AudienceReportReader: the gate and the window, with

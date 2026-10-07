@@ -155,8 +155,8 @@ func (c *Client) CheckAgeGenderReport(ctx context.Context, reportID string) (*Ag
 //
 // Label cells are the identity of a published bucket, so they get identityjson's raw-bytes
 // discipline in CSV form: malformed UTF-8 (which the JSON encoder would silently replace with
-// U+FFFD, merging distinct labels), control characters and over-long cells are refused rather
-// than published.
+// U+FFFD, merging distinct labels), control and format (Cf) characters and over-long cells are
+// refused rather than published.
 func foldAgeGenderReportRows(records [][]string) (*AgeGenderReportResult, error) {
 	header, rows, preamble, err := reportHeaderAndRows(records)
 	if err != nil {
@@ -255,8 +255,16 @@ func foldAgeGenderReportRows(records [][]string) (*AgeGenderReportResult, error)
 	return out, nil
 }
 
-// audienceLabel reads one AgeGroup/Gender cell: required, trimmed, valid UTF-8, no control
-// characters, at most maxAudienceLabelBytes. The offending bytes never reach the error text.
+// isUnsafeLabelRune reports a control character (Cc) or a FORMAT character (Cf — e.g. the
+// bidirectional override U+202E or a zero-width joiner): neither is part of a demographic label,
+// and a format character can make two distinct published labels render identically or reorder
+// the text around them.
+func isUnsafeLabelRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+}
+
+// audienceLabel reads one AgeGroup/Gender cell: required, trimmed, valid UTF-8, no control or
+// format characters, at most maxAudienceLabelBytes. The offending bytes never reach the error text.
 func audienceLabel(row []string, col int, what string, n int) (string, error) {
 	if col >= len(row) {
 		return "", fmt.Errorf("age/gender report row %d: row has %d columns, wanted column %d", n, len(row), col)
@@ -269,8 +277,8 @@ func audienceLabel(row []string, col int, what string, n int) (string, error) {
 		return "", fmt.Errorf("age/gender report row %d: %s is not valid UTF-8", n, what)
 	case len(v) > maxAudienceLabelBytes:
 		return "", fmt.Errorf("age/gender report row %d: %s is longer than %d bytes", n, what, maxAudienceLabelBytes)
-	case strings.IndexFunc(v, unicode.IsControl) >= 0:
-		return "", fmt.Errorf("age/gender report row %d: %s carries a control character", n, what)
+	case strings.IndexFunc(v, isUnsafeLabelRune) >= 0:
+		return "", fmt.Errorf("age/gender report row %d: %s carries a control or format character", n, what)
 	}
 	return v, nil
 }
