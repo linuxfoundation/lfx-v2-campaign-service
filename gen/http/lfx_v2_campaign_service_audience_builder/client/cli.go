@@ -247,7 +247,7 @@ func BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreview
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Minima veritatis sed impedit laborum.\",\n         \"Qui ut ut qui sed explicabo.\"\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Excepturi est et est totam.\",\n         \"Non in iure dolores et quis id.\",\n         \"Similique assumenda ut.\"\n      ]\n   }'")
 		}
 		if body.ListIds == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("list_ids", "body"))
@@ -296,7 +296,7 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Nam debitis hic qui consequatur laborum.\",\n         \"brief_id\": \"86f3786f-9295-4e13-aa5b-78023699677b\",\n         \"event_dates\": [\n            \"Quisquam dicta rerum eaque enim.\",\n            \"Libero enim quo sit aut tempora.\",\n            \"Neque assumenda sed.\"\n         ],\n         \"event_name\": \"Beatae non et excepturi sit minus.\",\n         \"exclude_list_ids\": [\n            \"Et eum.\",\n            \"Corrupti sunt labore voluptate fuga cum ipsum.\",\n            \"Possimus saepe quam culpa qui.\"\n         ],\n         \"inclusion_summary\": \"Pariatur ipsum expedita.\",\n         \"list_ids\": [\n            \"Et et iure tempora exercitationem voluptatum.\"\n         ],\n         \"name\": \"Ipsa molestias.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Sed impedit.\",\n         \"brief_id\": \"03d80800-bb8d-495f-88c6-626a4b8ea887\",\n         \"event_dates\": [\n            \"Explicabo dolorem totam non.\",\n            \"Nesciunt sed magnam sed vero nulla.\"\n         ],\n         \"event_name\": \"Quaerat qui ut ut.\",\n         \"exclude_list_ids\": [\n            \"Eius nulla suscipit ullam accusamus.\",\n            \"Sint molestiae occaecati.\",\n            \"Quos labore est ut ratione.\"\n         ],\n         \"inclusion_summary\": \"Sed sapiente aspernatur ipsam consequatur qui illo.\",\n         \"list_ids\": [\n            \"Nesciunt minus natus non.\"\n         ],\n         \"name\": \"Ut occaecati tenetur minima.\"\n      }\n   }'")
 		}
 		if body.Compose == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("compose", "body"))
@@ -382,7 +382,7 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderRunAudienceQaBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"0de\",\n      \"list_ref\": \"yj1\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"v\",\n      \"list_ref\": \"nls\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }'")
 		}
 		if utf8.RuneCountInString(body.ListRef) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", body.ListRef, utf8.RuneCountInString(body.ListRef), 1, true))

@@ -263,22 +263,30 @@ func isUnsafeLabelRune(r rune) bool {
 	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
 }
 
-// audienceLabel reads one AgeGroup/Gender cell: required, trimmed, valid UTF-8, no control or
+// audienceLabel reads one AgeGroup/Gender cell: required, valid UTF-8, no control or
 // format characters, at most maxAudienceLabelBytes. The offending bytes never reach the error text.
 func audienceLabel(row []string, col int, what string, n int) (string, error) {
 	if col >= len(row) {
 		return "", fmt.Errorf("age/gender report row %d: row has %d columns, wanted column %d", n, len(row), col)
 	}
-	v := strings.TrimSpace(row[col])
+	raw := row[col]
+	// The UNSAFE-rune and UTF-8 checks run on the cell AS RECEIVED, before any trimming:
+	// strings.TrimSpace also strips \t, \n, \r, \v, \f and U+0085, so checking only the trimmed
+	// value would accept "\tMale" as "Male". A label carrying a control or format character
+	// anywhere — leading and trailing included — is malformed. Only then are ordinary surrounding
+	// spaces trimmed, as the keyword fold trims its cells.
+	switch {
+	case !utf8.ValidString(raw):
+		return "", fmt.Errorf("age/gender report row %d: %s is not valid UTF-8", n, what)
+	case strings.IndexFunc(raw, isUnsafeLabelRune) >= 0:
+		return "", fmt.Errorf("age/gender report row %d: %s carries a control or format character", n, what)
+	}
+	v := strings.TrimSpace(raw)
 	switch {
 	case v == "":
 		return "", fmt.Errorf("age/gender report row %d: blank %s; the row cannot be attributed", n, what)
-	case !utf8.ValidString(v):
-		return "", fmt.Errorf("age/gender report row %d: %s is not valid UTF-8", n, what)
 	case len(v) > maxAudienceLabelBytes:
 		return "", fmt.Errorf("age/gender report row %d: %s is longer than %d bytes", n, what, maxAudienceLabelBytes)
-	case strings.IndexFunc(v, isUnsafeLabelRune) >= 0:
-		return "", fmt.Errorf("age/gender report row %d: %s carries a control or format character", n, what)
 	}
 	return v, nil
 }

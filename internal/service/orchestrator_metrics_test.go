@@ -302,6 +302,11 @@ func keywordReportKey(p model.Provider) model.KeywordReportKey {
 	return model.KeywordReportKey{ProjectID: "p1", Platform: p, AccountID: "acct-1", Window: model.MetricsWindowLast30Days}
 }
 
+// ReportWindowDates is local, so it never fails here.
+func (d upstreamCapableDispatcher) ReportWindowDates(model.MetricsWindow, time.Time) (time.Time, time.Time, error) {
+	return time.Time{}, time.Time{}, nil
+}
+
 // KeywordReportEnabled is local, so it never fails here.
 func (d upstreamCapableDispatcher) KeywordReportEnabled(model.MetricsWindow) error { return nil }
 

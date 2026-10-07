@@ -67,7 +67,7 @@ keyword read (`Orchestrator.ReadReportedAudience`, `service.AudienceReportReader
   can drift onto a wider scope.
 - **Fold:** one row per (campaign, age group, gender), columns by header name (all six required, a
   repeated header refused), a repeated key SUMMED as the keyword fold sums; a non-id campaign, a
-  blank/invalid-UTF-8/control-or-format-character/over-64-byte label, a negative or non-finite counter, an
+  blank/invalid-UTF-8/control-or-format-character (checked on the raw cell, so a leading tab or trailing CR/LF is refused rather than trimmed away)/over-64-byte label, a negative or non-finite counter, an
   overflow or more than 64 distinct (age, gender) pairs fails the WHOLE read (no partial rows).
 - **Response** (`MicrosoftAdsAudience`): `buckets` of `{age_group, gender, impressions, clicks,
   cost_micros, ctr}` summed over the campaigns the project owns NOW, impressions-descending;
@@ -85,6 +85,15 @@ the account monitor's pattern: serve the last finished report, check a pending o
 request, submit the next when none is building and the last is missing, older than 30 minutes, or
 does not cover every campaign the project now owns. The first read returns no rows with
 `metrics_pending: true`.
+
+A finished report is served ONLY for its own calendar period. Its saved `ready_window_start` /
+`ready_window_end` must equal the dates the requested window resolves to NOW (the reader's
+`ReportWindowDates`, the same UTC-day rule its Submit sends); otherwise it is treated as absent —
+a replacement is submitted and the read answers as when no report has finished (no rows/buckets,
+`metrics_as_of` absent, `metrics_pending` true). Without this a `this_month` report requested at
+23:50 on 31 October was fresh by age at 00:10 on 1 November and labelled October's data as
+November's (likewise `today` across midnight). The dates were already stored (000038/000041), so
+no migration was needed; the check is shared by both kinds (`discardOtherPeriod`).
 
 A finished report is served ONLY while it covers the project's current campaign scope. A
 campaign dispatched after the report was built makes the next read return no rows (and submit a
