@@ -29,6 +29,7 @@ var audienceColumnOrder = []string{
 	"id", "project_id", "brief_id", "platform", "platform_master_list_id",
 	"suppression_list_ids", "inclusion_summary", "status", "version",
 	"created_by", "updated_by", "created_at", "updated_at", "built_in_portal_id",
+	"include_list_ids",
 }
 
 // fakeAudienceRow drives scanAudience with a fixed, positionally ordered result set.
@@ -76,6 +77,7 @@ func TestScanAudience_MapsEachActorColumnToItsField(t *testing.T) {
 		"aud-1", "cncf", "b1", "hubspot", strPtrPG("12345"),
 		[]byte(`["s1"]`), strPtrPG("past attendees"), "built", int64(3),
 		[]byte(createdBy), []byte(updatedBy), createdAt, updatedAt, strPtrPG("8112310"),
+		[]byte(`["12345","67890"]`),
 	}})
 	require.NoError(t, err)
 
@@ -92,7 +94,7 @@ func TestScanAudience_MapsEachActorColumnToItsField(t *testing.T) {
 func TestScanAudience_NullUpdatedByIsNotRecorded(t *testing.T) {
 	got, err := scanAudience(fakeAudienceRow{vals: []any{
 		"aud-1", "cncf", "b1", "hubspot", nil, nil, nil, "building", int64(1),
-		nil, nil, time.Time{}, time.Time{}, nil,
+		nil, nil, time.Time{}, time.Time{}, nil, nil,
 	}})
 	require.NoError(t, err)
 	require.Nil(t, got.UpdatedBy, "a SQL NULL updated_by must scan to nil, not to a JSON null")
@@ -203,7 +205,7 @@ func TestMigration000019_AddsAudienceUpdatedBy(t *testing.T) {
 func TestScanAudience_PortalNullIsNotRecorded(t *testing.T) {
 	null, err := scanAudience(fakeAudienceRow{vals: []any{
 		"aud-1", "cncf", "b1", "hubspot", nil, nil, nil, "building", int64(1),
-		nil, nil, time.Time{}, time.Time{}, nil,
+		nil, nil, time.Time{}, time.Time{}, nil, nil,
 	}})
 	require.NoError(t, err)
 	require.Empty(t, null.BuiltInPortalID,
@@ -212,9 +214,75 @@ func TestScanAudience_PortalNullIsNotRecorded(t *testing.T) {
 	set, err := scanAudience(fakeAudienceRow{vals: []any{
 		"aud-1", "cncf", "b1", "hubspot", strPtrPG("12345"),
 		nil, nil, "built", int64(1),
-		nil, nil, time.Time{}, time.Time{}, strPtrPG("8112310"),
+		nil, nil, time.Time{}, time.Time{}, strPtrPG("8112310"), nil,
 	}})
 	require.NoError(t, err)
 	require.Equal(t, "8112310", set.BuiltInPortalID,
 		"a recorded portal must land on BuiltInPortalID — it is what dispatch compares against")
+}
+
+// TestScanAudience_IncludeListIDs pins that include_list_ids (appended LAST, 000040) lands on
+// IncludeListIDs and that a NULL reads back nil — "no direct include set", which is what makes
+// SendListIDs fall back to the master list for every row written before the column existed.
+func TestScanAudience_IncludeListIDs(t *testing.T) {
+	set, err := scanAudience(fakeAudienceRow{vals: []any{
+		"aud-1", "cncf", "b1", "hubspot", strPtrPG("111"),
+		[]byte(`["s1"]`), nil, "built", int64(1),
+		nil, nil, time.Time{}, time.Time{}, strPtrPG("8112310"), []byte(`["111","222"]`),
+	}})
+	require.NoError(t, err)
+	require.JSONEq(t, `["111","222"]`, string(set.IncludeListIDs))
+	require.JSONEq(t, `["s1"]`, string(set.SuppressionListIDs),
+		"include_list_ids must not shift onto suppression_list_ids: both are JSONB arrays")
+	ids, err := set.SendListIDs()
+	require.NoError(t, err)
+	require.Equal(t, []string{"111", "222"}, ids)
+
+	null, err := scanAudience(fakeAudienceRow{vals: []any{
+		"aud-1", "cncf", "b1", "hubspot", strPtrPG("111"),
+		nil, nil, "built", int64(1),
+		nil, nil, time.Time{}, time.Time{}, nil, nil,
+	}})
+	require.NoError(t, err)
+	require.Nil(t, null.IncludeListIDs)
+	ids, err = null.SendListIDs()
+	require.NoError(t, err)
+	require.Equal(t, []string{"111"}, ids)
+}
+
+// TestAudienceWrites_BindIncludeListIDs pins that every write carries include_list_ids, so an
+// UPDATE (a status PATCH, say) writes back the loaded set rather than dropping it to NULL and
+// silently shrinking the send to the first list.
+func TestAudienceWrites_BindIncludeListIDs(t *testing.T) {
+	require.Equal(t, "$10", bindingFor(t, writeClause(t, createAudienceForApprovedBriefQuery), "include_list_ids"))
+	require.Contains(t, normalizeWS(createAudienceQuery), "built_in_portal_id, include_list_ids)")
+	require.Contains(t, normalizeWS(createAudienceQuery), "$9,$10 WHERE")
+	require.Contains(t, setClause(t, normalizeWS(updateAudienceQuery)), "include_list_ids=$11")
+}
+
+// TestMigration000040_AddsIncludeListIDs pins the DDL: a nullable JSONB column, no backfill, and a
+// down that drops it idempotently but refuses while a multi-include audience would lose lists.
+func TestMigration000040_AddsIncludeListIDs(t *testing.T) {
+	up, err := fs.ReadFile(migrations.FS, "000040_campaign_audiences_include_list_ids.up.sql")
+	require.NoError(t, err)
+	upSQL := normalizeWS(string(up))
+	require.Regexp(t, regexp.MustCompile(`(?i)ALTER TABLE campaign_audiences ADD COLUMN IF NOT EXISTS include_list_ids JSONB NULL`), upSQL)
+	require.NotRegexp(t, regexp.MustCompile(`(?i)UPDATE campaign_audiences`), upSQL,
+		"000040 must not backfill: NULL means \"send to the master list alone\"")
+
+	down, err := fs.ReadFile(migrations.FS, "000040_campaign_audiences_include_list_ids.down.sql")
+	require.NoError(t, err)
+	downSQL := normalizeWS(string(down))
+	require.Regexp(t, regexp.MustCompile(`(?i)DROP COLUMN IF EXISTS include_list_ids`), downSQL)
+	// The revert must refuse while an audience depends on several include lists: dropping the column
+	// would silently narrow it to its first list while it stays built.
+	// Refuses while a live brief's CURRENT audience (newest, or newest built -- what dispatch reads)
+	// has several include lists, and ignores archived briefs and superseded rows, so both documented
+	// recoveries (re-attach a single master, or archive the brief) actually clear it.
+	require.Regexp(t, regexp.MustCompile(`(?i)jsonb_array_length\(include_list_ids\) > 1 \) THEN RAISE EXCEPTION`), downSQL,
+		"000040's down must refuse to drop include_list_ids while a live multi-include audience can be sent")
+	require.Regexp(t, regexp.MustCompile(`(?i)WHERE b\.status <> 'archived'`), downSQL, "archived briefs must not block the revert")
+	require.Regexp(t, regexp.MustCompile(`(?i)DISTINCT ON \(brief_id, platform\)`), downSQL,
+		"only each brief's newest rows may block, or a re-attach can never clear the guard")
+	require.Regexp(t, regexp.MustCompile(`(?i)WHERE status = 'built'`), downSQL, "the newest BUILT row -- what dispatch reads -- must be checked too")
 }

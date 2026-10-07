@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -56,8 +57,9 @@ type AudienceExplorer interface {
 	// flatten — see composeErr.
 	ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error)
 	// AttachExisting reads existing lists back from the portal and returns them as an
-	// outcome to record. It creates nothing in HubSpot.
-	AttachExisting(ctx context.Context, projectID, masterListID string, suppressionIDs []string) (*audience.ComposeOutcome, error)
+	// outcome to record. It creates nothing in HubSpot. includeIDs are the lists the send
+	// goes to; the first is reported as the outcome's Master, and every one is verified.
+	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string) (*audience.ComposeOutcome, error)
 	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (*audience.QaOutcome, error)
 }
 
@@ -408,7 +410,7 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 	}
 
 	recorded, rerr := s.recordComposedAudience(ctx, repo, p.ProjectID, briefID, outcome,
-		strings.TrimSpace(derefStr(p.Compose.InclusionSummary)))
+		strings.TrimSpace(derefStr(p.Compose.InclusionSummary)), nil)
 	if rerr != nil {
 		// The lists exist and are usable; only the attachment failed. That is a partial,
 		// not a 500: a 500 invites the retry that would create a second master, and the
@@ -449,16 +451,28 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 			Message: "this deployment cannot record an audience, so existing lists cannot be attached to a brief",
 		}
 	}
+	includeIDs, multi, verr := attachIncludeIDs(p.Attach)
+	if verr != nil {
+		return nil, verr
+	}
 	if _, berr := briefs.GetBrief(ctx, p.ProjectID, briefID); berr != nil {
 		return nil, composeBriefErr(ctx, p.ProjectID, briefID, berr)
 	}
 
-	outcome, aerr := explorer.AttachExisting(ctx, p.ProjectID, p.Attach.MasterListID, p.Attach.SuppressionListIds)
+	outcome, aerr := explorer.AttachExisting(ctx, p.ProjectID, includeIDs, p.Attach.SuppressionListIds)
 	if aerr != nil {
 		return nil, composeErr(ctx, p.ProjectID, aerr)
 	}
+	// Only the include_list_ids form records the include set. The single-master form keeps
+	// writing the row it always has, so every existing reader and send path is untouched.
+	// The read-back ids, not the caller's strings: SourceListIDs holds the id HubSpot returned for
+	// each list, so include_list_ids[0] always equals the platform_master_list_id recorded beside it.
+	var recordedIncludes []string
+	if multi {
+		recordedIncludes = outcome.SourceListIDs
+	}
 	recorded, rerr := s.recordComposedAudience(ctx, repo, p.ProjectID, briefID, outcome,
-		strings.TrimSpace(derefStr(p.Attach.InclusionSummary)))
+		strings.TrimSpace(derefStr(p.Attach.InclusionSummary)), recordedIncludes)
 	if rerr != nil {
 		slog.ErrorContext(ctx, "attach existing audience: record failed",
 			"project_id", p.ProjectID, "brief_id", briefID, "error", rerr)
@@ -467,16 +481,93 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 			Message: "the lists were verified but the audience could not be saved; nothing was created in HubSpot, so it is safe to retry",
 		}
 	}
+	recordedIDs := unmarshalStrings(recorded.IncludeListIDs)
 	return &explore.AudienceAttachExistingResult{
 		Master:             composedListResult(&outcome.Master),
 		SuppressionListIds: unmarshalStrings(recorded.SuppressionListIDs),
+		IncludeListIds:     recordedIDs,
 		Audience: &explore.AudienceComposeRecordedAudience{
 			ID:                   recorded.ID,
 			Status:               string(recorded.Status),
 			Version:              recorded.Version,
 			PlatformMasterListID: recorded.PlatformMasterListID,
+			IncludeListIds:       recordedIDs,
 		},
 	}, nil
+}
+
+// maxAttachListIDs caps the include and suppression lists of one attach together: each is read
+// back from HubSpot with its own GET. maxAttachListIDLength bounds one list id.
+const (
+	maxAttachListIDs      = 200
+	maxAttachListIDLength = 32
+)
+
+// isASCIIDigits reports whether s is a non-empty run of ASCII digits, the shape of a HubSpot
+// list id.
+func isASCIIDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// attachIncludeIDs resolves which lists an attach sends to, enforcing that the request names
+// them exactly one way: master_list_id (one list, the long-standing form) or include_list_ids
+// (several existing lists, sent to directly with no composed master). multi reports which form
+// was used, because only the second records include_list_ids on the audience.
+//
+// The include ids are trimmed and de-duplicated in order. Unlike the single-master form, where
+// a suppression id that is also the master is silently dropped (audience.ExclusionIDs), an
+// overlap here is refused: HubSpot applies exclusions after inclusions, so an id on both sides
+// would remove that whole list from the send, and with several includes the operator cannot
+// tell from the response which group quietly went missing.
+func attachIncludeIDs(in *explore.AudienceAttachExistingInput) (ids []string, multi bool, err error) {
+	master := strings.TrimSpace(derefStr(in.MasterListID))
+	hasInclude := len(in.IncludeListIds) > 0
+	switch {
+	case master != "" && hasInclude:
+		return nil, false, &explore.BadRequestError{Code: "400", Message: "send either master_list_id or include_list_ids, not both"}
+	case master == "" && !hasInclude:
+		return nil, false, &explore.BadRequestError{Code: "400", Message: "master_list_id or a non-empty include_list_ids is required"}
+	case master != "":
+		return []string{master}, false, nil
+	}
+	for _, id := range in.IncludeListIds {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			return nil, false, &explore.BadRequestError{Code: "400", Message: "an include_list_ids entry cannot be blank"}
+		}
+		// HubSpot ILS list ids are numeric. Validating the allowed shape keeps an oversized or
+		// malformed id from costing a HubSpot round trip each.
+		if len(trimmed) > maxAttachListIDLength || !isASCIIDigits(trimmed) {
+			return nil, false, &explore.BadRequestError{Code: "400", Message: fmt.Sprintf("include_list_ids entry %q is not a HubSpot list id", trimmed)}
+		}
+	}
+	ids = audience.UniqueIDs(in.IncludeListIds)
+	// Every include AND every suppression id is read back from HubSpot one GET at a time, so the
+	// two caps (200 each) alone would let one request spend 400 calls of the portal's rate limit.
+	if len(ids)+len(audience.UniqueIDs(in.SuppressionListIds)) > maxAttachListIDs {
+		return nil, false, &explore.BadRequestError{
+			Code:    "400",
+			Message: fmt.Sprintf("include_list_ids and suppression_list_ids together cannot name more than %d lists", maxAttachListIDs),
+		}
+	}
+	suppressed := make(map[string]struct{}, len(in.SuppressionListIds))
+	for _, id := range in.SuppressionListIds {
+		suppressed[strings.TrimSpace(id)] = struct{}{}
+	}
+	for _, id := range ids {
+		if _, both := suppressed[id]; both {
+			return nil, false, &explore.BadRequestError{
+				Code:    "400",
+				Message: fmt.Sprintf("list %s is in both include_list_ids and suppression_list_ids; a list cannot be both sent to and suppressed", id),
+			}
+		}
+	}
+	return ids, true, nil
 }
 
 // composeBriefErr maps the pre-flight brief read of a RECORDING compose.
@@ -529,8 +620,14 @@ func (s *AudienceExploreService) recordComposedAudience(
 	projectID, briefID string,
 	outcome *audience.ComposeOutcome,
 	inclusionSummary string,
+	includeIDs []string,
 ) (*model.CampaignAudience, error) {
 	a := audienceFromCompose(projectID, briefID, outcome, inclusionSummary)
+	// includeIDs is set only by an attach of several existing lists; the outcome's Master is
+	// already the first of them, so PlatformMasterListID keeps naming a real recipient list.
+	if len(includeIDs) > 0 {
+		a.IncludeListIDs = marshalStrings(includeIDs)
+	}
 	a.CreatedBy = marshalActor(actorFromCtx(ctx))
 	if verr := a.Validate(); verr != nil {
 		return nil, verr

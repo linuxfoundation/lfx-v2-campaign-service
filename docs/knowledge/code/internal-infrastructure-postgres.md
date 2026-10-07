@@ -1009,6 +1009,13 @@ wrong destination. A foundation with no HubSpot connection of its own now reache
 on every audience build and email dispatch, which after the fallback change is the ordinary case
 rather than the exception.
 
+**Migration 000040** adds `include_list_ids JSONB NULL` to `campaign_audiences`: the existing
+HubSpot lists an audience attached with `include_list_ids` sends to directly, with no composed
+master. NULL (every pre-existing row, and every single-master attach or compose) means the send
+set is `platform_master_list_id` alone, so no backfill is needed. Like `built_in_portal_id` it is
+appended LAST in `audienceCols`/`scanAudience` for the positional-scan reason, and bound in the
+insert and update statements after it.
+
 **Migration 000038** creates `keyword_insight_reports`, the saved-report store behind the
 report-backed Microsoft keyword read (see
 [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md)). It is 000035's

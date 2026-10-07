@@ -1922,6 +1922,12 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceTo
 		Version:              v.Version,
 		PlatformMasterListID: v.PlatformMasterListID,
 	}
+	if v.IncludeListIds != nil {
+		res.IncludeListIds = make([]string, len(v.IncludeListIds))
+		for i, val := range v.IncludeListIds {
+			res.IncludeListIds[i] = val
+		}
+	}
 
 	return res
 }
@@ -1933,8 +1939,14 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceTo
 func unmarshalAudienceAttachExistingInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInput(v *AudienceAttachExistingInputRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingInput {
 	res := &lfxv2campaignserviceaudiencebuilder.AudienceAttachExistingInput{
 		BriefID:          *v.BriefID,
-		MasterListID:     *v.MasterListID,
+		MasterListID:     v.MasterListID,
 		InclusionSummary: v.InclusionSummary,
+	}
+	if v.IncludeListIds != nil {
+		res.IncludeListIds = make([]string, len(v.IncludeListIds))
+		for i, val := range v.IncludeListIds {
+			res.IncludeListIds[i] = val
+		}
 	}
 	if v.SuppressionListIds != nil {
 		res.SuppressionListIds = make([]string, len(v.SuppressionListIds))

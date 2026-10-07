@@ -778,6 +778,63 @@ func TestHubSpot_MasterInSuppressionRefusedBeforeClone(t *testing.T) {
 	}
 }
 
+// TestHubSpot_DispatchSendsToEveryIncludeList: an audience attached from several existing lists
+// (include_list_ids) sends to ALL of them, in order, not just the first one its
+// platform_master_list_id holds. Dropping the rest would stage an email to a subset of the
+// audience the brief records, and nothing downstream would notice.
+func TestHubSpot_DispatchSendsToEveryIncludeList(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	auds := builtHubSpotAudience("26724", []string{"9001"})
+	auds[0].IncludeListIDs = json.RawMessage(`["26724","26725","26726"]`)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`)); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	to, _ := rec.SendListBody()["to"].(map[string]any)
+	ils, _ := to["contactIlsLists"].(map[string]any)
+	inc, _ := ils["include"].([]any)
+	want := []any{"26724", "26725", "26726"}
+	if len(inc) != len(want) {
+		t.Fatalf("send-list include = %v, want %v", inc, want)
+	}
+	for i := range want {
+		if inc[i] != want[i] {
+			t.Errorf("send-list include[%d] = %v, want %v (full: %v)", i, inc[i], want[i], inc)
+		}
+	}
+	exc, _ := ils["exclude"].([]any)
+	if len(exc) != 1 || exc[0] != "9001" {
+		t.Errorf("send-list exclude = %v, want [9001]", exc)
+	}
+}
+
+// TestHubSpot_IncludeListInSuppressionRefusedBeforeClone: the pre-clone overlap check covers every
+// include list, not only the master. A later include that is also suppressed would drop that
+// whole list from the send, and finding it after CloneEmail would orphan a draft.
+func TestHubSpot_IncludeListInSuppressionRefusedBeforeClone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("no HubSpot call should happen when an include list is suppressed: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	auds := builtHubSpotAudience("26724", []string{"26726"})
+	auds[0].IncludeListIDs = json.RawMessage(`["26724","26725","26726"]`)
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, fakeAudienceReader{auds: auds}, hubspot.WithBaseURL(srv.URL))
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	if err == nil {
+		t.Fatal("an include-list-in-suppression audience must be refused")
+	}
+	if camp != nil {
+		t.Errorf("a pre-clone refusal must return a nil campaign, got %+v", camp)
+	}
+	var nuc interface{ NoUpstreamCreate() bool }
+	if !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+		t.Errorf("a pre-clone conflict must be NoUpstreamCreate (claim released), got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "26726") {
+		t.Errorf("the error should name the conflicting list, got: %v", err)
+	}
+}
+
 // TestHubSpot_CloneUnconfirmedRetainsClaim: a clone that returns 2xx with no id (UNCONFIRMED —
 // a draft may exist) must retain the claim (non-nil name-only partial) with an UNCONFIRMED error.
 func TestHubSpot_CloneUnconfirmedRetainsClaim(t *testing.T) {

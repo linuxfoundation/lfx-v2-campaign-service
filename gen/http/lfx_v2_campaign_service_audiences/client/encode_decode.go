@@ -1185,6 +1185,12 @@ func unmarshalAudienceResponseBodyToLfxv2campaignserviceaudiencesAudience(v *Aud
 			res.SuppressionListIds[i] = val
 		}
 	}
+	if v.IncludeListIds != nil {
+		res.IncludeListIds = make([]string, len(v.IncludeListIds))
+		for i, val := range v.IncludeListIds {
+			res.IncludeListIds[i] = val
+		}
+	}
 
 	return res
 }
