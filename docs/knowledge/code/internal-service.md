@@ -1844,6 +1844,25 @@ HubSpot over something no reconnection can fix. The insert is plain `CreateAudie
 gate exists to stop a build from CREATING platform state, and recording a pointer to lists that
 already exist creates none.
 
+`AttachExistingAudience` records lists an operator already has, and takes EXACTLY ONE of
+`master_list_id` (one composed list, unchanged behaviour) or `include_list_ids` (up to 200 existing
+lists sent to directly, with no composed master). `attachIncludeIDs` decides before any brief read
+or HubSpot call, and every refusal is a 400: both given, neither given (or only blanks), a blank
+include entry, or an include id that is also in `suppression_list_ids` (compared trimmed) — HubSpot
+applies exclusions after inclusions, so that list would be sent nothing. A multi-include attach
+persists `platform_master_list_id` = the first include and `include_list_ids` = all of them; a
+single-master attach records no include list, so its row is byte-identical to before. The result
+and the `Audience` view both carry `include_list_ids` when set, and the inclusion summary of a
+multi-list attach reads "Reused N existing lists (first: …)" rather than naming one list.
+
+`refuseProvenanceBreakingPatch` refuses a `platform_master_list_id` change on any row that records
+include lists, stamped or not: the master there is only the first include, and moving it would
+desynchronise the column from the send set the dispatcher actually uses. `include_list_ids` itself
+is response-only — no PATCH can set it. The email wizard's `SetWizardSendList` resolves the
+audience through `SendListIDs()` too, passes every list to `SetSendList`, and reports them as
+`to.ils_list_ids` beside the existing `ils_list_id` (the first). Its explicit `send_list_ids`
+override still refuses more than one id; that refusal predates multi-include and is unchanged.
+
 `GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
 endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
 with the actions disabled instead of nine broken buttons.

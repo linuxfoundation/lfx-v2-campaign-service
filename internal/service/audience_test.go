@@ -792,3 +792,75 @@ func TestUpdateAudience_ProvenanceMakesTheListIdsImmutable(t *testing.T) {
 		}
 	})
 }
+
+// TestUpdateAudience_IncludeListIDsPinTheMaster: a row attached from several existing lists holds
+// the FIRST of them in platform_master_list_id, and dispatch sends to include_list_ids. A master
+// PATCH would leave the row naming one list while the send targets others, so it is refused --
+// even on a row with no portal stamp, because the invariant is the pairing, not the stamp. A
+// re-send of the same master and a status-only patch are still fine.
+func TestUpdateAudience_IncludeListIDsPinTheMaster(t *testing.T) {
+	multi := func(t *testing.T) (*AudienceService, *fakeAudienceRepo, string) {
+		t.Helper()
+		repo := newFakeAudienceRepo()
+		s := NewAudienceService(repo)
+		created, err := s.CreateAudience(context.Background(), &audiences.CreateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1",
+			Audience: &audiences.AudienceInput{Platform: "hubspot"},
+		})
+		if err != nil {
+			t.Fatalf("CreateAudience: %v", err)
+		}
+		repo.items[created.ID].PlatformMasterListID = "31027"
+		repo.items[created.ID].IncludeListIDs = marshalStrings([]string{"31027", "31028"})
+		repo.items[created.ID].Status = model.AudienceBuilt
+		return s, repo, created.ID
+	}
+	patch := func(s *AudienceService, repo *fakeAudienceRepo, id string, in *audiences.AudienceUpdateInput) (*audiences.Audience, error) {
+		return s.UpdateAudience(context.Background(), &audiences.UpdateAudiencePayload{
+			ProjectID: "cncf", BriefID: "b1", AudienceID: id,
+			IfMatch:  strptr(strconv.FormatInt(repo.items[id].Version, 10)),
+			Audience: in,
+		})
+	}
+
+	t.Run("a master change is refused without a stamp", func(t *testing.T) {
+		s, repo, id := multi(t)
+		_, err := patch(s, repo, id, &audiences.AudienceUpdateInput{PlatformMasterListID: strptr("99999")})
+		var conflict *audiences.ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("error = %T (%v), want *audiences.ConflictError", err, err)
+		}
+		if got := repo.items[id].PlatformMasterListID; got != "31027" {
+			t.Errorf("the refused patch was applied anyway: master = %q", got)
+		}
+	})
+
+	t.Run("re-sending the same master with a status change works and keeps include_list_ids", func(t *testing.T) {
+		s, repo, id := multi(t)
+		res, err := patch(s, repo, id, &audiences.AudienceUpdateInput{
+			PlatformMasterListID: strptr("31027"), Status: strptr("failed"),
+		})
+		if err != nil {
+			t.Fatalf("a no-op master resend must not be refused: %v", err)
+		}
+		if !slices.Equal(res.IncludeListIds, []string{"31027", "31028"}) {
+			t.Errorf("include_list_ids = %v, want [31027 31028] carried through the patch", res.IncludeListIds)
+		}
+	})
+}
+
+// TestAudienceResult_IncludeListIDs: include_list_ids is in the response exactly when the row
+// records it, and absent (not an empty array) for a master-only audience.
+func TestAudienceResult_IncludeListIDs(t *testing.T) {
+	multi := audienceResult(&model.CampaignAudience{
+		ID: "a1", PlatformMasterListID: "31027", Status: model.AudienceBuilt,
+		IncludeListIDs: marshalStrings([]string{"31027", "31028"}),
+	})
+	if !slices.Equal(multi.IncludeListIds, []string{"31027", "31028"}) {
+		t.Errorf("include_list_ids = %v, want [31027 31028]", multi.IncludeListIds)
+	}
+	single := audienceResult(&model.CampaignAudience{ID: "a2", PlatformMasterListID: "31027", Status: model.AudienceBuilt})
+	if single.IncludeListIds != nil {
+		t.Errorf("a master-only audience must omit include_list_ids, got %v", single.IncludeListIds)
+	}
+}

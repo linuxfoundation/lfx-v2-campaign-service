@@ -752,9 +752,11 @@ digits only, no leading zero (`numericIDRE` admits one; a stored Meta id never h
 one `GET /{campaign_id}?fields=id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy`
 through `doRequest`, so a 429 or HTTP-400 rate-limit code is retried and an exhausted one is an
 error. `ValidateCampaignID` (the campaign-ref id rule above) runs first
-and returns `ErrInvalidCampaignID` with no request. Graph code 100 + `error_subcode` 33 ("does not
-exist, cannot be loaded with this token, or does not support this operation" — all an absence under
-this token) and a `status` of `DELETED` or `ARCHIVED` are `(nil, nil)`. `ACTIVE`/`PAUSED` is a ref;
+and returns `ErrInvalidCampaignID` with no request. Only a `status` of `DELETED` or `ARCHIVED` is
+`(nil, nil)`. Graph code 100 + `error_subcode` 33 is NOT an absence, on any HTTP status: Meta
+documents it as "does not exist OR cannot be loaded due to missing permissions", so it cannot prove
+the campaign is missing rather than invisible to this token, and it is an error (503) like any
+401/403. `ACTIVE`/`PAUSED` is a ref;
 any other status, a missing name, an id echo that differs, a body `identityjson.Check` refuses or
 that does not decode, and — because the node read is NOT account-scoped — a missing or malformed
 `account_id` are errors. `effective_status` is reported verbatim and never judged: Meta grows that

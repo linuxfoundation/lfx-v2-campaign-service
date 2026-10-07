@@ -100,7 +100,14 @@ func TestMetaGetCampaign_Outcomes(t *testing.T) {
 		account string
 	}{
 		{name: "active", status: 200, body: `{"id":"120200000000001","name":"n","status":"ACTIVE","account_id":"act_777"}`, account: "act_777"},
-		{name: "graph 100/33 is absent", status: 400, body: notFound, absent: true},
+		// 100/33 is "does not exist OR cannot be loaded due to missing permissions": it cannot
+		// PROVE absence, so it is unverifiable on every status — never the 404 that invites a
+		// duplicate of a campaign the token merely cannot see.
+		{name: "graph 100/33 on 400 is unverifiable", status: 400, body: notFound, wantErr: true},
+		{name: "graph 100/33 on 401 is unverifiable", status: 401, body: notFound, wantErr: true},
+		{name: "graph 100/33 on 403 is unverifiable", status: 403, body: notFound, wantErr: true},
+		{name: "graph 100/33 on 404 is unverifiable", status: 404, body: notFound, wantErr: true},
+		{name: "a plain 403 is unverifiable", status: 403, body: `{"error":{"message":"Permissions error","type":"OAuthException","code":200}}`, wantErr: true},
 		{name: "deleted is absent", status: 200, body: `{"id":"120200000000001","name":"n","status":"DELETED","account_id":"777"}`, absent: true},
 		{name: "archived is absent", status: 200, body: `{"id":"120200000000001","name":"n","status":"ARCHIVED","account_id":"777"}`, absent: true},
 		// The node is in ANOTHER account: the client reports that account faithfully, and the

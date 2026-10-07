@@ -649,7 +649,7 @@ func TestSetSendList_ILSOnlyOnDraftRoute(t *testing.T) {
 		body = decodeBody(t, r)
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
-	_, err := c.SetSendList(context.Background(), "999", "26991", []string{"111", " 222 ", ""})
+	_, err := c.SetSendList(context.Background(), "999", []string{"26991"}, []string{"111", " 222 ", ""})
 	if err != nil {
 		t.Fatalf("SetSendList: %v", err)
 	}
@@ -690,7 +690,7 @@ func TestSetSendList_TrimsILSSendListID(t *testing.T) {
 		body = decodeBody(t, r)
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
-	if _, err := c.SetSendList(context.Background(), "999", "  ils-123  ", nil); err != nil {
+	if _, err := c.SetSendList(context.Background(), "999", []string{"  ils-123  "}, nil); err != nil {
 		t.Fatalf("SetSendList: %v", err)
 	}
 	ils := body["to"].(map[string]any)["contactIlsLists"].(map[string]any)
@@ -704,11 +704,14 @@ func TestSetSendList_RejectsEmptyIDs(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("no request expected on invalid input")
 	})
-	if _, err := c.SetSendList(context.Background(), "", "1", nil); err == nil {
+	if _, err := c.SetSendList(context.Background(), "", []string{"1"}, nil); err == nil {
 		t.Error("empty email id should be rejected")
 	}
-	if _, err := c.SetSendList(context.Background(), "1", "  ", nil); err == nil {
+	if _, err := c.SetSendList(context.Background(), "1", []string{"  "}, nil); err == nil {
 		t.Error("empty/whitespace ILS send-list id should be rejected")
+	}
+	if _, err := c.SetSendList(context.Background(), "1", nil, nil); err == nil {
+		t.Error("no ILS send-list id at all should be rejected")
 	}
 }
 
@@ -720,11 +723,14 @@ func TestSetSendList_RejectsSendListInSuppression(t *testing.T) {
 	// whitespace-padded duplicate is caught too.
 	for _, tc := range []struct {
 		name        string
-		ils         string
+		ils         []string
 		suppression []string
 	}{
-		{"exact-duplicate", "26991", []string{"111", "26991"}},
-		{"padded-duplicate", "26991", []string{" 26991 "}},
+		{"exact-duplicate", []string{"26991"}, []string{"111", "26991"}},
+		{"padded-duplicate", []string{"26991"}, []string{" 26991 "}},
+		// With several send lists EVERY one is checked, not just the first: a later include
+		// in the suppression set would silently drop that whole list from the send.
+		{"multi-include-later-duplicate", []string{"26991", "26992", "26993"}, []string{"111", " 26993 "}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var hit int32
@@ -746,6 +752,43 @@ func TestSetSendList_RejectsSendListInSuppression(t *testing.T) {
 	}
 }
 
+// Several existing lists can be sent to directly: HubSpot's contactIlsLists.include is an array
+// and the send goes to their union. Every id is trimmed, blanks and duplicates are dropped, and
+// order is kept, so the PATCH names exactly the lists the audience records.
+func TestSetSendList_MultiInclude(t *testing.T) {
+	// The handler runs on the server's goroutine: hand the body to the test goroutine over a
+	// channel, and report a decode failure with t.Errorf (FailNow must run on the test goroutine).
+	bodies := make(chan map[string]any, 1)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		bodies <- got
+		_, _ = io.WriteString(w, `{"id":"999"}`)
+	})
+	if _, err := c.SetSendList(context.Background(), "999",
+		[]string{" 101 ", "102", "", "101", "103"}, []string{"900"}); err != nil {
+		t.Fatalf("SetSendList: %v", err)
+	}
+	body := <-bodies
+	ils := body["to"].(map[string]any)["contactIlsLists"].(map[string]any)
+	inc, _ := ils["include"].([]any)
+	want := []any{"101", "102", "103"}
+	if len(inc) != len(want) {
+		t.Fatalf("ils include = %v, want %v", inc, want)
+	}
+	for i := range want {
+		if inc[i] != want[i] {
+			t.Errorf("ils include[%d] = %v, want %v (full: %v)", i, inc[i], want[i], inc)
+		}
+	}
+	exc, _ := ils["exclude"].([]any)
+	if len(exc) != 1 || exc[0] != "900" {
+		t.Errorf("ils exclude = %v, want [900]", exc)
+	}
+}
+
 func TestSetSendList_TrimsEmailID(t *testing.T) {
 	// A whitespace-padded email id must be trimmed before it reaches the draft URL —
 	// a padded id sent raw yields "/emails/%20999%20/draft", a 404 that silently
@@ -755,7 +798,7 @@ func TestSetSendList_TrimsEmailID(t *testing.T) {
 		gotPath = r.URL.Path
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
-	if _, err := c.SetSendList(context.Background(), "  999  ", "ils-123", nil); err != nil {
+	if _, err := c.SetSendList(context.Background(), "  999  ", []string{"ils-123"}, nil); err != nil {
 		t.Fatalf("SetSendList: %v", err)
 	}
 	if gotPath != "/marketing/v3/emails/999/draft" {

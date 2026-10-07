@@ -927,6 +927,12 @@ func marshalLfxv2campaignserviceaudiencesAudienceToAudienceResponseBody(v *lfxv2
 			res.SuppressionListIds[i] = val
 		}
 	}
+	if v.IncludeListIds != nil {
+		res.IncludeListIds = make([]string, len(v.IncludeListIds))
+		for i, val := range v.IncludeListIds {
+			res.IncludeListIds[i] = val
+		}
+	}
 
 	return res
 }
