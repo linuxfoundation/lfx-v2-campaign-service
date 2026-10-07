@@ -504,9 +504,11 @@ type Service interface {
 	// read (the project's own connection, else the LF system one; 404 with
 	// neither), with every email checked against the portal it was created in. A
 	// project that has recorded no HubSpot email gets an empty 200 without HubSpot
-	// being called. Any upstream failure — including a 401/403, a 429 still
-	// refused after retries (a throttled portal, e.g. under shared-app
-	// contention), or a malformed or untrustworthy response — is a 503 with no
+	// being called. Any upstream failure — a 429 still refused after retries (a
+	// throttled portal, e.g. under shared-app contention), or a malformed or
+	// untrustworthy response — is a 503 with no partial result; a 401/403 (revoked
+	// token, missing scope) is a connection that cannot be used as configured —
+	// 400 for the project's own token, 500 for the LF system one — also with no
 	// partial result. There are no cost fields: HubSpot bills nothing per send. A
 	// pure read: nothing is persisted.
 	MonitorHubspotAccount(context.Context, *MonitorHubspotAccountPayload) (res *HubspotEmailMonitor, err error)
@@ -1211,8 +1213,8 @@ type HubspotEmailMonitor struct {
 	Days int
 	// The project's own HubSpot marketing emails that HubSpot reports as SENT
 	// inside the window, newest-recorded campaign first. The window selects emails
-	// by SEND date; each email's counters are its totals to metrics_as_of, not
-	// only the events inside the window.
+	// by SEND date; each email's counters are its totals as of when it was read
+	// (no later than metrics_as_of), not only the events inside the window.
 	Emails []*HubspotEmailMonitorEmail
 	// Findings across the emails, HIGH first. campaign_id is this service's
 	// campaign UUID (as on the rows), email_id the HubSpot email the finding is
@@ -1221,9 +1223,11 @@ type HubspotEmailMonitor struct {
 	ActionItems []*AccountMonitorActionItem
 	// The sum of the emails array, with rates from the summed counters.
 	Totals *HubspotEmailMonitorTotals
-	// When the counters were read from HubSpot; each email's counters are its
-	// totals to this instant. ABSENT when HubSpot was not called because the
-	// project has recorded no HubSpot email.
+	// When the LAST HubSpot response of this read arrived — an upper bound: every
+	// email's counters were read at or before this instant (a read makes many
+	// requests over up to 20s, so earlier emails were read somewhat earlier). With
+	// no email to ask about it is when the token-info answer arrived. ABSENT when
+	// HubSpot was not called because the project has recorded no HubSpot email.
 	MetricsAsOf *string
 	// The FIRST UTC calendar day (inclusive) of the send-date window. Absent
 	// exactly when metrics_as_of is.

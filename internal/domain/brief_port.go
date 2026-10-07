@@ -156,8 +156,10 @@ type CampaignReader interface {
 	// on platform that have an upstream id, NEWEST FIRST (created_at, then id, descending).
 	// Scoped by project_id in SQL like the read above. It feeds the HubSpot email account
 	// monitor, which reads per recorded email and must bound how many it asks about: the caller
-	// passes its cap plus one and reads an extra row as "truncated". Returns an EMPTY slice,
-	// not an error, when there are none.
+	// passes its cap plus one and reads an extra row as "there were more than the cap" — which
+	// is NOT by itself the monitor's emails_truncated flag: that is set only when the oldest
+	// checked row was recorded on or after the window start (Orchestrator.
+	// ReadHubSpotEmailMonitor). Returns an EMPTY slice, not an error, when there are none.
 	ListRecentProjectPlatformCampaigns(ctx context.Context, projectID string, platform model.Provider, limit int) ([]*model.Campaign, error)
 
 	// ResolvePlatformCampaign maps ONE upstream campaign id back to this service's own

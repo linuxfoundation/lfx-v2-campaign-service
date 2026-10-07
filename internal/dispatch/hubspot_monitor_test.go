@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -305,10 +306,89 @@ func TestHubSpotEmailMonitor_AnyUpstreamFailureFailsTheWholeRead(t *testing.T) {
 			if read != nil {
 				t.Errorf("a partial result accompanied the error: %+v", read)
 			}
-			if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrConnectionNotUsable) {
+			// A 401/403 is a credential the platform refused (tested in
+			// TestHubSpotEmailMonitor_PermissionRejectionsAreConnectionDefects); every other
+			// failure must stay unclassified, i.e. the retryable 503.
+			auth := strings.HasPrefix(tc.name, "401") || strings.HasPrefix(tc.name, "403") || tc.name == "token-info refused"
+			if errors.Is(err, domain.ErrNotFound) || (!auth && errors.Is(err, domain.ErrConnectionNotUsable)) {
 				t.Errorf("an upstream failure was classified as a connection state: %v", err)
 			}
 		})
+	}
+}
+
+// A 401/403 on token-info or statistics is a credential HubSpot refused: a revoked token or a
+// missing scope does not recover by retrying. Tagged like SearchEmails/SearchCampaigns: the
+// project's own token → ErrConnectionNotUsable (400); the LF system fallback token → the
+// operator-owned row's defect, ErrSystemConnectionNotUsable (500).
+func TestHubSpotEmailMonitor_PermissionRejectionsAreConnectionDefects(t *testing.T) {
+	for _, call := range []struct {
+		name string
+		opts monitorServerOpts
+	}{
+		{"token-info 401", monitorServerOpts{tokenStatus: http.StatusUnauthorized}},
+		{"statistics 403", monitorServerOpts{status: map[string]int{"901": http.StatusForbidden}}},
+	} {
+		for _, origin := range []struct {
+			name   string
+			reader connReader
+			system bool
+		}{
+			{"project-owned token", fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, false},
+			{"LF system fallback token", ownOnlyConnReader{system: activeHubSpotConn(goodHubSpotCreds)}, true},
+		} {
+			t.Run(call.name+"/"+origin.name, func(t *testing.T) {
+				srv, _ := monitorServer(t, call.opts)
+				d := newMonitorDispatcher(srv, origin.reader)
+				read, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot,
+					[]*model.Campaign{recordedEmail("c1", "901", testPortalID, nil)}, 30)
+				if read != nil {
+					t.Fatalf("a partial result accompanied the refusal: %+v", read)
+				}
+				if !errors.Is(err, domain.ErrConnectionNotUsable) {
+					t.Fatalf("err = %v, want ErrConnectionNotUsable", err)
+				}
+				if got := errors.Is(err, domain.ErrSystemConnectionNotUsable); got != origin.system {
+					t.Errorf("attributed to the LF system row = %v, want %v: %v", got, origin.system, err)
+				}
+			})
+		}
+	}
+}
+
+// metrics_as_of is the instant the LAST upstream response arrived — every counter was read at or
+// before it — not the instant the read started. The pinned clock advances one minute per reading.
+func TestHubSpotEmailMonitor_AsOfIsWhenTheLastResponseArrived(t *testing.T) {
+	srv, _ := monitorServer(t, monitorServerOpts{byID: map[string]string{
+		"1001": monitorStats("1001", `{"sent":1}`), "1002": monitorStats("1002", `{"sent":1}`),
+	}})
+	base := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	tick := 0
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		tick++
+		return base.Add(time.Duration(tick) * time.Minute)
+	}
+	d := NewHubSpotDispatcher(fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{},
+		fakeAudienceReader{}, hubspot.WithBaseURL(srv.URL), hubspot.WithClock(clock))
+	read, err := d.ReadEmailMonitor(context.Background(), "proj-1", model.ProviderHubSpot, []*model.Campaign{
+		recordedEmail("c1", "1001", testPortalID, nil), recordedEmail("c2", "1002", testPortalID, nil),
+	}, 30)
+	if err != nil {
+		t.Fatalf("ReadEmailMonitor: %v", err)
+	}
+	mu.Lock()
+	last := base.Add(time.Duration(tick) * time.Minute)
+	mu.Unlock()
+	// The clock was read for the span, after token-info and after each of the two statistics
+	// responses; as-of must be the final reading, not the span's.
+	if !read.AsOf.Equal(last) {
+		t.Errorf("as-of = %s, want the last reading %s (after both statistics responses)", read.AsOf, last)
+	}
+	if tick < 4 {
+		t.Errorf("the clock was read %d times; want span, token-info and one per statistics response", tick)
 	}
 }
 

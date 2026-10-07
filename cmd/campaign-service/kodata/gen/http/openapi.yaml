@@ -5797,7 +5797,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-connections
             summary: monitor-hubspot-account lfx-v2-campaign-service-connections
-            description: 'Read the statistics of the HubSpot marketing emails THIS SERVICE created for the project and sent within the trailing `days` (today inclusive, UTC), with findings from this service''s email rules (high bounce, spam-complaint or unsubscribe rate, low open or click rate, sent but nothing delivered). The HubSpot sibling of the monitor-*-ads-account reads, with one deliberate difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is shared across projects and has no per-project account, so there is no account_id; the scope is the email ids this service recorded for the project, each read by itself from HubSpot''s marketing-email statistics endpoint — never a portal-wide read. Resolved like the per-campaign metrics read (the project''s own connection, else the LF system one; 404 with neither), with every email checked against the portal it was created in. A project that has recorded no HubSpot email gets an empty 200 without HubSpot being called. Any upstream failure — including a 401/403, a 429 still refused after retries (a throttled portal, e.g. under shared-app contention), or a malformed or untrustworthy response — is a 503 with no partial result. There are no cost fields: HubSpot bills nothing per send. A pure read: nothing is persisted.'
+            description: 'Read the statistics of the HubSpot marketing emails THIS SERVICE created for the project and sent within the trailing `days` (today inclusive, UTC), with findings from this service''s email rules (high bounce, spam-complaint or unsubscribe rate, low open or click rate, sent but nothing delivered). The HubSpot sibling of the monitor-*-ads-account reads, with one deliberate difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is shared across projects and has no per-project account, so there is no account_id; the scope is the email ids this service recorded for the project, each read by itself from HubSpot''s marketing-email statistics endpoint — never a portal-wide read. Resolved like the per-campaign metrics read (the project''s own connection, else the LF system one; 404 with neither), with every email checked against the portal it was created in. A project that has recorded no HubSpot email gets an empty 200 without HubSpot being called. Any upstream failure — a 429 still refused after retries (a throttled portal, e.g. under shared-app contention), or a malformed or untrustworthy response — is a 503 with no partial result; a 401/403 (revoked token, missing scope) is a connection that cannot be used as configured — 400 for the project''s own token, 500 for the LF system one — also with no partial result. There are no cost fields: HubSpot bills nothing per send. A pure read: nothing is persisted.'
             operationId: lfx-v2-campaign-service-connections#monitor-hubspot-account
             parameters:
                 - name: days
@@ -14534,7 +14534,7 @@ definitions:
                 type: array
                 items:
                     $ref: '#/definitions/HubspotEmailMonitorEmail'
-                description: The project's own HubSpot marketing emails that HubSpot reports as SENT inside the window, newest-recorded campaign first. The window selects emails by SEND date; each email's counters are its totals to metrics_as_of, not only the events inside the window.
+                description: The project's own HubSpot marketing emails that HubSpot reports as SENT inside the window, newest-recorded campaign first. The window selects emails by SEND date; each email's counters are its totals as of when it was read (no later than metrics_as_of), not only the events inside the window.
                 example:
                     - ab_variant: false
                       bounce_rate: 0.03
@@ -14573,7 +14573,7 @@ definitions:
                 format: int64
             metrics_as_of:
                 type: string
-                description: When the counters were read from HubSpot; each email's counters are its totals to this instant. ABSENT when HubSpot was not called because the project has recorded no HubSpot email.
+                description: 'When the LAST HubSpot response of this read arrived — an upper bound: every email''s counters were read at or before this instant (a read makes many requests over up to 20s, so earlier emails were read somewhat earlier). With no email to ask about it is when the token-info answer arrived. ABSENT when HubSpot was not called because the project has recorded no HubSpot email.'
                 example: "2026-10-08T14:30:00Z"
                 format: date-time
             metrics_window_end:

@@ -544,21 +544,23 @@ func (c *Client) GetEmailCounters(ctx context.Context, emailID string, start, en
 	}, nil
 }
 
-// MonitorSpan is the SEND-time span the email account monitor reads for `days`, and the instant
-// it is read as of, both from the client's injected clock: the trailing `days` UTC calendar days
-// including today, from midnight of the first to the final millisecond of today — the same
-// inclusive-of-today convention every sibling monitor uses and the same last-millisecond bound
-// timeRangeForWindow documents. asOf is "now": HubSpot's counters are each email's totals to the
-// moment they are read, so that instant is what they describe.
-func (c *Client) MonitorSpan(days int) (start, end, asOf time.Time, err error) {
+// MonitorSpan is the SEND-time span the email account monitor reads for `days`, from the client's
+// injected clock: the trailing `days` UTC calendar days including today, from midnight of the
+// first to the final millisecond of today — the same inclusive-of-today convention every sibling
+// monitor uses and the same last-millisecond bound timeRangeForWindow documents.
+func (c *Client) MonitorSpan(days int) (start, end time.Time, err error) {
 	if days < 1 {
-		return time.Time{}, time.Time{}, time.Time{}, fmt.Errorf("hubspot: monitor span needs at least one day")
+		return time.Time{}, time.Time{}, fmt.Errorf("hubspot: monitor span needs at least one day")
 	}
 	now := c.now().UTC()
 	y, m, d := now.Date()
 	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-	return today.AddDate(0, 0, -(days - 1)), today.Add(24*time.Hour - time.Millisecond), now, nil
+	return today.AddDate(0, 0, -(days - 1)), today.Add(24*time.Hour - time.Millisecond), nil
 }
+
+// Now is the client's injected clock in UTC, so a caller timing a read (the email monitor's
+// metrics_as_of) uses the same clock the client's spans and retries do.
+func (c *Client) Now() time.Time { return c.now().UTC() }
 
 // ValidateEmailID reports whether id is a canonical positive decimal HubSpot marketing-email id,
 // the only shape GetEmailMetrics and GetEmailCounters will interpolate into a request. Exported so

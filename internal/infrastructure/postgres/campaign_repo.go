@@ -431,7 +431,9 @@ func (r *CampaignRepo) ListProjectPlatformCampaignIDs(ctx context.Context, proje
 // label each email, and the Result blob for the creating portal and any A/B variant email.
 //
 // The caller passes its cap PLUS ONE as $3 and treats an extra row as "there were more" — the
-// plus-one read is how it learns it truncated without counting the whole table. The ORDER BY is
+// plus-one read is how it learns rows exist beyond the cap without counting the whole table.
+// Whether that is reported as truncation is the caller's conditional decision (the monitor
+// flags it only when the oldest checked row is not older than the window). The ORDER BY is
 // total: created_at alone is not (rows dispatched in one transaction share now()), so id breaks
 // the tie and a repeated read selects the same rows.
 const listRecentProjectPlatformCampaignsQuery = `SELECT ` + campaignCols + ` FROM campaigns

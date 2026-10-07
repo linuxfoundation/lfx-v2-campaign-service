@@ -1372,8 +1372,8 @@ type MonitorHubspotAccountResponseBody struct {
 	Days int `form:"days" json:"days" xml:"days"`
 	// The project's own HubSpot marketing emails that HubSpot reports as SENT
 	// inside the window, newest-recorded campaign first. The window selects emails
-	// by SEND date; each email's counters are its totals to metrics_as_of, not
-	// only the events inside the window.
+	// by SEND date; each email's counters are its totals as of when it was read
+	// (no later than metrics_as_of), not only the events inside the window.
 	Emails []*HubspotEmailMonitorEmailResponseBody `form:"emails" json:"emails" xml:"emails"`
 	// Findings across the emails, HIGH first. campaign_id is this service's
 	// campaign UUID (as on the rows), email_id the HubSpot email the finding is
@@ -1382,9 +1382,11 @@ type MonitorHubspotAccountResponseBody struct {
 	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
 	// The sum of the emails array, with rates from the summed counters.
 	Totals *HubspotEmailMonitorTotalsResponseBody `form:"totals" json:"totals" xml:"totals"`
-	// When the counters were read from HubSpot; each email's counters are its
-	// totals to this instant. ABSENT when HubSpot was not called because the
-	// project has recorded no HubSpot email.
+	// When the LAST HubSpot response of this read arrived — an upper bound: every
+	// email's counters were read at or before this instant (a read makes many
+	// requests over up to 20s, so earlier emails were read somewhat earlier). With
+	// no email to ask about it is when the token-info answer arrived. ABSENT when
+	// HubSpot was not called because the project has recorded no HubSpot email.
 	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
 	// The FIRST UTC calendar day (inclusive) of the send-date window. Absent
 	// exactly when metrics_as_of is.

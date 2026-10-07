@@ -49,7 +49,8 @@ func monitorClient(t *testing.T, body string) (*Client, *queryRec) {
 
 func TestMonitorSpan_TrailingUTCDaysIncludingToday(t *testing.T) {
 	c, _ := monitorClient(t, `{}`)
-	start, end, asOf, err := c.MonitorSpan(30)
+	start, end, err := c.MonitorSpan(30)
+	asOf := c.Now()
 	if err != nil {
 		t.Fatalf("MonitorSpan: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestMonitorSpan_TrailingUTCDaysIncludingToday(t *testing.T) {
 	if want := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC); !asOf.Equal(want) {
 		t.Errorf("asOf = %s, want the pinned clock %s", asOf, want)
 	}
-	if _, _, _, err := c.MonitorSpan(0); err == nil {
+	if _, _, err := c.MonitorSpan(0); err == nil {
 		t.Error("a zero-day span was accepted")
 	}
 }
@@ -71,7 +72,7 @@ func TestMonitorSpan_TrailingUTCDaysIncludingToday(t *testing.T) {
 func TestGetEmailCounters_MapsSevenCountersAndSendsTheSpan(t *testing.T) {
 	c, rec := monitorClient(t, statsBody(t, `[4242]`,
 		`{"sent":1000,"delivered":950,"open":400,"click":80,"bounce":50,"unsubscribed":7,"spamreport":2,"hardbounced":30}`))
-	start, end, _, _ := c.MonitorSpan(7)
+	start, end, _ := c.MonitorSpan(7)
 	got, err := c.GetEmailCounters(context.Background(), "4242", start, end)
 	if err != nil {
 		t.Fatalf("GetEmailCounters: %v", err)
@@ -97,7 +98,7 @@ func TestGetEmailCounters_MapsSevenCountersAndSendsTheSpan(t *testing.T) {
 func TestStatistics_ExplicitNullCounterIsRefused(t *testing.T) {
 	body := statsBody(t, `[4242]`, `{"sent":1000,"delivered":950,"bounce":null}`)
 	c, _ := monitorClient(t, body)
-	start, end, _, _ := c.MonitorSpan(30)
+	start, end, _ := c.MonitorSpan(30)
 	if _, err := c.GetEmailCounters(context.Background(), "4242", start, end); !errors.Is(err, ErrNullCounter) {
 		t.Errorf("GetEmailCounters err = %v, want ErrNullCounter", err)
 	}
@@ -118,7 +119,7 @@ func TestStatistics_UntrustworthyBytesAreRefusedBeforeDecoding(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := monitorClient(t, body)
-			start, end, _, _ := c.MonitorSpan(30)
+			start, end, _ := c.MonitorSpan(30)
 			_, err := c.GetEmailCounters(context.Background(), "4242", start, end)
 			if !errors.Is(err, identityjson.ErrUntrustworthy) {
 				t.Fatalf("err = %v, want identityjson.ErrUntrustworthy", err)
@@ -141,7 +142,7 @@ func TestStatistics_OpenMapsAreCheckedForExactDuplicatesOnly(t *testing.T) {
 	}{"case-distinct keys in an open map": {caseDistinct, false}, "exact duplicate in an open map": {exactDup, true}} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := monitorClient(t, tc.body)
-			start, end, _, _ := c.MonitorSpan(30)
+			start, end, _ := c.MonitorSpan(30)
 			_, err := c.GetEmailCounters(context.Background(), "4242", start, end)
 			if _, merr := c.GetEmailMetrics(context.Background(), "4242", model.MetricsWindowLast30Days); (merr != nil) != (err != nil) {
 				t.Errorf("the two reads disagree: counters %v, metrics %v", err, merr)
@@ -159,7 +160,7 @@ func TestStatistics_OpenMapsAreCheckedForExactDuplicatesOnly(t *testing.T) {
 func TestStatistics_RenameGuardWatchesWhatEachReadUses(t *testing.T) {
 	body := statsBody(t, `[4242]`, `{"sent":1,"delivered":1,"open":1,"click":1,"bounce":1,"unsubscribed":1,"spamReports":1}`)
 	c, _ := monitorClient(t, body)
-	start, end, _, _ := c.MonitorSpan(30)
+	start, end, _ := c.MonitorSpan(30)
 	if _, err := c.GetEmailCounters(context.Background(), "4242", start, end); !errors.Is(err, ErrRenamedCounter) {
 		t.Errorf("GetEmailCounters err = %v, want ErrRenamedCounter", err)
 	}
@@ -170,7 +171,7 @@ func TestStatistics_RenameGuardWatchesWhatEachReadUses(t *testing.T) {
 
 func TestGetEmailCounters_NoSendInTheSpanIsTheSentinelNotZeros(t *testing.T) {
 	c, _ := monitorClient(t, statsBody(t, `[]`, `{}`))
-	start, end, _, _ := c.MonitorSpan(30)
+	start, end, _ := c.MonitorSpan(30)
 	got, err := c.GetEmailCounters(context.Background(), "4242", start, end)
 	if !errors.Is(err, ErrNoSentEmailInWindow) || got != nil {
 		t.Fatalf("got %+v, %v; want nil, ErrNoSentEmailInWindow", got, err)
@@ -180,7 +181,7 @@ func TestGetEmailCounters_NoSendInTheSpanIsTheSentinelNotZeros(t *testing.T) {
 // A malformed id or an empty span is refused before any request.
 func TestGetEmailCounters_RefusesBadInputBeforeSending(t *testing.T) {
 	c, rec := monitorClient(t, statsBody(t, `[4242]`, fullCounters))
-	start, end, _, _ := c.MonitorSpan(30)
+	start, end, _ := c.MonitorSpan(30)
 	if _, err := c.GetEmailCounters(context.Background(), "04242", start, end); err == nil {
 		t.Error("a non-canonical id was accepted")
 	}

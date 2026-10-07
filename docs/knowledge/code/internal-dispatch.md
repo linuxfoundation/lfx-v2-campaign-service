@@ -4140,6 +4140,9 @@ email then its recorded `Result.abTestVariant`, deduplicated by email id (first,
 wins, see below) — counting as unattributable any whose row records no `portalId`, another portal, or a
 non-canonical id; those are never sent upstream. One `GetEmailCounters` per email through an
 `errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read).
+A 401/403 on token-info or statistics is tagged `ErrConnectionNotUsable` through
+`res.systemScoped` (400 own token, 500 LF fallback token), as SearchEmails/SearchCampaigns do.
+`AsOf` is the client clock (`hubspot.WithClock`/`Client.Now`) at the LAST upstream response.
 Attribution is decided BEFORE de-duplication and only attributable emails are de-duplicated,
 keyed portal+id: an id is unique only within its portal, so a foreign-portal or malformed row
 with the same number must neither suppress an attributable row nor escape the unattributable

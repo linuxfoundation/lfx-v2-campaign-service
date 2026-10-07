@@ -771,7 +771,9 @@ differs, and why:
   has no pacer, and none was added.
 - **Window.** `hubspot.Client.MonitorSpan`: the trailing `days` UTC days including today, from
   the client's injected clock. HubSpot's span selects emails by SEND date and the counters are
-  each email's totals to the read, so the response states `metrics_as_of` (the read instant) and
+  each email's totals to the read, so the response states `metrics_as_of` — when the LAST HubSpot
+  response arrived, an upper bound on when every counter was read (with no email to ask about,
+  when token-info answered) and
   `metrics_window_start`/`_end` (the send-date span) — the latter mean "sent in", not "events
   in".
 - **Attribution.** An email id means something only inside the portal that minted it. A row
@@ -783,7 +785,10 @@ differs, and why:
   retries, 401/403, malformed JSON, a filter-violating response, a null counter, or bytes
   `identityjson.Check` refuses (duplicate keys, bad UTF-8, unpaired surrogates — checked on the
   raw bytes of every statistics AND token-info response before decoding) — fails the whole read:
-  503 via the default arm, fixed text, no partial rows. The raw check is scoped to how each level
+  503 via the default arm, fixed text, no partial rows — except a 401/403 on token-info or
+  statistics, a credential HubSpot refused (revoked token, missing scope): tagged
+  `ErrConnectionNotUsable` like the other HubSpot reads, so 400 for the project's own token and
+  500 (attributed to the operator-owned row) for the LF fallback token. The raw check is scoped to how each level
   decodes: exact duplicates everywhere, case-folded duplicates only on the struct-decoded
   envelope and `aggregate` (open maps like `deviceBreakdown` are keyed exactly by the decoder).
   The connection resolves like Dispatch and ReadMetrics — the project's own, else the LF system
