@@ -1018,9 +1018,14 @@ CBO campaign's ad-set budget is `unknown`, not substituted with the shared campa
 Reddit: one campaign read (the create path puts goal, flight and bid strategy on the campaign,
 so no ad group is read); the budget is read only when `is_campaign_budget_optimization` is
 true, and that flag is reported upstream-only so an `unknown` budget is explained. X: campaign
-(budget) + the recorded line item (flight, bid strategy); the budget is compared only under
-`budget_optimization` `CAMPAIGN` (a LINE_ITEM campaign's total cap is not the recorded daily
-amount), and `budget_optimization` is reported upstream-only.
+(budget) + the recorded line item (flight, bid strategy); the budget is compared only when X
+REPORTS `budget_optimization` `CAMPAIGN` (a LINE_ITEM campaign's total cap is not the recorded daily
+amount), and `budget_optimization` is reported upstream-only. That gate applies to campaigns this
+service created too: the create path sends no `budget_optimization` (X's current reference lists
+`LINE_ITEM` as the only POST value, so sending `CAMPAIGN` would be undocumented), and which value
+X then reports is unverified (v11 announcement: `CAMPAIGN` default; current reference: `LINE_ITEM`).
+A created campaign reporting it absent or `LINE_ITEM` reads its budget `unknown` rather than
+being assumed `CAMPAIGN`; `TestCreateSendsQueryParams` pins the omission.
 
 **Flight dates compare as UTC calendar dates**, because every create path sends UTC instants
 (Meta's end is `23:59:59+0000`). Meta and Reddit nudge a start whose day has begun to dispatch
@@ -1041,11 +1046,12 @@ would be unactionable. It is `domain.ErrCampaignUpstreamIdentityMismatch` (409, 
 re-dispatch message).
 **Adopted rows** read at the campaign level: the child-dependent fields are absent, not errors.
 
-**Definite vs unknown.** A 404 (Reddit, X), Graph 100/33 (Meta — only after one account-scoped
-probe, `GET /{act_id}?fields=id`, proves the same token loads the account; 100/33 alone cannot
-tell a deleted campaign from one a token that lost the account cannot see, so an unloadable
-account makes it 503), `CampaignServiceInvalidCampaignId`
-(Microsoft) or a deleted X campaign is `ErrPlatformCampaignAbsent` → 404. A missing CHILD (ad
+**Definite vs unknown.** A 404 (Reddit, X), `CampaignServiceInvalidCampaignId`
+(Microsoft) or a deleted X campaign is `ErrPlatformCampaignAbsent` → 404. **Meta's readback never
+reports the campaign absent:** Graph 100/33 on the campaign cannot tell a deleted campaign from
+one this token cannot load (and `GET /{id}` is not account-scoped), so it is unverifiable (503)
+on every HTTP status — as on the adoption read — and no account probe is sent to try to settle
+it; a deleted or archived Meta campaign still answers with that status and is reported as one. A missing CHILD (ad
 set / line item) only blanks its fields. Every other failure — transport, 5xx, 401/403, an
 exhausted 429, a body `identityjson.Check` refuses, a wrong id echoed, a non-integer or
 contradictory amount (a Meta ad set carrying both budgets) — is an ordinary error, answered 503

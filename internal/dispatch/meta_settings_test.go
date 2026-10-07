@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -269,24 +270,43 @@ func TestMeta_ReadSettings_AccountMismatches(t *testing.T) {
 	})
 }
 
-// Graph 100/33 on the campaign is only an absence once the account is proven loadable by the same
-// token; with the account itself unreadable it is unproven — a 503, never a false 404.
-func TestMeta_ReadSettings_UnprovenAbsenceIs503(t *testing.T) {
-	routes := metaSettingsRoutes()
-	routes[metaSettingsCampaignPath] = settingsRoute{status: 400, body: metaSettingsMissing}
-	routes[metaSettingsAccountPath] = settingsRoute{status: 403, body: `{"error":{"message":"denied","code":200}}`}
-	d, _ := metaSettingsDispatcher(t, routes)
-	_, err := d.ReadSettings(context.Background(), "proj", model.ProviderMetaAds, metaSettingsRow())
-	assertSettings503(t, err)
+// Graph 100/33 on the campaign cannot tell a deleted campaign from one this token cannot load, on
+// any HTTP status, so it is a 503 — never a 404 — exactly as on the adoption read. The account is
+// routed as loadable, so an account probe that "proved" absence would succeed; none may be sent.
+func TestMeta_ReadSettings_ObjectMissingIs503NeverAbsent(t *testing.T) {
+	for _, status := range []int{400, 403, 404} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			routes := metaSettingsRoutes()
+			routes[metaSettingsCampaignPath] = settingsRoute{status: status, body: metaSettingsMissing}
+			d, api := metaSettingsDispatcher(t, routes)
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderMetaAds, metaSettingsRow())
+			if rb != nil {
+				t.Fatalf("an unverifiable read still returned a readback: %+v", rb)
+			}
+			if errors.Is(err, domain.ErrPlatformCampaignAbsent) {
+				t.Fatalf("100/33 was reported as absence (404): %v", err)
+			}
+			assertSettings503(t, err)
+			for _, r := range api.requests() {
+				if r.Path == metaSettingsAccountPath {
+					t.Fatalf("the readback probed the ad account to settle 100/33: %+v", api.requests())
+				}
+			}
+		})
+	}
 }
 
-func TestMeta_ReadSettings_NoSuchCampaignIs404(t *testing.T) {
+// A campaign Meta has DELETED still answers with that status: it is reported as status, not 404.
+func TestMeta_ReadSettings_DeletedCampaignReportsItsStatus(t *testing.T) {
 	routes := metaSettingsRoutes()
-	routes[metaSettingsCampaignPath] = settingsRoute{status: 400, body: metaSettingsMissing}
+	routes[metaSettingsCampaignPath] = settingsRoute{status: 200, body: `{"id":"555","name":"KubeCon — Leads","status":"DELETED","account_id":"777"}`}
 	d, _ := metaSettingsDispatcher(t, routes)
-	_, err := d.ReadSettings(context.Background(), "proj", model.ProviderMetaAds, metaSettingsRow())
-	if !errors.Is(err, domain.ErrPlatformCampaignAbsent) {
-		t.Fatalf("err = %v, want ErrPlatformCampaignAbsent", err)
+	rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderMetaAds, metaSettingsRow())
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if f := settingsField(t, rb, settingsFieldStatus); f.Upstream == nil || *f.Upstream != "DELETED" || f.Comparison != model.SettingsUnknown {
+		t.Fatalf("status = %+v, want upstream DELETED reported upstream-only", f)
 	}
 }
 
