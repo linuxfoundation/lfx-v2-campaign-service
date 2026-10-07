@@ -53,13 +53,15 @@ type Service interface {
 	// project's connection, and nothing is created upstream. Supported platforms:
 	// google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other
 	// platform answers 400. The read is one get-campaign-by-id under the project's
-	// OWN connection (never the shared LF system account), and the campaign must
-	// belong to that connection's ad account. Returns 404 when the platform
-	// answers that it holds no such campaign (a deleted, removed or archived
-	// campaign counts as absent), 503 when the campaign could not be verified (the
-	// platform was unreachable or throttled, or answered with something
-	// untrustworthy - its existence is unknown), 409 when this brief already has a
-	// live campaign on that platform / that campaign is already bound to another
+	// OWN connection (never the shared LF system account), plus, on Reddit and X
+	// only, one read of that connection's ad account after a campaign 404, and the
+	// campaign must belong to that connection's ad account. Returns 404 only when
+	// the platform PROVES it holds no such campaign (a deleted, removed or
+	// archived campaign counts as absent), 503 when the campaign could not be
+	// verified (the platform was unreachable or throttled, answered with something
+	// untrustworthy, or gave a not-found that could equally be an access, auth or
+	// account problem - its existence is unknown), 409 when this brief already has
+	// a live campaign on that platform / that campaign is already bound to another
 	// brief (in any project, since several foundations share one upstream ad
 	// account) / the platform reports the campaign under a different ad account
 	// than the project's connection / the campaign is of a type that platform's

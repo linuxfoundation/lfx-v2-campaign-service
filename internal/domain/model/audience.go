@@ -6,6 +6,7 @@ package model
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -59,6 +60,14 @@ type CampaignAudience struct {
 	BuiltInPortalID string
 	// SuppressionListIDs are the platform suppression list ids applied to the master.
 	SuppressionListIDs json.RawMessage
+	// IncludeListIDs are EXISTING platform lists the send goes to directly, recorded when an
+	// operator attached several lists instead of one master (a JSON string array, encoded like
+	// SuppressionListIDs). Nil/empty means "send to PlatformMasterListID alone", which is every
+	// composed or built audience and every row written before the column existed. When set,
+	// PlatformMasterListID holds its FIRST id, so the built-needs-a-master invariant (and the
+	// CHECK constraint behind it) still holds and a reader that knows only the master column
+	// still names a real recipient list. Read it through SendListIDs, never directly.
+	IncludeListIDs json.RawMessage
 	// InclusionSummary is human-readable provenance: how the audience was built
 	// (which past events, geo/topic segments), the part not visible from the list.
 	InclusionSummary string
@@ -100,4 +109,42 @@ func (a *CampaignAudience) Validate() error {
 		return ErrAudienceBuiltNeedsMasterList
 	}
 	return nil
+}
+
+// ErrAudienceIncludeListIDsUnreadable is returned by SendListIDs when include_list_ids holds
+// something other than a JSON string array. Surfaced rather than ignored: falling back to the
+// master list would send to a SUBSET of the recipients the row records, silently.
+var ErrAudienceIncludeListIDsUnreadable = errors.New("the audience's include_list_ids could not be decoded")
+
+// SendListIDs returns the platform list ids a send to this audience targets: the decoded
+// IncludeListIDs (trimmed, blanks and duplicates dropped, order kept) when any are recorded,
+// otherwise PlatformMasterListID alone. It returns nil when neither names a list — the caller
+// decides whether that is an error (it is, for a built audience).
+func (a *CampaignAudience) SendListIDs() ([]string, error) {
+	if len(a.IncludeListIDs) > 0 && string(a.IncludeListIDs) != "null" {
+		var raw []string
+		if err := json.Unmarshal(a.IncludeListIDs, &raw); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrAudienceIncludeListIDsUnreadable, err)
+		}
+		out := make([]string, 0, len(raw))
+		seen := make(map[string]struct{}, len(raw))
+		for _, id := range raw {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+	}
+	if id := strings.TrimSpace(a.PlatformMasterListID); id != "" {
+		return []string{id}, nil
+	}
+	return nil, nil
 }

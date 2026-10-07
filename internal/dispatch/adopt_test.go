@@ -48,6 +48,7 @@ type adoptStub struct {
 	lookupStatus int
 	lookupBody   string
 	mutationBody string
+	accountBody  string // the confirming ad-account read Reddit and X make after a campaign 404
 	isLookup     func(*http.Request) bool
 }
 
@@ -86,6 +87,8 @@ func (s *adoptStub) serve(w http.ResponseWriter, r *http.Request) {
 	case s.isLookup(r):
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
+	case r.Method == http.MethodGet && s.accountBody != "":
+		_, _ = io.WriteString(w, s.accountBody)
 	default:
 		_, _ = io.WriteString(w, mutation)
 	}
@@ -104,6 +107,7 @@ type adopterCase struct {
 	foreign   string // a body reporting ANOTHER account; "" where the read is account-scoped
 	absent    [2]any // status, body
 	mutation  string
+	account   string // the ad-account read's answer, where a campaign 404 must be confirmed
 	// creationAccount is the platform's own reader of the row's provenance — the function every
 	// later read, toggle and lever relies on.
 	creationAccount func(*model.Campaign) string
@@ -138,12 +142,13 @@ func adopterCases() []adopterCase {
 			build: func(repo connReader, base string) adopterUnderTest {
 				return NewMetaDispatcher(repo, identityEncryptor{}, meta.WithBaseURL(base))
 			},
-			isLookup:        func(r *http.Request) bool { return r.Method == http.MethodGet && r.URL.Path == "/120200000000001" },
-			validID:         "120200000000001",
-			malformed:       []string{"0", "0123", "abc", "act_777", " 120200000000001"},
-			found:           `{"id":"120200000000001","name":"KubeCon — Leads","status":"PAUSED","effective_status":"PAUSED","account_id":"777","objective":"OUTCOME_LEADS"}`,
-			foreign:         `{"id":"120200000000001","name":"KubeCon — Leads","status":"ACTIVE","account_id":"888"}`,
-			absent:          [2]any{http.StatusBadRequest, `{"error":{"message":"does not exist","type":"GraphMethodException","code":100,"error_subcode":33}}`},
+			isLookup:  func(r *http.Request) bool { return r.Method == http.MethodGet && r.URL.Path == "/120200000000001" },
+			validID:   "120200000000001",
+			malformed: []string{"0", "0123", "abc", "act_777", " 120200000000001"},
+			found:     `{"id":"120200000000001","name":"KubeCon — Leads","status":"PAUSED","effective_status":"PAUSED","account_id":"777","objective":"OUTCOME_LEADS"}`,
+			foreign:   `{"id":"120200000000001","name":"KubeCon — Leads","status":"ACTIVE","account_id":"888"}`,
+			// Meta proves absence only through the node's own terminal status; 100/33 is unverifiable.
+			absent:          [2]any{http.StatusOK, `{"id":"120200000000001","name":"KubeCon — Leads","status":"DELETED","account_id":"777"}`},
 			mutation:        `{"success":true}`,
 			creationAccount: metaCreationAccountID, wantAccount: "act_777", wantName: "KubeCon — Leads",
 		},
@@ -161,6 +166,7 @@ func adopterCases() []adopterCase {
 			foreign:         `{"data":{"id":"t3_camp","name":"KubeCon — Traffic","configured_status":"ACTIVE","ad_account_id":"t2_other"}}`,
 			absent:          [2]any{http.StatusNotFound, `{}`},
 			mutation:        `{"data":{"id":"t3_camp"}}`,
+			account:         `{"data":{"id":"t2_acct"}}`,
 			creationAccount: redditCreationAccountID, wantAccount: "t2_acct", wantName: "KubeCon — Traffic",
 		},
 		{
@@ -177,6 +183,7 @@ func adopterCases() []adopterCase {
 			foreign:         `{"data":{"id":"cmp1","name":"KubeCon — Awareness","entity_status":"PAUSED","account_id":"acc9"}}`,
 			absent:          [2]any{http.StatusNotFound, `{"errors":[{"code":"NOT_FOUND"}]}`},
 			mutation:        `{"data":{"id":"cmp1"}}`,
+			account:         `{"data":{"id":"acc1"}}`,
 			creationAccount: twitterCreationAccountID, wantAccount: "acc1", wantName: "KubeCon — Awareness",
 		},
 	}
@@ -186,7 +193,7 @@ func adopterCases() []adopterCase {
 // an LF system row in the repository — so a resolver that fell back would find something.
 func newAdopter(t *testing.T, tc adopterCase) (adopterUnderTest, *adoptStub, *scopedConnReader) {
 	t.Helper()
-	stub := &adoptStub{lookupStatus: http.StatusOK, lookupBody: tc.found, mutationBody: tc.mutation, isLookup: tc.isLookup}
+	stub := &adoptStub{lookupStatus: http.StatusOK, lookupBody: tc.found, mutationBody: tc.mutation, accountBody: tc.account, isLookup: tc.isLookup}
 	srv := httptest.NewServer(http.HandlerFunc(stub.serve))
 	t.Cleanup(srv.Close)
 	repo := &scopedConnReader{rows: map[string]*model.Connection{"cncf": tc.conn, model.SystemProjectID: tc.conn}}

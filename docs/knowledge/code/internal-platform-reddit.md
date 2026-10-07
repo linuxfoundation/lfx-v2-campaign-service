@@ -690,8 +690,12 @@ definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Ta
 one `GET /ad_accounts/{account}/campaigns/{id}` — the resource the budget read and the toggle
 address — through `request()`, so a 429 is retried and an exhausted one is an error.
 `ValidateCampaignID` (letters/digits/underscore, ≤64, no padding) runs first and returns
-`ErrInvalidCampaignID` with no request. A 404 and a `configured_status` of `DELETED` or `ARCHIVED`
-are `(nil, nil)`; `ACTIVE`/`PAUSED` is a ref; any other status, a missing name, an id echo that
+`ErrInvalidCampaignID` with no request. A `configured_status` of `DELETED` or `ARCHIVED` is
+`(nil, nil)`, and so is a 404 — but only once ONE confirming read of the connection's own ad
+account (`GET /ad_accounts/{account}`, `confirmAccountReadable`) answers 2xx naming that account;
+an inaccessible or revoked account 404s the campaign path the same way, so any other answer to the
+confirming read (404, 401/403, 5xx, throttle, a body naming another account) is an error. The
+confirming read is made only after a campaign 404; `ACTIVE`/`PAUSED` is a ref; any other status, a missing name, an id echo that
 differs, an empty `data`, a 401/403, and a body `identityjson.Check` refuses or that does not decode
 are errors. The read is path-scoped; `ad_account_id` is returned when present for the dispatcher to
 compare, and an unreported one is left to the path scoping.

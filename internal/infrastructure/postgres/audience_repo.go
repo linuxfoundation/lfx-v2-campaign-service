@@ -47,9 +47,12 @@ var _ domain.AudienceRepository = (*AudienceRepo)(nil)
 // is where it belongs by meaning. scanAudience reads positionally, so inserting it mid-list
 // would silently shift every column after it into the wrong destination -- a defect that
 // compiles, runs, and only shows up as a status parsed from a timestamp.
+//
+// include_list_ids (000040) follows the same rule for the same reason: appended after
+// built_in_portal_id, never beside platform_master_list_id, so no existing position moves.
 const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 	platform_master_list_id, suppression_list_ids, inclusion_summary, status, version,
-	created_by, updated_by, created_at, updated_at, built_in_portal_id`
+	created_by, updated_by, created_at, updated_at, built_in_portal_id, include_list_ids`
 
 // Both inserts bind updated_by to the SAME placeholder as created_by, matching the brief
 // statements: leaving it NULL until the first edit makes "who touched this last"
@@ -62,8 +65,8 @@ const audienceCols = `id::text, project_id::text, brief_id::text, platform,
 // the statement does not capture the actor, the information exists nowhere else.
 const createAudienceQuery = `INSERT INTO campaign_audiences
 		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
-		 inclusion_summary, status, created_by, updated_by, built_in_portal_id)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9
+		 inclusion_summary, status, created_by, updated_by, built_in_portal_id, include_list_ids)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10
 		WHERE EXISTS (
 			SELECT 1 FROM campaign_briefs
 			WHERE id=$2 AND project_id=$1 AND status <> 'archived'
@@ -75,8 +78,8 @@ const createAudienceQuery = `INSERT INTO campaign_audiences
 // person who created the row.
 const createAudienceForApprovedBriefQuery = `INSERT INTO campaign_audiences
 		(project_id, brief_id, platform, platform_master_list_id, suppression_list_ids,
-		 inclusion_summary, status, created_by, updated_by, built_in_portal_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9)
+		 inclusion_summary, status, created_by, updated_by, built_in_portal_id, include_list_ids)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10)
 		RETURNING ` + audienceCols
 
 // updateAudienceQuery is the ONLY statement that changes updated_by after the row exists —
@@ -88,7 +91,7 @@ const createAudienceForApprovedBriefQuery = `INSERT INTO campaign_audiences
 // authorship. TestAudienceUpdate_NeverTouchesCreatedBy pins the absence.
 const updateAudienceQuery = `UPDATE campaign_audiences SET
 		platform_master_list_id=$1, suppression_list_ids=$2, inclusion_summary=$3,
-		status=$4, updated_by=$5, built_in_portal_id=$10,
+		status=$4, updated_by=$5, built_in_portal_id=$10, include_list_ids=$11,
 		version=version+1, updated_at=now()
 		WHERE id=$6 AND brief_id=$7 AND project_id=$8 AND version=$9
 		RETURNING ` + audienceCols
@@ -153,7 +156,7 @@ func (r *AudienceRepo) CreateAudienceForApprovedBrief(ctx context.Context, a *mo
 	out, serr := scanAudience(tx.QueryRow(ctx, createAudienceForApprovedBriefQuery,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
 		nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
-		nullJSON(a.CreatedBy), nullStr(a.BuiltInPortalID)))
+		nullJSON(a.CreatedBy), nullStr(a.BuiltInPortalID), nullJSON(a.IncludeListIDs)))
 	if serr != nil {
 		if isUniqueViolationOn(serr, audienceBuildLeaseIndex) {
 			// Another build for this (brief, platform) is already in flight and holds the
@@ -458,7 +461,7 @@ func (r *AudienceRepo) CreateAudience(ctx context.Context, a *model.CampaignAudi
 	created, err := scanAudience(tx.QueryRow(ctx, createAudienceQuery,
 		a.ProjectID, a.BriefID, string(a.Platform), nullStr(a.PlatformMasterListID),
 		nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary), string(a.StatusOrDefault()),
-		nullJSON(a.CreatedBy), nullStr(a.BuiltInPortalID),
+		nullJSON(a.CreatedBy), nullStr(a.BuiltInPortalID), nullJSON(a.IncludeListIDs),
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		// No active parent brief for (project, brief) → the parent is missing,
@@ -571,6 +574,7 @@ func (r *AudienceRepo) UpdateAudience(ctx context.Context, a *model.CampaignAudi
 		nullStr(a.PlatformMasterListID), nullJSON(a.SuppressionListIDs), nullStr(a.InclusionSummary),
 		string(a.StatusOrDefault()), nullJSON(a.UpdatedBy),
 		a.ID, a.BriefID, a.ProjectID, expectedVersion, nullStr(a.BuiltInPortalID),
+		nullJSON(a.IncludeListIDs),
 	))
 	if err == nil {
 		return updated, nil
@@ -613,11 +617,12 @@ func scanAudience(row pgx.Row) (*model.CampaignAudience, error) {
 		createdBy []byte
 		updatedBy []byte
 		portalID  *string
+		include   []byte
 	)
 	if err := row.Scan(
 		&a.ID, &a.ProjectID, &a.BriefID, &platform,
 		&masterID, &suppress, &inclusion, &status, &a.Version,
-		&createdBy, &updatedBy, &a.CreatedAt, &a.UpdatedAt, &portalID,
+		&createdBy, &updatedBy, &a.CreatedAt, &a.UpdatedAt, &portalID, &include,
 	); err != nil {
 		return nil, err
 	}
@@ -633,6 +638,8 @@ func scanAudience(row pgx.Row) (*model.CampaignAudience, error) {
 		a.BuiltInPortalID = *portalID
 	}
 	a.SuppressionListIDs = suppress
+	// NULL stays nil — "no direct include set", so SendListIDs falls back to the master list.
+	a.IncludeListIDs = include
 	a.CreatedBy = createdBy
 	a.UpdatedBy = updatedBy
 	a.Status = model.AudienceStatus(status)

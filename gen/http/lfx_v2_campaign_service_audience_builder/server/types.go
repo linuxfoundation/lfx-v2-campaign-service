@@ -159,6 +159,9 @@ type AttachExistingAudienceResponseBody struct {
 	Master *AudienceComposedListResponseBody `form:"master" json:"master" xml:"master"`
 	// The suppression list ids recorded beside it
 	SuppressionListIds []string `form:"suppression_list_ids" json:"suppression_list_ids" xml:"suppression_list_ids"`
+	// Every include list the send goes to, when include_list_ids was supplied;
+	// absent for a single master_list_id
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// The audience row recorded for brief_id
 	Audience *AudienceComposeRecordedAudienceResponseBody `form:"audience" json:"audience" xml:"audience"`
 }
@@ -1103,8 +1106,12 @@ type AudienceComposeRecordedAudienceResponseBody struct {
 	Status string `form:"status" json:"status" xml:"status"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
-	// The master list this audience sends to
+	// The master list this audience sends to; for a multi-list attach, the first
+	// of include_list_ids
 	PlatformMasterListID string `form:"platform_master_list_id" json:"platform_master_list_id" xml:"platform_master_list_id"`
+	// Existing lists the send goes to directly, when the audience was attached to
+	// several lists instead of one master; absent for a single master
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 }
 
 // AudienceQaCandidateResponseBody is used to define fields on response body
@@ -1201,8 +1208,13 @@ type AudienceComposeMasterInputRequestBody struct {
 type AudienceAttachExistingInputRequestBody struct {
 	// The brief to record the audience under
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
-	// The existing contact list the send goes to
+	// The existing contact list the send goes to. Exactly one of master_list_id or
+	// include_list_ids is required
 	MasterListID *string `form:"master_list_id,omitempty" json:"master_list_id,omitempty" xml:"master_list_id,omitempty"`
+	// Several existing contact lists the send goes to directly, with no composed
+	// master. Exactly one of master_list_id or include_list_ids is required; the
+	// first id is recorded as platform_master_list_id
+	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Existing lists the send suppresses
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
 	// Operator-visible provenance for the recorded audience; derived from the
@@ -1389,6 +1401,12 @@ func NewAttachExistingAudienceResponseBody(res *lfxv2campaignserviceaudiencebuil
 		}
 	} else {
 		body.SuppressionListIds = []string{}
+	}
+	if res.IncludeListIds != nil {
+		body.IncludeListIds = make([]string, len(res.IncludeListIds))
+		for i, val := range res.IncludeListIds {
+			body.IncludeListIds[i] = val
+		}
 	}
 	if res.Audience != nil {
 		body.Audience = marshalLfxv2campaignserviceaudiencebuilderAudienceComposeRecordedAudienceToAudienceComposeRecordedAudienceResponseBody(res.Audience)
@@ -2464,9 +2482,6 @@ func ValidateAudienceAttachExistingInputRequestBody(body *AudienceAttachExisting
 	if body.BriefID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("brief_id", "body"))
 	}
-	if body.MasterListID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("master_list_id", "body"))
-	}
 	if body.BriefID != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", *body.BriefID, goa.FormatUUID))
 	}
@@ -2474,6 +2489,9 @@ func ValidateAudienceAttachExistingInputRequestBody(body *AudienceAttachExisting
 		if utf8.RuneCountInString(*body.MasterListID) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.master_list_id", *body.MasterListID, utf8.RuneCountInString(*body.MasterListID), 1, true))
 		}
+	}
+	if len(body.IncludeListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.include_list_ids", body.IncludeListIds, len(body.IncludeListIds), 200, false))
 	}
 	if len(body.SuppressionListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))

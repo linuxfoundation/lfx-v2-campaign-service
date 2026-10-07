@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -176,6 +177,7 @@ type fakeWizardHubSpot struct {
 	wroteWidgets      map[string]string
 	wroteSubject      string
 	sendListID        string
+	sendListIDs       []string
 	suppression       []string
 	searchDeadline    time.Time
 	searchHadDeadline bool
@@ -221,11 +223,14 @@ func (f *fakeWizardHubSpot) PatchEmailSettings(_ context.Context, id string, set
 	return &hubspot.Email{ID: id, Subject: f.wroteSubject}, nil
 }
 
-func (f *fakeWizardHubSpot) SetSendList(_ context.Context, id, ilsListID string, suppression []string) (*hubspot.Email, error) {
+func (f *fakeWizardHubSpot) SetSendList(_ context.Context, id string, ilsListIDs []string, suppression []string) (*hubspot.Email, error) {
 	if f.sendErr != nil {
 		return nil, f.sendErr
 	}
-	f.sendListID, f.suppression = ilsListID, suppression
+	f.sendListIDs, f.suppression = ilsListIDs, suppression
+	if len(ilsListIDs) > 0 {
+		f.sendListID = ilsListIDs[0]
+	}
 	return &hubspot.Email{ID: id}, nil
 }
 
@@ -1404,7 +1409,7 @@ func unconfirmedHubSpotErr(t *testing.T) error {
 		hubspot.Credentials{PrivateAppToken: "t"}, hubspot.AccountConfig{PortalID: "8112310"},
 		hubspot.WithBaseURL(srv.URL),
 	)
-	_, err := hc.SetSendList(context.Background(), "email-1", "list-1", nil)
+	_, err := hc.SetSendList(context.Background(), "email-1", []string{"list-1"}, nil)
 	if err == nil {
 		t.Fatal("fixture precondition: a mutating 429 must be an error")
 	}
@@ -1924,5 +1929,37 @@ func TestWizardReferenceReadSkipsAfterTheConnectionChanged(t *testing.T) {
 	}
 	if h.hubspot.getEmailCalls != 0 {
 		t.Errorf("the clone source was read %d time(s) through a connection it was not found under", h.hubspot.getEmailCalls)
+	}
+}
+
+// An audience attached from several existing lists (include_list_ids) must reach the draft as
+// every one of those lists, not just the master column's first id: sending to the first alone
+// would stage an email to a subset of the audience the brief records.
+func TestWizardSendListUsesEveryIncludeListOfTheAudience(t *testing.T) {
+	h := newWizardHarness(t, wizardModelJSON)
+	h.audiences.newestFirst = []*model.CampaignAudience{{
+		ID: "aud-1", Platform: model.ProviderHubSpot, Status: model.AudienceBuilt,
+		PlatformMasterListID: "ils-77", BuiltInPortalID: "portal-1",
+		IncludeListIDs: json.RawMessage(`["ils-77","ils-78"]`),
+	}}
+	started := h.start(t)
+	h.sessions.items[started.SessionID].EmailID = "email-99"
+	h.svc.SetWizardBackend(h.sessions, fakeWizardResolver{client: h.hubspot, fromSystem: false}, h.audiences)
+
+	out, err := h.svc.SetWizardSendList(context.Background(), &briefs.SetWizardSendListPayload{
+		ProjectID: wizardTestProject, BriefID: wizardTestBrief, SessionID: started.SessionID,
+	})
+	if err != nil {
+		t.Fatalf("SetWizardSendList: %v", err)
+	}
+	if !slices.Equal(h.hubspot.sendListIDs, []string{"ils-77", "ils-78"}) {
+		t.Errorf("send lists = %v, want every include list [ils-77 ils-78]", h.hubspot.sendListIDs)
+	}
+	if out.SendListID != "ils-77" {
+		t.Errorf("send_list_id = %q, want the first include list ils-77", out.SendListID)
+	}
+	to, _ := out.To.(map[string]any)
+	if got, _ := to["ils_list_ids"].([]string); !slices.Equal(got, []string{"ils-77", "ils-78"}) {
+		t.Errorf("to.ils_list_ids = %v, want [ils-77 ils-78]", to["ils_list_ids"])
 	}
 }

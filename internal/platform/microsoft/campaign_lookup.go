@@ -24,15 +24,6 @@ const (
 	StatusDeleted               = "Deleted"
 )
 
-// allCampaignTypes is every value of the v13 CampaignType flags enum
-// (https://learn.microsoft.com/en-us/advertising/campaign-management-service/campaigntype), sent
-// by the adoption lookup so a campaign of ANY type is returned rather than filtered out. Filtering
-// to Search left a non-Search campaign's answer resting on undocumented behaviour — a null slot
-// (unverifiable) or, worse, an InvalidCampaignId PartialError that would read as "absent" and
-// invite a duplicate of a live campaign. Comma-separated, as the REST JSON surface renders a
-// flags enum.
-const allCampaignTypes = "Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App"
-
 // ErrNotSearchCampaign reports a DEFINITE answer: the campaign exists in this account, but it is
 // not a Search campaign, the only type this service creates and so the only one with a slot to
 // adopt into. The dispatcher maps it to domain.ErrAdoptionCampaignTypeUnsupported (409).
@@ -91,7 +82,8 @@ type CampaignRef struct {
 // the provenance check; the client's AccountID is the connection's own (see
 // MicrosoftDispatcher.LookupCampaign).
 //
-// CAMPAIGN TYPE. The read asks for EVERY documented CampaignType (allCampaignTypes), so a live
+// CAMPAIGN TYPE. The read asks for EVERY documented CampaignType (allCampaignTypes in monitor.go:
+// the space-delimited v13 set of all eight, ObjectiveBased included), so a live
 // campaign is returned whatever its type, and then only Search — the one type this service
 // creates, and so the one with a slot — is adoptable. Any other type is ErrNotSearchCampaign: a
 // definite refusal, never an absence and never an adoption.

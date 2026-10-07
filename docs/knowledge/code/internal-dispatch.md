@@ -1847,6 +1847,13 @@ reports false numbers:
   provenance read whose failure is only ever logged must not be able to spend the budget those
   calls need.
 
+  The send targets `CampaignAudience.SendListIDs()`, not `platform_master_list_id`:
+  `resolveBuiltAudience` returns every recorded include list (or the master alone when none are
+  recorded) and `SetSendList` receives all of them. The pre-clone overlap check runs against that
+  WHOLE set — a suppression naming any include list is refused before the clone, because HubSpot
+  applies exclusions after inclusions and the send would exclude that entire list while reporting
+  success. Unreadable include ids fail the dispatch rather than falling back to the master.
+
 - **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
   are in scope by SEND date; the counters returned are that email's totals to date. `today`
   and `last_30_days` on an email sent this morning return the same numbers. `Window` records
@@ -3146,9 +3153,10 @@ order is the safety argument:
    Meta's campaign-only fields (`objective`, the budget fields, `bid_strategy`) are load-bearing:
    they make Graph refuse an ad set or ad id read through the same `GET /{id}`. Reddit and X run
    `identityjson.Check` over the RAW response body (`apiResponse.raw`), not the decoded `data`, so a
-   duplicated `data` envelope key is refused rather than resolved last-wins; their bare-404 absence
-   is judged on the status alone (a revoked account would also read absent — low harm, since any
-   dispatch to that account fails the same way).
+   duplicated `data` envelope key is refused rather than resolved last-wins; a campaign 404 is a
+   PROVEN absence only after one confirming read of the connection's own ad account
+   (`confirmAccountReadable`) answers 2xx naming that account — an inaccessible or revoked account
+   404s the same way, so any other answer to the confirming read is unverifiable (503).
 4. **Prove provenance.** Microsoft's read is account-scoped and its Campaign object carries no
    account id, so — as on Google — the request's scope is the proof and a foreign campaign is
    answered absent. Meta's node read is NOT account-scoped (one token reaches many accounts), so the
@@ -3176,8 +3184,12 @@ order is the safety argument:
 
 Definite vs unverifiable, per client (`GetCampaign` in each `campaign_lookup.go`): **absent
 (nil, nil)** is Microsoft `CampaignServiceInvalidCampaignId` (fault or PartialError) or status
-`Deleted`; Meta Graph code 100 + `error_subcode` 33 or status `DELETED`/`ARCHIVED`; Reddit 404 or
-`configured_status` `DELETED`/`ARCHIVED`; X 404 or `deleted: true`. A terminal state reads absent for
+`Deleted`; Meta status `DELETED`/`ARCHIVED` ONLY (Graph 100/33 is "does not exist OR cannot be
+loaded due to missing permissions", so it is unverifiable on every status); Reddit 404 confirmed by a
+readable ad account, or `configured_status` `DELETED`/`ARCHIVED`; X 404 confirmed by a readable
+account, or `deleted: true`. The rule behind each: 404 only when the platform has PROVEN absence —
+anything that could be an access, auth or account problem is 503, because an ambiguous 404 invites
+a duplicate of a campaign that may be live. A terminal state reads absent for
 the reason Google's `REMOVED` does — it cannot spend, so "absent" licenses no duplicate of anything
 serving. **Everything else is an error** the service answers 503 "could not be verified":
 transport, 5xx, an exhausted or over-cap throttle, 401/403, an id echo that differs, a missing name,
@@ -3899,6 +3911,17 @@ for list ids it never saw. The orchestration records nothing itself — it only 
 service layer cannot obtain anywhere else honestly. With no brief id the path is unchanged, which
 is why the lookup is conditional: it is a live round trip the exploratory caller should not pay
 for.
+
+`AttachExisting(ctx, projectID, includeIDs, suppressionIDs)` verifies lists that ALREADY exist
+instead of creating any, so it is the one write-adjacent path here that creates nothing upstream.
+The include ids are trimmed and de-duplicated (`audience.UniqueIDs`; none left is
+`ErrNoInclusionLists`), suppressions that repeat an include id are dropped
+(`audience.ExclusionIDs` — the service refuses an explicit overlap with a 400 before this runs),
+and EVERY id is read back from the portal: the first include as the master, then the remaining
+includes, then the suppressions, so a mistyped id (or one that is not a contact list) is a 404
+rather than an audience that silently reaches fewer people. `SourceListIDs` reports the master
+followed by the other include ids. The portal is resolved only after every read succeeds, and a
+blank one is `ErrComposePortalUnconfirmed` rather than an unstamped row.
 
 `LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
 once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a
