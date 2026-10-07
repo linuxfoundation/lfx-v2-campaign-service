@@ -207,6 +207,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   locks use; a hash collision between two slots only serializes them. Nothing does platform I/O
   under the lock.
 
+  The comments inside migrations `000036` and `000037` still say the old index is dropped "a
+  release later". That timeline is superseded by the staging below; the files are applied (shipped
+  in v1.0.17) and the migrations README forbids editing an applied migration, so they are left
+  as written and this concept, with `domain.ErrSlotVersionUnavailable`'s comment, is the
+  authority.
+
   The lock ships FIRST and the index drop (the contract migration, plus removing
   `uq_campaigns_brief_platform_variant_live` from `requiredIndexes`, plus retiring
   `ErrSlotVersionUnavailable` and the legacy-index `23505` handling) ships **one release after
