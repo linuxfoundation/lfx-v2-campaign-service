@@ -542,7 +542,8 @@ const (
 //
 // REJECTED ("nothing was changed") is OPT-IN, because telling an operator a write did not land
 // when it may have is the dangerous direction. It is answered only when Meta's own Graph error
-// envelope was read and says the refusal is definite: not a throttle (429 or a rate-limit code —
+// envelope was read — from a body identityjson accepted — carries a non-zero code, and says the
+// refusal is definite: not a throttle (429 or a rate-limit code —
 // IsOutcomeUnconfirmed), not `is_transient`, not Graph's generic code 1 ("unknown error") or 2
 // ("service temporarily unavailable"), and not an HTTP 408. Every other *APIError — an HTML body,
 // an unread envelope, a 5xx/3xx — is UNCONFIRMED.
@@ -555,7 +556,10 @@ func ClassifyAdSetWrite(err error) AdSetWriteOutcome {
 	}
 	var ae *APIError
 	if errors.As(err, &ae) {
-		if ae.EnvelopeParsed && !ae.IsTransient && ae.Code != 1 && ae.Code != 2 &&
+		// Code > 0: a missing, explicit-zero or non-numeric code (encoding/json leaves the int at
+		// 0 on a type mismatch) all read as 0, and an error object without a usable refusal code
+		// is not Meta saying the write was refused.
+		if ae.EnvelopeParsed && ae.Code > 0 && !ae.IsTransient && ae.Code != 1 && ae.Code != 2 &&
 			ae.StatusCode != http.StatusRequestTimeout && ae.StatusCode >= 400 && ae.StatusCode < 500 {
 			return AdSetWriteRejected
 		}
@@ -580,13 +584,20 @@ func (c *Client) UpdateAdSetStatusOnce(ctx context.Context, adSetID, status stri
 		return fmt.Errorf("meta: status must be %q or %q", StatusActive, StatusPaused)
 	}
 	path := "/" + adSetID
+	var raw json.RawMessage
+	if err := c.do(ctx, http.MethodPost, path, map[string]any{"status": status}, &raw, false); err != nil {
+		return fmt.Errorf("meta: update ad set %s status to %s: %w", adSetID, status, err)
+	}
+	// The confirmation is checked as RAW BYTES first: {"success":false,"Success":true} decodes to
+	// true under encoding/json's last-wins, case-insensitive matching. A body that cannot be
+	// trusted confirms nothing, so it is unconfirmed, never applied.
+	if err := identityjson.Check(raw); err != nil {
+		return &transportError{Method: http.MethodPost, Path: path, Err: err}
+	}
 	var resp struct {
 		Success *bool `json:"success"`
 	}
-	if err := c.do(ctx, http.MethodPost, path, map[string]any{"status": status}, &resp, false); err != nil {
-		return fmt.Errorf("meta: update ad set %s status to %s: %w", adSetID, status, err)
-	}
-	if resp.Success == nil || !*resp.Success {
+	if err := json.Unmarshal(raw, &resp); err != nil || resp.Success == nil || !*resp.Success {
 		// Meta answered 2xx without confirming. It received the request, so the outcome is
 		// unknown — never reported as success, never as "nothing changed".
 		return &transportError{Method: http.MethodPost, Path: path, Err: errors.New("2xx response did not confirm success")}

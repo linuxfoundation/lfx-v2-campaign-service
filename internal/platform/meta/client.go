@@ -31,6 +31,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -893,7 +895,9 @@ func (e *APIError) copyEnvelope(g *graphError) {
 	e.ErrorSubcode = g.ErrorSubcode
 	e.blameFields = g.blameFieldSpecs()
 	e.IsTransient = g.IsTransient
-	e.EnvelopeParsed = true
+	// Only an envelope the identity check accepted counts as read (see do()); the /adimages
+	// upload path never sets trusted, and nothing there consults this field.
+	e.EnvelopeParsed = g.trusted
 }
 
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
@@ -913,6 +917,9 @@ type graphError struct {
 	ErrorData json.RawMessage `json:"error_data"`
 	// IsTransient is Graph's own "retrying may succeed" flag. Read only to CLASSIFY a write.
 	IsTransient bool `json:"is_transient"`
+	// trusted records that the raw body this envelope was decoded from passed
+	// identityjson.Check. Set by do(), never decoded.
+	trusted bool
 }
 
 // Bounds on what blameFieldSpecs retains from an untrusted body: a real spec names one or two
@@ -1682,6 +1689,15 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 		var env graphErrorEnvelope
 		if status < 200 || status >= 300 {
 			_ = json.Unmarshal(raw, &env)
+			if env.Error != nil {
+				// Whether the decoded envelope can be TRUSTED as what Meta said: encoding/json
+				// keeps the last of a duplicated (or case-folded) key and substitutes U+FFFD
+				// silently, so a body carrying two codes decodes to one of them. Only a body the
+				// identity check accepts may mark the APIError EnvelopeParsed — the gate a
+				// definite "nothing was changed" (ClassifyAdSetWrite) requires. Every other field
+				// is copied exactly as before, so throttle detection and logging are unchanged.
+				env.Error.trusted = identityjson.Check(raw) == nil
+			}
 		}
 		// isThrottle is the CLASSIFICATION — "Meta shed this request" — and is deliberately
 		// kept separate from throttled, which is the narrower "and we are going to retry it".

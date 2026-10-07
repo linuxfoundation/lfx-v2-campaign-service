@@ -407,11 +407,12 @@ type Service interface {
 	// created. Before anything is read the campaign must record which ad account
 	// it was created under and that account must be the connection's (409
 	// otherwise); a campaign with no platform campaign id is 409; any platform but
-	// Meta is 400. **404 only when the campaign row does not exist.** Meta's
-	// 100/33 on the campaign ("does not exist, cannot be loaded due to missing
+	// Meta is 400. **404 when the campaign row does not exist or the project has
+	// no Meta connection** — never because of anything Meta answers: Meta's 100/33
+	// on the campaign ("does not exist, cannot be loaded due to missing
 	// permissions, or does not support this operation") cannot tell a deleted
 	// campaign from one this token cannot load, so it is a 503 like every other
-	// unverifiable answer — all or nothing, never a partial list.
+	// unverifiable upstream answer — all or nothing, never a partial list.
 	ListMetaAdSets(context.Context, *ListMetaAdSetsPayload) (res *MetaAdSets, err error)
 	// Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a
 	// live paid campaign, guarded like toggle-campaign-status: If-Match carries

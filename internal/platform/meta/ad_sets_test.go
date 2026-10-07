@@ -355,6 +355,14 @@ func TestUpdateAdSetStatusOnce_Classification(t *testing.T) {
 		{"400 is_transient", adSetReply{400, `{"error":{"message":"try again","code":100,"is_transient":true}}`}, AdSetWriteUnconfirmed},
 		{"400 HTML body", adSetReply{400, `<html><body>Bad Request</body></html>`}, AdSetWriteUnconfirmed},
 		{"408", adSetReply{408, `{"error":{"message":"timeout","code":100}}`}, AdSetWriteUnconfirmed},
+		{"400 code missing", adSetReply{400, `{"error":{"message":"rate limited"}}`}, AdSetWriteUnconfirmed},
+		{"400 code 0", adSetReply{400, `{"error":{"message":"refused","code":0}}`}, AdSetWriteUnconfirmed},
+		{"400 code non-numeric", adSetReply{400, `{"error":{"message":"refused","code":"100"}}`}, AdSetWriteUnconfirmed},
+		{"400 duplicate code (throttle first)", adSetReply{400, `{"error":{"message":"x","code":17,"code":100}}`}, AdSetWriteUnconfirmed},
+		{"400 case-folded Code", adSetReply{400, `{"error":{"message":"x","Code":17,"code":100}}`}, AdSetWriteUnconfirmed},
+		{"400 duplicate is_transient", adSetReply{400, `{"error":{"message":"x","code":100,"is_transient":true,"is_transient":false}}`}, AdSetWriteUnconfirmed},
+		{"2xx duplicate success", adSetReply{200, `{"success":false,"success":true}`}, AdSetWriteUnconfirmed},
+		{"2xx case-folded Success", adSetReply{200, `{"success":false,"Success":true}`}, AdSetWriteUnconfirmed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newAdSetServer(t, map[string][]adSetReply{"POST /888": {tc.reply, {200, `{"success":true}`}}})
