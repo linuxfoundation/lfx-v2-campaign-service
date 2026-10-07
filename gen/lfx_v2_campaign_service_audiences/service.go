@@ -73,6 +73,10 @@ type Audience struct {
 	InclusionSummary *string
 	// Build lifecycle status
 	Status string
+	// Existing lists the send goes to directly when the audience was attached to
+	// several lists; platform_master_list_id is then the first of them. Absent for
+	// a single master list
+	IncludeListIds []string
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)

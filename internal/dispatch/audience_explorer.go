@@ -1547,9 +1547,13 @@ func (x *AudienceExplorer) ComposeMaster(ctx context.Context, projectID string, 
 // Every id is caller-supplied, so each is read back from the project's portal: a mistyped or
 // foreign id is a 404 now rather than a send that fails at dispatch. The portal is resolved
 // from the same build-scoped client that did the reads, for the reason ComposeMaster gives.
-func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID, masterListID string, suppressionIDs []string) (outcome *audience.ComposeOutcome, err error) {
-	masterListID = strings.TrimSpace(masterListID)
-	if masterListID == "" {
+//
+// includeIDs are the lists the send goes to: one (the master_list_id form) or several (the
+// include_list_ids form, sent to directly with no composed master). The first is reported as
+// the outcome's Master, which the audience records as its platform_master_list_id.
+func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string) (outcome *audience.ComposeOutcome, err error) {
+	include := audience.UniqueIDs(includeIDs)
+	if len(include) == 0 {
 		return nil, audience.ErrNoInclusionLists
 	}
 	for _, id := range suppressionIDs {
@@ -1557,7 +1561,7 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID, master
 			return nil, audience.ErrBlankExclusionID
 		}
 	}
-	suppress := audience.ExclusionIDs(suppressionIDs, []string{masterListID})
+	suppress := audience.ExclusionIDs(suppressionIDs, include)
 
 	ctx = x.builder.BeginBuild(ctx)
 	client, fromSystem, cerr := x.builder.cachedClient(ctx, projectID)
@@ -1581,9 +1585,19 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID, master
 		}
 		return l, nil
 	}
-	master, merr := read(masterListID)
+	master, merr := read(include[0])
 	if merr != nil {
 		return nil, merr
+	}
+	// The ids HubSpot returned, not the caller's spelling: the recorded include set must name the
+	// same lists the master column does, id for id.
+	sourceIDs := []string{readBackID(master, include[0])}
+	for _, id := range include[1:] {
+		l, ierr := read(id)
+		if ierr != nil {
+			return nil, ierr
+		}
+		sourceIDs = append(sourceIDs, readBackID(l, id))
 	}
 	for _, id := range suppress {
 		if _, serr := read(id); serr != nil {
@@ -1600,7 +1614,7 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID, master
 	}
 	return &audience.ComposeOutcome{
 		Master:                 audience.ComposedList{ListRow: listRow(master)},
-		SourceListIDs:          []string{master.ListID},
+		SourceListIDs:          sourceIDs,
 		PortalID:               portalID,
 		AttachedSuppressionIDs: suppress,
 		Attached:               true,
@@ -1966,4 +1980,13 @@ func sendDetailsURL(client *hubspot.Client, email hubspot.Email) string {
 		return u
 	}
 	return email.AppURL
+}
+
+// readBackID is the id HubSpot returned for a list, falling back to the requested id when the
+// response carried none.
+func readBackID(l *hubspot.List, requested string) string {
+	if id := strings.TrimSpace(l.ListID); id != "" {
+		return id
+	}
+	return requested
 }

@@ -4,7 +4,9 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -46,6 +48,43 @@ func TestCampaignAudience_Validate_BuiltNeedsMasterList(t *testing.T) {
 			}
 			if err != nil {
 				t.Errorf("want no error, got %v", err)
+			}
+		})
+	}
+}
+
+// TestCampaignAudience_SendListIDs pins which lists a send targets: every recorded include list
+// (trimmed, blanks and duplicates dropped, order kept) when there are any, otherwise the master
+// alone, and nothing when neither names a list. Corrupt include ids are an error, never a silent
+// fall back to the master -- that would send to a subset of the recorded audience.
+func TestCampaignAudience_SendListIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		a       CampaignAudience
+		want    []string
+		wantErr bool
+	}{
+		{"master only", CampaignAudience{PlatformMasterListID: " 31027 "}, []string{"31027"}, false},
+		{"null include falls back to master", CampaignAudience{PlatformMasterListID: "31027", IncludeListIDs: json.RawMessage(`null`)}, []string{"31027"}, false},
+		{"empty include falls back to master", CampaignAudience{PlatformMasterListID: "31027", IncludeListIDs: json.RawMessage(`[]`)}, []string{"31027"}, false},
+		{"blank-only include falls back to master", CampaignAudience{PlatformMasterListID: "31027", IncludeListIDs: json.RawMessage(`[" ",""]`)}, []string{"31027"}, false},
+		{"include wins, cleaned", CampaignAudience{PlatformMasterListID: "31027", IncludeListIDs: json.RawMessage(`[" 31027 ","31028","","31027","31029"]`)}, []string{"31027", "31028", "31029"}, false},
+		{"nothing", CampaignAudience{}, nil, false},
+		{"corrupt include", CampaignAudience{PlatformMasterListID: "31027", IncludeListIDs: json.RawMessage(`{"a":1}`)}, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.a.SendListIDs()
+			if tc.wantErr {
+				if !errors.Is(err, ErrAudienceIncludeListIDsUnreadable) {
+					t.Fatalf("err = %v, want ErrAudienceIncludeListIDsUnreadable", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SendListIDs: %v", err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("SendListIDs = %v, want %v", got, tc.want)
 			}
 		})
 	}
