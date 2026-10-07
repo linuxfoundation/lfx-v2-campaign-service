@@ -1635,6 +1635,41 @@ func BuildGetMicrosoftAdsKeywordsPayload(lfxV2CampaignServiceConnectionsGetMicro
 	return v, nil
 }
 
+// BuildGetMicrosoftAdsAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-connections get-microsoft-ads-audience endpoint from
+// CLI flags.
+func BuildGetMicrosoftAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceProjectID string, lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceWindow string, lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceBearerToken string) (*lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceWindow != "" {
+			window = &lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceWindow
+			if !(*window == "today" || *window == "last_7_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildResolveGoogleAdsCampaignPayload builds the payload for the
 // lfx-v2-campaign-service-connections resolve-google-ads-campaign endpoint
 // from CLI flags.

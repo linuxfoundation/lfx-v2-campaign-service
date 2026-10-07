@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"sort"
 	"time"
@@ -145,10 +144,11 @@ func (o *Orchestrator) ReadReportedKeywordPerformance(ctx context.Context, proje
 
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
-	now := time.Now()
+	now := o.insightReportNow()
 	scopeIDs := scopeCampaignIDs(scope)
-	o.collectPendingKeywordReport(callCtx, ctx, reader, store, snap, now)
-	if rerr := o.refreshKeywordReport(callCtx, ctx, reader, store, snap, scope, scopeIDs, now); rerr != nil {
+	driver := o.keywordReportDriver(reader, store)
+	collectPendingInsightReport(callCtx, ctx, driver, snap, now)
+	if rerr := refreshInsightReport(callCtx, ctx, driver, snap, scope, scopeIDs, now); rerr != nil {
 		return nil, rerr
 	}
 	return mergeKeywordReport(window, snap, scopeIDs), nil
@@ -177,65 +177,6 @@ func coversScope(reportIDs []string, scopeIDs map[string]bool) bool {
 	return true
 }
 
-// collectPendingKeywordReport is step 3 — collectPendingAccountReport's logic over the keyword
-// store, updating snap in place.
-func (o *Orchestrator) collectPendingKeywordReport(callCtx, ctx context.Context, reader KeywordReportReader, store domain.KeywordReportRepository, snap *model.KeywordReportSnapshot, now time.Time) {
-	p := snap.Pending
-	if p == nil {
-		return
-	}
-	key := snap.Key
-	overdue := now.Sub(p.SubmittedAt) > accountReportAbandonAfter
-	abandon := func() {
-		reason := fmt.Sprintf("report not finished %s after submission; abandoned", accountReportAbandonAfter)
-		if _, ferr := store.FailKeywordReport(callCtx, key, p.ReportID, reason, now); ferr != nil {
-			slog.WarnContext(ctx, "keyword read: could not record an abandoned report", "platform", key.Platform, "project_id", key.ProjectID, "error", ferr)
-			return
-		}
-		snap.Pending = nil
-	}
-	check, cerr := o.checkKeywordReport(callCtx, ctx, reader, key, p.ReportID)
-	if cerr != nil || check == nil {
-		slog.WarnContext(ctx, "keyword read: report check failed; will retry on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", cerr)
-		if overdue {
-			abandon()
-		}
-		return
-	}
-	switch check.Status {
-	case model.AccountReportPending:
-		if overdue {
-			abandon()
-		}
-	case model.AccountReportReady:
-		ready := model.ReadyKeywordReport{
-			ReportID: p.ReportID, Rows: check.Rows, Partial: check.Partial, CampaignIDs: p.CampaignIDs,
-			WindowStart: p.WindowStart, WindowEnd: p.WindowEnd, AsOf: p.SubmittedAt,
-		}
-		applied, perr := store.CompleteKeywordReport(callCtx, key, ready)
-		if perr != nil {
-			slog.WarnContext(ctx, "keyword read: could not save a finished report", "platform", key.Platform, "project_id", key.ProjectID, "error", perr)
-		}
-		// Served either way, for collectPendingAccountReport's reason.
-		snap.Ready = &ready
-		if applied {
-			snap.Pending = nil
-		} else if perr == nil {
-			if latest, gerr := store.GetKeywordReport(callCtx, key); gerr == nil {
-				snap.Pending = latest.Pending
-			}
-		}
-	case model.AccountReportFailed:
-		if _, ferr := store.FailKeywordReport(callCtx, key, p.ReportID, "the platform reported the report as failed", now); ferr != nil {
-			slog.WarnContext(ctx, "keyword read: could not record a failed report", "platform", key.Platform, "project_id", key.ProjectID, "error", ferr)
-			return
-		}
-		snap.Pending = nil
-	default:
-		slog.WarnContext(ctx, "keyword read: report check returned an unknown status", "platform", key.Platform, "project_id", key.ProjectID, "status", string(check.Status))
-	}
-}
-
 // isPermanentKeywordRefusal reports whether a submission error is one no later read can avoid.
 // KeywordReportAccount refuses all of these before step 3; they are matched here too so a
 // dispatcher that raises one only at submission still fails the read rather than logging forever.
@@ -247,51 +188,23 @@ func isPermanentKeywordRefusal(err error) bool {
 		errors.Is(err, ErrCampaignAccountMismatch)
 }
 
-// refreshKeywordReport is step 4 — refreshAccountReport's logic, with scope coverage added to
-// what makes a saved report stale.
-func (o *Orchestrator) refreshKeywordReport(callCtx, ctx context.Context, reader KeywordReportReader, store domain.KeywordReportRepository, snap *model.KeywordReportSnapshot, scope []model.ProjectCampaignScope, scopeIDs map[string]bool, now time.Time) error {
-	if snap.Pending != nil {
-		return nil
+// keywordReportDriver binds the keyword kind's store and upstream calls for the shared
+// collect/refresh steps (insight_report.go).
+func (o *Orchestrator) keywordReportDriver(reader KeywordReportReader, store domain.KeywordReportRepository) insightReportDriver[model.KeywordReportRow] {
+	return insightReportDriver[model.KeywordReportRow]{
+		read:     "keyword read",
+		get:      store.GetKeywordReport,
+		mark:     store.MarkKeywordReportPending,
+		complete: store.CompleteKeywordReport,
+		fail:     store.FailKeywordReport,
+		check: func(callCtx, ctx context.Context, key model.InsightReportKey, reportID string) (*model.KeywordReportCheck, error) {
+			return o.checkKeywordReport(callCtx, ctx, reader, key, reportID)
+		},
+		submit: func(callCtx, ctx context.Context, key model.InsightReportKey, scope []model.ProjectCampaignScope) (*model.KeywordReportSubmission, error) {
+			return o.submitKeywordReport(callCtx, ctx, reader, key, scope)
+		},
+		permanent: isPermanentKeywordRefusal,
 	}
-	if r := snap.Ready; r != nil && now.Sub(r.AsOf) < accountReportFreshFor && coversScope(r.CampaignIDs, scopeIDs) {
-		return nil
-	}
-	if callCtx.Err() != nil {
-		return nil
-	}
-	key := snap.Key
-	sub, serr := o.submitKeywordReport(callCtx, ctx, reader, key, scope)
-	if isPermanentKeywordRefusal(serr) {
-		return fmt.Errorf("%s keyword read: %w", key.Platform, serr)
-	}
-	if serr != nil {
-		slog.WarnContext(ctx, "keyword read: report submission failed; will retry on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", serr)
-		return nil
-	}
-	if sub == nil || sub.ReportID == "" || len(sub.CampaignIDs) == 0 {
-		slog.WarnContext(ctx, "keyword read: report submission returned no report id or scope", "platform", key.Platform, "project_id", key.ProjectID)
-		return nil
-	}
-	pending := model.PendingKeywordReport{
-		ReportID: sub.ReportID, CampaignIDs: sub.CampaignIDs,
-		WindowStart: sub.WindowStart, WindowEnd: sub.WindowEnd, SubmittedAt: now,
-	}
-	// Detached budget, for accountReportMarkTimeout's reason.
-	markCtx, markCancel := context.WithTimeout(context.WithoutCancel(ctx), accountReportMarkTimeout)
-	defer markCancel()
-	applied, merr := store.MarkKeywordReportPending(markCtx, key, pending)
-	if merr != nil {
-		slog.WarnContext(ctx, "keyword read: could not save a submitted report; it will not be collected", "platform", key.Platform, "project_id", key.ProjectID, "error", merr)
-		return nil
-	}
-	if !applied {
-		if latest, gerr := store.GetKeywordReport(markCtx, key); gerr == nil && latest.Pending != nil {
-			snap.Pending = latest.Pending
-		}
-		return nil
-	}
-	snap.Pending = &pending
-	return nil
 }
 
 // mergeKeywordReport builds the response from the snapshot: the last finished report's rows

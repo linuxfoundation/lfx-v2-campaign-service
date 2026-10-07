@@ -928,7 +928,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// The startup scan can't see a claim stranded younger than the report age (the
 	// rolling-deploy case); a periodic sweep catches those. Stopped by Close.
 	c.startStuckClaimSweeper(campaignRepo)
-	orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers, postgres.NewAccountReportRepo(pool), postgres.NewKeywordReportRepo(pool))
+	orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers, postgres.NewAccountReportRepo(pool), postgres.NewKeywordReportRepo(pool), postgres.NewKeywordReportRepo(pool))
 	c.orch = orch
 	// Inject the orchestrator into the connection service for account-listing operations.
 	// Through backendSetter, not a *service.ConnectionService cast: the cold-start path
@@ -1012,7 +1012,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			// Start the periodic sweep here too. Safe without a lock for the same reason
 			// as c.orch below: Close waits on <-c.initDone before reading these fields.
 			c.startStuckClaimSweeper(campaignRepo)
-			orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers, postgres.NewAccountReportRepo(pool), postgres.NewKeywordReportRepo(pool))
+			orch := c.newOrchestrator(campaignRepo, jobRepo, dispatchers, postgres.NewAccountReportRepo(pool), postgres.NewKeywordReportRepo(pool), postgres.NewKeywordReportRepo(pool))
 			// Safe without a lock: Close() waits on <-c.initDone (closed when this
 			// goroutine returns) before it reads c.orch, so this write happens-before
 			// that read.
@@ -1418,7 +1418,7 @@ func (c *Container) indexingDisabled() bool {
 // created campaign unsearchable until some later update republishes it. Same rationale
 // as newBriefService: route EVERY construction through one helper so a path cannot
 // silently keep the Noop.
-func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]service.PlatformDispatcher, accountReports domain.AccountReportRepository, keywordReports domain.KeywordReportRepository) *service.Orchestrator {
+func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs domain.JobRepository, dispatchers map[model.Provider]service.PlatformDispatcher, accountReports domain.AccountReportRepository, keywordReports domain.KeywordReportRepository, audienceReports domain.AudienceReportRepository) *service.Orchestrator {
 	o := service.NewOrchestrator(campaigns, jobs, dispatchers)
 	o.SetIndexer(c.indexPublisher)
 	// The saved-report store behind the report-backed account monitor (Microsoft). A parameter
@@ -1428,6 +1428,9 @@ func (c *Container) newOrchestrator(campaigns domain.CampaignRepository, jobs do
 	// The saved-report store behind the report-backed keyword read (Microsoft), a parameter for
 	// the same reason.
 	o.SetKeywordReportStore(keywordReports)
+	// The age/gender KIND of the same store (KeywordReportRepo implements both), behind the
+	// report-backed audience read (Microsoft), a parameter for the same reason.
+	o.SetAudienceReportStore(audienceReports)
 	// Injected here for the same reason as the publisher: BOTH construction paths
 	// (the live fast path and the cold-start retry) route through this helper, so a
 	// path cannot silently keep the no-op recorder and report no dispatch metrics.

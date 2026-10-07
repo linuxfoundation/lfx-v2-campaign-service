@@ -452,17 +452,17 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/keywords", true},
-		{"/projects/p1/microsoft-ads/audience", false},
+		{"/projects/p1/microsoft-ads/audience", true},
+		{"/projects/p1/microsoft-ads/audience/x", false},
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
-		// The Meta and X audience reads (LFXV2-2665); the other non-Google providers have none.
+		// The Meta and X audience reads (LFXV2-2665); Reddit and LinkedIn have none.
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},
 		{"/projects/p1/twitter-ads/audience", true},
 		{"/projects/p1/twitter-ads/audience/x", false},
 		{"/projects/p1/reddit-ads/audience", false},
-		{"/projects/p1/microsoft-ads/audience", false},
 		{"/projects/p1/linkedin-ads/audience", false},
 		// The Meta, Reddit and X twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},

@@ -1269,6 +1269,68 @@ var MicrosoftAdsKeywords = Type("microsoft-ads-keywords", func() {
 	Required("window", "rows", "row_count", "truncated", "metrics_pending", "conversions_complete", "data_incomplete")
 })
 
+// MicrosoftAdsAudienceBucket is one (age group, gender) bucket of the Microsoft audience read,
+// summed over the project's own campaigns. A Microsoft-named type rather than Meta's bucket: there
+// is ONE breakdown here (Microsoft's age/gender report carries both values on every row), so no
+// `dimension` discriminator is needed and both labels are always present.
+var MicrosoftAdsAudienceBucket = Type("microsoft-ads-audience-bucket", func() {
+	Attribute("age_group", String, "Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34, 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown bucket, is passed through rather than dropped).", func() { Example("25-34") })
+	Attribute("gender", String, "Microsoft's Gender, verbatim (documented as male or female; any other value Microsoft reports is passed through rather than dropped).", func() { Example("Female") })
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of the ad account's own currency (Microsoft's Spend times 10^6). This service performs no FX conversion and does not know the currency.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions as a fraction, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("age_group", "gender", "impressions", "clicks", "cost_micros", "ctr")
+	Example(map[string]any{
+		"age_group":   "25-34",
+		"gender":      "Female",
+		"impressions": 12840,
+		"clicks":      742,
+		"cost_micros": 3120000,
+		"ctr":         0.0578,
+	})
+})
+
+// MicrosoftAdsAudience is the Microsoft Advertising age/gender audience read, scoped to the
+// project's OWN campaigns and served from a saved asynchronous AgeGenderAudienceReportRequest,
+// exactly as MicrosoftAdsKeywords is served from a saved keyword report. The envelope is the Meta
+// audience read's (window, buckets, bucket_count) plus the saved-report facts the keyword read
+// publishes (metrics_as_of, metrics_pending, data_incomplete).
+//
+// There is NO device dimension (the report has none — a device breakdown would need a second
+// report), NO conversions (not requested; the keyword read carries them), and NO account_currency
+// (the report carries no currency column and this service does not read the account's).
+var MicrosoftAdsAudience = Type("microsoft-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover", microsoftKeywordsWindowEnum)
+	Attribute("buckets", ArrayOf(MicrosoftAdsAudienceBucket), "One bucket per (age_group, gender), summed over the campaigns this project owns, from the last finished Microsoft age/gender report that covers every one of them; ordered by impressions descending. Every bucket covers a disjoint slice of the same traffic, so counters may be totalled across buckets. Empty while no such report has finished (metrics_as_of absent).", func() {
+		Example([]map[string]any{
+			{"age_group": "25-34", "gender": "Female", "impressions": 12840, "clicks": 742, "cost_micros": 3120000, "ctr": 0.0578},
+			{"age_group": "35-49", "gender": "Male", "impressions": 9310, "clicks": 401, "cost_micros": 1985000, "ctr": 0.0431},
+		})
+	})
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`.", func() { Example(2) })
+	Attribute("metrics_as_of", String, "When the Microsoft report these buckets come from was requested (not when it was collected). ABSENT when no finished report covers every campaign this project now owns — the first read, or the first after a campaign was added — and `buckets` is then empty rather than a partial picture.", func() {
+		Format(FormatDateTime)
+		Example("2026-10-07T14:30:00Z")
+	})
+	Attribute("metrics_pending", Boolean, "True while a newer Microsoft report is building, so a later read will return newer buckets (or the first ones, when metrics_as_of is absent).", func() { Example(false) })
+	Attribute("data_incomplete", Boolean, "True when Microsoft flagged the served report's data as potentially incomplete (the window's last day may still be aggregating): its counters may still rise. False when no report is served.", func() { Example(false) })
+	Required("window", "buckets", "bucket_count", "metrics_pending", "data_incomplete")
+	// A composite example, for PlatformCampaignResolution's reason: Goa's synthesised one would
+	// repeat one bucket and keep bucket_count's scalar, contradicting itself.
+	Example(map[string]any{
+		"window": "last_30_days",
+		"buckets": []map[string]any{
+			{"age_group": "25-34", "gender": "Female", "impressions": 12840, "clicks": 742, "cost_micros": 3120000, "ctr": 0.0578},
+			{"age_group": "35-49", "gender": "Male", "impressions": 9310, "clicks": 401, "cost_micros": 1985000, "ctr": 0.0431},
+		},
+		"bucket_count":    2,
+		"metrics_as_of":   "2026-10-07T14:30:00Z",
+		"metrics_pending": false,
+		"data_incomplete": false,
+	})
+})
+
 // microsoftKeywordsWindowEnum is the subset of metricsWindowEnum the Microsoft keyword read can
 // serve: the windows the Microsoft client maps to an explicit UTC date range (reportDateRange).
 // `yesterday` and `last_14_days` have no mapping there, so they are refused by the decoder here
@@ -1557,7 +1619,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"report — see metrics_as_of and metrics_pending — while the next one builds; the first read " +
 			"returns no rows with metrics_pending=true. A report is served only while it covers every " +
 			"campaign the project owns. Saved reports are cached platform data. Off (400, not supported) " +
-			"unless MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for Microsoft.")
+			"unless MICROSOFT_METRICS_ENABLED is true. Age/gender audience demographics are served by get-microsoft-ads-audience.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -1572,6 +1634,43 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/microsoft-ads/keywords")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("get-microsoft-ads-audience", func() {
+		Description("Read Microsoft Advertising audience demographics — one bucket per (age group, gender) — " +
+			"for this project's own campaigns. Scoped to the campaigns this service holds for the project, NOT " +
+			"to the connected ad account, and read from the project's OWN connection only (never the LF system " +
+			"account). Microsoft serves demographics only through its asynchronous Reporting service " +
+			"(AgeGenderAudienceReportRequest), so buckets come from the last finished report — see " +
+			"metrics_as_of and metrics_pending — while the next one builds; the first read returns no buckets " +
+			"with metrics_pending=true. A report is served only while it covers every campaign the project " +
+			"owns. A project with no Microsoft campaigns of its own receives an empty `buckets` array and " +
+			"Microsoft is not contacted. There is NO device breakdown: Microsoft's age/gender report has no " +
+			"device dimension. Spend is in the account's own currency; no FX conversion is performed. Off " +
+			"(400, not supported) unless MICROSOFT_METRICS_ENABLED is true.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.", microsoftKeywordsWindowEnum)
+			Required("project_id")
+		})
+		Result(MicrosoftAdsAudience)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/microsoft-ads/audience")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("window")

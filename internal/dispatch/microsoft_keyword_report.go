@@ -24,14 +24,16 @@ import (
 // the next one across requests (Orchestrator.ReadReportedKeywordPerformance). These three
 // methods are the stateless platform half.
 //
-// AUDIENCE INSIGHTS ARE NOT IMPLEMENTED for Microsoft, deliberately, so this dispatcher does not
-// implement KeywordInsightsReader and Orchestrator.ReadAudienceInsights answers
-// ErrKeywordInsightsUnsupported (400, "not supported for this platform"). Microsoft's
-// AgeGenderAudienceReportRequest carries AgeGroup and Gender but no device dimension
-// (AgeGenderAudienceReportColumn, learn.microsoft.com, read 2026-10-05), so the age/gender/device
-// shape the audience read publishes would need a SECOND report for device, two pending reports
-// per key, and a partial answer whenever only one had finished — not the clean single report
-// this read is built on.
+// Microsoft AUDIENCE insights are a SECOND saved-report kind, not part of
+// KeywordInsightsReader: this dispatcher still does not implement KeywordInsightsReader, so
+// Orchestrator.ReadAudienceInsights (the Google-shaped age/gender/device read) answers
+// ErrKeywordInsightsUnsupported for Microsoft. Microsoft's AgeGenderAudienceReportRequest
+// carries AgeGroup and Gender but NO device dimension (AgeGenderAudienceReportColumn,
+// learn.microsoft.com, read 2026-10-07), so it cannot answer that shape from one report.
+// Instead it serves its own age/gender-only read, get-microsoft-ads-audience, through
+// service.AudienceReportReader (microsoft_audience_report.go) on the same saved-report machinery
+// and the same scope rules as this file; a device breakdown would need a second report per key
+// and is out of scope.
 //
 // Trust boundary: the project's OWN connection only (resolveOwned — no LF system fallback), the
 // account that connection is bound to only, the scope from this service's database, and every
@@ -43,9 +45,16 @@ var _ service.KeywordReportReader = (*MicrosoftDispatcher)(nil)
 // contract follows Microsoft's published v13 documentation and has not been exercised against a
 // live account. Disabled, the read answers the same 400 as a platform with no keyword read.
 func microsoftKeywordsEnabled() error {
+	return microsoftInsightsEnabled("keyword")
+}
+
+// microsoftInsightsEnabled is the gate shared by every report-backed Microsoft insight read
+// (what: "keyword", "audience"): one flag, one sentinel, so every such read answers the same
+// 400 while it is off.
+func microsoftInsightsEnabled(what string) error {
 	if os.Getenv(constants.EnvMicrosoftMetricsEnabled) != "true" {
-		return fmt.Errorf("microsoft keyword insights are disabled (%s is not \"true\") while the reporting contract is unverified: %w",
-			constants.EnvMicrosoftMetricsEnabled, domain.ErrKeywordInsightsUnsupported)
+		return fmt.Errorf("microsoft %s insights are disabled (%s is not \"true\") while the reporting contract is unverified: %w",
+			what, constants.EnvMicrosoftMetricsEnabled, domain.ErrKeywordInsightsUnsupported)
 	}
 	return nil
 }
@@ -53,7 +62,13 @@ func microsoftKeywordsEnabled() error {
 // resolveMicrosoftKeywordClient resolves the project's own connection and returns a client for
 // its bound account. requestedAccount, when non-empty, must be that account.
 func (d *MicrosoftDispatcher) resolveMicrosoftKeywordClient(ctx context.Context, projectID string, platform model.Provider, requestedAccount string) (*microsoft.Client, error) {
-	if err := microsoftKeywordsEnabled(); err != nil {
+	return d.resolveMicrosoftInsightsClient(ctx, projectID, platform, requestedAccount, "keyword")
+}
+
+// resolveMicrosoftInsightsClient is resolveMicrosoftKeywordClient for any report-backed insight
+// read (what names the read for the gate's message).
+func (d *MicrosoftDispatcher) resolveMicrosoftInsightsClient(ctx context.Context, projectID string, platform model.Provider, requestedAccount, what string) (*microsoft.Client, error) {
+	if err := microsoftInsightsEnabled(what); err != nil {
 		return nil, err
 	}
 	res, err := d.creds.resolveOwned(ctx, projectID, platform)
@@ -85,14 +100,40 @@ func (d *MicrosoftDispatcher) resolveMicrosoftKeywordClient(ctx context.Context,
 // campaign can arrive as two rows), and the DISTINCT count must fit the report-scope ceiling.
 // An empty scope is refused: nothing here may build a report wider than the caller's campaigns.
 func microsoftKeywordScopeIDs(scope []model.ProjectCampaignScope) ([]string, error) {
+	return microsoftReportScopeIDs(scope, microsoftKeywordScopeRules)
+}
+
+// microsoftReportScopeRules is one report kind's vocabulary for the shared scope rules: the
+// read's name in error text and the kind's own sentinels (the keyword read's, or the audience
+// read's), so each read's 409 names the read that refused.
+type microsoftReportScopeRules struct {
+	read     string
+	empty    error
+	invalid  error
+	tooLarge error
+	// validateID is the kind's own platform-client id check, so a refused id's error chain names
+	// that kind's scope sentinel (microsoft.ErrKeywordReportScope / ErrAudienceReportScope).
+	validateID func(string) error
+}
+
+var microsoftKeywordScopeRules = microsoftReportScopeRules{
+	read:       "read microsoft keyword performance",
+	empty:      microsoft.ErrKeywordReportScope,
+	invalid:    domain.ErrKeywordReportScopeInvalid,
+	tooLarge:   domain.ErrKeywordReportScopeTooLarge,
+	validateID: microsoft.ValidateKeywordReportCampaignID,
+}
+
+// microsoftReportScopeIDs is microsoftKeywordScopeIDs' rule for any campaign-scoped report kind.
+func microsoftReportScopeIDs(scope []model.ProjectCampaignScope, rules microsoftReportScopeRules) ([]string, error) {
 	if len(scope) == 0 {
-		return nil, fmt.Errorf("read microsoft keyword performance: %w", microsoft.ErrKeywordReportScope)
+		return nil, fmt.Errorf("%s: %w", rules.read, rules.empty)
 	}
 	ids := make([]string, 0, len(scope))
 	seen := make(map[string]bool, len(scope))
 	for _, s := range scope {
-		if err := microsoft.ValidateKeywordReportCampaignID(s.PlatformCampaignID); err != nil {
-			return nil, fmt.Errorf("read microsoft keyword performance: %w: %w", domain.ErrKeywordReportScopeInvalid, err)
+		if err := rules.validateID(s.PlatformCampaignID); err != nil {
+			return nil, fmt.Errorf("%s: %w: %w", rules.read, rules.invalid, err)
 		}
 		if !seen[s.PlatformCampaignID] {
 			seen[s.PlatformCampaignID] = true
@@ -100,8 +141,8 @@ func microsoftKeywordScopeIDs(scope []model.ProjectCampaignScope) ([]string, err
 		}
 	}
 	if len(ids) > microsoft.MaxKeywordReportCampaigns {
-		return nil, fmt.Errorf("read microsoft keyword performance: %d campaigns, at most %d per report: %w",
-			len(ids), microsoft.MaxKeywordReportCampaigns, domain.ErrKeywordReportScopeTooLarge)
+		return nil, fmt.Errorf("%s: %d campaigns, at most %d per report: %w",
+			rules.read, len(ids), microsoft.MaxKeywordReportCampaigns, rules.tooLarge)
 	}
 	return ids, nil
 }
@@ -112,7 +153,12 @@ func microsoftKeywordScopeIDs(scope []model.ProjectCampaignScope) ([]string, err
 // googleAdsScopeForCustomer applies for the reason recorded there. An entry with no recorded
 // account is "unknown, proceed" (microsoftCreationAccountID).
 func microsoftKeywordScope(scope []model.ProjectCampaignScope, accountID string) ([]string, error) {
-	ids, err := microsoftKeywordScopeIDs(scope)
+	return microsoftReportScope(scope, accountID, microsoftKeywordScopeRules)
+}
+
+// microsoftReportScope is microsoftKeywordScope's rule for any campaign-scoped report kind.
+func microsoftReportScope(scope []model.ProjectCampaignScope, accountID string, rules microsoftReportScopeRules) ([]string, error) {
+	ids, err := microsoftReportScopeIDs(scope, rules)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +170,8 @@ func microsoftKeywordScope(scope []model.ProjectCampaignScope, accountID string)
 		}
 	}
 	if mismatched > 0 {
-		return nil, fmt.Errorf("read microsoft keyword performance: %d of this project's %d campaign rows were created under a different ad account than the one its connection is bound to (%s); returning only the rest would report a partial result as complete: %w",
-			mismatched, len(scope), accountID, domain.ErrCampaignAccountMismatch)
+		return nil, fmt.Errorf("%s: %d of this project's %d campaign rows were created under a different ad account than the one its connection is bound to (%s); returning only the rest would report a partial result as complete: %w",
+			rules.read, mismatched, len(scope), accountID, domain.ErrCampaignAccountMismatch)
 	}
 	return ids, nil
 }
