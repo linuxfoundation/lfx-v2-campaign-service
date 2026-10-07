@@ -67,20 +67,20 @@ const unrecognizedValidationPart = "a field failed validation"
 // treated as unrecognized.
 const fieldName = `([A-Za-z0-9_.*\[\]-]+)`
 
-// echoingPartFormats recognizes, by its fixed PREFIX, each of Goa's value-echoing messages
-// (goa.design/goa/v3/pkg/error.go). Only the prefix is matched — it precedes the value — and the
-// whole part is replaced, so nothing after the field name survives.
 // formatPart is the invalid_format prefix; see sanitizeValidationMessage for why a format part
 // ends the message.
 var formatPart = regexp.MustCompile(`^` + fieldName + ` must be formatted as a `)
 
+// echoingPartFormats recognizes, by its fixed PREFIX, each of Goa's value-echoing messages
+// (goa.design/goa/v3/pkg/error.go). Only the prefix is matched — it precedes the value — and the
+// whole part is replaced, so nothing after the field name survives.
 var echoingPartFormats = []struct {
 	re       *regexp.Regexp
 	sentence string
 }{
 	{regexp.MustCompile(`^length of ` + fieldName + ` must be (?:greater|lesser) or equal than `), valueEchoingValidationMessages[goa.InvalidLength]},
 	{regexp.MustCompile(`^value of ` + fieldName + ` must be one of `), valueEchoingValidationMessages[goa.InvalidEnumValue]},
-	{regexp.MustCompile(`^` + fieldName + ` must be formatted as a `), valueEchoingValidationMessages[goa.InvalidFormat]},
+	{formatPart, valueEchoingValidationMessages[goa.InvalidFormat]},
 	{regexp.MustCompile(`^` + fieldName + ` must match the regexp `), valueEchoingValidationMessages[goa.InvalidPattern]},
 	{regexp.MustCompile(`^` + fieldName + ` must be (?:greater|lesser) or equal than `), valueEchoingValidationMessages[goa.InvalidRange]},
 }
