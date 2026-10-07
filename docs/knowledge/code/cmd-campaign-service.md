@@ -108,9 +108,14 @@ Goa's own. `decode_payload` and every error a service method returns keep Goa's 
 `campaign-ref` routes and asserts no 400 body contains it; `TestNonEchoingResponseEncoder` pins the
 per-part rules.
 
-The nil formatter brings back goa v3.25.3's benign upstream race in `goahttp.ErrorEncoder`
-(it writes the shared default into its closure on each non-named error); see
-`upload_admission_wiring_test.go`.
+The nil formatter brings back goa v3.25.3's upstream race in `goahttp.ErrorEncoder`: it assigns
+the default formatter inside the closure it returns, on each non-named error, so concurrent error
+responses on one endpoint write that captured variable unsynchronized. The value is always the same,
+so no response is wrong, but `-race` reports it if a test drives concurrent errors through one
+endpoint. It is an **accepted known upstream issue** (documented at the wiring in `server.go`), not
+avoidable while the formatter must stay nil. Goa fixed it in **v3.30.0** (the nil check moved out
+of the closure); the remedy is a goa bump to v3.30.0 or later with `gen/` regenerated, tracked as a
+follow-up. `main` carried the same race before this change; see `upload_admission_wiring_test.go`.
 
 ## Mounting the audience-builder service (LFXV2-2770)
 
