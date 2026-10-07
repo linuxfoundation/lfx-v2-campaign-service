@@ -2397,6 +2397,18 @@ func TestRejectCredentialQueryParamsInText_SchemelessUserinfo(t *testing.T) {
 		// RFC 3986 sub-delims are legal in a username, so `!` must not end the match.
 		"admin!:PLAINTEXT@events.example/reset/TOKEN",
 		"a(b:PLAINTEXT@host.example",
+		// Sub-delims only, and numbers that are not a real clock behind punctuation or `+`.
+		"!:PLAINTEXT@host.example",
+		"$$:PLAINTEXT@host.example",
+		"alice+2024:1234@ops.example",
+		"alice+9:30@ops.example",
+		"a,2024:1234@h.example",
+		// Clock edges and long numeric pairs (a user ID and PIN, not prose).
+		"Mon,24:00@main.stage",
+		"Mon,9:60@main.stage",
+		"2024:1234@ops.example",
+		"12345:67890@host.example",
+		"!2024:1234@ops.example",
 	}
 	for _, text := range refused {
 		err := rejectCredentialQueryParamsInText(text)
@@ -2441,15 +2453,17 @@ func TestRejectCredentialQueryParamsInText_ClockAgainstHost(t *testing.T) {
 		"*9:30@main.stage*",
 		"'14:00@main.stage'",
 		"Mon,9:30@main.stage",
+		"Mon,23:59@main.stage",
+		"Session;9:30@main.stage",
 	} {
 		if err := rejectCredentialQueryParamsInText(text); err != nil {
 			t.Errorf("ordinary tweet copy %q was refused: %v", text, err)
 		}
 	}
 
-	// Digits on BOTH sides is what makes it a clock. One non-digit side and it is a
-	// credential pair again — this is the coverage the narrower "numeric username"
-	// spelling would have given up.
+	// A clock needs a digit password as well as a clock-shaped username
+	// (redact.UsernameIsClock). One non-digit side and it is a credential pair again — this
+	// is the coverage the narrower "numeric username" spelling would have given up.
 	for _, text := range []string{
 		"9:PLAINTEXT@events.example is the link",
 		"ops9:PLAINTEXT@events.example/portal",

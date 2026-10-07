@@ -35,6 +35,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
 // ---------------------------------------------------------------------------
@@ -2356,11 +2358,12 @@ var schemelessScreenRunRe = regexp.MustCompile(
 // schemelessUserinfoSnapshotRunRe: a narrower class let `admin!:pw@events.example` through.
 // The FIRST character must be unreserved, so a clock opened by prose punctuation —
 // `Keynote (14:00@main.stage)`, `*9:30@main.stage*` — is matched from its first digit and
-// still reads as a clock; userinfoRunIsClockShaped also judges only the username's segment
-// after its last sub-delim, for the `Mon,9:30@main.stage` shape the leftmost match starts
-// on a letter.
+// still reads as a clock. A username made ONLY of sub-delims (`!:pw@host`) is the second
+// alternative, which must be followed directly by the colon — RE2 has no lookahead, so the
+// required `:` after the group is what stops `(` in `(14:00@` from starting a match there.
+// See redact.UsernameIsClock for the exact clock exemption.
 var schemelessUserinfoRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*:[^\s<>@。、！？，：；]*@` +
+	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]+):[^\s<>@。、！？，：；]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>。、！？，：；]*)?`,
 )
@@ -2424,14 +2427,14 @@ func findSchemelessScreenRuns(text string) []string {
 //
 // `keynote 14:00@events.example` parses as userinfo `14:00` on host `events.example`, and
 // there is no syntax that separates it from `bob:pw@events.example`. What separates them
-// is that BOTH sides of the colon are digits. A clock, a score (`3:4`) and a ratio are all
-// digits either side; a password that is also all digits sitting behind a username that is
-// also all digits is a shape nothing in this service produces, and one the scheme-ful
-// screen still catches the moment the operator writes the `https://`.
+// is the shape of the pair, and the exact rule is redact.UsernameIsClock, shared with the
+// snapshot redactor: an all-digit pair of at most two digits a side (a clock, a score `3:4`,
+// a ratio), or a real clock behind any sub-delim except `+` (`Mon,9:30`). `2024:1234@…` is a
+// numeric user ID and PIN and is refused.
 //
 // The narrower test — reject when only the username is numeric — was the first spelling
-// and it gives up `9:hunter2@events.example` for nothing. Requiring both sides keeps that
-// refusal.
+// and it gives up `9:hunter2@events.example` for nothing. The password must be digits too,
+// which keeps that refusal.
 //
 // This is a REFUSAL path, so the cost direction is what decides it: a false positive here
 // blocks a working brief before anything is created, and "keynote 14:00@…" is copy an
@@ -2446,29 +2449,7 @@ func userinfoRunIsClockShaped(run string) bool {
 	if colon < 0 {
 		return false
 	}
-	return isAllASCIIDigits(afterLastSubDelim(userinfo[:colon])) && isAllASCIIDigits(userinfo[colon+1:])
-}
-
-// afterLastSubDelim returns the part of a username after its last RFC 3986 sub-delim. Prose
-// punctuation hard against a clock (`Mon,9:30@`) is admitted into the username by the run
-// pattern, and the clock is the segment after it. Kept in step with pkg/redact.
-func afterLastSubDelim(username string) string {
-	if i := strings.LastIndexAny(username, "!$&'()*+,;="); i >= 0 {
-		return username[i+1:]
-	}
-	return username
-}
-
-func isAllASCIIDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
+	return redact.UsernameIsClock(userinfo[:colon], userinfo[colon+1:])
 }
 
 // twitterUTMParams is the allowlist of utm_* params THIS client generates (the source

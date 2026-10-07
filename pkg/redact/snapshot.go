@@ -6,6 +6,7 @@ package redact
 import (
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -304,32 +305,33 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // `admin!:pw@events.example/reset/TOKEN` was not matched here, and the path-only pass below
 // then left it whole because it contains an `@`: password and path token both persisted.
 // Kept in step with the twitter screen's class. The FIRST character must be unreserved, so a
-// clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit;
-// sanitizeUserinfoSnapshotRun judges the username's segment after its last sub-delim, for
-// `Mon,9:30@main.stage`, whose leftmost match starts on the letter.
+// clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit. A
+// username made ONLY of sub-delims (`!:pw@host`) is the second alternative, held to a colon
+// directly after it by the pattern itself (RE2 has no lookahead). See UsernameIsClock for the
+// exact clock exemption.
 //
 // It is not the only discriminator needed, and the second one is kept in step too: a time
 // of day written hard against a host — `keynote 14:00@events.example` — is the userinfo
 // production byte for byte. See sanitizeUserinfoSnapshotRun.
 var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*:[^\s<>"\x60\]}|\\^@]*@` +
+	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]+):[^\s<>"\x60\]}|\\^@]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
 
-// sanitizeUserinfoSnapshotRun blanks a matched userinfo run unless both sides of the colon
-// are digits, which makes it a clock, a score or a ratio rather than a credential pair.
+// sanitizeUserinfoSnapshotRun blanks a matched userinfo run unless UsernameIsClock calls its
+// username:password pair a clock, a score or a ratio rather than a credential pair.
 //
-// The rule is deliberately identical to userinfoRunIsClockShaped in
-// internal/platform/twitter/client.go — the two patterns are documented as kept in step,
-// and a discriminator that lived on only one of them would put the screen and the redactor
+// internal/platform/twitter's userinfoRunIsClockShaped calls the same UsernameIsClock, so the
+// screen and the redactor share one discriminator; one living on only one side would put them
 // back out of agreement, which is the exact defect the third pass was added to fix.
 //
 // The COST direction differs, and it is worth being clear that this side is the milder
 // one: over-redacting here loses a line of the operator's own copy from a diagnostic
 // snapshot, where over-refusing on the twitter side blocks a brief before anything is
 // created. Milder is not free — the snapshot exists to be read by a human — and the
-// digits-both-sides test gives up no credential shape to buy it.
+// residual UsernameIsClock gives up is bounded: a two-digit password <= 59 behind a username
+// ending in an hour, or a pair of at most two digits a side.
 func sanitizeUserinfoSnapshotRun(run string) string {
 	at := strings.IndexByte(run, '@')
 	if at < 0 {
@@ -337,20 +339,52 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 	}
 	userinfo := run[:at]
 	colon := strings.IndexByte(userinfo, ':')
-	if colon >= 0 && isAllASCIIDigits(afterLastSubDelim(userinfo[:colon])) && isAllASCIIDigits(userinfo[colon+1:]) {
+	if colon >= 0 && UsernameIsClock(userinfo[:colon], userinfo[colon+1:]) {
 		return run
 	}
 	return ""
 }
 
-// afterLastSubDelim returns the part of a username after its last RFC 3986 sub-delim: prose
-// punctuation hard against a clock (`Mon,9:30@`) is admitted into the username by the run
-// pattern, and the clock is the segment after it. Kept in step with internal/platform/twitter.
-func afterLastSubDelim(username string) string {
-	if i := strings.LastIndexAny(username, "!$&'()*+,;="); i >= 0 {
-		return username[i+1:]
+// clockPrefixDelims are the RFC 3986 sub-delims that may sit hard against a clock in prose:
+// every sub-delim except `+`.
+const clockPrefixDelims = "!$&'()*,;="
+
+// UsernameIsClock reports whether a userinfo run's username:password pair is a time of day,
+// score or ratio rather than a credential. Two shapes qualify, and nothing else:
+//
+//   - an ALL-DIGIT pair of at most two digits a side (`14:00`, `9:30`, `3:4`). Longer digit
+//     runs (`2024:1234`, `12345:67890`, and `!2024:1234`, whose match starts at the digit) are
+//     a numeric user ID and PIN, not prose, and are caught. Two short digit pairs stay exempt
+//     on purpose: "finals 3:4@events.example" is ordinary event copy, and refusing it on the X
+//     screen blocks a working brief;
+//   - any sub-delim EXCEPT `+` hard against a REAL clock (`Mon,9:30`, `Session;9:30`,
+//     `Join!9:30`): the username's segment after its last such sub-delim must be a 1–2 digit
+//     hour <= 23 and the password exactly two digits <= 59. A longer number after the
+//     punctuation (`a,2024:1234`, `!2024:1234`) is not a clock.
+//
+// The residual is deliberate and bounded: a credential whose password is two digits <= 59 and
+// whose username ends in punctuation plus an hour. Every other numeric shape is caught.
+//
+// This is the single copy: internal/platform/twitter's tweet screen calls it, so the snapshot
+// redactor and the X screen cannot drift apart.
+//
+// `+` is deliberately NOT a qualifying prefix: it is unreserved in a username and common in
+// real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are credentials.
+func UsernameIsClock(username, password string) bool {
+	if isAllASCIIDigits(username) {
+		return len(username) <= 2 && len(password) <= 2 && isAllASCIIDigits(password)
 	}
-	return username
+	i := strings.LastIndexAny(username, clockPrefixDelims)
+	if i < 0 {
+		return false
+	}
+	hour := username[i+1:]
+	if len(hour) < 1 || len(hour) > 2 || !isAllASCIIDigits(hour) || len(password) != 2 || !isAllASCIIDigits(password) {
+		return false
+	}
+	h, _ := strconv.Atoi(hour)
+	m, _ := strconv.Atoi(password)
+	return h <= 23 && m <= 59
 }
 
 // schemelessPathSnapshotRunRe matches a scheme-less link whose secret is in the PATH and
