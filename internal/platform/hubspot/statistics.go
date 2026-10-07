@@ -349,13 +349,12 @@ func (c *Client) readEmailCounters(ctx context.Context, id int64, start, end tim
 	}
 	emails := *resp.Emails
 
-	// An EXPLICIT null counter is refused before anything else reads the map — and before the
-	// empty-list answer below, so a body that lists no email AND carries a null counter fails
-	// closed rather than reading as "not sent". Decoded into int64 it would become an
-	// authoritative 0 with no error — `"bounce":null` reading as "no bounces" — while an ABSENT
-	// key keeps the meaning HubSpot's omission of a zero counter gives it (see ErrRenamedCounter
-	// for why absence alone is not evidence of anything).
-	// A null is neither: HubSpot said the key exists and declined to give it a value.
+	// An EXPLICIT null counter is refused before anything else reads the map. Decoded into
+	// int64 it would become an authoritative 0 with no error — `"bounce":null` reading as "no
+	// bounces". An ABSENT key keeps HubSpot's omitted-zero meaning (see ErrRenamedCounter for
+	// why absence alone is not evidence of anything); a null is an explicit key with no value,
+	// so it fails closed. The check runs before the empty-list answer below too, so a body that
+	// lists no email AND carries a null counter is refused rather than read as "not sent".
 	counters, err := nonNullCounters(resp.Aggregate.Counters)
 	if err != nil {
 		return nil, err
