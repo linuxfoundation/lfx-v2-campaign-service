@@ -1965,9 +1965,10 @@ the client will actually use.
 `microsoft_keyword_report.go` makes `MicrosoftDispatcher` a `service.KeywordReportReader` — the
 report-backed stand-in for `KeywordInsightsReader.ReadKeywordPerformance`, as
 `AccountReportReader` stands in for `AccountMetricsReader`. It does NOT implement
-`KeywordInsightsReader`, so the audience read stays `ErrKeywordInsightsUnsupported` (400) for
-Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension, so the
-three-dimension answer would need a second report and could be half-finished.
+`KeywordInsightsReader`, so the Google-shaped audience read stays `ErrKeywordInsightsUnsupported`
+(400) for Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension,
+so the three-dimension answer would need a second report and could be half-finished. Microsoft's
+age/gender-only read is a separate capability (below).
 
 - `KeywordReportAccount` — makes NO upstream call. Gate (`MICROSOFT_METRICS_ENABLED`, off →
   `ErrKeywordInsightsUnsupported`), window (`ErrMetricsWindowUnsupported`), scope ceiling (more
@@ -1992,6 +1993,27 @@ three-dimension answer would need a second report and could be half-finished.
 Tests (`microsoft_keyword_report_test.go`): gate off on all three methods, every refusal arm with
 zero upstream calls, the provenance filter, the system-fallback refusal, the submitted scope
 (Campaigns only, no `AccountIds`), and the poll states.
+
+The scope rules, gate and connection resolution are shared helpers parameterised by the read
+(`microsoftReportScopeIDs` / `microsoftReportScope` over `microsoftReportScopeRules`,
+`microsoftInsightsEnabled`, `resolveMicrosoftInsightsClient`); the keyword functions are thin
+wrappers with unchanged behaviour. Each kind's rules carry its own platform id check
+(`validateID`: `ValidateKeywordReportCampaignID` / `ValidateAudienceReportCampaignID`), so a
+refused id's error chain names that kind's scope sentinel.
+
+## Report-backed age/gender audience read (Microsoft, LFXV2-2665)
+
+`microsoft_audience_report.go` makes `MicrosoftDispatcher` a `service.AudienceReportReader`, the
+keyword reader's twin for the `AgeGenderAudienceReportRequest` (no device dimension):
+`AudienceReportEnabled` / `AudienceReportAccount` / `SubmitAudienceReport` /
+`CheckAudienceReport` with the keyword methods' gate, window, own-connection, bound-account,
+de-duplication, 300-ceiling and provenance rules, but the AUDIENCE sentinels
+(`microsoft.ErrAudienceReportScope`, `domain.ErrAudienceScopeInvalid`,
+`domain.ErrAudienceScopeTooLarge`) so a 409 names the read that refused; a 2027 rejection
+(`microsoft.ErrAudienceReportScopeRejected`) is tagged `ErrServiceDefect`. Check maps rows to
+`model.AudienceReportRow` (campaign, age group, gender, counters) and refuses a spend whose micros
+would overflow. Tests (`microsoft_audience_report_test.go`) mirror the keyword ones on the same
+fake Microsoft, plus a check that a malformed report fails rather than returning partial rows.
 
 ## Meta audience read (`meta_audience.go`, LFXV2-2665)
 

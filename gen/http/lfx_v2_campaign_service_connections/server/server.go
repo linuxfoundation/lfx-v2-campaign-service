@@ -67,6 +67,7 @@ type Server struct {
 	GetGoogleAdsAudience        http.Handler
 	GetMetaAdsAudience          http.Handler
 	GetMicrosoftAdsKeywords     http.Handler
+	GetMicrosoftAdsAudience     http.Handler
 	ResolveGoogleAdsCampaign    http.Handler
 	ResolveMicrosoftAdsCampaign http.Handler
 	ResolveMetaAdsCampaign      http.Handler
@@ -163,6 +164,7 @@ func New(
 			{"GetGoogleAdsAudience", "GET", "/projects/{project_id}/google-ads/audience"},
 			{"GetMetaAdsAudience", "GET", "/projects/{project_id}/meta-ads/audience"},
 			{"GetMicrosoftAdsKeywords", "GET", "/projects/{project_id}/microsoft-ads/keywords"},
+			{"GetMicrosoftAdsAudience", "GET", "/projects/{project_id}/microsoft-ads/audience"},
 			{"ResolveGoogleAdsCampaign", "GET", "/projects/{project_id}/google-ads/campaign-ref"},
 			{"ResolveMicrosoftAdsCampaign", "GET", "/projects/{project_id}/microsoft-ads/campaign-ref"},
 			{"ResolveMetaAdsCampaign", "GET", "/projects/{project_id}/meta-ads/campaign-ref"},
@@ -230,6 +232,7 @@ func New(
 		GetGoogleAdsAudience:        NewGetGoogleAdsAudienceHandler(e.GetGoogleAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetMetaAdsAudience:          NewGetMetaAdsAudienceHandler(e.GetMetaAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsHandler(e.GetMicrosoftAdsKeywords, mux, decoder, encoder, errhandler, formatter),
+		GetMicrosoftAdsAudience:     NewGetMicrosoftAdsAudienceHandler(e.GetMicrosoftAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignHandler(e.ResolveGoogleAdsCampaign, mux, decoder, encoder, errhandler, formatter),
 		ResolveMicrosoftAdsCampaign: NewResolveMicrosoftAdsCampaignHandler(e.ResolveMicrosoftAdsCampaign, mux, decoder, encoder, errhandler, formatter),
 		ResolveMetaAdsCampaign:      NewResolveMetaAdsCampaignHandler(e.ResolveMetaAdsCampaign, mux, decoder, encoder, errhandler, formatter),
@@ -304,6 +307,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetGoogleAdsAudience = m(s.GetGoogleAdsAudience)
 	s.GetMetaAdsAudience = m(s.GetMetaAdsAudience)
 	s.GetMicrosoftAdsKeywords = m(s.GetMicrosoftAdsKeywords)
+	s.GetMicrosoftAdsAudience = m(s.GetMicrosoftAdsAudience)
 	s.ResolveGoogleAdsCampaign = m(s.ResolveGoogleAdsCampaign)
 	s.ResolveMicrosoftAdsCampaign = m(s.ResolveMicrosoftAdsCampaign)
 	s.ResolveMetaAdsCampaign = m(s.ResolveMetaAdsCampaign)
@@ -378,6 +382,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetGoogleAdsAudienceHandler(mux, h.GetGoogleAdsAudience)
 	MountGetMetaAdsAudienceHandler(mux, h.GetMetaAdsAudience)
 	MountGetMicrosoftAdsKeywordsHandler(mux, h.GetMicrosoftAdsKeywords)
+	MountGetMicrosoftAdsAudienceHandler(mux, h.GetMicrosoftAdsAudience)
 	MountResolveGoogleAdsCampaignHandler(mux, h.ResolveGoogleAdsCampaign)
 	MountResolveMicrosoftAdsCampaignHandler(mux, h.ResolveMicrosoftAdsCampaign)
 	MountResolveMetaAdsCampaignHandler(mux, h.ResolveMetaAdsCampaign)
@@ -2935,6 +2940,61 @@ func NewGetMicrosoftAdsKeywordsHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "get-microsoft-ads-keywords")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGetMicrosoftAdsAudienceHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint.
+func MountGetMicrosoftAdsAudienceHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/microsoft-ads/audience", f)
+}
+
+// NewGetMicrosoftAdsAudienceHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "get-microsoft-ads-audience" endpoint.
+func NewGetMicrosoftAdsAudienceHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetMicrosoftAdsAudienceRequest(mux, decoder)
+		encodeResponse = EncodeGetMicrosoftAdsAudienceResponse(encoder)
+		encodeError    = EncodeGetMicrosoftAdsAudienceError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-microsoft-ads-audience")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

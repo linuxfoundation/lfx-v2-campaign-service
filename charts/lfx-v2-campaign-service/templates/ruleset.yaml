@@ -180,6 +180,9 @@ spec:
           # Microsoft keyword read (LFXV2-2665): the Google read's row shape, served from a
           # saved asynchronous Microsoft report. A campaign_manager read like its Google sibling.
           - path: /projects/:projectId/microsoft-ads/keywords
+          # Microsoft age/gender audience read (LFXV2-2665): served from a saved asynchronous
+          # Microsoft report like the keyword read above, campaign_manager likewise.
+          - path: /projects/:projectId/microsoft-ads/audience
           # Microsoft twin of google-ads/campaign-ref (LFXV2-2665): maps a Microsoft campaign
           # id to this service's campaign + brief so the Microsoft keyword levers are addressable.
           # A pure project-scoped read of this service's tables, campaign_manager like its sibling.
