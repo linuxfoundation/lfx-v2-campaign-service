@@ -276,12 +276,13 @@ func TestMigration000040_AddsIncludeListIDs(t *testing.T) {
 	require.Regexp(t, regexp.MustCompile(`(?i)DROP COLUMN IF EXISTS include_list_ids`), downSQL)
 	// The revert must refuse while an audience depends on several include lists: dropping the column
 	// would silently narrow it to its first list while it stays built.
-	require.Regexp(t, regexp.MustCompile(`(?i)jsonb_array_length\(a\.include_list_ids\) > 1 \) THEN RAISE EXCEPTION`), downSQL,
-		"000040's down must refuse to drop include_list_ids while a multi-include audience can still be sent")
-	// Scoped to live briefs only, so archiving a brief -- a documented recovery -- clears it. NOT scoped
-	// to built audiences: a failed or building row can be patched back to built after the revert.
-	require.Regexp(t, regexp.MustCompile(`(?i)WHERE b\.status <> 'archived' AND a\.include_list_ids IS NOT NULL`), downSQL,
-		"the guard must ignore archived briefs only, whatever the audience status")
-	require.NotRegexp(t, regexp.MustCompile(`(?i)a\.status = 'built'`), downSQL,
-		"an unbuilt multi-include audience can be patched to built later, so it must still block the revert")
+	// Refuses while a live brief's CURRENT audience (newest, or newest built -- what dispatch reads)
+	// has several include lists, and ignores archived briefs and superseded rows, so both documented
+	// recoveries (re-attach a single master, or archive the brief) actually clear it.
+	require.Regexp(t, regexp.MustCompile(`(?i)jsonb_array_length\(include_list_ids\) > 1 \) THEN RAISE EXCEPTION`), downSQL,
+		"000040's down must refuse to drop include_list_ids while a live multi-include audience can be sent")
+	require.Regexp(t, regexp.MustCompile(`(?i)WHERE b\.status <> 'archived'`), downSQL, "archived briefs must not block the revert")
+	require.Regexp(t, regexp.MustCompile(`(?i)DISTINCT ON \(brief_id, platform\)`), downSQL,
+		"only each brief's newest rows may block, or a re-attach can never clear the guard")
+	require.Regexp(t, regexp.MustCompile(`(?i)WHERE status = 'built'`), downSQL, "the newest BUILT row -- what dispatch reads -- must be checked too")
 }
