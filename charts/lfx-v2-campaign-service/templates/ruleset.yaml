@@ -90,13 +90,12 @@ spec:
           - path: /projects/:projectId/connection-google-ads/test
           - path: /projects/:projectId/connection-google-ads/set-credential
           # Account discovery — a live, credential-scoped read of the ad accounts
-          # reachable upstream. Ruled for the five providers whose dispatchers
+          # reachable upstream. Ruled for the six providers whose dispatchers
           # implement AccountLister: google-ads, meta-ads, linkedin-ads,
-          # microsoft-ads and twitter-ads. reddit-ads has no ListAdAccounts in its
-          # platform client, so the endpoint does not exist for it and ruling the
-          # path would admit one the service does not serve. Each entry must be ruled
-          # here AND admitted by the HTTPRoute regex or the path is unreachable
-          # through the gateway.
+          # microsoft-ads, twitter-ads and reddit-ads (LFXV2-2665). hubspot has no ad
+          # account, so it has no /accounts entry. Each entry must be ruled here AND
+          # admitted by the HTTPRoute regex or the path is unreachable through the
+          # gateway.
           - path: /projects/:projectId/connection-google-ads/accounts
           # Account-scoped monitor reads — a live, credential-scoped read of every
           # campaign under one raw ad account plus derived pacing/action-item rules
@@ -105,10 +104,7 @@ spec:
           # meta-ads and reddit-ads implement AccountMetricsReader, and microsoft-ads
           # and twitter-ads implement AccountReportReader (their metrics come from
           # asynchronous platform reports — Microsoft's Reporting service, X's stats
-          # jobs — served from a saved copy). reddit-ads gets this despite
-          # having no /accounts entry above — it has no AccountLister (no
-          # ListAdAccounts in its platform client) but DOES have a monitor
-          # dispatcher.
+          # jobs — served from a saved copy).
           - path: /projects/:projectId/connection-google-ads/account-monitor
           - path: /projects/:projectId/connection-linkedin-ads
           - path: /projects/:projectId/connection-linkedin-ads/test
@@ -123,6 +119,7 @@ spec:
           - path: /projects/:projectId/connection-reddit-ads
           - path: /projects/:projectId/connection-reddit-ads/test
           - path: /projects/:projectId/connection-reddit-ads/set-credential
+          - path: /projects/:projectId/connection-reddit-ads/accounts
           - path: /projects/:projectId/connection-reddit-ads/account-monitor
           - path: /projects/:projectId/connection-twitter-ads
           - path: /projects/:projectId/connection-twitter-ads/test
@@ -182,6 +179,11 @@ spec:
           # id to this service's campaign + brief so the Microsoft keyword levers are addressable.
           # A pure project-scoped read of this service's tables, campaign_manager like its sibling.
           - path: /projects/:projectId/microsoft-ads/campaign-ref
+          # Meta, Reddit and X twins of the two campaign-ref lookups above (LFXV2-2665): the
+          # same project-scoped read of this service's own tables, campaign_manager likewise.
+          - path: /projects/:projectId/meta-ads/campaign-ref
+          - path: /projects/:projectId/reddit-ads/campaign-ref
+          - path: /projects/:projectId/twitter-ads/campaign-ref
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

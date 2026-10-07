@@ -349,8 +349,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// Account discovery. Unlike /test and /set-credential this is NOT shared by the
 		// whole connection-* family — only the providers whose dispatcher implements
 		// AccountLister have it, so each needs its own route/rule entry on both sides.
-		// The reddit/twitter rows below pin that the alternation was not widened to every
-		// provider by accident.
+		// The hubspot row below pins that the alternation was not widened to every
+		// connection provider by accident.
 		{"/projects/p1/connection-google-ads/accounts", true},
 		{"/projects/p1/connection-meta-ads/accounts", true},
 		{"/projects/p1/connection-linkedin-ads/accounts", true},
@@ -359,6 +359,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// twitter.ListAdAccounts and TwitterDispatcher.ListAccounts. This row is what
 		// fails if only one chart side is edited.
 		{"/projects/p1/connection-twitter-ads/accounts", true},
+		// Reddit joined with LFXV2-2665 (reddit.ListAdAccounts, RedditDispatcher.ListAccounts).
+		{"/projects/p1/connection-reddit-ads/accounts", true},
+		{"/projects/p1/connection-reddit-ads/accounts/x", false},
 		// HubSpot's extra sub-path is /emails, not /accounts (LFXV2-3197): the connection is
 		// already portal-scoped by its token, so there is no account to discover — the choice
 		// is which marketing email a campaign clones. It gets its own branch for that reason,
@@ -368,9 +371,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// Account-scoped monitor reads (LFX One BFF /api/campaigns/*/monitor port):
 		// ruled for exactly the six providers with a monitor dispatcher —
 		// google-ads, linkedin-ads, meta-ads and reddit-ads (AccountMetricsReader) and
-		// microsoft-ads and twitter-ads (AccountReportReader, report-backed). reddit-ads
-		// gets this despite having no /accounts row above (no AccountLister, but it does
-		// have a monitor dispatcher). The hubspot rejected row further down pins that the
+		// microsoft-ads and twitter-ads (AccountReportReader, report-backed). The hubspot
+		// rejected row further down pins that the
 		// alternation was not widened to every connection provider by accident.
 		{"/projects/p1/connection-google-ads/account-monitor", true},
 		{"/projects/p1/connection-linkedin-ads/account-monitor", true},
@@ -454,6 +456,13 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
+		// The Meta, Reddit and X twins (LFXV2-2665).
+		{"/projects/p1/meta-ads/campaign-ref", true},
+		{"/projects/p1/reddit-ads/campaign-ref", true},
+		{"/projects/p1/twitter-ads/campaign-ref", true},
+		{"/projects/p1/reddit-ads/campaign-ref/x", false},
+		{"/projects/p1/linkedin-ads/campaign-ref", false},
+		{"/projects/p1/hubspot-ads/campaign-ref", false},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it
 		// inherits nothing: it needs its own alternation branch in the HTTPRoute regex AND
@@ -482,14 +491,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// --- rejected: unknown provider / unknown connection action ---
 		{"/projects/p1/connection-tiktok-ads", false},
 		{"/projects/p1/connection-google-ads/delete", false},
-		// reddit-ads has NO account discovery: its platform client has no ListAdAccounts,
-		// so its dispatcher does not implement AccountLister and the endpoint does not
-		// exist. Admitting the path would route a request the service answers with a 400
-		// by construction. linkedin-ads, microsoft-ads and twitter-ads used to sit here
-		// for the same reason and now have it -- this row is what fails if a future edit
-		// collapses the discovery branch back into the shared alternation before reddit's
-		// client grows one.
-		{"/projects/p1/connection-reddit-ads/accounts", false},
+		// hubspot has no ad account, so no discovery. linkedin-ads, microsoft-ads,
+		// twitter-ads and reddit-ads used to sit here and each gained discovery; this row is
+		// what fails if the discovery branch is widened to every connection-* provider.
 		{"/projects/p1/connection-hubspot/accounts", false},
 		{"/projects/p1/connection-google-ads/emails", false},
 		// hubspot has no ad account and no monitor dispatcher — account-monitor must not

@@ -770,6 +770,12 @@ func TestListAccounts_RejectsTheReservedSystemScope(t *testing.T) {
 				&conn.ListTwitterAdsAccountsPayload{ProjectID: model.SystemProjectID})
 			return err
 		}},
+		// The route LFXV2-2665 added, for the same reason.
+		{"reddit ads", func(s *ConnectionService) error {
+			_, err := s.ListRedditAdsAccounts(context.Background(),
+				&conn.ListRedditAdsAccountsPayload{ProjectID: model.SystemProjectID})
+			return err
+		}},
 		// Not account discovery, same reserved scope. A GET here would decrypt the LF system
 		// credential and list the Linux Foundation's own marketing emails — subjects and all —
 		// for whoever asked.

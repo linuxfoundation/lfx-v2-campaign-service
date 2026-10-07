@@ -1923,9 +1923,17 @@ zero upstream calls, the provenance filter, the system-fallback refusal, the sub
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
 of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher`, `MicrosoftDispatcher` and
-`TwitterDispatcher` implement it too — five in total, two added in LFXV2-3064 and X in
-LFXV2-3319. Reddit does not, because its platform client exposes no `ListAdAccounts` for a
-dispatcher method to call.
+`TwitterDispatcher` implement it too, and `RedditDispatcher` since LFXV2-2665 — six in total,
+two added in LFXV2-3064, X in LFXV2-3319 and Reddit in LFXV2-2665.
+
+`RedditDispatcher.ListAccounts` resolves through `d.creds.resolve` (the discovery entry point)
+and applies `validateRedditCredentials` — the active / decodable / complete checks
+`resolveRedditClientWithCredsCache` also runs for `Dispatch` — but not the account-id check, so
+the account-less connection discovery exists for is served while every other refusal keeps its
+sentinel. It builds a fresh, uncached client with a zero `AccountConfig` and caller-scoped token
+refresh, calls `reddit.Client.ListAdAccounts` (businesses, then each business's ad accounts), and
+labels each row `name [currency] (business)` via `redditAccountLabel`, falling back to the id
+for a nameless account.
 
 `TwitterDispatcher.ListAccounts` shares `validateTwitterConnection` with `Dispatch` and
 `ToggleStatus`, tolerating exactly one of its outcomes — `ErrAccountNotSelected`, the state the

@@ -282,21 +282,9 @@ func (d *RedditDispatcher) resolveRedditClientWithCredsCache(ctx context.Context
 		return nil, nil, err
 	}
 	defer func() { err = res.systemScoped(err) }()
-	if res.status != model.StatusActive {
-		return nil, res, fmt.Errorf("%w: %w: reddit connection for project %s is %s, not active",
-			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
-	}
-	var creds redditCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		// The unmarshal error is DROPPED, not wrapped: it is derived from the DECRYPTED
-		// credential blob and encoding/json quotes its input. Full rationale on
-		// validateGoogleAdsCredentials, which this follows.
-		return nil, res, fmt.Errorf("%w: %w: reddit credentials for project %s are not valid JSON",
-			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
-	}
-	if creds.ClientID == "" || creds.ClientSecret == "" || creds.RefreshToken == "" {
-		return nil, res, fmt.Errorf("%w: %w: reddit credentials are incomplete (need clientId, clientSecret, refreshToken)",
-			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+	creds, err := validateRedditCredentials(projectID, res)
+	if err != nil {
+		return nil, res, err
 	}
 	if strings.TrimSpace(res.accountID) == "" {
 		// BOTH sentinels: ErrConnectionNotUsable decides the HTTP status, ErrAccountNotSelected
@@ -359,6 +347,92 @@ func (d *RedditDispatcher) resolveRedditClientWithCredsCache(ctx context.Context
 		return build(), res, nil
 	}
 	return client, res, nil
+}
+
+// validateRedditCredentials is the part of the client resolution that does not depend on an
+// account having been chosen: the connection is active, and its decrypted blob decodes with
+// every credential field set. Shared by resolveRedditClientWithCredsCache (which then also
+// requires the account id) and ListAccounts (which must not), so discovery cannot accept a
+// credential dispatch would refuse. Each failure carries ErrConnectionNotUsable plus its reason
+// sentinel; the caller applies res.systemScoped.
+func validateRedditCredentials(projectID string, res *resolved) (redditCreds, error) {
+	if res.status != model.StatusActive {
+		return redditCreds{}, fmt.Errorf("%w: %w: reddit connection for project %s is %s, not active",
+			domain.ErrConnectionNotUsable, domain.ErrConnectionInactive, projectID, res.status)
+	}
+	var creds redditCreds
+	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
+		// The unmarshal error is DROPPED, not wrapped: it is derived from the DECRYPTED
+		// credential blob and encoding/json quotes its input. Full rationale on
+		// validateGoogleAdsCredentials, which this follows.
+		return redditCreds{}, fmt.Errorf("%w: %w: reddit credentials for project %s are not valid JSON",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsUndecodable, projectID)
+	}
+	if creds.ClientID == "" || creds.ClientSecret == "" || creds.RefreshToken == "" {
+		return redditCreds{}, fmt.Errorf("%w: %w: reddit credentials are incomplete (need clientId, clientSecret, refreshToken)",
+			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
+	}
+	return creds, nil
+}
+
+// ListAccounts discovers the Reddit ad accounts reachable via the project's stored credential
+// (LFXV2-2665), returning each account id in the form the connection's account_id stores, plus a
+// display label. It satisfies the service-side AccountLister interface.
+//
+// It deliberately does NOT require an account id — discovery exists to answer "which account
+// should this connection use?", so validateRedditCredentials is applied and the account-id
+// check is not. Every other refusal dispatch makes is made here too, with the same sentinels.
+//
+// d.creds.resolve, the same entry point as the X, Meta, LinkedIn and Microsoft discovery paths:
+// discovery answers "what could this project use?", including through the LF system fallback.
+//
+// The client is built fresh with a ZERO AccountConfig and is not cached: ListAdAccounts asks
+// what the CREDENTIAL reaches and never reads the account config, and a throwaway client keeps
+// its token refresh bound to this call (WithCallerScopedTokenRefresh) rather than seeding the
+// dispatch cache with it.
+func (d *RedditDispatcher) ListAccounts(ctx context.Context, projectID string, platform model.Provider) (accounts []model.AccessibleAccount, err error) {
+	res, err := d.creds.resolve(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	creds, verr := validateRedditCredentials(projectID, res)
+	if verr != nil {
+		return nil, res.systemScoped(verr)
+	}
+	client := reddit.NewClient(
+		reddit.Credentials{ClientID: creds.ClientID, ClientSecret: creds.ClientSecret, RefreshToken: creds.RefreshToken},
+		reddit.AccountConfig{},
+		append(append([]reddit.Option(nil), d.opts...), reddit.WithCallerScopedTokenRefresh())...,
+	)
+	adAccounts, lerr := client.ListAdAccounts(ctx)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// make(..., 0, n), never nil: Orchestrator.ReadAccounts rejects a nil result so that an
+	// empty list keeps meaning "the credential reaches no ad accounts".
+	accounts = make([]model.AccessibleAccount, 0, len(adAccounts))
+	for _, a := range adAccounts {
+		accounts = append(accounts, model.AccessibleAccount{ID: a.ID, Label: redditAccountLabel(a)})
+	}
+	return accounts, nil
+}
+
+// redditAccountLabel builds the picker label for one Reddit ad account: its name (falling back
+// to the id, since a blank row is unpickable), the currency in brackets when reported — a
+// property that distinguishes otherwise identically named accounts, as linkedInAccountLabel
+// renders it — and the business it was listed under, since one credential can reach several.
+func redditAccountLabel(a reddit.AdAccount) string {
+	name := strings.TrimSpace(a.Name)
+	if name == "" {
+		name = a.ID
+	}
+	if cur := strings.TrimSpace(a.Currency); cur != "" {
+		name += " [" + cur + "]"
+	}
+	if biz := strings.TrimSpace(a.BusinessName); biz != "" {
+		name += " (" + biz + ")"
+	}
+	return name
 }
 
 // ToggleStatus pauses or resumes an existing reddit campaign on the platform. It resolves

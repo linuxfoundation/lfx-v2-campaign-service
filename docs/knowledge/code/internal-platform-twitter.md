@@ -1268,3 +1268,9 @@ classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), se
 `ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
 `deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
 targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
+
+`ValidateCampaignID` is the id rule `resolve-twitter-ads-campaign` applies before any lookup:
+the package's `campaignIDRe` (`^[A-Za-z0-9]+$`) and at most 64 characters, untrimmed. Returns
+`ErrInvalidCampaignID`. It contacts nothing.
