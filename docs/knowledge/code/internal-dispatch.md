@@ -3153,9 +3153,10 @@ order is the safety argument:
    Meta's campaign-only fields (`objective`, the budget fields, `bid_strategy`) are load-bearing:
    they make Graph refuse an ad set or ad id read through the same `GET /{id}`. Reddit and X run
    `identityjson.Check` over the RAW response body (`apiResponse.raw`), not the decoded `data`, so a
-   duplicated `data` envelope key is refused rather than resolved last-wins; their bare-404 absence
-   is judged on the status alone (a revoked account would also read absent — low harm, since any
-   dispatch to that account fails the same way).
+   duplicated `data` envelope key is refused rather than resolved last-wins; a campaign 404 is a
+   PROVEN absence only after one confirming read of the connection's own ad account
+   (`confirmAccountReadable`) answers 2xx naming that account — an inaccessible or revoked account
+   404s the same way, so any other answer to the confirming read is unverifiable (503).
 4. **Prove provenance.** Microsoft's read is account-scoped and its Campaign object carries no
    account id, so — as on Google — the request's scope is the proof and a foreign campaign is
    answered absent. Meta's node read is NOT account-scoped (one token reaches many accounts), so the
@@ -3183,8 +3184,12 @@ order is the safety argument:
 
 Definite vs unverifiable, per client (`GetCampaign` in each `campaign_lookup.go`): **absent
 (nil, nil)** is Microsoft `CampaignServiceInvalidCampaignId` (fault or PartialError) or status
-`Deleted`; Meta Graph code 100 + `error_subcode` 33 or status `DELETED`/`ARCHIVED`; Reddit 404 or
-`configured_status` `DELETED`/`ARCHIVED`; X 404 or `deleted: true`. A terminal state reads absent for
+`Deleted`; Meta status `DELETED`/`ARCHIVED` ONLY (Graph 100/33 is "does not exist OR cannot be
+loaded due to missing permissions", so it is unverifiable on every status); Reddit 404 confirmed by a
+readable ad account, or `configured_status` `DELETED`/`ARCHIVED`; X 404 confirmed by a readable
+account, or `deleted: true`. The rule behind each: 404 only when the platform has PROVEN absence —
+anything that could be an access, auth or account problem is 503, because an ambiguous 404 invites
+a duplicate of a campaign that may be live. A terminal state reads absent for
 the reason Google's `REMOVED` does — it cannot spend, so "absent" licenses no duplicate of anything
 serving. **Everything else is an error** the service answers 503 "could not be verified":
 transport, 5xx, an exhausted or over-cap throttle, 401/403, an id echo that differs, a missing name,

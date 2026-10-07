@@ -35,7 +35,7 @@ func TestGetCampaign_ReadsOneCampaignUnderTheClientsAccount(t *testing.T) {
 	if len(reqs) != 1 || reqs[0].method != http.MethodPost || !strings.HasSuffix(reqs[0].path, "/Campaigns/QueryByIds") {
 		t.Fatalf("want exactly one POST .../Campaigns/QueryByIds, got %+v", reqs)
 	}
-	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App"}`; reqs[0].body != want {
+	if want := `{"AccountId":1234567,"CampaignIds":[321],"CampaignType":"Search Shopping DynamicSearchAds Audience Hotel PerformanceMax App ObjectiveBased"}`; reqs[0].body != want {
 		t.Errorf("body = %s, want %s", reqs[0].body, want)
 	}
 	if got, _ := gotAcct.Load().(string); got != "1234567" {
@@ -47,7 +47,7 @@ func TestGetCampaign_ReadsOneCampaignUnderTheClientsAccount(t *testing.T) {
 // DEFINITELY — never read as absent (a duplicate of a live campaign would follow) and never
 // adopted into the Search slot.
 func TestGetCampaign_NonSearchCampaignIsADefiniteRefusal(t *testing.T) {
-	for _, typ := range []string{"Audience", "PerformanceMax", "Shopping", "DynamicSearchAds"} {
+	for _, typ := range []string{"Audience", "PerformanceMax", "Shopping", "DynamicSearchAds", "Hotel", "App", "ObjectiveBased"} {
 		t.Run(typ, func(t *testing.T) {
 			c := newAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = io.WriteString(w, `{"Campaigns":[{"Id":321,"Name":"n","Status":"Active","CampaignType":"`+typ+`"}]}`)
