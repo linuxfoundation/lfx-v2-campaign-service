@@ -688,7 +688,12 @@ var metaAudiencePlacementExample = map[string]any{
 // than reporting a misleading 0.
 var MetaAdsAudience = Type("meta-ads-audience", func() {
 	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
-	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.")
+	// The PROPERTY needs its own example too: left to Goa, the array example repeats the bucket
+	// type's single example (three identical placement buckets), which no response can contain —
+	// rows are merged per segment, and age_gender buckets precede placement ones.
+	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.", func() {
+		Example([]map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample})
+	})
 	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across both dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions double-counts it — total within one dimension only.", func() { Example(24) })
 	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as Meta reports it. ABSENT when no bucket was returned.", func() {
 		Pattern("^[A-Z]{3}$")

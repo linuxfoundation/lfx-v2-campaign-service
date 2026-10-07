@@ -572,7 +572,14 @@ The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both
 2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
 large project can 503 consistently on timeout. The earlier row-only `rejectDuplicateKeys`
 (a pairwise `strings.EqualFold` scan, quadratic in keys and blind to the page envelope) was
-replaced by the page-level `identityjson.Check` above (#283 review).
+replaced by the page-level `identityjson.Check` above (#283 review). Two tests guard it, and
+neither uses an absolute wall-clock bound (#285).
+
+- **Correctness:** a 50,000-key row is accepted. The same row is refused when a case-folded
+  `Campaign_ID` naming the in-scope campaign is appended last over a foreign `campaign_id`. Both
+  run under a 60s hang guard.
+- **Ratio:** each size takes the fastest of three runs, and 4x the keys must cost under 10x the
+  time. Linear measures about 3-4x; the old pairwise scan measured about 16x.
 
 ## Credential scrubbing on error bodies
 

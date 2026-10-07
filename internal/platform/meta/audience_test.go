@@ -428,21 +428,77 @@ func TestGetAudienceInsights_DuplicateKeysAnywhereFailTheRead(t *testing.T) {
 	})
 }
 
-// The duplicate-key pass is LINEAR in the number of keys: a row carrying 50,000 distinct keys
-// must not take the quadratic time a pairwise scan would (≈1.25e9 comparisons).
-func TestGetAudienceInsights_DuplicateKeyCheckIsLinear(t *testing.T) {
+// wideRow is an age_gender row carrying n extra distinct keys. With dupKey empty it is campaign
+// 111's row. With dupKey set, the row's campaign_id is a FOREIGN "999" and dupKey (a case-folded
+// spelling of campaign_id) is appended as the LAST key with the in-scope "111" — exactly the row
+// encoding/json would silently accept as 111's, and one a duplicate check must walk every key to
+// catch.
+func wideRow(n int, dupKey string) string {
 	var extra strings.Builder
-	for i := 0; i < 50_000; i++ {
+	for i := 0; i < n; i++ {
 		fmt.Fprintf(&extra, `"x%d":"",`, i)
 	}
-	row := strings.Replace(ageRow("111", "25-34", "male", 10, 1, "1"), `{"campaign_id"`, `{`+extra.String()+`"campaign_id"`, 1)
-	srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, audiencePage("", row)))
-	start := time.Now()
-	if _, err := newAudienceClient(srv).GetAudienceInsights(context.Background(), "act_777", WindowLast30Days, []string{"111"}); err != nil {
-		t.Fatalf("GetAudienceInsights: %v", err)
+	campaign := "111"
+	if dupKey != "" {
+		campaign = "999"
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("50,000 distinct keys took %s; the duplicate-key check must be linear", elapsed)
+	row := strings.Replace(ageRow(campaign, "25-34", "male", 10, 1, "1"), `{"campaign_id"`, `{`+extra.String()+`"campaign_id"`, 1)
+	if dupKey != "" {
+		row = strings.TrimSuffix(row, "}") + `,"` + dupKey + `":"111"}`
+	}
+	return row
+}
+
+// readWide runs one audience read over a single wide row under a generous HANG guard (not a
+// performance bound): a regression that loops or stalls fails here instead of hanging the suite.
+func readWide(t *testing.T, row string) (*AudienceInsights, error) {
+	t.Helper()
+	srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, audiencePage("", row)))
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	return newAudienceClient(srv).GetAudienceInsights(ctx, "act_777", WindowLast30Days, []string{"111"})
+}
+
+// Correctness on a large row: 50,000 distinct keys are ACCEPTED, and the same row with a
+// case-folded duplicate of campaign_id as its very last key is REFUSED. No wall-clock bound.
+func TestGetAudienceInsights_WideRowsAreJudgedCorrectly(t *testing.T) {
+	if _, err := readWide(t, wideRow(50_000, "")); err != nil {
+		t.Fatalf("50,000 distinct keys must be accepted: %v", err)
+	}
+	if ai, err := readWide(t, wideRow(50_000, "Campaign_ID")); err == nil {
+		t.Fatalf("a case-folded duplicate after 50,000 keys must be refused, got %+v", ai)
+	}
+}
+
+// The duplicate-key check must scale LINEARLY with the number of keys. Measured as a RATIO, not
+// an absolute time, so a slow or loaded CI machine slows both sides alike: each size is timed as
+// the fastest of three runs, and quadrupling the keys must cost well under the 16x a pairwise
+// scan (n²/2 comparisons) costs — linear is ~4x, the bound is 10x. If the pairwise EqualFold scan
+// came back, 20,000 → 80,000 keys goes from ~2e8 to ~3.2e9 comparisons and this fails on the
+// ratio (it did: the scan this replaced measured ~16x), while correctness alone would still pass.
+func TestGetAudienceInsights_DuplicateKeyCheckScalesLinearly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing ratio test")
+	}
+	fastest := func(n int) time.Duration {
+		row := wideRow(n, "")
+		best := time.Duration(1<<63 - 1)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			if _, err := readWide(t, row); err != nil {
+				t.Fatalf("%d keys: %v", n, err)
+			}
+			if d := time.Since(start); d < best {
+				best = d
+			}
+		}
+		return best
+	}
+	small, large := fastest(20_000), fastest(80_000)
+	ratio := float64(large) / float64(small)
+	t.Logf("20,000 keys %s, 80,000 keys %s: %.1fx", small, large, ratio)
+	if ratio > 10 {
+		t.Errorf("4x the keys took %.1fx the time (%s vs %s); the duplicate-key check is not linear", ratio, large, small)
 	}
 }
 
