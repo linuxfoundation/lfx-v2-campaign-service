@@ -244,8 +244,22 @@ func hasAudiencePatch(in *audiences.AudienceUpdateInput) bool {
 // summary and a suppression CLEAR that changes nothing are all still patchable on a stamped row.
 // And a row with no stamp is unaffected, so the pre-provenance rows this feature deliberately did
 // not backfill stay editable exactly as before.
+//
+// include_list_ids is covered too, and more strictly. It is not patchable at all, and a row that
+// records it holds its FIRST id in platform_master_list_id; a master PATCH on such a row would
+// leave the column naming a list the send (which reads include_list_ids) does not target, so the
+// row would describe one audience and dispatch another. That is refused whether or not the row is
+// stamped -- every include_list_ids row is written by attach-existing, which always stamps, but the
+// invariant is the pairing, not the stamp.
 func refuseProvenanceBreakingPatch(cur *model.CampaignAudience, in *audiences.AudienceUpdateInput) error {
-	if in == nil || cur == nil || strings.TrimSpace(cur.BuiltInPortalID) == "" {
+	if in == nil || cur == nil {
+		return nil
+	}
+	if len(unmarshalStrings(cur.IncludeListIDs)) > 0 &&
+		in.PlatformMasterListID != nil && *in.PlatformMasterListID != cur.PlatformMasterListID {
+		return domain.ErrAudienceProvenanceImmutable
+	}
+	if strings.TrimSpace(cur.BuiltInPortalID) == "" {
 		return nil
 	}
 	// A patch that re-sends the SAME master-list id is not a change and must not be refused --
@@ -391,6 +405,11 @@ func audienceFromCompose(projectID, briefID string, outcome *audience.ComposeOut
 func composedInclusionSummary(outcome *audience.ComposeOutcome) string {
 	if outcome.Attached {
 		summary := "Reused existing list " + outcome.Master.Name
+		// An include_list_ids attach sends to every source list directly; naming only the
+		// first would describe a smaller audience than the one the row records.
+		if n := len(outcome.SourceListIDs); n > 1 {
+			summary = fmt.Sprintf("Reused %d existing lists (first: %s)", n, outcome.Master.Name)
+		}
 		if n := len(outcome.AttachedSuppressionIDs); n > 0 {
 			summary += fmt.Sprintf(" with %d suppression list(s)", n)
 		}
@@ -416,9 +435,12 @@ func audienceResult(a *model.CampaignAudience) *audiences.Audience {
 		BriefID:            a.BriefID,
 		Platform:           string(a.Platform),
 		SuppressionListIds: unmarshalStrings(a.SuppressionListIDs),
-		Status:             string(a.Status),
-		Version:            a.Version,
-		Etag:               &etag,
+		// Present only on an include_list_ids attach; absent means the send goes to
+		// platform_master_list_id alone.
+		IncludeListIds: unmarshalStrings(a.IncludeListIDs),
+		Status:         string(a.Status),
+		Version:        a.Version,
+		Etag:           &etag,
 	}
 	if a.PlatformMasterListID != "" {
 		res.PlatformMasterListID = &a.PlatformMasterListID

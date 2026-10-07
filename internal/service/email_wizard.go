@@ -49,7 +49,7 @@ type HubSpotWizardClient interface {
 	GetEmail(ctx context.Context, id string) (*hubspot.Email, error)
 	CloneEmail(ctx context.Context, sourceID, cloneName string) (*hubspot.Email, error)
 	PatchEmailSettings(ctx context.Context, id string, settings hubspot.EmailSettings) (*hubspot.Email, error)
-	SetSendList(ctx context.Context, id, ilsListID string, suppressionListIDs []string) (*hubspot.Email, error)
+	SetSendList(ctx context.Context, id string, ilsListIDs []string, suppressionListIDs []string) (*hubspot.Email, error)
 	GetEmailHTMLWidgets(ctx context.Context, id string) ([]hubspot.EmailHTMLBlock, error)
 	SetEmailHTMLWidgets(ctx context.Context, id string, widgets map[string]string) (*hubspot.Email, error)
 	AuthenticatedPortalID(ctx context.Context) (string, error)
@@ -1242,7 +1242,7 @@ func (s *BriefService) CloneWizardEmail(ctx context.Context, p *briefs.CloneWiza
 	if listID := strings.TrimSpace(strVal(p.SendListID)); listID != "" {
 		// Same request, so the operator is not left with a draft that has no recipients. A
 		// failure here does NOT fail the clone: the draft exists and the list can be set again.
-		if _, lerr := client.SetSendList(ctx, email.ID, listID, nil); lerr != nil {
+		if _, lerr := client.SetSendList(ctx, email.ID, []string{listID}, nil); lerr != nil {
 			slog.WarnContext(ctx, "wizard created the draft but could not apply the requested send list",
 				"email_id", email.ID, "send_list_id", listID, "error", safeErrSummary(lerr))
 			out.ValidationPassed = false
@@ -1375,11 +1375,14 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 		}
 	}
 
-	primary, suppression, listType, rerr := s.resolveWizardSendList(ctx, client, p)
+	sendIDs, suppression, listType, rerr := s.resolveWizardSendList(ctx, client, p)
 	if rerr != nil {
 		return nil, rerr
 	}
-	if _, lerr := client.SetSendList(ctx, emailID, primary, suppression); lerr != nil {
+	// resolveWizardSendList never returns an empty set without an error; sendIDs[0] is the
+	// list the response has always named, kept for callers that read only send_list_id.
+	primary := sendIDs[0]
+	if _, lerr := client.SetSendList(ctx, emailID, sendIDs, suppression); lerr != nil {
 		slog.WarnContext(ctx, "wizard could not apply the send list to the draft",
 			"email_id", emailID, "send_list_id", primary, "error", safeErrSummary(lerr))
 		// "the draft is unchanged" is a DEFINITE claim, and it is false for an unconfirmed
@@ -1417,61 +1420,66 @@ func (s *BriefService) SetWizardSendList(ctx context.Context, p *briefs.SetWizar
 		SendListID: primary,
 		ListType:   &listType,
 		To: map[string]any{
-			"ils_list_id":          primary,
+			"ils_list_id": primary,
+			// Every list the draft sends to: more than one when the brief's audience was
+			// attached from several existing lists (include_list_ids).
+			"ils_list_ids":         sendIDs,
 			"suppression_list_ids": suppression,
 		},
 	}
 	return out, nil
 }
 
-// resolveWizardSendList decides which lists the draft sends to.
-func (s *BriefService) resolveWizardSendList(ctx context.Context, client HubSpotWizardClient, p *briefs.SetWizardSendListPayload) (primary string, suppression []string, listType string, err error) {
+// resolveWizardSendList decides which lists the draft sends to. An explicit request names one
+// list; the brief's audience may name several (an include_list_ids attach).
+func (s *BriefService) resolveWizardSendList(ctx context.Context, client HubSpotWizardClient, p *briefs.SetWizardSendListPayload) (sendIDs, suppression []string, listType string, err error) {
 	suppression = trimmedNonEmpty(p.SuppressionListIds)
 	// send_list_ids takes priority over send_list_id, per the design's own wording.
 	if ids := trimmedNonEmpty(p.SendListIds); len(ids) > 0 {
 		if len(ids) > 1 {
 			// HubSpot takes ONE ILS list per send. Refusing is the honest answer: silently
 			// using the first would send to a subset of the audience the operator named.
-			return "", nil, "", &briefs.BadRequestError{
+			return nil, nil, "", &briefs.BadRequestError{
 				Code:    "400",
 				Message: "a HubSpot send takes a single recipient list; supply one send list id",
 			}
 		}
-		return ids[0], suppression, "explicit", nil
+		return ids[:1], suppression, "explicit", nil
 	}
 	if id := strings.TrimSpace(strVal(p.SendListID)); id != "" {
-		return id, suppression, "explicit", nil
+		return []string{id}, suppression, "explicit", nil
 	}
 
 	// No explicit list: fall back to the brief's built audience.
 	_, _, audiences := s.wizardDeps()
 	if audiences == nil {
-		return "", nil, "", &briefs.BadRequestError{
+		return nil, nil, "", &briefs.BadRequestError{
 			Code:    "400",
 			Message: "send_list_id is required; this deployment cannot resolve the brief's audience",
 		}
 	}
-	listID, audSuppression, portal, aerr := resolveWizardAudience(ctx, audiences, p.ProjectID, p.BriefID)
+	audSendIDs, audSuppression, portal, aerr := resolveWizardAudience(ctx, audiences, p.ProjectID, p.BriefID)
 	if aerr != nil {
-		return "", nil, "", aerr
+		return nil, nil, "", aerr
 	}
 	// The audience's list ids are meaningless outside the portal they were built in, and
 	// dispatch can resolve a DIFFERENT credential than the build used. Proven, not assumed:
 	// see assertAudiencePortal in internal/dispatch for the same guard on the send path.
 	if err := assertWizardPortal(ctx, client, portal); err != nil {
-		return "", nil, "", err
+		return nil, nil, "", err
 	}
 	if len(suppression) == 0 {
 		suppression = audSuppression
 	}
-	return listID, suppression, "audience", nil
+	return audSendIDs, suppression, "audience", nil
 }
 
-// resolveWizardAudience finds the brief's newest BUILT HubSpot audience.
-func resolveWizardAudience(ctx context.Context, repo domain.AudienceRepository, projectID, briefID string) (listID string, suppression []string, portalID string, err error) {
+// resolveWizardAudience finds the brief's newest BUILT HubSpot audience and returns the lists
+// it sends to (model.CampaignAudience.SendListIDs: the master alone, or every include list).
+func resolveWizardAudience(ctx context.Context, repo domain.AudienceRepository, projectID, briefID string) (sendIDs, suppression []string, portalID string, err error) {
 	auds, lerr := repo.ListAudiences(ctx, projectID, briefID)
 	if lerr != nil {
-		return "", nil, "", mapWizardErr(lerr)
+		return nil, nil, "", mapWizardErr(lerr)
 	}
 	// Newest-first. The newest HubSpot audience decides; an older one must NOT be
 	// substituted, because it describes a different set of recipients.
@@ -1480,30 +1488,37 @@ func resolveWizardAudience(ctx context.Context, repo domain.AudienceRepository, 
 			continue
 		}
 		if a.Status != model.AudienceBuilt {
-			return "", nil, "", &briefs.ConflictError{
+			return nil, nil, "", &briefs.ConflictError{
 				Code:    "409",
 				Message: fmt.Sprintf("the brief's audience is %s, not built; build it or supply send_list_id", a.Status),
 			}
 		}
 		id := strings.TrimSpace(a.PlatformMasterListID)
 		if id == "" {
-			return "", nil, "", &briefs.ConflictError{
+			return nil, nil, "", &briefs.ConflictError{
 				Code:    "409",
 				Message: "the brief's built audience has no recipient list id; rebuild it or supply send_list_id",
+			}
+		}
+		send, serr := a.SendListIDs()
+		if serr != nil {
+			return nil, nil, "", &briefs.ConflictError{
+				Code:    "409",
+				Message: "the brief's audience has unreadable include list ids; rebuild it or supply send_list_id",
 			}
 		}
 		var ids []string
 		if len(a.SuppressionListIDs) > 0 && string(a.SuppressionListIDs) != "null" {
 			if uerr := json.Unmarshal(a.SuppressionListIDs, &ids); uerr != nil {
-				return "", nil, "", &briefs.ConflictError{
+				return nil, nil, "", &briefs.ConflictError{
 					Code:    "409",
 					Message: "the brief's audience has unreadable suppression list ids; rebuild it or supply send_list_id",
 				}
 			}
 		}
-		return id, trimmedNonEmpty(ids), strings.TrimSpace(a.BuiltInPortalID), nil
+		return send, trimmedNonEmpty(ids), strings.TrimSpace(a.BuiltInPortalID), nil
 	}
-	return "", nil, "", &briefs.BadRequestError{
+	return nil, nil, "", &briefs.BadRequestError{
 		Code:    "400",
 		Message: "this brief has no built audience; build one or supply send_list_id",
 	}

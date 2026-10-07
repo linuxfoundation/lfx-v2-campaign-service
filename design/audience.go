@@ -99,6 +99,10 @@ var Audience = Type("audience", func() {
 	Attribute("inclusion_summary")
 	Attribute("status")
 	// Response-only fields.
+	//
+	// include_list_ids is response-only: only attach-existing writes it, after reading every id
+	// back from the portal. Accepting it on create/patch would record recipients nobody verified.
+	Attribute("include_list_ids", ArrayOf(String), "Existing lists the send goes to directly when the audience was attached to several lists; platform_master_list_id is then the first of them. Absent for a single master list")
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
 	Required("id", "project_id", "brief_id", "platform", "status", "version")

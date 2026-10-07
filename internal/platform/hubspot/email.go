@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -657,38 +658,41 @@ func (c *Client) PatchEmailSettings(ctx context.Context, id string, s EmailSetti
 	return c.patchEmail(ctx, id, payload)
 }
 
-// SetSendList sets the recipient (ILS) send list and suppression lists on a draft.
-// ilsListID is the built master audience (an ILS list id); suppressionListIDs are
-// excluded.
+// SetSendList sets the recipient (ILS) send lists and suppression lists on a draft.
+// ilsListIDs are the lists the email goes to -- the built master audience, or several
+// existing lists attached directly (HubSpot's contactIlsLists.include is an array and
+// sends to their union); suppressionListIDs are excluded. The include ids are trimmed,
+// blanks and duplicates dropped, and at least one must remain.
 //
 // Recipients are set ONLY via contactIlsLists. HubSpot's ILS migration removed
 // functional support for the legacy `contactLists` recipient field after
 // 2024-10-31 (it's silently non-functional now), so this client never emits it —
 // callers resolve an ILS list id from the Lists v3 API. A COMPLETE `to` object is
 // sent (contactIds cleared) so no stale clone-source recipients remain. MUTATING.
-func (c *Client) SetSendList(ctx context.Context, id, ilsListID string, suppressionListIDs []string) (*Email, error) {
+func (c *Client) SetSendList(ctx context.Context, id string, ilsListIDs []string, suppressionListIDs []string) (*Email, error) {
 	id = strings.TrimSpace(id)
-	ilsListID = strings.TrimSpace(ilsListID)
-	if id == "" || ilsListID == "" {
-		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and ILS send-list id")
+	include := uniqueIDs(ilsListIDs)
+	if id == "" || len(include) == 0 {
+		return nil, fmt.Errorf("hubspot: SetSendList requires a non-empty email id and at least one ILS send-list id")
 	}
 	suppressionIDs := cleanIDs(suppressionListIDs)
 	// HubSpot applies contactIlsLists exclusions AFTER inclusions, so a send-list id
 	// that also appears in the suppression set would silently exclude the ENTIRE
-	// selected audience — the PATCH returns 2xx while the email ends up with zero
-	// recipients. Reject that contradictory input up front (before the mutating PATCH)
-	// rather than let it look like a successful send-list assignment.
+	// selected list — the PATCH returns 2xx while the email ends up without those
+	// recipients (all of them, for a single send list). Reject that contradictory input
+	// up front (before the mutating PATCH) rather than let it look like a successful
+	// send-list assignment. Every include id is checked, not just the first.
 	for _, s := range suppressionIDs {
-		if s == ilsListID {
-			return nil, fmt.Errorf("hubspot: SetSendList send-list id %q is also in the suppression list — the audience would be fully excluded", ilsListID)
+		if slices.Contains(include, s) {
+			return nil, fmt.Errorf("hubspot: SetSendList send-list id %q is also in the suppression list — that list would be fully excluded", s)
 		}
 	}
 	to := map[string]any{
 		// Clear individual contacts the clone source may have carried over.
 		"contactIds": map[string]any{"include": []string{}, "exclude": []string{}},
-		// ilsListID is trimmed above — a whitespace-padded id sent raw could be
+		// The include ids are trimmed above — a whitespace-padded id sent raw could be
 		// rejected by HubSpot, leaving the email with no recipients.
-		"contactIlsLists": map[string]any{"include": []string{ilsListID}, "exclude": suppressionIDs},
+		"contactIlsLists": map[string]any{"include": include, "exclude": suppressionIDs},
 	}
 	return c.patchEmail(ctx, id, map[string]any{"to": to})
 }
@@ -742,6 +746,20 @@ func (c *Client) emailEditURL(emailID string) string {
 
 // cleanIDs trims, drops empties, and returns a non-nil slice (so an omitted list
 // serializes as [] not null).
+// uniqueIDs is cleanIDs with duplicates dropped, first occurrence kept. Used for send lists,
+// where a repeated id is harmless to HubSpot but would make the recorded include set read
+// as more lists than the email actually targets.
+func uniqueIDs(ids []string) []string {
+	clean := cleanIDs(ids)
+	out := make([]string, 0, len(clean))
+	for _, s := range clean {
+		if !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func cleanIDs(ids []string) []string {
 	out := make([]string, 0, len(ids))
 	for _, s := range ids {

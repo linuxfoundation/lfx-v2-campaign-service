@@ -1847,6 +1847,13 @@ reports false numbers:
   provenance read whose failure is only ever logged must not be able to spend the budget those
   calls need.
 
+  The send targets `CampaignAudience.SendListIDs()`, not `platform_master_list_id`:
+  `resolveBuiltAudience` returns every recorded include list (or the master alone when none are
+  recorded) and `SetSendList` receives all of them. The pre-clone overlap check runs against that
+  WHOLE set — a suppression naming any include list is refused before the clone, because HubSpot
+  applies exclusions after inclusions and the send would exclude that entire list while reporting
+  success. Unreadable include ids fail the dispatch rather than falling back to the master.
+
 - **The window does not scope the counters.** HubSpot's statistics span selects WHICH EMAILS
   are in scope by SEND date; the counters returned are that email's totals to date. `today`
   and `last_30_days` on an email sent this morning return the same numbers. `Window` records
@@ -3826,6 +3833,17 @@ for list ids it never saw. The orchestration records nothing itself — it only 
 service layer cannot obtain anywhere else honestly. With no brief id the path is unchanged, which
 is why the lookup is conditional: it is a live round trip the exploratory caller should not pay
 for.
+
+`AttachExisting(ctx, projectID, includeIDs, suppressionIDs)` verifies lists that ALREADY exist
+instead of creating any, so it is the one write-adjacent path here that creates nothing upstream.
+The include ids are trimmed and de-duplicated (`audience.UniqueIDs`; none left is
+`ErrNoInclusionLists`), suppressions that repeat an include id are dropped
+(`audience.ExclusionIDs` — the service refuses an explicit overlap with a 400 before this runs),
+and EVERY id is read back from the portal: the first include as the master, then the remaining
+includes, then the suppressions, so a mistyped id (or one that is not a contact list) is a 404
+rather than an audience that silently reaches fewer people. `SourceListIDs` reports the master
+followed by the other include ids. The portal is resolved only after every read succeeds, and a
+blank one is `ErrComposePortalUnconfirmed` rather than an unstamped row.
 
 `LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
 once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a
