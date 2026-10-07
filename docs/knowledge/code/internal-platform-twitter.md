@@ -1303,3 +1303,34 @@ returned for the dispatcher to compare.
 the RAW body and a strict id echo. A 404 or deleted campaign is `(nil, nil)`; a 404 or deleted
 line item only leaves `LineItem` nil; a line item of another campaign is
 `ErrLineItemNotInCampaign`; an amount that is not a non-negative integer is an error.
+
+## Audience insights read (`audience.go`, LFXV2-2665)
+
+`GetAudienceInsights(ctx, window, campaignIDs)` reads AGE, GENDER and PLATFORMS segmentations
+over the project's own campaigns. X serves segmentation only through the ASYNCHRONOUS stats-jobs
+API (the synchronous `stats/accounts/:account_id` takes no `segmentation_type`), so one call:
+`GET accounts/:account_id` (timezone required; `currency` optional, ISO 4217 when present; id
+must echo the account; `identityjson.Check` on the raw body) → `statsJobsFitBudget` → one paced
+`POST stats/jobs/accounts/:account_id` per segmentation per batch of ≤20 ids (`postStatsJob`,
+shared with the monitor's `createStatsJob`: `entity=CAMPAIGN`, `granularity=TOTAL`,
+`placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`, plus `segmentation_type`) → one
+`GET stats/jobs/…?job_ids=<all>` per poll (first immediate, then every
+`audiencePollInterval`, at most `audienceMaxPolls`) → each results file through
+`downloadStatsFile`. The read WAITS inside the caller's deadline instead of persisting a report
+id: unfinished jobs are `ErrAudienceJobsUnfinished` (503) and are left to expire on X.
+Scope: non-empty, every id `ValidateCampaignID` (`ErrAudienceScopeInvalid`), de-duplicated, at
+most `MaxAudienceCampaigns` (40 — a local bound: two batches, six jobs; `ErrAudienceScopeTooLarge`).
+Window: the metrics read's days (today; yesterday; today and the six before) on the ACCOUNT's
+calendar via `localDayStart`, `[start, end)`; non-whole-hour bounds are
+`ErrReportWindowNotWholeHours`; other windows `ErrUnsupportedWindow`. Trust: `identityjson.Check`
+on every job, status and file body; a status answer naming an unasked or repeated job, a
+FAILED/CANCELLED job or a SUCCESS without url fails; every file entity must be in THAT job's
+batch, once; `segment.segment_name` is required and must match `audienceValueRE` (returned
+verbatim, never echoed); a repeated (campaign, segment) fails; counters are absent/null → 0 (X's
+"no activity"), else exactly one non-negative integer bucket, summed with an int64 overflow
+guard; CTR after summing. Ordered by dimension, impressions desc, value. Tests:
+`audience_test.go` (stateful stub; segmentation params, batching and bound, account-tz windows
+incl. DST and a UTC/local day split, polling bound and deadline, duplicate/case-folded keys at
+every level, null counters, malformed files, 401/403/429/5xx, job defects, budget check).
+UNVERIFIED against a live account: the segmented file shape and `segment_name` vocabulary, and
+X's forum reports segmented files with all-null metrics, which would read as zeros.

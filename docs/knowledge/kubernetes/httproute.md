@@ -17,7 +17,7 @@ The service serves its API under `/projects/{projectId}/…` (the approved contr
 every endpoint is nested under a project and gated on that project's
 `campaign_manager` relation). `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
-`jobs`, the `{provider}/metrics` segment, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|campaign-ref`, `meta-ads/audience`, `(meta-ads|reddit-ads|twitter-ads)/campaign-ref`, `hubspot`,
+`jobs`, the `{provider}/metrics` segment, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|campaign-ref`, `(meta-ads|twitter-ads)/audience`, `(meta-ads|reddit-ads|twitter-ads)/campaign-ref`, `hubspot`,
 `audience-builder`)
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.

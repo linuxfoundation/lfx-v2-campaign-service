@@ -2878,6 +2878,17 @@ type MetaAudienceReader interface {
 	ReadMetaAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.MetaAudienceInsights, error)
 }
 
+// TwitterAudienceReader is an OPTIONAL dispatcher capability: X's age, gender and platform
+// audience segmentations for the campaigns a project OWNS. Type-asserted like
+// MetaAudienceReader, so a dispatcher without it — every platform but X — yields
+// ErrKeywordInsightsUnsupported → 400. Separate from MetaAudienceReader because the result shape
+// differs (one value per X segment, not Meta's combined breakdowns). scope carries
+// KeywordInsightsReader's contract: never empty from the orchestrator, and the adapter refuses
+// the whole read on any provenance mismatch rather than dropping entries.
+type TwitterAudienceReader interface {
+	ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error)
+}
+
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
 // existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
 // clean ErrKeywordActionsUnsupported → 400.
@@ -3065,7 +3076,33 @@ func (o *Orchestrator) ReadMetaAudienceInsights(ctx context.Context, projectID s
 		})
 }
 
-// readScopedAudience is the scope-then-read sequence both audience reads share, after their
+// ReadTwitterAudienceInsights reads X audience segmentations across the project's OWN campaigns.
+// Same shape as ReadMetaAudienceInsights — capability check, then readScopedAudience (empty
+// scope answers empty WITHOUT contacting X) — only the capability and result type differ.
+func (o *Orchestrator) ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.TwitterAudienceInsights, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(TwitterAudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error) {
+			return reader.ReadTwitterAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.TwitterAudienceInsights {
+			return &model.TwitterAudienceInsights{Window: window, Buckets: []model.TwitterAudienceBucket{}}
+		},
+		func(ai *model.TwitterAudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.TwitterAudienceBucket{}
+			}
+		})
+}
+
+// readScopedAudience is the scope-then-read sequence every audience read shares, after its
 // capability check:
 //
 //   - the scope comes from this service's own rows (projectCampaignScope), and a lookup failure

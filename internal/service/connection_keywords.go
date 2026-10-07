@@ -120,6 +120,11 @@ func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projec
 		slog.WarnContext(ctx, "audience insights blocked: a campaign in scope has a malformed platform id",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.ConflictError{Code: "409", Message: domain.ErrAudienceScopeInvalid.Error()}
+	case errors.Is(err, domain.ErrAccountTimezoneUnsupported):
+		// The X audience read: the account's timezone cannot be queried on its own days (see the
+		// sentinel). Permanent for the account, not a fault of the connection or the request, so
+		// neither 503 nor 400 — the monitor's 409, in the shared ConflictError this route declares.
+		return &conn.ConflictError{Code: "409", Message: domain.ErrAccountTimezoneUnsupported.Error()}
 	default:
 		return s.classifyDiscoveryError(ctx, projectID, d, err)
 	}

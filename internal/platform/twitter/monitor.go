@@ -819,8 +819,28 @@ func (c *Client) activeCampaignIDs(ctx context.Context, start, end time.Time) ([
 
 // createStatsJob POSTs one stats job and returns its id_str.
 func (c *Client) createStatsJob(ctx context.Context, campaignIDs []string, start, end time.Time) (string, error) {
+	resp, err := c.postStatsJob(ctx, campaignIDs, start, end, "")
+	if err != nil {
+		return "", err
+	}
+	var job statsJobElement
+	if resp == nil || len(resp.Data) == 0 || json.Unmarshal(resp.Data, &job) != nil {
+		return "", errors.New("create x stats job: response carried no job object")
+	}
+	if !validStatsJobID(job.IDStr) {
+		return "", errors.New("create x stats job: response carried no usable id_str")
+	}
+	return job.IDStr, nil
+}
+
+// postStatsJob paces, then POSTs one CAMPAIGN stats job over [start, end) with the parameter set
+// both job creators share: granularity=TOTAL, placement=ALL_ON_TWITTER,
+// metric_groups=ENGAGEMENT,BILLING. segmentation, when non-empty, is sent as segmentation_type
+// (the audience read; https://docs.x.com/x-ads-api/analytics, Segmentation). The caller decodes
+// the response.
+func (c *Client) postStatsJob(ctx context.Context, campaignIDs []string, start, end time.Time, segmentation string) (*apiResponse, error) {
 	if err := c.pace(ctx); err != nil {
-		return "", fmt.Errorf("create x stats job: %w", err)
+		return nil, fmt.Errorf("create x stats job: %w", err)
 	}
 	params := map[string]string{
 		"entity":        "CAMPAIGN",
@@ -831,18 +851,14 @@ func (c *Client) createStatsJob(ctx context.Context, campaignIDs []string, start
 		"placement":     "ALL_ON_TWITTER",
 		"metric_groups": "ENGAGEMENT,BILLING",
 	}
+	if segmentation != "" {
+		params["segmentation_type"] = segmentation
+	}
 	resp, err := c.doRequestAbs(ctx, http.MethodPost, c.statsJobsURL(), "stats/jobs", params, false /* a repeated create builds a second job */)
 	if err != nil {
-		return "", fmt.Errorf("create x stats job: %w", err)
+		return nil, fmt.Errorf("create x stats job: %w", err)
 	}
-	var job statsJobElement
-	if resp == nil || len(resp.Data) == 0 || json.Unmarshal(resp.Data, &job) != nil {
-		return "", errors.New("create x stats job: response carried no job object")
-	}
-	if !validStatsJobID(job.IDStr) {
-		return "", errors.New("create x stats job: response carried no usable id_str")
-	}
-	return job.IDStr, nil
+	return resp, nil
 }
 
 func validStatsJobID(id string) bool {

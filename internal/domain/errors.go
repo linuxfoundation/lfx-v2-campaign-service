@@ -418,7 +418,9 @@ var (
 	// as the account's timezone keeps a fractional-hour offset (all year in most such zones;
 	// only part of the year in one with a half-hour DST shift, e.g. Australia/Lord_Howe);
 	// surfaced by Orchestrator.ReadReportedAccountCampaigns and mapped to 409 with reason
-	// "account_timezone_unsupported". Producer: the X monitor.
+	// "account_timezone_unsupported". Producers: the X monitor, and the X audience read (before
+	// any stats job), whose shared-ConflictError 409 carries this same text
+	// (classifyInsightsErrorFor).
 	//
 	// The message is fixed, client-safe text: it reaches the HTTP body.
 	ErrAccountTimezoneUnsupported = errors.New("the account's timezone does not start its days on a whole UTC hour, which the platform's report window requires")
@@ -451,15 +453,17 @@ var (
 	// the rest of the project as all of it. The message is fixed, client-safe text.
 	ErrKeywordReportScopeInvalid = errors.New("a campaign in this project has a stored platform id the keyword report cannot be scoped to")
 
-	// ErrAudienceScopeTooLarge indicates the Meta audience read refused because the project owns
-	// more campaigns on the platform than one Insights campaign-id filter is bounded to
-	// (meta.MaxAudienceCampaigns, a local bound on the request URL). Refused before any upstream
+	// ErrAudienceScopeTooLarge indicates the Meta or X audience read refused because the project
+	// owns more campaigns on the platform than one read is bounded to (meta.MaxAudienceCampaigns,
+	// a local bound on the Insights request URL; twitter.MaxAudienceCampaigns, a local bound on the
+	// stats jobs one request creates and awaits). Refused before any upstream
 	// call and PERMANENT while the project stays that large, for ErrKeywordReportScopeTooLarge's
 	// reasons. The message is fixed, client-safe text: it reaches the HTTP body.
 	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
 
-	// ErrAudienceScopeInvalid indicates the Meta audience read refused because a campaign in the
-	// project's scope has a stored platform id that is not a valid Meta campaign id. Refused
+	// ErrAudienceScopeInvalid indicates the Meta or X audience read refused because a campaign in
+	// the project's scope has a stored platform id that is not a valid campaign id on that
+	// platform. Refused
 	// before any upstream call, PERMANENT until the row is corrected, for
 	// ErrKeywordReportScopeInvalid's reasons. The message is fixed, client-safe text.
 	ErrAudienceScopeInvalid = errors.New("a campaign in this project has a stored platform id the audience read cannot be scoped to")

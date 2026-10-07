@@ -2017,6 +2017,32 @@ returned unclassified (503 at the service). Tests: `meta_audience_test.go` (mapp
 refusal with zero upstream calls, partial mismatch, unknown provenance proceeds, 403 stays
 unclassified).
 
+## X audience read (`twitter_audience.go`, LFXV2-2665)
+
+`TwitterDispatcher` implements `service.TwitterAudienceReader` (`ReadTwitterAudienceInsights`),
+a third capability beside `KeywordInsightsReader` and `MetaAudienceReader`: X's AGE, GENDER and
+PLATFORMS segmentations carry ONE value each (so the bucket is `dimension` + `value`, not Meta's
+named fields), and X has no keyword read. Every other dispatcher lacks it → 400 not supported.
+
+Order: `twitterAudienceEnabled()` first — `TWITTER_METRICS_ENABLED` must be exactly `"true"`,
+else `ErrKeywordInsightsUnsupported` (400) before any credential read, because the read runs on
+the same unverified asynchronous stats-jobs contract as the X account monitor (the synchronous
+`ReadMetrics` is not gated); then the window through `twitterMetricsWindow` (yesterday, today,
+last_7_days; anything longer → `ErrMetricsWindowUnsupported`, 400); then
+`creds.resolveExisting(…, "")` — project-then-system, so a fallback project reads only its own
+campaigns and no connection is `ErrNotFound` (404); `validateTwitterConnection` (inactive,
+undecodable, incomplete, no account → `ErrConnectionNotUsable`, 400 own / 500 system fallback);
+`twitter.ValidateMonitorAccountID` on the stored account (`ErrConnectionNotUsable`); then
+`twitterScopeForAccount`: every stored id must pass `twitter.ValidateCampaignID`
+(`ErrAudienceScopeInvalid`, 409) and ANY entry whose `twitterCreationAccountID` differs refuses
+the whole read (`ErrCampaignAccountMismatch`, 409). Only then the CACHED client (shared write
+pacer) calls `twitter.Client.GetAudienceInsights`; `ErrAudienceScopeTooLarge` /
+`ErrAudienceScopeInvalid` / `ErrReportWindowNotWholeHours` are re-tagged with the domain
+sentinels (the last as `ErrAccountTimezoneUnsupported`, 409), every upstream failure is returned
+unclassified (503). Tests: `twitter_audience_test.go` (mapping and account-tz job window, every
+refusal with zero upstream calls, flag values, partial mismatch, own and LF-fallback reads,
+fractional-offset zone creates no job, 403 unclassified).
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`

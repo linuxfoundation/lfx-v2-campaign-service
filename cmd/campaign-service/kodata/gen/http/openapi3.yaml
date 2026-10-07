@@ -7335,17 +7335,17 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -7357,7 +7357,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -7375,7 +7375,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -7393,25 +7393,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -7452,7 +7434,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError110'
+                                $ref: '#/components/schemas/UnauthorizedError111'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8286,15 +8268,7 @@ paths:
                                       name: KubeCon NA 2026
                                       start_date: "2026-11-01"
                                       utm: kubecon-na-2026
-                                    - id: "112233445566"
-                                      name: KubeCon NA 2026
-                                      start_date: "2026-11-01"
-                                      utm: kubecon-na-2026
-                                    - id: "112233445566"
-                                      name: KubeCon NA 2026
-                                      start_date: "2026-11-01"
-                                      utm: kubecon-na-2026
-                                capped: false
+                                capped: true
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -8317,7 +8291,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError108'
+                                $ref: '#/components/schemas/UnauthorizedError109'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8417,7 +8391,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError109'
+                                $ref: '#/components/schemas/UnauthorizedError110'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8521,7 +8495,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError107'
+                                $ref: '#/components/schemas/UnauthorizedError108'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9256,22 +9230,12 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -9283,7 +9247,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -9301,7 +9265,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -9319,7 +9283,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -9360,7 +9324,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError111'
+                                $ref: '#/components/schemas/UnauthorizedError112'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9454,7 +9418,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError103'
+                                $ref: '#/components/schemas/UnauthorizedError104'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10195,22 +10159,12 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -10222,7 +10176,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -10240,7 +10194,43 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: normal
+                                      pacing_pct: 87
+                                      pacing_unknown: false
+                                      platform_campaign_id: "24183781329"
+                                      spend: 482.13
+                                      start_date: "2026-08-01"
+                                      status: ENABLED
+                                      total_budget: 5000
+                                    - budget_day: 150
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
+                                      clicks: 3110
+                                      conversions: 12.5
+                                      ctr: 6.45
+                                      end_date: "2026-11-30"
+                                      fetch_failed: false
+                                      impressions: 48200
+                                      is_search_channel: true
+                                      name: KubeCon NA 2026 - Search
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -10281,7 +10271,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError112'
+                                $ref: '#/components/schemas/UnauthorizedError113'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10375,7 +10365,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError102'
+                                $ref: '#/components/schemas/UnauthorizedError103'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11111,12 +11101,22 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: LOW
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -11128,7 +11128,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -11146,43 +11146,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -11223,7 +11187,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError114'
+                                $ref: '#/components/schemas/UnauthorizedError115'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11317,7 +11281,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError104'
+                                $ref: '#/components/schemas/UnauthorizedError105'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12054,22 +12018,22 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -12081,7 +12045,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -12099,7 +12063,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -12117,7 +12081,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -12158,7 +12122,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError113'
+                                $ref: '#/components/schemas/UnauthorizedError114'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12252,7 +12216,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError106'
+                                $ref: '#/components/schemas/UnauthorizedError107'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12994,17 +12958,22 @@ paths:
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
                                     - action: Increase daily budget or check for delivery limits
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
                                       issue: 'Underspending: 42% of expected spend'
-                                      priority: HIGH
+                                      priority: LOW
+                                    - action: Increase daily budget or check for delivery limits
+                                      campaign_id: "24183781329"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      issue: 'Underspending: 42% of expected spend'
+                                      priority: LOW
                                 campaigns:
                                     - budget_day: 150
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -13016,7 +12985,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -13034,43 +13003,7 @@ paths:
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
+                                      pacing_label: normal
                                       pacing_pct: 87
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
@@ -13111,7 +13044,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError115'
+                                $ref: '#/components/schemas/UnauthorizedError116'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13215,7 +13148,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError105'
+                                $ref: '#/components/schemas/UnauthorizedError106'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13765,7 +13698,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError97'
+                                $ref: '#/components/schemas/UnauthorizedError98'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14308,7 +14241,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError99'
+                                $ref: '#/components/schemas/UnauthorizedError100'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14414,7 +14347,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError98'
+                                $ref: '#/components/schemas/UnauthorizedError99'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14471,14 +14404,14 @@ paths:
                   schema:
                     type: string
                     description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Microsoft.
-                    example: last_30_days
+                    example: this_month
                     enum:
                         - today
                         - last_7_days
                         - last_30_days
                         - this_month
                         - last_month
-                  example: last_30_days
+                  example: this_month
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -14544,8 +14477,22 @@ paths:
                                       quality_score: 7
                                       status: ENABLED
                                       text: kubernetes training
+                                    - ad_group_id: "176216228"
+                                      ad_group_name: Registration - Exact
+                                      campaign_id: "21234567890"
+                                      campaign_name: KubeCon NA 2026 - Search
+                                      clicks: 311
+                                      conversions: 12.5
+                                      cost_micros: 1284000
+                                      criterion_id: "305729261"
+                                      ctr: 0.0645
+                                      impressions: 4820
+                                      match_type: EXACT
+                                      quality_score: 7
+                                      status: ENABLED
+                                      text: kubernetes training
                                 truncated: false
-                                window: last_7_days
+                                window: last_month
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -14568,7 +14515,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError96'
+                                $ref: '#/components/schemas/UnauthorizedError97'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14684,7 +14631,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError100'
+                                $ref: '#/components/schemas/UnauthorizedError101'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14697,6 +14644,140 @@ paths:
                             example:
                                 code: "404"
                                 message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/twitter-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-twitter-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read X (Twitter) Ads audience insights — age, gender and device platform — for this project''s own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `buckets` array and X is not contacted. The window is the X metrics read''s — today, yesterday or the last 7 days including today — in the ad ACCOUNT''s timezone; longer windows are refused (400). All three segmentations must load or the request fails (503). Billed charge is in the account''s own currency (`account_currency`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.'
+            operationId: lfx-v2-campaign-service-connections#get-twitter-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: 'Reporting window; defaults to last_7_days when omitted. X windows only: longer ones are refused.'
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: 'Reporting window; defaults to last_7_days when omitted. X windows only: longer ones are refused.'
+                    example: today
+                    enum:
+                        - today
+                        - yesterday
+                        - last_7_days
+                  example: yesterday
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TwitterAdsAudience'
+                            example:
+                                account_currency: USD
+                                bucket_count: 3
+                                buckets:
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: age
+                                      impressions: 9000
+                                      value: 25-34
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: gender
+                                      impressions: 9000
+                                      value: Female
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: platform
+                                      impressions: 9000
+                                      value: iOS
+                                window: last_7_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError96'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
                 "413":
                     description: 'PayloadTooLarge: Payload too large'
                     content:
@@ -14790,7 +14871,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError101'
+                                $ref: '#/components/schemas/UnauthorizedError102'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -14867,12 +14948,12 @@ components:
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
                           issue: 'Underspending: 42% of expected spend'
-                          priority: HIGH
+                          priority: LOW
                         - action: Increase daily budget or check for delivery limits
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
                           issue: 'Underspending: 42% of expected spend'
-                          priority: HIGH
+                          priority: LOW
                 campaigns:
                     type: array
                     items:
@@ -14948,12 +15029,12 @@ components:
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
                       issue: 'Underspending: 42% of expected spend'
-                      priority: HIGH
+                      priority: LOW
                     - action: Increase daily budget or check for delivery limits
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
                       issue: 'Underspending: 42% of expected spend'
-                      priority: HIGH
+                      priority: LOW
                 campaigns:
                     - budget_day: 150
                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
@@ -16324,7 +16405,7 @@ components:
                 platform_master_list_id:
                     type: string
                     description: Pointer to the built master list in the platform (empty until built)
-                    example: Et quam deleniti reiciendis sit provident cumque.
+                    example: Reiciendis sit provident cumque sit nihil culpa.
                 status:
                     type: string
                     description: Build lifecycle status
@@ -16337,11 +16418,10 @@ components:
                     type: array
                     items:
                         type: string
-                        example: Nihil culpa non.
+                        example: Amet officia mollitia et vel et.
                     description: Platform suppression list ids applied to the master
                     example:
-                        - Mollitia et vel et vel architecto provident.
-                        - Eius corporis ea.
+                        - Provident modi eius corporis ea.
                         - Asperiores et est cupiditate quidem laudantium.
                         - Ut fugit qui et est aperiam.
             example:
@@ -19455,10 +19535,6 @@ components:
                           text: Register Now
                           type: rich_text
                           url: https://example.com/register
-                        - html: <p>We're excited to invite you...</p>
-                          text: Register Now
-                          type: rich_text
-                          url: https://example.com/register
                 subject:
                     type: string
                     description: Email subject line
@@ -19467,14 +19543,6 @@ components:
             example:
                 preheader: Register now and shape the future of cloud native computing
                 sections:
-                    - html: <p>We're excited to invite you...</p>
-                      text: Register Now
-                      type: rich_text
-                      url: https://example.com/register
-                    - html: <p>We're excited to invite you...</p>
-                      text: Register Now
-                      type: rich_text
-                      url: https://example.com/register
                     - html: <p>We're excited to invite you...</p>
                       text: Register Now
                       type: rich_text
@@ -19575,7 +19643,7 @@ components:
                 description:
                     type: string
                     description: Event description
-                    example: Eveniet architecto molestias eum sit aut.
+                    example: Molestias eum sit aut eveniet.
                 end_date:
                     type: string
                     description: Event end date, same caveat as start_date
@@ -19599,7 +19667,7 @@ components:
                 location:
                     type: string
                     description: Event location as written on the page — free text, not a resolved place
-                    example: Ab rerum cupiditate est rerum error.
+                    example: Rerum cupiditate est rerum error.
                 start_date:
                     type: string
                     description: Event start date exactly as the page states it; NOT normalised to RFC 3339, because the source rarely is
@@ -21252,7 +21320,7 @@ components:
                 outcome:
                     type: string
                     description: 'Microsoft Advertising only: this action''s own outcome, because a Microsoft batch is applied item by item. APPLIED — Microsoft did not reject it; FAILED — definitely not applied (see error_code); UNCONFIRMED — may have been applied, verify in Microsoft Advertising before retrying. ABSENT on Google Ads, whose batch is atomic: there every result on a 200 was applied.'
-                    example: APPLIED
+                    example: FAILED
                     enum:
                         - APPLIED
                         - FAILED
@@ -21262,11 +21330,11 @@ components:
                     description: 'Google Ads only: the criterion resource name Google returned for the applied mutation. Present on every Google Ads result; absent on Microsoft Advertising, which has no resource names.'
                     example: customers/1234567890/adGroupCriteria/176216228~305729261
             example:
-                action: REMOVE
+                action: PAUSE
                 ad_group_id: "176216228"
                 criterion_id: "305729261"
                 error_code: CampaignServiceInvalidKeywordId
-                outcome: FAILED
+                outcome: APPLIED
                 resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
             required:
                 - ad_group_id
@@ -21290,18 +21358,6 @@ components:
                         $ref: '#/components/schemas/KeywordActionResult'
                     description: 'Exactly one entry per requested action, in request order, so results[i] answers actions[i]. Google Ads: all applied, or the request failed and none were. Microsoft Advertising: each entry carries its own outcome.'
                     example:
-                        - action: PAUSE
-                          ad_group_id: "176216228"
-                          criterion_id: "305729261"
-                          error_code: CampaignServiceInvalidKeywordId
-                          outcome: UNCONFIRMED
-                          resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
-                        - action: PAUSE
-                          ad_group_id: "176216228"
-                          criterion_id: "305729261"
-                          error_code: CampaignServiceInvalidKeywordId
-                          outcome: UNCONFIRMED
-                          resource_name: customers/1234567890/adGroupCriteria/176216228~305729261
                         - action: PAUSE
                           ad_group_id: "176216228"
                           criterion_id: "305729261"
@@ -21347,9 +21403,6 @@ components:
                         $ref: '#/components/schemas/KeywordTargetingEntry'
                     description: 'The POSITIVE keywords the ad group / line item targets now, in the order the platform reported them. Empty when it targets none (every X campaign this service creates targets none: only an operator can add them, in X Ads Manager). Negative / excluded keywords are not listed.'
                     example:
-                        - criterion_id: 2kzxf
-                          keyword: kubernetes
-                          match_type: BROAD_KEYWORD
                         - criterion_id: 2kzxf
                           keyword: kubernetes
                           match_type: BROAD_KEYWORD
@@ -21454,7 +21507,7 @@ components:
                 outcome:
                     type: string
                     description: APPLIED — the keyword is no longer targeted; FAILED — definitely not removed (see error_code); UNCONFIRMED — may have been removed, read the targeting again before retrying.
-                    example: FAILED
+                    example: UNCONFIRMED
                     enum:
                         - APPLIED
                         - FAILED
@@ -21484,10 +21537,6 @@ components:
                         $ref: '#/components/schemas/KeywordTargetingRemovalResult'
                     description: 'Exactly one entry per requested removal, in request order, so results[i] answers keywords[i]. Reddit: one write carries every removal, so all entries share one outcome. X: one DELETE per criterion, each with its own outcome; the targeting is re-read before each, and an item that would now remove the last keyword is not sent (WOULD_EMPTY).'
                     example:
-                        - criterion_id: 2kzxf
-                          error_code: NOT_SENT
-                          keyword: kubernetes
-                          outcome: UNCONFIRMED
                         - criterion_id: 2kzxf
                           error_code: NOT_SENT
                           keyword: kubernetes
@@ -22893,7 +22942,7 @@ components:
                 outcome:
                     type: string
                     description: APPLIED — added by this request; ALREADY_PRESENT — the campaign already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.
-                    example: UNCONFIRMED
+                    example: ALREADY_PRESENT
                     enum:
                         - APPLIED
                         - ALREADY_PRESENT
@@ -22905,9 +22954,9 @@ components:
                     example: free download
             example:
                 error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                match_type: Phrase
+                match_type: Exact
                 negative_keyword_id: "8475612390"
-                outcome: ALREADY_PRESENT
+                outcome: UNCONFIRMED
                 text: free download
             required:
                 - text
@@ -22934,12 +22983,17 @@ components:
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
                           match_type: Phrase
                           negative_keyword_id: "8475612390"
-                          outcome: ALREADY_PRESENT
+                          outcome: APPLIED
                           text: free download
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
                           match_type: Phrase
                           negative_keyword_id: "8475612390"
-                          outcome: ALREADY_PRESENT
+                          outcome: APPLIED
+                          text: free download
+                        - error_code: CampaignServiceNegativeKeywordMatchesKeyword
+                          match_type: Phrase
+                          negative_keyword_id: "8475612390"
+                          outcome: APPLIED
                           text: free download
             example:
                 applied_count: 2
@@ -23741,6 +23795,128 @@ components:
                 status: active
             required:
                 - status
+        TwitterAdsAudience:
+            type: object
+            properties:
+                account_currency:
+                    type: string
+                    description: ISO 4217 currency of the ad account that cost_micros is denominated in, as X reports it on the account. ABSENT when X was not contacted (the project has no X campaigns of its own) or the account carries no currency.
+                    example: USD
+                    pattern: ^[A-Z]{3}$
+                bucket_count:
+                    type: integer
+                    description: How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.
+                    example: 3
+                    format: int64
+                buckets:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/TwitterAdsAudienceBucket'
+                    description: Every bucket across the three segmentations, discriminated by `dimension`. Ordered by dimension (age, gender, platform), then impressions descending, then value.
+                    example:
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: age
+                          impressions: 9000
+                          value: 25-34
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: gender
+                          impressions: 9000
+                          value: Female
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: platform
+                          impressions: 9000
+                          value: iOS
+                window:
+                    type: string
+                    description: The reporting window these counters cover
+                    example: today
+                    enum:
+                        - today
+                        - yesterday
+                        - last_7_days
+            example:
+                account_currency: USD
+                bucket_count: 3
+                buckets:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: age
+                      impressions: 9000
+                      value: 25-34
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: gender
+                      impressions: 9000
+                      value: Female
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: platform
+                      impressions: 9000
+                      value: iOS
+                window: last_7_days
+            required:
+                - window
+                - buckets
+                - bucket_count
+        TwitterAdsAudienceBucket:
+            type: object
+            properties:
+                clicks:
+                    type: integer
+                    description: Clicks over the window
+                    example: 742
+                    format: int64
+                cost_micros:
+                    type: integer
+                    description: Billed charge over the window (X's billed_charge_local_micro) in micro-units of the ad account's currency (see account_currency). This service performs no FX conversion.
+                    example: 3120000
+                    format: int64
+                ctr:
+                    type: number
+                    description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                    example: 0.0578
+                    format: double
+                dimension:
+                    type: string
+                    description: 'Which segmentation this bucket belongs to: age (X segmentation_type AGE), gender (GENDER) or platform (PLATFORMS)'
+                    example: gender
+                    enum:
+                        - age
+                        - gender
+                        - platform
+                impressions:
+                    type: integer
+                    description: Impressions over the window
+                    example: 12840
+                    format: int64
+                value:
+                    type: string
+                    description: X's segment name for this bucket, verbatim (for example an age range, a gender or a device platform). A value outside a conservative charset fails the read rather than being returned.
+                    example: iOS
+                    pattern: ^[A-Za-z0-9](?:[A-Za-z0-9 _+.\-]{0,62}[A-Za-z0-9+])?$
+            example:
+                clicks: 270
+                cost_micros: 2700000
+                ctr: 0.03
+                dimension: platform
+                impressions: 9000
+                value: iOS
+            required:
+                - dimension
+                - value
+                - impressions
+                - clicks
+                - cost_micros
+                - ctr
         TwitterAdsConnection:
             type: object
             properties:
@@ -26115,6 +26291,24 @@ components:
                 - code
                 - message
         UnauthorizedError115:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError116:
             type: object
             properties:
                 code:
