@@ -124,3 +124,5 @@ campaign_manager rule matches, with each branch's object correctly paired to its
 guard": a path moved into an `allow_all` / `deny_all` / differently-scoped rule, a
 downgrade of the rule's relation, or a swapped guard/object pairing, must FAIL the
 security regression test rather than silently satisfy path parity.
+
+The Meta ad-set read and pause/resume (`campaigns/{id}/meta-ad-sets`, `campaigns/{id}/meta-ad-sets/{adSetId}/status`, LFXV2-2665) are routed and ruled by the `briefs` family with no entry of their own; `parity_test.go` pins both paths.

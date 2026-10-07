@@ -39,7 +39,9 @@ spec:
     # (ruleset.yaml `project-api`) exactly, or the route would forward sub-paths
     # Heimdall has no rule for (a route/rule parity violation — an unruled path is
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
-    # only they get the free `(/.*)?` tail here. The connection-* family is ruled
+    # only they get the free `(/.*)?` tail here — which is also what routes every
+    # per-campaign path below a brief, including the Meta ad-set read and pause/resume
+    # (campaigns/{id}/meta-ad-sets[/{adSetId}/status], LFXV2-2665), with no branch of its own. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths; per-provider
     # /metrics, google-ads/keywords|audience|campaign-ref, microsoft-ads/keywords|audience|campaign-ref,
     # meta-ads/audience and (meta-ads|reddit-ads|twitter-ads)/campaign-ref are ruled at the

@@ -126,6 +126,16 @@ func RemoveKeywordTargetingLfxV2CampaignServiceBriefsPath(projectID string, brie
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/keyword-targeting/removals", projectID, briefID, campaignID)
 }
 
+// ListMetaAdSetsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service list-meta-ad-sets HTTP endpoint.
+func ListMetaAdSetsLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/meta-ad-sets", projectID, briefID, campaignID)
+}
+
+// ToggleMetaAdSetStatusLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status HTTP endpoint.
+func ToggleMetaAdSetStatusLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string, adSetID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/meta-ad-sets/%v/status", projectID, briefID, campaignID, adSetID)
+}
+
 // DeleteCampaignLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service delete-campaign HTTP endpoint.
 func DeleteCampaignLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v", projectID, briefID, campaignID)
