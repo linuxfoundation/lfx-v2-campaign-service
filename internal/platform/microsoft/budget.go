@@ -179,6 +179,10 @@ type msCampaignBudgetRead struct {
 	Name         json.RawMessage `json:"Name"`
 	Status       json.RawMessage `json:"Status"`
 	CampaignType json.RawMessage `json:"CampaignType"`
+	// DailyBudget is read only by the settings readback (campaign_settings.go) and is kept RAW for
+	// the same reason: a shape it does not expect fails the readback without failing the budget,
+	// bid or adoption read that shares this decode.
+	DailyBudget json.RawMessage `json:"DailyBudget"`
 }
 
 // queryCampaignsByIDsResponse is the (subset of the) 200 body. Campaigns is a pointer so an

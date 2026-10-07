@@ -1431,8 +1431,10 @@ campaign's CURRENT configuration from the ad platform and reports where it diver
 the campaign row recorded. Like the metrics read it is pure — nothing is persisted, so there is
 no `If-Match`/version — and like it, `Orchestrator.ReadCampaignSettings` type-asserts the
 platform's dispatcher for an optional capability at call time, so a platform with no readback
-wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything. Google Ads is
-the only platform wired today.
+wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything. Google Ads,
+Microsoft Advertising, Meta, Reddit and X are wired (the last four by LFXV2-2665); LinkedIn and
+HubSpot still answer 400. `TestOrchestrator_ReadCampaignSettings_MicrosoftMetaRedditXAreWired`
+(internal/dispatch) drives the real orchestrator with the four real dispatchers.
 
 **It never writes back onto the row, and that is the point.** The row records what a dispatch
 ASKED FOR; writing an observation into those columns would change their meaning from request to

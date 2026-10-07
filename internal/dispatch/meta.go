@@ -107,6 +107,9 @@ type MetaDispatcher struct {
 	// STRONGER property than the mutex-guarded safety Reddit and Microsoft rely on.
 	clients *clientCache
 	opts    []meta.Option
+	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
+	// tests can pin it.
+	settingsNow func() time.Time
 }
 
 // NewMetaDispatcher builds the adapter from the connection repo + encryptor. The

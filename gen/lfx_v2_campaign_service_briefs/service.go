@@ -98,9 +98,15 @@ type Service interface {
 	// This is the read metrics cannot be: impressions, clicks, cost and CTR do not
 	// describe a campaign's configuration. A setting that could not be read on
 	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
-	// zero and never counted as a match. Support is per-platform: a campaign whose
-	// platform has no settings-readback dispatcher wired returns 400 — Google Ads
-	// is the only one today.
+	// zero and never counted as a match. Support is per-platform: Google Ads,
+	// Microsoft Advertising, Meta, Reddit and X (Twitter) Ads are wired, and a
+	// campaign on any other platform returns 400. The field set is per-platform
+	// too — each platform reports only the settings it can answer honestly,
+	// normalised to the units its create path wrote (Microsoft carries no flight
+	// dates, so reports none) — and on every platform the provenance rules are the
+	// same: a campaign that does not record the account it was created under, or
+	// that belongs to a different account than the connection now resolves to, is
+	// refused 409 before anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -770,9 +776,18 @@ type CampaignSettingsField struct {
 	// compared rather than upstream-only because the dispatch config's channel IS
 	// persisted in the campaign's config snapshot; it still reads `unknown` on a
 	// legacy row that carries no snapshot, but for the ordinary reason that
-	// nothing was recorded there — not because the field has no recorded side. The
-	// vocabulary is per-platform and may grow, so a consumer must render an
-	// unrecognised field name rather than dropping it.
+	// nothing was recorded there — not because the field has no recorded side. On
+	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
+	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
+	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
+	// dates, so they are not reported there); `status` and `bidding_strategy_type`
+	// are upstream-only on all four (none of their create paths records a
+	// strategy), and Microsoft also reports `budget_explicitly_shared`
+	// upstream-only. A Meta or Reddit start that the create path itself nudged
+	// forward past UTC midnight (because the requested day had already begun at
+	// dispatch) is shown with both sides and an `unknown` verdict rather than a
+	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
+	// must render an unrecognised field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

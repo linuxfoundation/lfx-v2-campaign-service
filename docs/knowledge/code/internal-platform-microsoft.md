@@ -1308,3 +1308,16 @@ that answer resting on undocumented behaviour: a null slot (503) or, worse, an
 `InvalidCampaignId` PartialError read as absent (404 → a duplicate of a live campaign). A missing
 `CampaignType` is unverifiable, not assumed Search. The comma-separated flags spelling is from the
 REST documentation and has not been exercised live.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings` (`campaign_settings.go`) reads ONE campaign for the settings readback
+through the same `queryCampaignByIDGuarded` (`GetCampaignsByIds`) the budget, bid and adoption
+reads use, with `identityjson.Check` over the raw body and EVERY documented `CampaignType`
+requested (a Search-only filter could turn a live non-Search campaign into an apparent absence).
+It returns `Name`, `Status`, `BudgetType`, `DailyBudget` (decoded from a new RAW `DailyBudget`
+field on `msCampaignBudgetRead`, so an unexpected shape fails only this read), `Shared` (the
+same `BudgetId` three-way reading `GetCampaignBudget` makes; nil when unreadable) and
+`BiddingSchemeType`. Absent fields are nil, never zero; a present field of the wrong kind, or a
+negative/non-finite `DailyBudget`, is an error. `(nil, nil)` only on
+`CampaignServiceInvalidCampaignId`.

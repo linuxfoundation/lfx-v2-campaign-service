@@ -125,6 +125,9 @@ type MicrosoftDispatcher struct {
 	// must be given the same treatment before it is shared.
 	clients *clientCache
 	opts    []microsoft.Option
+	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
+	// tests can pin it.
+	settingsNow func() time.Time
 }
 
 // NewMicrosoftDispatcher builds the adapter from the connection repo + encryptor.
