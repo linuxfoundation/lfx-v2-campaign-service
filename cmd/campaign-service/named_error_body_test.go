@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	exploresvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audience_builder/server"
 	audiencesvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audiences/server"
 	briefsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/server"
 	connsvcsvr "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
@@ -49,6 +50,15 @@ func TestNamedErrorBodies_AreTheGeneratedBodies(t *testing.T) {
 	connUnavailable := &connsvc.ConnServiceUnavailableError{Code: "503", Message: "connection store is not configured"}
 	notFound := &audiencesvc.NotFoundError{Code: "404", Message: "audience not found"}
 	readyUnavailable := &svc.ServiceUnavailableError{Code: "503", Message: "database is not reachable"}
+	// ComposePartial carries the reconciliation fields a caller needs NOT to retry a compose that
+	// already created platform state: the list that exists, and the deterministic names to search.
+	suppressionName := "LFX suppression cncf 2026-q4"
+	composeSize := int64(42)
+	composePartial := &exploresvc.AudienceComposePartialError{
+		Code: "500", Message: "compose failed after creating the suppression list; do not retry",
+		Suppression:     &exploresvc.AudienceComposedList{ListID: "1001", Name: "LFX suppression", HubspotURL: "https://app.hubspot.com/contacts/1/objectLists/1001", Size: &composeSize},
+		SuppressionName: &suppressionName,
+	}
 
 	connEndpoints := connsvc.NewEndpoints(service.NewConnectionService(nil, nil))
 	connEndpoints.ResolveMicrosoftAdsCampaign = failingEndpoint(badRequest)
@@ -60,10 +70,12 @@ func TestNamedErrorBodies_AreTheGeneratedBodies(t *testing.T) {
 	audienceEndpoints.GetAudience = failingEndpoint(notFound)
 	campaignEndpoints := svc.NewEndpoints(service.NewCampaignService(nil))
 	campaignEndpoints.Readyz = failingEndpoint(readyUnavailable)
+	exploreEndpoints := exploresvc.NewEndpoints(service.NewAudienceExploreService(nil))
+	exploreEndpoints.ComposeAudienceMaster = failingEndpoint(composePartial)
 
 	mux, err := buildMux(context.Background(), &config.Config{},
 		campaignEndpoints, connEndpoints, briefEndpoints, audienceEndpoints,
-		exploresvc.NewEndpoints(service.NewAudienceExploreService(nil)),
+		exploreEndpoints,
 		nil, nil)
 	if err != nil {
 		t.Fatalf("buildMux: %v", err)
@@ -91,6 +103,8 @@ func TestNamedErrorBodies_AreTheGeneratedBodies(t *testing.T) {
 			http.StatusServiceUnavailable, "ServiceUnavailable", svcsvr.NewReadyzServiceUnavailableResponseBody(readyUnavailable)},
 		{"connections service unavailable", http.MethodGet, "/projects/cncf/connection-microsoft-ads", "",
 			http.StatusServiceUnavailable, "ServiceUnavailable", connsvcsvr.NewGetMicrosoftAdsServiceUnavailableResponseBody(connUnavailable)},
+		{"audience builder compose partial reconciliation fields", http.MethodPost, "/projects/cncf/audience-builder/compose-master", `{"compose":{"list_ids":["11"]}}`,
+			http.StatusInternalServerError, "ComposePartial", exploresvcsvr.NewComposeAudienceMasterComposePartialResponseBody(composePartial)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
