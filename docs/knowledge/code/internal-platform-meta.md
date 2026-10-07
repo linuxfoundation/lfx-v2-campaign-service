@@ -774,3 +774,21 @@ that does not decode, and — because the node read is NOT account-scoped — a 
 `account_id` are errors. `effective_status` is reported verbatim and never judged: Meta grows that
 set without notice. The ref carries `account_id` normalised to `act_<digits>`; the dispatcher, not
 the client, decides the account matches the connection.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings(ctx, campaignID, adSetID)` (`campaign_settings.go`) reads the campaign node
+(`id,name,status,account_id` plus the campaign-only fields that make Graph refuse a non-campaign
+node) and, when the row recorded one, the ad set (`id,campaign_id,daily_budget,lifetime_budget,
+start_time,end_time,bid_strategy`). Both bodies pass `identityjson.Check` and a strict id echo;
+the campaign must report a readable `account_id` (GET /{id} is not account-scoped, so this is
+the read's provenance proof). Graph 100/33 on the campaign is `(nil, nil)` ONLY after
+`proveAccountLoads` (one `GET /{act_id}?fields=id`, same token, strict id echo) shows the
+account loads; otherwise it is an error, because 100/33 alone also means "this token cannot
+load it". On the ad set 100/33 only leaves `AdSet` nil (its fields read `unknown`, a claim of
+nothing). An ad set whose `campaign_id` is another campaign is
+`ErrAdSetNotInCampaign`; both budgets on one ad set, or a non-integer budget, is an error.
+Unlike adoption, DELETED/ARCHIVED is returned with its status, not as absent.
+`AccountCurrencyOffset` is the read half of `ResolveBudgetMinorUnits`: the account currency's
+minor-unit offset, `known=false` for a currency outside the supported map (never a guessed 100),
+and an error when the preflight fails.

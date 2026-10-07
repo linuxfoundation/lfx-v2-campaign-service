@@ -2789,6 +2789,14 @@ func (s *BriefService) GetCampaignSettings(ctx context.Context, p *briefs.GetCam
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"platform", existing.Platform, "error", safeErrSummary(rerr))
 			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign does not record which platform account it was created under, so its settings cannot be read safely — it must be re-dispatched before it can be read"}
+		case errors.Is(rerr, domain.ErrCampaignUpstreamIdentityMismatch):
+			// Ahead of the account-mismatch arm: the connection already IS the recorded account,
+			// so "reconnect the original account" would be an unactionable instruction. No ids or
+			// account text reach the client; the specifics are in the log.
+			slog.WarnContext(ctx, "campaign settings readback blocked: the platform's record of the campaign no longer matches the identity this service recorded",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", safeErrSummary(rerr))
+			return nil, &briefs.ConflictError{Code: "409", Message: "the platform's record of this campaign no longer matches what this service created, so its settings cannot be read safely — re-dispatch the campaign"}
 		case errors.Is(rerr, ErrCampaignAccountMismatch):
 			// The two customer ids stay server-side, as on every sibling arm: which ad account
 			// a project is connected to is connection configuration. Here the guard matters

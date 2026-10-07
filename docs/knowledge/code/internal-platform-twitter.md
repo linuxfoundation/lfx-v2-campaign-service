@@ -1290,3 +1290,13 @@ any other status, a missing name, an id echo that differs, an empty `data`, a 40
 `identityjson.Check` refuses or that does not decode are errors. The read is path-scoped; X's
 campaign object is not documented to carry `account_id`, and when a response does carry one it is
 returned for the dispatcher to compare.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings(ctx, campaignID, lineItemID)` (`campaign_settings.go`) reads the campaign
+(name, `entity_status`, `budget_optimization`, the daily and total `*_local_micro` amounts,
+`account_id`) and, when the row recorded one, the line item (`start_time`, `end_time`,
+`bid_strategy`, `campaign_id`; `with_deleted=true`). Both bodies pass `identityjson.Check` over
+the RAW body and a strict id echo. A 404 or deleted campaign is `(nil, nil)`; a 404 or deleted
+line item only leaves `LineItem` nil; a line item of another campaign is
+`ErrLineItemNotInCampaign`; an amount that is not a non-negative integer is an error.

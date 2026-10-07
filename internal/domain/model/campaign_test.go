@@ -332,3 +332,16 @@ func TestDispatchSlotVersionDefaultsToTheFirstSlot(t *testing.T) {
 		t.Errorf("DispatchSlotVersion(0) = %d, want it normalized to %d", got, FirstSlotVersion)
 	}
 }
+
+// TestUncomparableSettingsField_IsAlwaysUnknownWithBothSides pins that the companion constructor
+// can never produce a verdict of its own: even two EQUAL sides are `unknown`, so it cannot be
+// used to fabricate a match or a divergence, and both observed values are kept for the operator.
+func TestUncomparableSettingsField_IsAlwaysUnknownWithBothSides(t *testing.T) {
+	a, b := "2026-08-01", "2026-08-02"
+	for _, pair := range [][2]*string{{&a, &b}, {&a, &a}, {nil, &b}, {&a, nil}} {
+		f := UncomparableSettingsField("start_date", pair[0], pair[1])
+		if f.Comparison != SettingsUnknown || f.Recorded != pair[0] || f.Upstream != pair[1] || f.Field != "start_date" {
+			t.Fatalf("UncomparableSettingsField(%v, %v) = %+v", pair[0], pair[1], f)
+		}
+	}
+}
