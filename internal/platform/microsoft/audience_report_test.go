@@ -248,6 +248,9 @@ func TestFoldAgeGenderReportRows_RefusesMalformed(t *testing.T) {
 		"control char in age":      header + "\n" + "\"1\",\"25\x0134\",\"Male\",\"1\",\"1\",\"1\"",
 		"bidi override in gender":  header + "\n" + "\"1\",\"25-34\",\"\u202eelaM\",\"1\",\"1\",\"1\"",
 		"zero-width joiner in age": header + "\n" + "\"1\",\"25\u200d-34\",\"Male\",\"1\",\"1\",\"1\"",
+		"leading tab in gender":    header + "\n" + "\"1\",\"25-34\",\"\tMale\",\"1\",\"1\",\"1\"",
+		"trailing newline in age":  header + "\n" + "\"1\",\"25-34\n\",\"Male\",\"1\",\"1\",\"1\"",
+		"trailing CR in gender":    header + "\n" + "\"1\",\"25-34\",\"Male\r\",\"1\",\"1\",\"1\"",
 		"over-long label":          header + "\n" + `"1","` + strings.Repeat("a", maxAudienceLabelBytes+1) + `","Male","1","1","1"`,
 		"negative impressions":     header + "\n" + `"1","25-34","Male","-1","1","1"`,
 		"negative spend":           header + "\n" + `"1","25-34","Male","1","1","-0.5"`,
@@ -260,6 +263,15 @@ func TestFoldAgeGenderReportRows_RefusesMalformed(t *testing.T) {
 				t.Errorf("want an error")
 			}
 		})
+	}
+}
+
+// Ordinary surrounding spaces are trimmed, as the keyword fold trims its cells, so " Male " is
+// the "Male" bucket; only control/format characters make a label malformed.
+func TestFoldAgeGenderReportRows_TrimsPlainSpaces(t *testing.T) {
+	res, err := foldAgeGenderReportRows(csvRecords(t, `"CampaignId","AgeGroup","Gender","Impressions","Clicks","Spend"`+"\n"+`"1"," 25-34 ","  Male","1","1","1"`))
+	if err != nil || len(res.Rows) != 1 || res.Rows[0].AgeGroup != "25-34" || res.Rows[0].Gender != "Male" {
+		t.Fatalf("got %+v, %v; want one trimmed 25-34/Male row", res, err)
 	}
 }
 

@@ -30,6 +30,7 @@ import (
 // rows, not a live breakdown. There is NO device dimension: Microsoft's age/gender report has
 // none, and a device breakdown would need a second report (out of scope).
 type AudienceReportReader interface {
+	InsightReportPeriod
 	AudienceReportEnabled(window model.MetricsWindow) error
 	AudienceReportAccount(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (accountID string, err error)
 	SubmitAudienceReport(ctx context.Context, projectID string, platform model.Provider, accountID string, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.InsightReportSubmission, error)
@@ -64,6 +65,7 @@ func (o *Orchestrator) audienceReportStore() domain.AudienceReportRepository {
 //     store access and no upstream call;
 //  2. AudienceReportAccount: every trust-boundary refusal, before anything upstream;
 //  3. check a pending report once (store / drop / abandon);
+//     then drop a finished report for another calendar period (discardOtherPeriod);
 //  4. submit when nothing is pending and the last finished report is missing, stale, or does not
 //     cover every campaign the project NOW owns — failing the read only on a permanent refusal;
 //  5. serve the last finished report only if it covers the current scope, its rows confined to
@@ -111,7 +113,14 @@ func (o *Orchestrator) ReadReportedAudience(ctx context.Context, projectID strin
 	now := o.insightReportNow()
 	scopeIDs := scopeCampaignIDs(scope)
 	driver := o.audienceReportDriver(reader, store)
+	wantStart, wantEnd, perr := resolveInsightPeriod(reader, platform, "audience read", window, now)
+	if perr != nil {
+		return nil, perr
+	}
 	collectPendingInsightReport(callCtx, ctx, driver, snap, now)
+	// A finished report for another calendar period (the window rolled over since it was
+	// requested) is neither fresh nor servable: see discardOtherPeriod.
+	discardOtherPeriod(snap, wantStart, wantEnd)
 	if rerr := refreshInsightReport(callCtx, ctx, driver, snap, scope, scopeIDs, now); rerr != nil {
 		return nil, rerr
 	}

@@ -36,6 +36,24 @@ type fakeAudienceReader struct {
 	accounts   int
 	submits    int
 	checks     int
+	// dates, when set, is ReportWindowDates; nil answers the fake period whatever the clock.
+	dates func(model.MetricsWindow, time.Time) (time.Time, time.Time, error)
+	// submitNow is the clock a scripted-dates submission resolves its window at.
+	submitNow time.Time
+}
+
+// fakeAudiencePeriodStart..fakeAudiencePeriodEnd is the period the fake's submissions cover and,
+// unless a test scripts dates, the period every window resolves to.
+var (
+	fakeAudiencePeriodStart = audienceNow.AddDate(0, 0, -29)
+	fakeAudiencePeriodEnd   = audienceNow
+)
+
+func (f *fakeAudienceReader) ReportWindowDates(w model.MetricsWindow, now time.Time) (time.Time, time.Time, error) {
+	if f.dates != nil {
+		return f.dates(w, now)
+	}
+	return fakeAudiencePeriodStart, fakeAudiencePeriodEnd, nil
 }
 
 func (f *fakeAudienceReader) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -54,7 +72,7 @@ func (f *fakeAudienceReader) AudienceReportAccount(context.Context, string, mode
 	return f.account, nil
 }
 
-func (f *fakeAudienceReader) SubmitAudienceReport(_ context.Context, _ string, _ model.Provider, _ string, _ model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.InsightReportSubmission, error) {
+func (f *fakeAudienceReader) SubmitAudienceReport(_ context.Context, _ string, _ model.Provider, _ string, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.InsightReportSubmission, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.submits++
@@ -65,7 +83,11 @@ func (f *fakeAudienceReader) SubmitAudienceReport(_ context.Context, _ string, _
 	for _, s := range scope {
 		ids = append(ids, s.PlatformCampaignID)
 	}
-	return &model.InsightReportSubmission{ReportID: f.submitID, WindowStart: audienceNow.AddDate(0, 0, -29), WindowEnd: audienceNow, CampaignIDs: ids}, nil
+	start, end := fakeAudiencePeriodStart, fakeAudiencePeriodEnd
+	if f.dates != nil {
+		start, end, _ = f.dates(window, f.submitNow)
+	}
+	return &model.InsightReportSubmission{ReportID: f.submitID, WindowStart: start, WindowEnd: end, CampaignIDs: ids}, nil
 }
 
 func (f *fakeAudienceReader) CheckAudienceReport(context.Context, string, model.Provider, string, string) (*model.AudienceReportCheck, error) {
@@ -196,7 +218,7 @@ func TestReadAudience_CollectsAndSumsAFinishedReport(t *testing.T) {
 	}}
 	submitted := audienceNow.Add(-5 * time.Minute)
 	store := &fakeAudienceStore{snap: &model.AudienceReportSnapshot{Pending: &model.PendingInsightReport{
-		ReportID: "a1", CampaignIDs: []string{"111", "222"}, SubmittedAt: submitted, WindowStart: audienceNow, WindowEnd: audienceNow,
+		ReportID: "a1", CampaignIDs: []string{"111", "222"}, SubmittedAt: submitted, WindowStart: fakeAudiencePeriodStart, WindowEnd: fakeAudiencePeriodEnd,
 	}}}
 	read := readAudience(t, audienceOrch([]string{"111", "222"}, r, store))
 	if read.MetricsPending || read.MetricsAsOf == nil || !read.MetricsAsOf.Equal(submitted) || !read.DataIncomplete {
@@ -222,6 +244,7 @@ func TestReadAudience_CollectsAndSumsAFinishedReport(t *testing.T) {
 
 func TestReadAudience_ScopeCoverageAndFreshness(t *testing.T) {
 	ready := &model.ReadyAudienceReport{
+		WindowStart: fakeAudiencePeriodStart, WindowEnd: fakeAudiencePeriodEnd,
 		ReportID: "a1", CampaignIDs: []string{"111", "999"}, AsOf: audienceNow.Add(-time.Minute),
 		Rows: []model.AudienceReportRow{agRow("111", "25-34", "Female", 5), agRow("999", "25-34", "Female", 50)},
 	}
@@ -254,6 +277,7 @@ func TestReadAudience_PendingStatesAndAbandon(t *testing.T) {
 	pending := func(age time.Duration) *fakeAudienceStore {
 		return &fakeAudienceStore{snap: &model.AudienceReportSnapshot{Pending: &model.PendingInsightReport{
 			ReportID: "a1", CampaignIDs: []string{"111"}, SubmittedAt: audienceNow.Add(-age),
+			WindowStart: fakeAudiencePeriodStart, WindowEnd: fakeAudiencePeriodEnd,
 		}}}
 	}
 	r := &fakeAudienceReader{account: "123", check: &model.AudienceReportCheck{Status: model.AccountReportPending}}
@@ -338,6 +362,7 @@ func microsoftAudienceService(scope []string, reader *fakeAudienceReader, store 
 func TestGetMicrosoftAdsAudience_MapsTheSavedReport(t *testing.T) {
 	asOf := audienceNow.Add(-time.Minute)
 	store := &fakeAudienceStore{snap: &model.AudienceReportSnapshot{Ready: &model.ReadyAudienceReport{
+		WindowStart: fakeAudiencePeriodStart, WindowEnd: fakeAudiencePeriodEnd,
 		ReportID: "a1", CampaignIDs: []string{"111"}, AsOf: asOf, Partial: true,
 		Rows: []model.AudienceReportRow{agRow("111", "25-34", "Female", 100)},
 	}}}

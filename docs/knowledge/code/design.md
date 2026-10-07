@@ -297,6 +297,15 @@ which the type defines as "both arrays empty because unknown". It now has a type
 examples (`missing: false`) via the shared `audienceIncludedListsExample` /
 `audienceSuppressionListsExample`. This is an example-only change, with no behaviour change.
 
+`AudienceListBrief` and `AudiencePreviewCount` themselves now carry TYPE-LEVEL examples too (#289
+review): wherever they appear without an attribute-level example, Goa's synthesised one paired
+`missing: true` with a populated `name`/`hubspot_url`, and `exact: false` with a `count` that was
+neither `estimate` nor 0 — both impossible per their descriptions. The list brief uses the shared
+resolved-list example; the preview count is `ExactPreviewCount`'s shape (`exact: true`, count ≤
+estimate, empty reason). `internal/service/audience_builder_examples_spec_test.go` walks every
+example in the four generated JSON specs and checks both invariants. Examples only; no behaviour
+change.
+
 `internal/service/meta_audience_wire_example_test.go` walks EVERY `example` in all four GENERATED
 specs (v2 and v3, `gen/` and the kodata copy), where the defects lived. It checks the following:
 

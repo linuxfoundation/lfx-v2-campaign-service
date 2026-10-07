@@ -33,6 +33,23 @@ type fakeKeywordReader struct {
 	submits    int
 	checks     int
 	scopes     [][]model.ProjectCampaignScope
+	// dates, when set, is ReportWindowDates; nil answers the fake period whatever the clock.
+	dates func(model.MetricsWindow, time.Time) (time.Time, time.Time, error)
+	// submitNow is the clock a scripted-dates submission resolves its window at.
+	submitNow time.Time
+}
+
+// fakeKeywordPeriodStart..fakeKeywordPeriodEnd is the period the fake's submissions cover (SubmitKeywordReport below) and,
+// unless a test scripts dates, the period every window resolves to — so a saved fixture carrying
+// it is a report for the period being asked about.
+var fakeKeywordPeriodEnd = time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+var fakeKeywordPeriodStart = fakeKeywordPeriodEnd.AddDate(0, 0, -29)
+
+func (f *fakeKeywordReader) ReportWindowDates(w model.MetricsWindow, now time.Time) (time.Time, time.Time, error) {
+	if f.dates != nil {
+		return f.dates(w, now)
+	}
+	return fakeKeywordPeriodStart, fakeKeywordPeriodEnd, nil
 }
 
 func (f *fakeKeywordReader) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -57,7 +74,7 @@ func (f *fakeKeywordReader) KeywordReportAccount(_ context.Context, _ string, _ 
 	return f.account, nil
 }
 
-func (f *fakeKeywordReader) SubmitKeywordReport(_ context.Context, _ string, _ model.Provider, _ string, _ model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordReportSubmission, error) {
+func (f *fakeKeywordReader) SubmitKeywordReport(_ context.Context, _ string, _ model.Provider, _ string, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordReportSubmission, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.submits++
@@ -68,8 +85,11 @@ func (f *fakeKeywordReader) SubmitKeywordReport(_ context.Context, _ string, _ m
 	for _, s := range scope {
 		ids = append(ids, s.PlatformCampaignID)
 	}
-	d := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
-	return &model.KeywordReportSubmission{ReportID: f.submitID, WindowStart: d.AddDate(0, 0, -29), WindowEnd: d, CampaignIDs: ids}, nil
+	start, end := fakeKeywordPeriodStart, fakeKeywordPeriodEnd
+	if f.dates != nil {
+		start, end, _ = f.dates(window, f.submitNow)
+	}
+	return &model.KeywordReportSubmission{ReportID: f.submitID, WindowStart: start, WindowEnd: end, CampaignIDs: ids}, nil
 }
 
 func (f *fakeKeywordReader) CheckKeywordReport(context.Context, string, model.Provider, string, string) (*model.KeywordReportCheck, error) {
@@ -196,7 +216,7 @@ func TestReadKeywords_CollectsAFinishedReport(t *testing.T) {
 	submitted := time.Now().Add(-5 * time.Minute)
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Pending: &model.PendingKeywordReport{
 		ReportID: "k1", CampaignIDs: []string{"111", "222"}, SubmittedAt: submitted,
-		WindowStart: time.Now(), WindowEnd: time.Now(),
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 	}}}
 	read := readKeywords(t, keywordOrch([]string{"111", "222"}, r, store))
 	if read.MetricsPending || read.MetricsAsOf == nil || !read.MetricsAsOf.Equal(submitted) {
@@ -216,6 +236,7 @@ func TestReadKeywords_CollectsAFinishedReport(t *testing.T) {
 func TestReadKeywords_FreshCoveringReportMakesNoReportCalls(t *testing.T) {
 	r := &fakeKeywordReader{account: "123"}
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Ready: &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: time.Now().Add(-time.Minute), Rows: []model.KeywordReportRow{kwRow("111", "1", 5)},
 	}}}
 	read := readKeywords(t, keywordOrch([]string{"111"}, r, store))
@@ -229,6 +250,7 @@ func TestReadKeywords_FreshCoveringReportMakesNoReportCalls(t *testing.T) {
 // submitted. A campaign the project no longer owns drops out of a covering report.
 func TestReadKeywords_ScopeCoverage(t *testing.T) {
 	ready := &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111", "999"}, AsOf: time.Now().Add(-time.Minute),
 		Rows: []model.KeywordReportRow{kwRow("111", "1", 5), kwRow("999", "9", 50)},
 	}
@@ -251,6 +273,7 @@ func TestReadKeywords_ScopeCoverage(t *testing.T) {
 func TestReadKeywords_StaleReportIsServedWhileTheNextBuilds(t *testing.T) {
 	r := &fakeKeywordReader{account: "123", submitID: "k2"}
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Ready: &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: time.Now().Add(-2 * accountReportFreshFor), Rows: []model.KeywordReportRow{kwRow("111", "1", 5)},
 	}}}
 	read := readKeywords(t, keywordOrch([]string{"111"}, r, store))
@@ -263,6 +286,7 @@ func TestReadKeywords_PendingStatesAndAbandon(t *testing.T) {
 	pending := func(age time.Duration) *fakeKeywordStore {
 		return &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Pending: &model.PendingKeywordReport{
 			ReportID: "k1", CampaignIDs: []string{"111"}, SubmittedAt: time.Now().Add(-age),
+			WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		}}}
 	}
 	// Still building: not resubmitted.
@@ -381,6 +405,7 @@ func TestGetMicrosoftAdsKeywords_MapsTheSavedReport(t *testing.T) {
 	qs := int64(6)
 	row.QualityScore = &qs
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Ready: &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: asOf, Rows: []model.KeywordReportRow{row}, Partial: true,
 	}}}
 	// asOf is far older than accountReportFreshFor, so the read also submits a refresh.

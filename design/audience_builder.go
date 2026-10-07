@@ -190,6 +190,10 @@ var AudienceListBrief = Type("audience-list-brief", func() {
 	Attribute("resolved_from_legacy_id", String, "Legacy list id this row was translated from")
 	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when it no longer resolves")
 	Required("list_id", "name", "missing")
+	// TYPE-LEVEL so the published example is a possible one: Goa's synthesised example drew
+	// each attribute independently and showed `missing: true` beside a populated name and
+	// hubspot_url, which the descriptions above rule out. A resolved list is the common shape.
+	Example(audienceIncludedListsExample[0])
 })
 
 // AudienceLastSentEmail is one previous marketing email, with the audience it targeted.
@@ -271,6 +275,10 @@ var AudiencePreviewCount = Type("audience-preview-count", func() {
 	Attribute("estimate", Int64, "Upper bound on the union size (the sum of list sizes) when exact is false; 0 when no reliable total exists")
 	Attribute("reason", String, "Why the count is exact or bounded")
 	Required("exact", "count", "estimate", "reason")
+	// TYPE-LEVEL for the same reason: the synthesised example paired `exact: false` with a count
+	// that neither mirrored estimate nor was 0. This is ExactPreviewCount's shape — a counted
+	// union, at most the sum of the list sizes, with no reason to give.
+	Example(map[string]any{"exact": true, "count": 19870, "estimate": 21370, "reason": ""})
 })
 
 // AudienceComposedList is a list this service created, echoed back with its deep link so
