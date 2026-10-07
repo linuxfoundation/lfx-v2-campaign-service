@@ -2381,6 +2381,12 @@ func unmarshalAudienceComposeRecordedAudienceResponseBodyToLfxv2campaignservicea
 		Version:              *v.Version,
 		PlatformMasterListID: *v.PlatformMasterListID,
 	}
+	if v.IncludeListIds != nil {
+		res.IncludeListIds = make([]string, len(v.IncludeListIds))
+		for i, val := range v.IncludeListIds {
+			res.IncludeListIds[i] = val
+		}
+	}
 
 	return res
 }
@@ -2393,6 +2399,12 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceAttachExistingInputToAudi
 		BriefID:          v.BriefID,
 		MasterListID:     v.MasterListID,
 		InclusionSummary: v.InclusionSummary,
+	}
+	if v.IncludeListIds != nil {
+		res.IncludeListIds = make([]string, len(v.IncludeListIds))
+		for i, val := range v.IncludeListIds {
+			res.IncludeListIds[i] = val
+		}
 	}
 	if v.SuppressionListIds != nil {
 		res.SuppressionListIds = make([]string, len(v.SuppressionListIds))
@@ -2413,6 +2425,12 @@ func marshalAudienceAttachExistingInputRequestBodyToLfxv2campaignserviceaudience
 		BriefID:          v.BriefID,
 		MasterListID:     v.MasterListID,
 		InclusionSummary: v.InclusionSummary,
+	}
+	if v.IncludeListIds != nil {
+		res.IncludeListIds = make([]string, len(v.IncludeListIds))
+		for i, val := range v.IncludeListIds {
+			res.IncludeListIds[i] = val
+		}
 	}
 	if v.SuppressionListIds != nil {
 		res.SuppressionListIds = make([]string, len(v.SuppressionListIds))

@@ -49,8 +49,19 @@ type campaignLookupWire struct {
 // The outcomes are the CampaignAdopter contract's:
 //
 //   - a live campaign (entity_status ACTIVE, PAUSED or DRAFT) -> (ref, nil)
-//   - a 404, or a campaign X reports as deleted              -> (nil, nil)
+//   - a 404 with the account then confirmed readable, or a   -> (nil, nil)
+//     campaign X reports as deleted
 //   - anything unverifiable                                  -> (nil, error)
+//
+// A campaign 404 alone does NOT prove absence: X answers 404 the same way when the AD ACCOUNT in
+// the path is inaccessible or revoked, and reporting that as "no such campaign" is the ambiguous
+// absence an operator acts on by creating a duplicate. So a campaign 404 is followed by ONE
+// confirming read of the account itself (GET accounts/:account_id, confirmAccountReadable) through the
+// same client and credential: only when that answers 2xx, describing this exact account, is the
+// campaign definitely absent. Any other answer to the confirming read — 404, 401/403, 5xx, an
+// exhausted 429, transport, a body that does not decode or names another account — leaves the
+// absence unproven, and the lookup is unverifiable (503). The confirming read is made only after
+// a campaign 404, never on any other outcome.
 //
 // The 404 is matched on the HTTP status, never on body text. "Unverifiable" is everything else:
 // a transport failure, a 5xx, an exhausted or over-long 429, a 401/403, a body identityjson
@@ -72,13 +83,12 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	resp, err := c.request(ctx, http.MethodGet, path)
 	if err != nil {
 		var ae *apiError
-		// A bare 404, judged on the status alone. That is also how X may answer a path
-		// whose AD ACCOUNT is inaccessible or revoked, which would then read as "absent" too.
-		// The harm is low: the connection's own account is in the path, so any dispatch to it
-		// — the duplicate a false absence could invite — would fail the same way rather than
-		// create a campaign. If X ever documents a structured error code that tells "no
-		// such campaign" from "no such account", match on that code instead of the status.
+		// A campaign 404 is proven absent only once the account itself is confirmed readable;
+		// see the doc comment above.
 		if errors.As(err, &ae) && ae.StatusCode == http.StatusNotFound {
+			if cerr := c.confirmAccountReadable(ctx); cerr != nil {
+				return nil, fmt.Errorf("x ads campaign lookup for %s: the campaign read answered 404, but the ad account could not be confirmed readable, so the absence is not proven: %w", campaignID, cerr)
+			}
 			return nil, nil
 		}
 		return nil, fmt.Errorf("x ads campaign lookup for %s: %w", campaignID, err)
@@ -119,4 +129,33 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 		Status:    *wire.EntityStatus,
 		AccountID: strings.TrimSpace(wire.AccountID),
 	}, nil
+}
+
+// confirmAccountReadable is the proof behind a campaign 404: ONE read of the connection's own ad
+// account (GET accounts/:account_id), which must answer 2xx with a body identityjson accepts whose data.id
+// is exactly the configured account. Anything else is returned as an error, and the caller
+// reports the lookup unverifiable rather than the campaign absent. The account id was already
+// validated by the campaign read's path builder before this runs.
+func (c *Client) confirmAccountReadable(ctx context.Context) error {
+	accountID := strings.TrimSpace(c.account.AccountID)
+	resp, err := c.request(ctx, http.MethodGet, "")
+	if err != nil {
+		return err
+	}
+	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
+		return fmt.Errorf("the ad account read carried no account")
+	}
+	if err := identityjson.Check(resp.raw); err != nil {
+		return err
+	}
+	var acct struct {
+		ID *string `json:"id"`
+	}
+	if err := json.Unmarshal(resp.Data, &acct); err != nil {
+		return fmt.Errorf("the ad account read is not an account object")
+	}
+	if acct.ID == nil || *acct.ID != accountID {
+		return fmt.Errorf("the ad account read does not describe the connection's account")
+	}
+	return nil
 }

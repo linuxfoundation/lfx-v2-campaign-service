@@ -1846,6 +1846,25 @@ HubSpot over something no reconnection can fix. The insert is plain `CreateAudie
 gate exists to stop a build from CREATING platform state, and recording a pointer to lists that
 already exist creates none.
 
+`AttachExistingAudience` records lists an operator already has, and takes EXACTLY ONE of
+`master_list_id` (one composed list, unchanged behaviour) or `include_list_ids` (up to 200 existing
+lists sent to directly, with no composed master). `attachIncludeIDs` decides before any brief read
+or HubSpot call, and every refusal is a 400: both given, neither given (or only blanks), a blank
+include entry, or an include id that is also in `suppression_list_ids` (compared trimmed) — HubSpot
+applies exclusions after inclusions, so that list would be sent nothing. A multi-include attach
+persists `platform_master_list_id` = the first include and `include_list_ids` = all of them; a
+single-master attach records no include list, so its row is byte-identical to before. The result
+and the `Audience` view both carry `include_list_ids` when set, and the inclusion summary of a
+multi-list attach reads "Reused N existing lists (first: …)" rather than naming one list.
+
+`refuseProvenanceBreakingPatch` refuses a `platform_master_list_id` change on any row that records
+include lists, stamped or not: the master there is only the first include, and moving it would
+desynchronise the column from the send set the dispatcher actually uses. `include_list_ids` itself
+is response-only — no PATCH can set it. The email wizard's `SetWizardSendList` resolves the
+audience through `SendListIDs()` too, passes every list to `SetSendList`, and reports them as
+`to.ils_list_ids` beside the existing `ils_list_id` (the first). Its explicit `send_list_ids`
+override still refuses more than one id; that refusal predates multi-include and is unchanged.
+
 `GetAudienceBuilderCapabilities` returns no error on purpose — an unusable connection is this
 endpoint's ANSWER, not its failure, and it is what lets the UI render one explanatory banner
 with the actions disabled instead of nine broken buttons.
@@ -1965,6 +1984,22 @@ did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
 `remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
+## Meta audience read (`connection_meta_audience.go`, LFXV2-2665)
+
+`GetMetaAdsAudience` (`GET .../meta-ads/audience`) is `GetGoogleAdsAudience`'s Meta sibling:
+system scope refused (404), `resolveInsightsWindow` (all seven windows, default
+`last_30_days`), backend check, then `Orchestrator.ReadMetaAudienceInsights`, which type-asserts
+`MetaAudienceReader` (absent → `ErrKeywordInsightsUnsupported`, 400), reads the project's scope
+from `ListProjectPlatformCampaignIDs`, answers an EMPTY scope with an empty result and no
+upstream call, times the call under `metricsCallTimeout`/`read_audience`, and rejects a nil
+result / normalises nil buckets. Errors go through `classifyInsightsErrorFor` with the
+`metaAdsAudienceInsights` descriptor; two arms were added there for the Meta-only sentinels
+`domain.ErrAudienceScopeTooLarge` and `ErrAudienceScopeInvalid` (409, fixed text). Upstream
+failures (transport, 5xx, 429 after retry, 401/403, malformed rows) take the default 503 arm.
+Both audience reads share `readScopedAudience`, a small generic helper holding the scope, empty-scope, timeout, metrics, nil-result and normalise steps; only the capability assertion differs. The account-mismatch 409 text is route-neutral ("…to read this data…") since it is reached by the keyword, Google audience and Meta audience reads alike. Upstream calls run under `metricsCallTimeout` (20s). Buckets carry `dimension` (`age_gender` | `placement`) plus only that dimension's value fields
+(others absent via `optionalString`), and the envelope adds `account_currency`. Tests:
+`meta_audience_test.go`.
+
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
@@ -1979,4 +2014,8 @@ and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta
 (LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
 `platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
 platform error. `internal/apivalidation/campaign_ref_id_drift_test.go` pins that the Goa
-Pattern/MaxLength and the platform validator accept the same ids.
+Pattern/MaxLength and the platform validator accept the same ids. Over HTTP that fixed message is
+reached only by a caller the decoder lets through: the generated decoder applies the design's
+Pattern/MaxLength FIRST, so a malformed id is answered by Goa's own `invalid_pattern` /
+`invalid_length` 400. That one is non-echoing too, but because of the server-wide response encoder
+in [cmd/campaign-service](cmd-campaign-service.md), not because of `platformCampaignIDRule`.

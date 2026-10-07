@@ -1289,8 +1289,8 @@ pre-send shape ever changes.
 
 `GetCampaign` is the read `MicrosoftDispatcher.LookupCampaign` makes to adopt an existing campaign.
 It rides the budget read's `GetCampaignsByIds` (`queryCampaignByIDGuarded`, `Campaigns/QueryByIds`,
-EVERY documented `CampaignType` — `Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App`
-— rather than the budget and bid reads' Search, AccountId in the body and `CustomerAccountId` on the request), so it inherits
+EVERY documented `CampaignType` — `allCampaignTypes`, the space-delimited eight-value v13 set
+(ObjectiveBased included) SHARED with the account monitor in `monitor.go` — rather than the budget and bid reads' Search, AccountId in the body and `CustomerAccountId` on the request), so it inherits
 every answer rule that read applies, plus `identityjson.Check` over the raw 200 body before it is
 decoded — the budget and bid reads pass no guard and are unchanged. `Name`, `Status` and `CampaignType` were
 added to `msCampaignBudgetRead` as RAW fields so a shape this package does not expect in either can fail
@@ -1306,8 +1306,8 @@ back and is refused with `ErrNotSearchCampaign` — a DEFINITE answer the dispat
 only"), never an absence and never an adoption into the Search slot. Requesting Search alone left
 that answer resting on undocumented behaviour: a null slot (503) or, worse, an
 `InvalidCampaignId` PartialError read as absent (404 → a duplicate of a live campaign). A missing
-`CampaignType` is unverifiable, not assumed Search. The comma-separated flags spelling is from the
-REST documentation and has not been exercised live.
+`CampaignType` is unverifiable, not assumed Search. The flags list is the monitor's documented spelling; whether Microsoft rejects a type the account is not
+enabled for has not been exercised live.
 
 ## Settings readback read (LFXV2-2665)
 

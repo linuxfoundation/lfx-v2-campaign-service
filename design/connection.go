@@ -1347,10 +1347,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// a generated method for a provider that cannot answer it would be a 400 by
 	// construction.
 	//
-	// Google Ads, Meta, LinkedIn, Microsoft and X have one. Reddit does not: its platform
-	// client has no ListAdAccounts, so its account id stays hand-entered on the connection
-	// until one is built. Do not add a method here for it without the dispatcher side —
-	// the endpoint would exist and always fail.
+	// Google Ads, Meta, LinkedIn, Microsoft, X and — as of LFXV2-2665 — Reddit have one
+	// (list-reddit-ads-accounts, below; reddit.ListAdAccounts behind RedditDispatcher's
+	// ListAccounts). Reddit's account_id is still Required on its connection config, so a
+	// Reddit connection is not credentials-first: discovery helps an operator choose the id
+	// to store, it does not let the connection be created without one. Do not add a method
+	// here for a provider without the dispatcher side — the endpoint would exist and always
+	// fail.
 	Method("list-google-ads-accounts", func() {
 		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
 		Payload(func() {
@@ -1448,6 +1451,45 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/google-ads/audience")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("get-meta-ads-audience", func() {
+		Description("Read Meta audience insights — age and gender (one combined breakdown) and placement " +
+			"(publisher_platform and platform_position) — for this project's own campaigns, live from the " +
+			"Meta Marketing API Insights edge of the connected ad account. Scoped to the campaigns this " +
+			"service holds for the project, NOT to the ad account: the request filters on those campaign " +
+			"ids and every returned row is checked against them, because the account is shared across " +
+			"foundations. A pure read-through; nothing is persisted. A project with no Meta campaigns of " +
+			"its own receives an empty `buckets` array and Meta is not contacted. Both breakdowns must load " +
+			"or the request fails (503): each covers the same traffic independently, and one presented " +
+			"without the other is a partial picture. Spend is in the account's own currency " +
+			"(`account_currency`); no FX conversion is performed. There is no conversions counter: Meta " +
+			"reports conversions only as per-action-type entries, not as one scalar.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id")
+		})
+		Result(MetaAdsAudience)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/meta-ads/audience")
 			Header("bearer_token:Authorization")
 			connectionAuthErrorResponses()
 			Param("window")

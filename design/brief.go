@@ -639,6 +639,47 @@ var GoogleAdsAudience = Type("google-ads-audience", func() {
 	Required("window", "buckets", "bucket_count")
 })
 
+// MetaAdsAudienceBucket is one Meta Insights breakdown segment's counters.
+//
+// A Meta-named type rather than GoogleAdsAudienceBucket, because the Google type does not fit
+// unchanged: Meta's age and gender arrive as ONE combined breakdown (each segment carries both
+// values), and placement carries two values (publisher_platform and platform_position). Folding
+// either into Google's single `value` would mean inventing a joined-string vocabulary a caller
+// then has to split. The dimension values are named attributes instead, set only for the
+// dimension that carries them.
+var MetaAdsAudienceBucket = Type("meta-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which breakdown this bucket belongs to: age_gender (Meta's combined age,gender breakdown) or placement (publisher_platform,platform_position)", func() { Enum("age_gender", "placement") })
+	Attribute("age", String, "Meta's age bucket, verbatim (e.g. 25-34, 65+, Unknown). Present only on age_gender buckets.", func() { Example("25-34") })
+	Attribute("gender", String, "Meta's gender bucket, verbatim (male, female, unknown). Present only on age_gender buckets.", func() { Example("female") })
+	Attribute("publisher_platform", String, "Meta's publisher platform, verbatim (e.g. facebook, instagram, audience_network, messenger). Present only on placement buckets.", func() { Example("instagram") })
+	Attribute("platform_position", String, "Meta's placement within the publisher platform, verbatim (e.g. feed, instagram_stories). Present only on placement buckets.", func() { Example("feed") })
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of the ad account's native currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "impressions", "clicks", "cost_micros", "ctr")
+})
+
+// MetaAdsAudience is the project-scoped Meta demographic/placement read. Its envelope fields are
+// the Google audience read's (window, buckets, bucket_count) plus account_currency, which Meta
+// reports on every Insights row and Google's read does not carry.
+//
+// There is deliberately NO conversions field. Meta's Insights edge exposes no scalar
+// conversions metric: conversions arrive inside the `actions` array as {action_type, value}
+// pairs, and reducing that to one number means choosing which action types count for this
+// advertiser — the same reason the Meta campaign metrics read leaves conversions absent rather
+// than reporting a misleading 0.
+var MetaAdsAudience = Type("meta-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
+	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.")
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across both dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions double-counts it — total within one dimension only.", func() { Example(24) })
+	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as Meta reports it. ABSENT when no bucket was returned.", func() {
+		Pattern("^[A-Z]{3}$")
+		Example("USD")
+	})
+	Required("window", "buckets", "bucket_count")
+})
+
 // HubSpotCampaign is one LF HubSpot marketing campaign.
 //
 // The `hs_utm` token is the point of this type: it is what makes a send attributable to a
@@ -1440,7 +1481,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("adopt-campaign", func() {
-		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), and the campaign must belong to that connection's ad account. Returns 404 when the platform answers that it holds no such campaign (a deleted, removed or archived campaign counts as absent), 503 when the campaign could not be verified (the platform was unreachable or throttled, or answered with something untrustworthy - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit and X, where the budget is the campaign's own.")
+		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit and X only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit and X, where the budget is the campaign's own.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only, matching create-campaigns: project_id is the exact-match key for

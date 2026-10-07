@@ -114,12 +114,26 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	}
 	koHTTPDir := http.Dir(koDataPath)
 
+	// Every generated server is built with a nil formatter and nonEchoingResponseEncoder. The
+	// formatter MUST stay nil: each generated Encode<Method>Error hands a named error to a non-nil
+	// formatter instead of building its generated code/message/reason body. Validation 400s are
+	// kept from echoing the rejected value by the encoder instead (see error_formatter.go).
+	//
+	// ACCEPTED KNOWN UPSTREAM RACE. With a nil formatter, goa v3.25.3's goahttp.ErrorEncoder
+	// (http/encoding.go:265-266) assigns `formatter = NewErrorResponse` INSIDE the closure it
+	// returns, on every non-named error, so two concurrent error responses on one endpoint write
+	// that captured variable without synchronization. The value written is always the same, so
+	// no response is ever wrong, but it is a Go-memory-model race that `-race` reports if a test
+	// drives concurrent errors through one endpoint. It is not avoidable here: a non-nil
+	// formatter is what replaced the named-error bodies. Goa fixed it upstream in v3.30.0 (the nil
+	// check moved outside the closure); the remedy is a goa bump (>= v3.30.0, regenerating gen/),
+	// tracked as a follow-up rather than done in this change. main carried the same race before.
 	eh := errorHandler(ctx)
 	server := svcsvr.New(
 		endpoints,
 		mux,
 		goahttp.RequestDecoder,
-		goahttp.ResponseEncoder,
+		nonEchoingResponseEncoder,
 		eh,
 		nil,
 		koHTTPDir,
@@ -138,25 +152,25 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	if connEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: connEndpoints is nil (connection routes would be unmounted)")
 	}
-	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	connsvcsvr.Mount(mux, connServer)
 
 	if briefEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: briefEndpoints is nil (brief routes would be unmounted)")
 	}
-	briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	briefsvcsvr.Mount(mux, briefServer)
 
 	if audienceEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: audienceEndpoints is nil (audience routes would be unmounted)")
 	}
-	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	audiencesvcsvr.Mount(mux, audienceServer)
 
 	if exploreEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: exploreEndpoints is nil (audience-builder routes would be unmounted)")
 	}
-	exploreServer := exploresvcsvr.New(exploreEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	exploreServer := exploresvcsvr.New(exploreEndpoints, mux, goahttp.RequestDecoder, nonEchoingResponseEncoder, eh, nil)
 	exploresvcsvr.Mount(mux, exploreServer)
 
 	// The email wizard's progress stream is the one route in this service that is not a Goa

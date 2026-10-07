@@ -88,8 +88,13 @@ type AttachExistingAudiencePayload struct {
 type AudienceAttachExistingInput struct {
 	// The brief to record the audience under
 	BriefID string
-	// The existing contact list the send goes to
-	MasterListID string
+	// The existing contact list the send goes to. Exactly one of master_list_id or
+	// include_list_ids is required
+	MasterListID *string
+	// Several existing contact lists the send goes to directly, with no composed
+	// master. Exactly one of master_list_id or include_list_ids is required; the
+	// first id is recorded as platform_master_list_id
+	IncludeListIds []string
 	// Existing lists the send suppresses
 	SuppressionListIds []string
 	// Operator-visible provenance for the recorded audience; derived from the
@@ -105,6 +110,9 @@ type AudienceAttachExistingResult struct {
 	Master *AudienceComposedList
 	// The suppression list ids recorded beside it
 	SuppressionListIds []string
+	// Every include list the send goes to, when include_list_ids was supplied;
+	// absent for a single master_list_id
+	IncludeListIds []string
 	// The audience row recorded for brief_id
 	Audience *AudienceComposeRecordedAudience
 }
@@ -164,8 +172,12 @@ type AudienceComposeRecordedAudience struct {
 	Status string
 	// Optimistic-concurrency version
 	Version int64
-	// The master list this audience sends to
+	// The master list this audience sends to; for a multi-list attach, the first
+	// of include_list_ids
 	PlatformMasterListID string
+	// Existing lists the send goes to directly, when the audience was attached to
+	// several lists instead of one master; absent for a single master
+	IncludeListIds []string
 }
 
 type AudienceComposedList struct {

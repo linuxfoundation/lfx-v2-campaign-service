@@ -542,6 +542,32 @@ zero). The return type `CampaignMetrics` is distinct from the domain type
 `model.CampaignMetrics` (an application-level platform-agnostic staging area), converted at
 the dispatcher boundary.
 
+## Audience insights read (`audience.go`, LFXV2-2665)
+
+`GetAudienceInsights(ctx, accountID, window, campaignIDs)` issues, per breakdown,
+`GET /act_<id>/insights?level=campaign&fields=campaign_id,impressions,clicks,spend,account_currency&breakdowns=<b>&date_preset=<p>&filtering=[{"field":"campaign.id","operator":"IN","value":[<ids>]}]&limit=500`
+with `<b>` = `age,gender` then `publisher_platform,platform_position`. The window uses the
+metrics read's `datePresetFor` map (Meta resolves it in the account's timezone). Before any
+request: `ValidateAccountID`, a non-empty scope of canonical ids (`ErrAudienceScopeInvalid`),
+de-duplicated, at most `MaxAudienceCampaigns` (250, a local URL bound — not a documented Meta
+limit; `ErrAudienceScopeTooLarge`). Paging follows `paging.cursors.after` (never the `next` URL),
+at most `audienceMaxPages` (20) pages per breakdown; a `next` on the last page, a missing or
+repeated cursor all fail the read. Every row is checked: no duplicate top-level JSON keys
+(`rejectDuplicateKeys`), `campaign_id` in the requested scope, `account_currency` a consistent
+ISO 4217 code, each breakdown value present and matching `^[A-Za-z0-9][A-Za-z0-9_+\-]{0,63}$`
+(kept verbatim, else the read fails — values never echoed), no repeated (campaign, segment),
+counters via `parseMetricInt`/`parseSpendMicros` (spend → micros, the helper the metrics read
+now shares). Rows are summed per segment across campaigns with an overflow check; CTR is computed
+after aggregation; order is impressions descending then values. Any failure — including either
+breakdown's — returns no rows. No conversions: Meta has no scalar conversions metric.
+
+The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both breakdowns, up to
+2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
+large project can 503 consistently on timeout. Row keys are compared for duplicates with
+`strings.EqualFold`, because encoding/json matches keys to struct fields case-insensitively
+(KELVIN SIGN → `k`, LONG S → `s` included) and keeps the last match: `{"Campaign_ID":…,"campaign_id":…}`
+is as ambiguous as an exact repeat.
+
 ## Credential scrubbing on error bodies
 
 When an error response is NOT a Graph diagnostic — a proxy page, a WAF block, a
@@ -733,9 +759,11 @@ digits only, no leading zero (`numericIDRE` admits one; a stored Meta id never h
 one `GET /{campaign_id}?fields=id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy`
 through `doRequest`, so a 429 or HTTP-400 rate-limit code is retried and an exhausted one is an
 error. `ValidateCampaignID` (the campaign-ref id rule above) runs first
-and returns `ErrInvalidCampaignID` with no request. Graph code 100 + `error_subcode` 33 ("does not
-exist, cannot be loaded with this token, or does not support this operation" — all an absence under
-this token) and a `status` of `DELETED` or `ARCHIVED` are `(nil, nil)`. `ACTIVE`/`PAUSED` is a ref;
+and returns `ErrInvalidCampaignID` with no request. Only a `status` of `DELETED` or `ARCHIVED` is
+`(nil, nil)`. Graph code 100 + `error_subcode` 33 is NOT an absence, on any HTTP status: Meta
+documents it as "does not exist OR cannot be loaded due to missing permissions", so it cannot prove
+the campaign is missing rather than invisible to this token, and it is an error (503) like any
+401/403. `ACTIVE`/`PAUSED` is a ref;
 any other status, a missing name, an id echo that differs, a body `identityjson.Check` refuses or
 that does not decode, and — because the node read is NOT account-scoped — a missing or malformed
 `account_id` are errors. `effective_status` is reported verbatim and never judged: Meta grows that

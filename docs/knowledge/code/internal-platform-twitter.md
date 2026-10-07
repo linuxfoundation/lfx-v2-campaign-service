@@ -1281,8 +1281,11 @@ the package's `campaignIDRe` (`^[A-Za-z0-9]+$`) and at most 64 characters, untri
 one `GET accounts/:account_id/campaigns/:campaign_id` — the resource the budget read and the toggle
 address — through `request()`, so a 429 is retried (and a declared reset past the wait cap ends the
 read at once) and an exhausted one is an error. `ValidateCampaignID` (alphanumeric, ≤64, no
-padding) runs first and returns `ErrInvalidCampaignID` with no request. A 404 and `deleted: true`
-are `(nil, nil)`; `entity_status` `ACTIVE`, `PAUSED` or `DRAFT` is a ref (a draft campaign exists);
+padding) runs first and returns `ErrInvalidCampaignID` with no request. `deleted: true` is `(nil, nil)`,
+and so is a 404 — but only once ONE confirming read of the connection's own account
+(`GET accounts/:account_id`, `confirmAccountReadable`) answers 2xx naming that account; any other
+answer to it (404, 401/403, 5xx, throttle, a body naming another account) is an error. The
+confirming read is made only after a campaign 404; `entity_status` `ACTIVE`, `PAUSED` or `DRAFT` is a ref (a draft campaign exists);
 any other status, a missing name, an id echo that differs, an empty `data`, a 401/403, and a body
 `identityjson.Check` refuses or that does not decode are errors. The read is path-scoped; X's
 campaign object is not documented to carry `account_id`, and when a response does carry one it is

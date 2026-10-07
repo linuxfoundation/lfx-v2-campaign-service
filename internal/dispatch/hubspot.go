@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -520,9 +521,10 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// email, so the name is read leniently instead.
 	eventName := lenientEventName(brief)
 
-	// Resolve the brief's BUILT audience: the send list is the audience's HubSpot master list.
+	// Resolve the brief's BUILT audience: the send lists are the audience's HubSpot master list,
+	// or every include list when the audience was attached from several existing lists.
 	// All of this is pre-create (no HubSpot mutation yet), so any failure releases the claim.
-	masterListID, suppressionIDs, audiencePortal, aerr := d.resolveBuiltAudience(ctx, brief.ProjectID, brief.ID)
+	sendListIDs, suppressionIDs, audiencePortal, aerr := d.resolveBuiltAudience(ctx, brief.ProjectID, brief.ID)
 	if aerr != nil {
 		return nil, notCreated(aerr)
 	}
@@ -539,13 +541,13 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// Refused BEFORE any HubSpot mutation, so this releases the dispatch claim and creates
 	// nothing. Rebuild is the remedy rather than reconnect: the lists in the old portal cannot
 	// be moved, and the brief's audience must be rebuilt where the send will run.
-	// Pre-flight the master/suppression conflict BEFORE cloning: SetSendList rejects when the
-	// master list also appears in the suppression set (it would exclude the whole audience), but
-	// discovering that only after CloneEmail would orphan a draft. This is pure validation (no
+	// Pre-flight the send/suppression conflict BEFORE cloning: SetSendList rejects when any send
+	// list also appears in the suppression set (it would exclude that whole list from the send),
+	// but discovering that only after CloneEmail would orphan a draft. This is pure validation (no
 	// HubSpot call), so a conflict fails cleanly with nothing created.
 	for _, s := range suppressionIDs {
-		if s == masterListID {
-			return nil, notCreated(fmt.Errorf("hubspot: the audience master list %q is also in its suppression set — the send list would exclude the entire audience", masterListID))
+		if slices.Contains(sendListIDs, s) {
+			return nil, notCreated(fmt.Errorf("hubspot: the audience send list %q is also in its suppression set — the send would exclude that entire list", s))
 		}
 	}
 
@@ -583,7 +585,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// already exists, so ANY failure here is a PARTIAL application — return the campaign (with
 	// the clone id) so the orchestrator retains the claim and the email is reconcilable, and
 	// surface the error so the caller verifies rather than reporting a clean success.
-	if _, serr := client.SetSendList(ctx, email.ID, masterListID, suppressionIDs); serr != nil {
+	if _, serr := client.SetSendList(ctx, email.ID, sendListIDs, suppressionIDs); serr != nil {
 		// Assigns the NAMED return, not a local: the deferred stampProvenance reads `camp`,
 		// and a local here would leave the named return nil for any later edit that turns this
 		// into a bare `return` or inserts a statement before it.
@@ -839,13 +841,14 @@ func tagEmailLinks(ctx context.Context, client *hubspot.Client, emailID, emailNa
 }
 
 // resolveBuiltAudience finds the brief's most-recent BUILT HubSpot audience and returns its
-// master list id + suppression list ids. It fails (a pre-create error) when no audience exists
+// send list ids (model.CampaignAudience.SendListIDs: every include_list_ids entry when the
+// audience records them, otherwise the master list alone) + suppression list ids. It fails (a pre-create error) when no audience exists
 // or the newest one is not yet built — activating an email against a missing/incomplete audience
 // would send to the wrong (or no) recipients, so this refuses rather than send blindly.
-func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID, briefID string) (masterListID string, suppressionIDs []string, builtInPortalID string, err error) {
+func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID, briefID string) (sendListIDs, suppressionIDs []string, builtInPortalID string, err error) {
 	auds, lerr := d.audiences.ListAudiences(ctx, projectID, briefID)
 	if lerr != nil {
-		return "", nil, "", fmt.Errorf("hubspot: could not load the brief's audience: %w", lerr)
+		return nil, nil, "", fmt.Errorf("hubspot: could not load the brief's audience: %w", lerr)
 	}
 	// ListAudiences returns newest-first; take the newest HubSpot audience that is BUILT.
 	for _, a := range auds {
@@ -855,18 +858,22 @@ func (d *HubSpotDispatcher) resolveBuiltAudience(ctx context.Context, projectID,
 		if a.Status != model.AudienceBuilt {
 			// The newest hubspot audience isn't built yet (still building / failed) — refuse; a
 			// retry after it builds will succeed. A stale older audience must NOT be substituted.
-			return "", nil, "", fmt.Errorf("hubspot: the brief's audience is %s, not built — build the audience before staging the email", a.Status)
+			return nil, nil, "", fmt.Errorf("hubspot: the brief's audience is %s, not built — build the audience before staging the email", a.Status)
 		}
 		if strings.TrimSpace(a.PlatformMasterListID) == "" {
-			return "", nil, "", fmt.Errorf("hubspot: the built audience has no master list id")
+			return nil, nil, "", fmt.Errorf("hubspot: the built audience has no master list id")
+		}
+		send, serr := a.SendListIDs()
+		if serr != nil {
+			return nil, nil, "", fmt.Errorf("hubspot: %w", serr)
 		}
 		ids, derr := decodeSuppressionIDs(a.SuppressionListIDs)
 		if derr != nil {
-			return "", nil, "", derr
+			return nil, nil, "", derr
 		}
-		return strings.TrimSpace(a.PlatformMasterListID), ids, strings.TrimSpace(a.BuiltInPortalID), nil
+		return send, ids, strings.TrimSpace(a.BuiltInPortalID), nil
 	}
-	return "", nil, "", fmt.Errorf("hubspot: no audience found for this brief — build one before staging the email")
+	return nil, nil, "", fmt.Errorf("hubspot: no audience found for this brief — build one before staging the email")
 }
 
 // decodeSuppressionIDs parses the audience's SuppressionListIDs JSON (a string array) into a

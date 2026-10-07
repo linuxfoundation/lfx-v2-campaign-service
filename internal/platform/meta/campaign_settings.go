@@ -196,6 +196,14 @@ func (c *Client) AccountCurrencyOffset(ctx context.Context) (offset int64, known
 	return off, ok, nil
 }
 
+// graphCodeInvalidParameter + graphSubcodeObjectMissing is Graph's structured "this node does not
+// exist, cannot be loaded with this token, or does not support this operation" answer (code 100,
+// error_subcode 33). It does NOT by itself prove absence — see GetCampaignSettings.
+const (
+	graphCodeInvalidParameter = 100
+	graphSubcodeObjectMissing = 33
+)
+
 // graphObjectMissing reports Graph's structured "this node does not exist or cannot be loaded"
 // answer (code 100 / error_subcode 33) on a 4xx — the one answer this package reads as absence.
 func graphObjectMissing(err error) bool {

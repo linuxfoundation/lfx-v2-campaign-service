@@ -88,7 +88,7 @@ type AccountCampaign struct {
 	BudgetUnparseable bool
 }
 
-// monitorCampaignTypes is every CampaignType value the v13 CampaignType value set documents
+// allCampaignTypes is every CampaignType value the v13 CampaignType value set documents
 // (App, Audience, DynamicSearchAds, Hotel, ObjectiveBased, PerformanceMax, Search, Shopping),
 // as the space-separated flags string GetCampaignsByAccountId documents for multiple values
 // ("a string that contains a space-delimited list of values for example ... Search Shopping").
@@ -107,7 +107,12 @@ type AccountCampaign struct {
 // direction this file prefers; trimming the list would trade that error for a silent omission.
 // DynamicSearchAds is documented as "no longer supported" as a campaign TYPE but remains in the
 // value set, so legacy campaigns of that type are still asked for.
-const monitorCampaignTypes = "Search Shopping DynamicSearchAds Audience Hotel PerformanceMax App ObjectiveBased"
+//
+// SHARED with the adoption lookup (campaign_lookup.go, GetCampaign), which asks for every type
+// for the mirror-image reason: filtered to Search, a live campaign of another type would not come
+// back at all, and its absence could read as "no such campaign" and invite a duplicate. One
+// constant, so the two reads cannot drift onto different lists.
+const allCampaignTypes = "Search Shopping DynamicSearchAds Audience Hotel PerformanceMax App ObjectiveBased"
 
 // campaignStatusDeleted is the one CampaignStatus the monitor drops. Microsoft documents it as
 // "for internal use only ... all Get operations do not return deleted objects", so this filter
@@ -129,7 +134,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context) ([]AccountCampaign, e
 	}
 	req := queryCampaignsRequest{
 		AccountId:    json.Number(c.account.AccountID),
-		CampaignType: monitorCampaignTypes,
+		CampaignType: allCampaignTypes,
 	}
 	body, err := c.doRequest(ctx, http.MethodPost, "Campaigns/QueryByAccountId", req, true)
 	if err != nil {

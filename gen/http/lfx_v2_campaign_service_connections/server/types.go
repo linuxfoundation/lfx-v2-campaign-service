@@ -830,6 +830,24 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
 }
 
+// GetMetaAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body.
+type GetMetaAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window string `form:"window" json:"window" xml:"window"`
+	// Every bucket across both breakdowns, discriminated by `dimension`. Ordered
+	// by dimension (age_gender, then placement) then impressions descending.
+	Buckets []*MetaAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`, across both dimensions. Each dimension
+	// independently covers the same traffic, so summing any counter across
+	// dimensions double-counts it — total within one dimension only.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+	// ISO 4217 currency of the ad account that cost_micros is denominated in, as
+	// Meta reports it. ABSENT when no bucket was returned.
+	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -4205,6 +4223,79 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetMetaAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMetaAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMetaAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMetaAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMetaAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMetaAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMetaAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMetaAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMetaAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5536,6 +5627,35 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
 }
 
+// MetaAdsAudienceBucketResponseBody is used to define fields on response body
+// types.
+type MetaAdsAudienceBucketResponseBody struct {
+	// Which breakdown this bucket belongs to: age_gender (Meta's combined
+	// age,gender breakdown) or placement (publisher_platform,platform_position)
+	Dimension string `form:"dimension" json:"dimension" xml:"dimension"`
+	// Meta's age bucket, verbatim (e.g. 25-34, 65+, Unknown). Present only on
+	// age_gender buckets.
+	Age *string `form:"age,omitempty" json:"age,omitempty" xml:"age,omitempty"`
+	// Meta's gender bucket, verbatim (male, female, unknown). Present only on
+	// age_gender buckets.
+	Gender *string `form:"gender,omitempty" json:"gender,omitempty" xml:"gender,omitempty"`
+	// Meta's publisher platform, verbatim (e.g. facebook, instagram,
+	// audience_network, messenger). Present only on placement buckets.
+	PublisherPlatform *string `form:"publisher_platform,omitempty" json:"publisher_platform,omitempty" xml:"publisher_platform,omitempty"`
+	// Meta's placement within the publisher platform, verbatim (e.g. feed,
+	// instagram_stories). Present only on placement buckets.
+	PlatformPosition *string `form:"platform_position,omitempty" json:"platform_position,omitempty" xml:"platform_position,omitempty"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window in micro-units of the ad account's native currency
+	// (see account_currency). This service performs no FX conversion.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
 // CampaignRefResponseBody is used to define fields on response body types.
 type CampaignRefResponseBody struct {
 	// This service's campaign id, as the mutation routes take it.
@@ -6361,6 +6481,30 @@ func NewGetGoogleAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.Go
 		}
 	} else {
 		body.Buckets = []*GoogleAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceResponseBody builds the HTTP response body from the
+// result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.MetaAdsAudience) *GetMetaAdsAudienceResponseBody {
+	body := &GetMetaAdsAudienceResponseBody{
+		Window:          res.Window,
+		BucketCount:     res.BucketCount,
+		AccountCurrency: res.AccountCurrency,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*MetaAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsMetaAdsAudienceBucketToMetaAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*MetaAdsAudienceBucketResponseBody{}
 	}
 	return body
 }
@@ -10070,6 +10214,84 @@ func NewGetGoogleAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewGetMetaAdsAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetMetaAdsAudienceBadRequestResponseBody {
+	body := &GetMetaAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceConflictResponseBody builds the HTTP response body from
+// the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetMetaAdsAudienceConflictResponseBody {
+	body := &GetMetaAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMetaAdsAudienceServiceUnavailableResponseBody {
+	body := &GetMetaAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMetaAdsAudienceInternalServerErrorResponseBody {
+	body := &GetMetaAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMetaAdsAudienceNotFoundResponseBody {
+	body := &GetMetaAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetMetaAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetMetaAdsAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMetaAdsAudienceUnauthorizedResponseBody {
+	body := &GetMetaAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMicrosoftAdsKeywordsBadRequestResponseBody builds the HTTP response
 // body from the result of the "get-microsoft-ads-keywords" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -11899,6 +12121,17 @@ func NewGetGoogleAdsKeywordsPayload(projectID string, window *string, bearerToke
 // service get-google-ads-audience endpoint payload.
 func NewGetGoogleAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload {
 	v := &lfxv2campaignserviceconnections.GetGoogleAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetMetaAdsAudiencePayload builds a lfx-v2-campaign-service-connections
+// service get-meta-ads-audience endpoint payload.
+func NewGetMetaAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMetaAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetMetaAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
 	v.BearerToken = bearerToken
