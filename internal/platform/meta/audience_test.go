@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -483,7 +484,11 @@ func TestGetAudienceInsights_DuplicateKeyCheckScalesLinearly(t *testing.T) {
 	fastest := func(n int) time.Duration {
 		row := wideRow(n, "")
 		best := time.Duration(1<<63 - 1)
-		for i := 0; i < 3; i++ {
+		// Best of five, each after a forced GC, so a collection or a throttled moment during one
+		// run cannot inflate the ratio on a loaded CI worker; the bound (10x vs ~4x measured)
+		// keeps further headroom.
+		for i := 0; i < 5; i++ {
+			runtime.GC()
 			start := time.Now()
 			if _, err := readWide(t, row); err != nil {
 				t.Fatalf("%d keys: %v", n, err)
