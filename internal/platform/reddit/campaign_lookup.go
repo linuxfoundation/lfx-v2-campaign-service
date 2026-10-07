@@ -20,22 +20,6 @@ const (
 	StatusDeleted  = "DELETED"
 )
 
-// maxCampaignIDLen bounds an adoption id at the adopt-campaign payload's own MaxLength, so the
-// client refuses nothing longer than the API already admits and keeps an unbounded string out of
-// the request path when it is called from anywhere else.
-const maxCampaignIDLen = 64
-
-// ValidateCampaignID reports whether campaignID can name a Reddit campaign: non-empty, letters,
-// digits and underscores only (the path-injection guard every campaign path here applies), and
-// bounded. Padding is refused, not trimmed. The error wraps ErrInvalidCampaignID — a PERMANENT
-// input fault the adopt handler maps to 400.
-func ValidateCampaignID(campaignID string) error {
-	if campaignID == "" || len(campaignID) > maxCampaignIDLen || !accountIDRe.MatchString(campaignID) {
-		return fmt.Errorf("reddit: adoption id: %w", ErrInvalidCampaignID)
-	}
-	return nil
-}
-
 // CampaignRef is what the adoption read learns about one campaign.
 type CampaignRef struct {
 	// ID is the id Reddit ECHOED, already checked against the requested one.

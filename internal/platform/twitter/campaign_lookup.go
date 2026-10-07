@@ -18,21 +18,6 @@ import (
 // real campaign in the account — adoptable, though not serving.
 const StatusDraft = "DRAFT"
 
-// maxCampaignIDLen bounds an adoption id. X's ids are short base-36 tokens; the bound keeps an
-// unbounded caller string out of the request path and the logs.
-const maxCampaignIDLen = 64
-
-// ValidateCampaignID reports whether campaignID can name an X Ads campaign: non-empty,
-// alphanumeric (the path guard every campaign path here applies) and bounded. Padding is refused,
-// not trimmed. The error wraps ErrInvalidCampaignID — a PERMANENT input fault the adopt handler
-// maps to 400.
-func ValidateCampaignID(campaignID string) error {
-	if campaignID == "" || len(campaignID) > maxCampaignIDLen || !campaignIDRe.MatchString(campaignID) {
-		return fmt.Errorf("twitter: adoption id: %w", ErrInvalidCampaignID)
-	}
-	return nil
-}
-
 // CampaignRef is what the adoption read learns about one campaign.
 type CampaignRef struct {
 	// ID is the id X ECHOED, already checked against the requested one.

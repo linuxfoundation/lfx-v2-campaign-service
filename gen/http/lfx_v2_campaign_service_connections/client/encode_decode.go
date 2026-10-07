@@ -9565,6 +9565,587 @@ func DecodeResolveMicrosoftAdsCampaignResponse(decoder func(*http.Response) goah
 	}
 }
 
+// BuildResolveMetaAdsCampaignRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "resolve-meta-ads-campaign" endpoint
+func (c *Client) BuildResolveMetaAdsCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", "*lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ResolveMetaAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeResolveMetaAdsCampaignRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections resolve-meta-ads-campaign server.
+func EncodeResolveMetaAdsCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", "*lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("platform_campaign_id", p.PlatformCampaignID)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeResolveMetaAdsCampaignResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-meta-ads-campaign endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeResolveMetaAdsCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeResolveMetaAdsCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ResolveMetaAdsCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			err = ValidateResolveMetaAdsCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			res := NewResolveMetaAdsCampaignPlatformCampaignResolutionOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ResolveMetaAdsCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			err = ValidateResolveMetaAdsCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			return nil, NewResolveMetaAdsCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ResolveMetaAdsCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			err = ValidateResolveMetaAdsCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			return nil, NewResolveMetaAdsCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ResolveMetaAdsCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			err = ValidateResolveMetaAdsCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			return nil, NewResolveMetaAdsCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ResolveMetaAdsCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			err = ValidateResolveMetaAdsCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			return nil, NewResolveMetaAdsCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ResolveMetaAdsCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			err = ValidateResolveMetaAdsCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			return nil, NewResolveMetaAdsCampaignPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ResolveMetaAdsCampaignUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			err = ValidateResolveMetaAdsCampaignUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+			}
+			return nil, NewResolveMetaAdsCampaignUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildResolveRedditAdsCampaignRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "resolve-reddit-ads-campaign" endpoint
+func (c *Client) BuildResolveRedditAdsCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", "*lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ResolveRedditAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeResolveRedditAdsCampaignRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections resolve-reddit-ads-campaign
+// server.
+func EncodeResolveRedditAdsCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", "*lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("platform_campaign_id", p.PlatformCampaignID)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeResolveRedditAdsCampaignResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-reddit-ads-campaign endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeResolveRedditAdsCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeResolveRedditAdsCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ResolveRedditAdsCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			err = ValidateResolveRedditAdsCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			res := NewResolveRedditAdsCampaignPlatformCampaignResolutionOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ResolveRedditAdsCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			err = ValidateResolveRedditAdsCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			return nil, NewResolveRedditAdsCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ResolveRedditAdsCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			err = ValidateResolveRedditAdsCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			return nil, NewResolveRedditAdsCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ResolveRedditAdsCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			err = ValidateResolveRedditAdsCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			return nil, NewResolveRedditAdsCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ResolveRedditAdsCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			err = ValidateResolveRedditAdsCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			return nil, NewResolveRedditAdsCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ResolveRedditAdsCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			err = ValidateResolveRedditAdsCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			return nil, NewResolveRedditAdsCampaignPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ResolveRedditAdsCampaignUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			err = ValidateResolveRedditAdsCampaignUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+			}
+			return nil, NewResolveRedditAdsCampaignUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildResolveTwitterAdsCampaignRequest instantiates a HTTP request object
+// with method and path set to call the "lfx-v2-campaign-service-connections"
+// service "resolve-twitter-ads-campaign" endpoint
+func (c *Client) BuildResolveTwitterAdsCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", "*lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ResolveTwitterAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeResolveTwitterAdsCampaignRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections resolve-twitter-ads-campaign
+// server.
+func EncodeResolveTwitterAdsCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", "*lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("platform_campaign_id", p.PlatformCampaignID)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeResolveTwitterAdsCampaignResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-twitter-ads-campaign endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeResolveTwitterAdsCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeResolveTwitterAdsCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ResolveTwitterAdsCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			err = ValidateResolveTwitterAdsCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			res := NewResolveTwitterAdsCampaignPlatformCampaignResolutionOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ResolveTwitterAdsCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			err = ValidateResolveTwitterAdsCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			return nil, NewResolveTwitterAdsCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ResolveTwitterAdsCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			err = ValidateResolveTwitterAdsCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			return nil, NewResolveTwitterAdsCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ResolveTwitterAdsCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			err = ValidateResolveTwitterAdsCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			return nil, NewResolveTwitterAdsCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ResolveTwitterAdsCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			err = ValidateResolveTwitterAdsCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			return nil, NewResolveTwitterAdsCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ResolveTwitterAdsCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			err = ValidateResolveTwitterAdsCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			return nil, NewResolveTwitterAdsCampaignPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ResolveTwitterAdsCampaignUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			err = ValidateResolveTwitterAdsCampaignUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
+			}
+			return nil, NewResolveTwitterAdsCampaignUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListMetaAdsAccountsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "list-meta-ads-accounts" endpoint
@@ -10322,6 +10903,196 @@ func DecodeListTwitterAdsAccountsResponse(decoder func(*http.Response) goahttp.D
 		default:
 			body, _ := io.ReadAll(resp.Body)
 			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildListRedditAdsAccountsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "list-reddit-ads-accounts" endpoint
+func (c *Client) BuildListRedditAdsAccountsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", "*lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListRedditAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListRedditAdsAccountsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections list-reddit-ads-accounts server.
+func EncodeListRedditAdsAccountsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", "*lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		return nil
+	}
+}
+
+// DecodeListRedditAdsAccountsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections list-reddit-ads-accounts
+// endpoint. restoreBody controls whether the response body should be restored
+// after having been read.
+// DecodeListRedditAdsAccountsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeListRedditAdsAccountsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListRedditAdsAccountsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			err = ValidateListRedditAdsAccountsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			res := NewListRedditAdsAccountsResultOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListRedditAdsAccountsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			err = ValidateListRedditAdsAccountsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			return nil, NewListRedditAdsAccountsBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListRedditAdsAccountsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			err = ValidateListRedditAdsAccountsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			return nil, NewListRedditAdsAccountsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListRedditAdsAccountsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			err = ValidateListRedditAdsAccountsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			return nil, NewListRedditAdsAccountsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListRedditAdsAccountsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			err = ValidateListRedditAdsAccountsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			return nil, NewListRedditAdsAccountsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListRedditAdsAccountsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			err = ValidateListRedditAdsAccountsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			return nil, NewListRedditAdsAccountsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListRedditAdsAccountsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			err = ValidateListRedditAdsAccountsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
+			}
+			return nil, NewListRedditAdsAccountsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", resp.StatusCode, string(body))
 		}
 	}
 }

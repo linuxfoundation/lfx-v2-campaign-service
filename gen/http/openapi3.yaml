@@ -7375,7 +7375,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError105'
+                                $ref: '#/components/schemas/UnauthorizedError109'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8240,7 +8240,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError103'
+                                $ref: '#/components/schemas/UnauthorizedError107'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8340,7 +8340,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError104'
+                                $ref: '#/components/schemas/UnauthorizedError108'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -8444,7 +8444,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError102'
+                                $ref: '#/components/schemas/UnauthorizedError106'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9255,7 +9255,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError106'
+                                $ref: '#/components/schemas/UnauthorizedError110'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -9349,7 +9349,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError99'
+                                $ref: '#/components/schemas/UnauthorizedError102'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10202,7 +10202,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError107'
+                                $ref: '#/components/schemas/UnauthorizedError111'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -10296,7 +10296,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError98'
+                                $ref: '#/components/schemas/UnauthorizedError101'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11108,7 +11108,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError109'
+                                $ref: '#/components/schemas/UnauthorizedError113'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -11202,7 +11202,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError100'
+                                $ref: '#/components/schemas/UnauthorizedError103'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12015,7 +12015,101 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError108'
+                                $ref: '#/components/schemas/UnauthorizedError112'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/connection-reddit-ads/accounts:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-reddit-ads-accounts lfx-v2-campaign-service-connections
+            description: 'Enumerate the Reddit ad accounts accessible via the stored connection credential: every business the credential can access, then each business''s ad accounts. Returns account ids in the form the connection''s account_id stores. The label carries the account name, its currency when reported, and the business it was listed under. All or nothing: an upstream failure, a throttle that outlasts the bounded retry, a malformed response or a walk past its page or item bound is a 503, never a short or empty list. An account reachable through two businesses is listed once.'
+            operationId: lfx-v2-campaign-service-connections#list-reddit-ads-accounts
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListGoogleAdsAccountsResponseBody'
+                            example:
+                                accounts:
+                                    - id: t2_gv9wtbfa
+                                      label: Linux Foundation [USD] (The Linux Foundation)
+                                    - id: t2_8k2mzq1x
+                                      label: CNCF [USD] (The Linux Foundation)
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError105'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12843,7 +12937,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError110'
+                                $ref: '#/components/schemas/UnauthorizedError114'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -12947,7 +13041,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/UnauthorizedError101'
+                                $ref: '#/components/schemas/UnauthorizedError104'
                             example:
                                 code: "401"
                                 message: Unauthorized.
@@ -13850,6 +13944,112 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/meta-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-meta-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one Meta campaign id to this service''s own campaign and brief. The Meta twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service''s own tables: Meta is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry:** migration 000020''s unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-meta-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The Meta campaign id to resolve. Digits only, no leading zero, at most 32 digits.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: The Meta campaign id to resolve. Digits only, no leading zero, at most 32 digits.
+                    example: "120210000000000001"
+                    pattern: ^[1-9][0-9]{0,31}$
+                    maxLength: 32
+                  example: "120210000000000001"
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PlatformCampaignResolution'
+                            example:
+                                match_count: 1
+                                matches:
+                                    - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                platform_campaign_id: "24183781329"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError98'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/microsoft-ads/campaign-ref:
         get:
             tags:
@@ -14120,6 +14320,218 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-reddit-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one Reddit campaign id to this service''s own campaign and brief. The Reddit twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service''s own tables: Reddit is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry:** migration 000020''s unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-reddit-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The Reddit campaign id to resolve. Letters, digits and underscores, at most 64 characters.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: The Reddit campaign id to resolve. Letters, digits and underscores, at most 64 characters.
+                    example: "1234567890123456789"
+                    pattern: ^[A-Za-z0-9_]+$
+                    maxLength: 64
+                  example: "1234567890123456789"
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PlatformCampaignResolution'
+                            example:
+                                match_count: 1
+                                matches:
+                                    - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                platform_campaign_id: "24183781329"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError99'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/twitter-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-twitter-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one X/Twitter campaign id to this service''s own campaign and brief. The X/Twitter twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service''s own tables: X/Twitter is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry:** migration 000020''s unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-twitter-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The X/Twitter campaign id to resolve. Letters and digits, at most 64 characters.
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: The X/Twitter campaign id to resolve. Letters and digits, at most 64 characters.
+                    example: 8wxyz
+                    pattern: ^[A-Za-z0-9]+$
+                    maxLength: 64
+                  example: 8wxyz
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PlatformCampaignResolution'
+                            example:
+                                match_count: 1
+                                matches:
+                                    - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                platform_campaign_id: "24183781329"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError100'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
 components:
     schemas:
         AccessibleAccount:
@@ -14127,7 +14539,7 @@ components:
             properties:
                 id:
                     type: string
-                    description: 'Account identifier in the ad platform''s OWN namespace, ready to store as the connection''s account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method''s own example shows its provider''s form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.'
+                    description: 'Account identifier in the ad platform''s OWN namespace, ready to store as the connection''s account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter; a letters-digits-underscores id such as `t2_gv9wtbfa` on Reddit — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method''s own example shows its provider''s form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.'
                     example: Quibusdam ut nihil quasi minima.
                 label:
                     type: string
@@ -25052,6 +25464,78 @@ components:
                 - code
                 - message
         UnauthorizedError110:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError111:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError112:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError113:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: HTTP status code
+                    example: "401"
+                message:
+                    type: string
+                    description: Error message
+                    example: Unauthorized.
+            description: Unauthorized
+            example:
+                code: "401"
+                message: Unauthorized.
+            required:
+                - code
+                - message
+        UnauthorizedError114:
             type: object
             properties:
                 code:

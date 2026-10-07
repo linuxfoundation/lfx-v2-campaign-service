@@ -41,30 +41,21 @@ spec:
     # denied, or worse). Only briefs/jobs/hubspot carry `**` in the RuleSet, so
     # only they get the free `(/.*)?` tail here. The connection-* family is ruled
     # for exactly the base, /test, and /set-credential sub-paths; per-provider
-    # /metrics, google-ads/keywords|audience|campaign-ref and microsoft-ads/keywords|campaign-ref
-    # are ruled at the base path only.
+    # /metrics, google-ads/keywords|audience|campaign-ref, microsoft-ads/keywords|campaign-ref
+    # and (meta-ads|reddit-ads|twitter-ads)/campaign-ref are ruled at the base path only.
     #
-    # google-ads, meta-ads, linkedin-ads, microsoft-ads and twitter-ads are spelled out
-    # separately from the rest of the family because they carry one extra ruled
-    # sub-path the others do not have: /accounts (account discovery). Folding /accounts
-    # into the shared alternation would admit it for every provider, and a path the
-    # RuleSet does not rule is a route/rule parity violation.
+    # google-ads, meta-ads, linkedin-ads, microsoft-ads, twitter-ads and reddit-ads — every
+    # ad provider — share ONE discovery branch carrying /accounts (account discovery) and
+    # /account-monitor (the account-scoped monitor endpoints). reddit-ads was its own branch
+    # (/account-monitor without /accounts) until LFXV2-2665 gave it account discovery
+    # (reddit.ListAdAccounts, RedditDispatcher.ListAccounts); it joined this branch and its
+    # /accounts path was ruled in the RuleSet in the same change. microsoft-ads and
+    # twitter-ads have report-backed monitors (AccountReportReader — see the
+    # account-monitor architecture concept).
     #
-    # All five of those also carry /account-monitor (the account-scoped monitor
-    # endpoints), so they share ONE sub-branch with both extra sub-paths. microsoft-ads
-    # and twitter-ads joined it with their report-backed monitors (AccountReportReader —
-    # their metrics come from asynchronous platform reports, Microsoft's Reporting service
-    # and X's stats jobs; see the account-monitor architecture concept).
-    #
-    # reddit-ads remains its own branch because its platform client has no
-    # ListAdAccounts, so its dispatcher does not implement AccountLister and /accounts
-    # does not exist for it — but it DOES implement AccountMetricsReader, so it gets
-    # /account-monitor without /accounts. When it gains discovery, move it to the
-    # discovery branch here AND add its /accounts path to the RuleSet. Only once EVERY
-    # provider in the shared discovery branch has /accounts ruled does collapsing them
-    # back into one alternation become correct — and with reddit-ads the only member
-    # left, "the shared branch" is now a single provider, so that collapse is one ticket
-    # away and must still not be done early.
+    # The branch still names its providers rather than matching any connection-*: hubspot
+    # must not gain /accounts or /account-monitor (see below), and a path the RuleSet does
+    # not rule is a route/rule parity violation.
     #
     # hubspot is spelled out separately for the same reason, but its extra sub-paths are
     # /emails and /campaigns, NOT /accounts: a HubSpot connection is already scoped to the
@@ -84,7 +75,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|connection-reddit-ads(/(test|set-credential|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|campaign-ref)|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|campaign-ref)|(meta-ads|reddit-ads|twitter-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef

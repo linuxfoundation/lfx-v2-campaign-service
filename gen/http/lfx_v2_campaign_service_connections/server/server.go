@@ -68,10 +68,14 @@ type Server struct {
 	GetMicrosoftAdsKeywords     http.Handler
 	ResolveGoogleAdsCampaign    http.Handler
 	ResolveMicrosoftAdsCampaign http.Handler
+	ResolveMetaAdsCampaign      http.Handler
+	ResolveRedditAdsCampaign    http.Handler
+	ResolveTwitterAdsCampaign   http.Handler
 	ListMetaAdsAccounts         http.Handler
 	ListLinkedinAdsAccounts     http.Handler
 	ListMicrosoftAdsAccounts    http.Handler
 	ListTwitterAdsAccounts      http.Handler
+	ListRedditAdsAccounts       http.Handler
 	ListHubspotEmails           http.Handler
 	SearchHubspotCampaigns      http.Handler
 	CreateHubspotCampaign       http.Handler
@@ -159,10 +163,14 @@ func New(
 			{"GetMicrosoftAdsKeywords", "GET", "/projects/{project_id}/microsoft-ads/keywords"},
 			{"ResolveGoogleAdsCampaign", "GET", "/projects/{project_id}/google-ads/campaign-ref"},
 			{"ResolveMicrosoftAdsCampaign", "GET", "/projects/{project_id}/microsoft-ads/campaign-ref"},
+			{"ResolveMetaAdsCampaign", "GET", "/projects/{project_id}/meta-ads/campaign-ref"},
+			{"ResolveRedditAdsCampaign", "GET", "/projects/{project_id}/reddit-ads/campaign-ref"},
+			{"ResolveTwitterAdsCampaign", "GET", "/projects/{project_id}/twitter-ads/campaign-ref"},
 			{"ListMetaAdsAccounts", "GET", "/projects/{project_id}/connection-meta-ads/accounts"},
 			{"ListLinkedinAdsAccounts", "GET", "/projects/{project_id}/connection-linkedin-ads/accounts"},
 			{"ListMicrosoftAdsAccounts", "GET", "/projects/{project_id}/connection-microsoft-ads/accounts"},
 			{"ListTwitterAdsAccounts", "GET", "/projects/{project_id}/connection-twitter-ads/accounts"},
+			{"ListRedditAdsAccounts", "GET", "/projects/{project_id}/connection-reddit-ads/accounts"},
 			{"ListHubspotEmails", "GET", "/projects/{project_id}/connection-hubspot/emails"},
 			{"SearchHubspotCampaigns", "GET", "/projects/{project_id}/connection-hubspot/campaigns"},
 			{"CreateHubspotCampaign", "POST", "/projects/{project_id}/connection-hubspot/campaigns"},
@@ -221,10 +229,14 @@ func New(
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsHandler(e.GetMicrosoftAdsKeywords, mux, decoder, encoder, errhandler, formatter),
 		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignHandler(e.ResolveGoogleAdsCampaign, mux, decoder, encoder, errhandler, formatter),
 		ResolveMicrosoftAdsCampaign: NewResolveMicrosoftAdsCampaignHandler(e.ResolveMicrosoftAdsCampaign, mux, decoder, encoder, errhandler, formatter),
+		ResolveMetaAdsCampaign:      NewResolveMetaAdsCampaignHandler(e.ResolveMetaAdsCampaign, mux, decoder, encoder, errhandler, formatter),
+		ResolveRedditAdsCampaign:    NewResolveRedditAdsCampaignHandler(e.ResolveRedditAdsCampaign, mux, decoder, encoder, errhandler, formatter),
+		ResolveTwitterAdsCampaign:   NewResolveTwitterAdsCampaignHandler(e.ResolveTwitterAdsCampaign, mux, decoder, encoder, errhandler, formatter),
 		ListMetaAdsAccounts:         NewListMetaAdsAccountsHandler(e.ListMetaAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListLinkedinAdsAccounts:     NewListLinkedinAdsAccountsHandler(e.ListLinkedinAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListMicrosoftAdsAccounts:    NewListMicrosoftAdsAccountsHandler(e.ListMicrosoftAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListTwitterAdsAccounts:      NewListTwitterAdsAccountsHandler(e.ListTwitterAdsAccounts, mux, decoder, encoder, errhandler, formatter),
+		ListRedditAdsAccounts:       NewListRedditAdsAccountsHandler(e.ListRedditAdsAccounts, mux, decoder, encoder, errhandler, formatter),
 		ListHubspotEmails:           NewListHubspotEmailsHandler(e.ListHubspotEmails, mux, decoder, encoder, errhandler, formatter),
 		SearchHubspotCampaigns:      NewSearchHubspotCampaignsHandler(e.SearchHubspotCampaigns, mux, decoder, encoder, errhandler, formatter),
 		CreateHubspotCampaign:       NewCreateHubspotCampaignHandler(e.CreateHubspotCampaign, mux, decoder, encoder, errhandler, formatter),
@@ -290,10 +302,14 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetMicrosoftAdsKeywords = m(s.GetMicrosoftAdsKeywords)
 	s.ResolveGoogleAdsCampaign = m(s.ResolveGoogleAdsCampaign)
 	s.ResolveMicrosoftAdsCampaign = m(s.ResolveMicrosoftAdsCampaign)
+	s.ResolveMetaAdsCampaign = m(s.ResolveMetaAdsCampaign)
+	s.ResolveRedditAdsCampaign = m(s.ResolveRedditAdsCampaign)
+	s.ResolveTwitterAdsCampaign = m(s.ResolveTwitterAdsCampaign)
 	s.ListMetaAdsAccounts = m(s.ListMetaAdsAccounts)
 	s.ListLinkedinAdsAccounts = m(s.ListLinkedinAdsAccounts)
 	s.ListMicrosoftAdsAccounts = m(s.ListMicrosoftAdsAccounts)
 	s.ListTwitterAdsAccounts = m(s.ListTwitterAdsAccounts)
+	s.ListRedditAdsAccounts = m(s.ListRedditAdsAccounts)
 	s.ListHubspotEmails = m(s.ListHubspotEmails)
 	s.SearchHubspotCampaigns = m(s.SearchHubspotCampaigns)
 	s.CreateHubspotCampaign = m(s.CreateHubspotCampaign)
@@ -359,10 +375,14 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetMicrosoftAdsKeywordsHandler(mux, h.GetMicrosoftAdsKeywords)
 	MountResolveGoogleAdsCampaignHandler(mux, h.ResolveGoogleAdsCampaign)
 	MountResolveMicrosoftAdsCampaignHandler(mux, h.ResolveMicrosoftAdsCampaign)
+	MountResolveMetaAdsCampaignHandler(mux, h.ResolveMetaAdsCampaign)
+	MountResolveRedditAdsCampaignHandler(mux, h.ResolveRedditAdsCampaign)
+	MountResolveTwitterAdsCampaignHandler(mux, h.ResolveTwitterAdsCampaign)
 	MountListMetaAdsAccountsHandler(mux, h.ListMetaAdsAccounts)
 	MountListLinkedinAdsAccountsHandler(mux, h.ListLinkedinAdsAccounts)
 	MountListMicrosoftAdsAccountsHandler(mux, h.ListMicrosoftAdsAccounts)
 	MountListTwitterAdsAccountsHandler(mux, h.ListTwitterAdsAccounts)
+	MountListRedditAdsAccountsHandler(mux, h.ListRedditAdsAccounts)
 	MountListHubspotEmailsHandler(mux, h.ListHubspotEmails)
 	MountSearchHubspotCampaignsHandler(mux, h.SearchHubspotCampaigns)
 	MountCreateHubspotCampaignHandler(mux, h.CreateHubspotCampaign)
@@ -2988,6 +3008,171 @@ func NewResolveMicrosoftAdsCampaignHandler(
 	})
 }
 
+// MountResolveMetaAdsCampaignHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint.
+func MountResolveMetaAdsCampaignHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/meta-ads/campaign-ref", f)
+}
+
+// NewResolveMetaAdsCampaignHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "resolve-meta-ads-campaign" endpoint.
+func NewResolveMetaAdsCampaignHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeResolveMetaAdsCampaignRequest(mux, decoder)
+		encodeResponse = EncodeResolveMetaAdsCampaignResponse(encoder)
+		encodeError    = EncodeResolveMetaAdsCampaignError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "resolve-meta-ads-campaign")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountResolveRedditAdsCampaignHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint.
+func MountResolveRedditAdsCampaignHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/reddit-ads/campaign-ref", f)
+}
+
+// NewResolveRedditAdsCampaignHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "resolve-reddit-ads-campaign" endpoint.
+func NewResolveRedditAdsCampaignHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeResolveRedditAdsCampaignRequest(mux, decoder)
+		encodeResponse = EncodeResolveRedditAdsCampaignResponse(encoder)
+		encodeError    = EncodeResolveRedditAdsCampaignError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "resolve-reddit-ads-campaign")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountResolveTwitterAdsCampaignHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint.
+func MountResolveTwitterAdsCampaignHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/twitter-ads/campaign-ref", f)
+}
+
+// NewResolveTwitterAdsCampaignHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-connections" service
+// "resolve-twitter-ads-campaign" endpoint.
+func NewResolveTwitterAdsCampaignHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeResolveTwitterAdsCampaignRequest(mux, decoder)
+		encodeResponse = EncodeResolveTwitterAdsCampaignResponse(encoder)
+		encodeError    = EncodeResolveTwitterAdsCampaignError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "resolve-twitter-ads-campaign")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
 // MountListMetaAdsAccountsHandler configures the mux to serve the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint.
@@ -3185,6 +3370,61 @@ func NewListTwitterAdsAccountsHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "list-twitter-ads-accounts")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListRedditAdsAccountsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint.
+func MountListRedditAdsAccountsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/connection-reddit-ads/accounts", f)
+}
+
+// NewListRedditAdsAccountsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "list-reddit-ads-accounts" endpoint.
+func NewListRedditAdsAccountsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListRedditAdsAccountsRequest(mux, decoder)
+		encodeResponse = EncodeListRedditAdsAccountsResponse(encoder)
+		encodeError    = EncodeListRedditAdsAccountsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-reddit-ads-accounts")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

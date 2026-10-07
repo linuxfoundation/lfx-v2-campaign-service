@@ -15,11 +15,10 @@ import (
 
 // redditAdsAccountDiscovery is the account-discovery descriptor for Reddit Ads.
 //
-// Unlike Google/Meta/LinkedIn/Microsoft/X, connection.go declares no var for Reddit: Reddit's
-// dispatcher has no ListAccounts implementation (per the migration plan's own verified note),
-// so account discovery never needed one. This monitor endpoint is the first Reddit surface to
-// route through classifyDiscoveryError, so the descriptor is added here rather than guessed
-// into connection.go's existing block.
+// Despite its name it names the "account monitor" operation: it was added for the monitor
+// endpoint, the first Reddit surface to route through classifyDiscoveryError, before Reddit had
+// account discovery. list-reddit-ads-accounts (LFXV2-2665) uses connection.go's
+// redditAdsListDiscovery instead.
 var redditAdsAccountDiscovery = accountDiscovery{
 	provider:        model.ProviderRedditAds,
 	displayName:     "reddit ads",

@@ -8670,6 +8670,81 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/connection-reddit-ads/accounts:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: list-reddit-ads-accounts lfx-v2-campaign-service-connections
+            description: 'Enumerate the Reddit ad accounts accessible via the stored connection credential: every business the credential can access, then each business''s ad accounts. Returns account ids in the form the connection''s account_id stores. The label carries the account name, its currency when reported, and the business it was listed under. All or nothing: an upstream failure, a throttle that outlasts the bounded retry, a malformed response or a walk past its page or item bound is a 503, never a short or empty list. An account reachable through two businesses is listed once.'
+            operationId: lfx-v2-campaign-service-connections#list-reddit-ads-accounts
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LfxV2CampaignServiceConnectionsListRedditAdsAccountsResponseBody'
+                        required:
+                            - accounts
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/connection-reddit-ads/set-credential:
         post:
             tags:
@@ -9967,6 +10042,90 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/meta-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-meta-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one Meta campaign id to this service''s own campaign and brief. The Meta twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service''s own tables: Meta is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry:** migration 000020''s unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-meta-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The Meta campaign id to resolve. Digits only, no leading zero, at most 32 digits.
+                  required: true
+                  type: string
+                  maxLength: 32
+                  pattern: ^[1-9][0-9]{0,31}$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/PlatformCampaignResolution'
+                        required:
+                            - platform_campaign_id
+                            - matches
+                            - match_count
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/microsoft-ads/campaign-ref:
         get:
             tags:
@@ -10150,6 +10309,174 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-reddit-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one Reddit campaign id to this service''s own campaign and brief. The Reddit twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service''s own tables: Reddit is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry:** migration 000020''s unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-reddit-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The Reddit campaign id to resolve. Letters, digits and underscores, at most 64 characters.
+                  required: true
+                  type: string
+                  maxLength: 64
+                  pattern: ^[A-Za-z0-9_]+$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/PlatformCampaignResolution'
+                        required:
+                            - platform_campaign_id
+                            - matches
+                            - match_count
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/twitter-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-twitter-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one X/Twitter campaign id to this service''s own campaign and brief. The X/Twitter twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service''s own tables: X/Twitter is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry:** migration 000020''s unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-twitter-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: The X/Twitter campaign id to resolve. Letters and digits, at most 64 characters.
+                  required: true
+                  type: string
+                  maxLength: 64
+                  pattern: ^[A-Za-z0-9]+$
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/PlatformCampaignResolution'
+                        required:
+                            - platform_campaign_id
+                            - matches
+                            - match_count
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
 definitions:
     AccessibleAccount:
         title: AccessibleAccount
@@ -10157,7 +10484,7 @@ definitions:
         properties:
             id:
                 type: string
-                description: 'Account identifier in the ad platform''s OWN namespace, ready to store as the connection''s account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method''s own example shows its provider''s form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.'
+                description: 'Account identifier in the ad platform''s OWN namespace, ready to store as the connection''s account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter; a letters-digits-underscores id such as `t2_gv9wtbfa` on Reddit — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method''s own example shows its provider''s form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.'
                 example: Qui reiciendis eaque sapiente corporis quia consequatur.
             label:
                 type: string
@@ -15740,6 +16067,27 @@ definitions:
                   label: Linux Foundation (X1234567)
                 - id: "7654321"
                   label: CNCF (X7654321) — suspended
+        required:
+            - accounts
+    LfxV2CampaignServiceConnectionsListRedditAdsAccountsResponseBody:
+        title: LfxV2CampaignServiceConnectionsListRedditAdsAccountsResponseBody
+        type: object
+        properties:
+            accounts:
+                type: array
+                items:
+                    $ref: '#/definitions/AccessibleAccount'
+                example:
+                    - id: t2_gv9wtbfa
+                      label: Linux Foundation [USD] (The Linux Foundation)
+                    - id: t2_8k2mzq1x
+                      label: CNCF [USD] (The Linux Foundation)
+        example:
+            accounts:
+                - id: t2_gv9wtbfa
+                  label: Linux Foundation [USD] (The Linux Foundation)
+                - id: t2_8k2mzq1x
+                  label: CNCF [USD] (The Linux Foundation)
         required:
             - accounts
     LfxV2CampaignServiceConnectionsListTwitterAdsAccountsResponseBody:

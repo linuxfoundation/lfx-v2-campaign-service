@@ -46,7 +46,7 @@ func (d *MetaDispatcher) LookupCampaign(ctx context.Context, projectID string, p
 	client := d.cachedMetaClient(projectID, platform, res, creds)
 	ref, err := client.GetCampaign(ctx, platformCampaignID)
 	if err != nil {
-		if errors.Is(err, meta.ErrNotACampaignID) {
+		if errors.Is(err, meta.ErrInvalidCampaignID) {
 			return nil, fmt.Errorf("%w: %w", domain.ErrInvalidPlatformCampaignID, err)
 		}
 		return nil, fmt.Errorf("look up meta campaign: %w", err)

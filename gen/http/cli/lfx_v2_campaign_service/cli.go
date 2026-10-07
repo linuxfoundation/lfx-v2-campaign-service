@@ -30,7 +30,7 @@ func UsageCommands() []string {
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-microsoft-ads-keywords|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-microsoft-ads-keywords|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
@@ -581,6 +581,21 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignPlatformCampaignIDFlag = lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignFlags.String("platform-campaign-id", "REQUIRED", "")
 		lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignBearerTokenFlag        = lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignFlags                  = flag.NewFlagSet("resolve-meta-ads-campaign", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignProjectIDFlag          = lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignPlatformCampaignIDFlag = lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignFlags.String("platform-campaign-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignBearerTokenFlag        = lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignFlags                  = flag.NewFlagSet("resolve-reddit-ads-campaign", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignProjectIDFlag          = lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignPlatformCampaignIDFlag = lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignFlags.String("platform-campaign-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignBearerTokenFlag        = lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignFlags                  = flag.NewFlagSet("resolve-twitter-ads-campaign", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignProjectIDFlag          = lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignPlatformCampaignIDFlag = lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignFlags.String("platform-campaign-id", "REQUIRED", "")
+		lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignBearerTokenFlag        = lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags           = flag.NewFlagSet("list-meta-ads-accounts", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsListMetaAdsAccountsProjectIDFlag   = lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsListMetaAdsAccountsBearerTokenFlag = lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags.String("bearer-token", "", "")
@@ -596,6 +611,10 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags           = flag.NewFlagSet("list-twitter-ads-accounts", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsListTwitterAdsAccountsProjectIDFlag   = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsListTwitterAdsAccountsBearerTokenFlag = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags.String("bearer-token", "", "")
+
+		lfxV2CampaignServiceConnectionsListRedditAdsAccountsFlags           = flag.NewFlagSet("list-reddit-ads-accounts", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsListRedditAdsAccountsProjectIDFlag   = lfxV2CampaignServiceConnectionsListRedditAdsAccountsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsListRedditAdsAccountsBearerTokenFlag = lfxV2CampaignServiceConnectionsListRedditAdsAccountsFlags.String("bearer-token", "", "")
 
 		lfxV2CampaignServiceConnectionsListHubspotEmailsFlags           = flag.NewFlagSet("list-hubspot-emails", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag   = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
@@ -757,10 +776,14 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsFlags.Usage = lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsUsage
 	lfxV2CampaignServiceConnectionsResolveGoogleAdsCampaignFlags.Usage = lfxV2CampaignServiceConnectionsResolveGoogleAdsCampaignUsage
 	lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignFlags.Usage = lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignUsage
+	lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignFlags.Usage = lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignUsage
+	lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignFlags.Usage = lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignUsage
+	lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignFlags.Usage = lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignUsage
 	lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListMetaAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListLinkedinAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListMicrosoftAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsUsage
+	lfxV2CampaignServiceConnectionsListRedditAdsAccountsFlags.Usage = lfxV2CampaignServiceConnectionsListRedditAdsAccountsUsage
 	lfxV2CampaignServiceConnectionsListHubspotEmailsFlags.Usage = lfxV2CampaignServiceConnectionsListHubspotEmailsUsage
 	lfxV2CampaignServiceConnectionsSearchHubspotCampaignsFlags.Usage = lfxV2CampaignServiceConnectionsSearchHubspotCampaignsUsage
 	lfxV2CampaignServiceConnectionsCreateHubspotCampaignFlags.Usage = lfxV2CampaignServiceConnectionsCreateHubspotCampaignUsage
@@ -1117,6 +1140,15 @@ func ParseEndpoint(
 			case "resolve-microsoft-ads-campaign":
 				epf = lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignFlags
 
+			case "resolve-meta-ads-campaign":
+				epf = lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignFlags
+
+			case "resolve-reddit-ads-campaign":
+				epf = lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignFlags
+
+			case "resolve-twitter-ads-campaign":
+				epf = lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignFlags
+
 			case "list-meta-ads-accounts":
 				epf = lfxV2CampaignServiceConnectionsListMetaAdsAccountsFlags
 
@@ -1128,6 +1160,9 @@ func ParseEndpoint(
 
 			case "list-twitter-ads-accounts":
 				epf = lfxV2CampaignServiceConnectionsListTwitterAdsAccountsFlags
+
+			case "list-reddit-ads-accounts":
+				epf = lfxV2CampaignServiceConnectionsListRedditAdsAccountsFlags
 
 			case "list-hubspot-emails":
 				epf = lfxV2CampaignServiceConnectionsListHubspotEmailsFlags
@@ -1491,6 +1526,15 @@ func ParseEndpoint(
 			case "resolve-microsoft-ads-campaign":
 				endpoint = c.ResolveMicrosoftAdsCampaign()
 				data, err = lfxv2campaignserviceconnectionsc.BuildResolveMicrosoftAdsCampaignPayload(*lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignProjectIDFlag, *lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignPlatformCampaignIDFlag, *lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignBearerTokenFlag)
+			case "resolve-meta-ads-campaign":
+				endpoint = c.ResolveMetaAdsCampaign()
+				data, err = lfxv2campaignserviceconnectionsc.BuildResolveMetaAdsCampaignPayload(*lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignProjectIDFlag, *lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignPlatformCampaignIDFlag, *lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignBearerTokenFlag)
+			case "resolve-reddit-ads-campaign":
+				endpoint = c.ResolveRedditAdsCampaign()
+				data, err = lfxv2campaignserviceconnectionsc.BuildResolveRedditAdsCampaignPayload(*lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignProjectIDFlag, *lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignPlatformCampaignIDFlag, *lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignBearerTokenFlag)
+			case "resolve-twitter-ads-campaign":
+				endpoint = c.ResolveTwitterAdsCampaign()
+				data, err = lfxv2campaignserviceconnectionsc.BuildResolveTwitterAdsCampaignPayload(*lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignProjectIDFlag, *lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignPlatformCampaignIDFlag, *lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignBearerTokenFlag)
 			case "list-meta-ads-accounts":
 				endpoint = c.ListMetaAdsAccounts()
 				data, err = lfxv2campaignserviceconnectionsc.BuildListMetaAdsAccountsPayload(*lfxV2CampaignServiceConnectionsListMetaAdsAccountsProjectIDFlag, *lfxV2CampaignServiceConnectionsListMetaAdsAccountsBearerTokenFlag)
@@ -1503,6 +1547,9 @@ func ParseEndpoint(
 			case "list-twitter-ads-accounts":
 				endpoint = c.ListTwitterAdsAccounts()
 				data, err = lfxv2campaignserviceconnectionsc.BuildListTwitterAdsAccountsPayload(*lfxV2CampaignServiceConnectionsListTwitterAdsAccountsProjectIDFlag, *lfxV2CampaignServiceConnectionsListTwitterAdsAccountsBearerTokenFlag)
+			case "list-reddit-ads-accounts":
+				endpoint = c.ListRedditAdsAccounts()
+				data, err = lfxv2campaignserviceconnectionsc.BuildListRedditAdsAccountsPayload(*lfxV2CampaignServiceConnectionsListRedditAdsAccountsProjectIDFlag, *lfxV2CampaignServiceConnectionsListRedditAdsAccountsBearerTokenFlag)
 			case "list-hubspot-emails":
 				endpoint = c.ListHubspotEmails()
 				data, err = lfxv2campaignserviceconnectionsc.BuildListHubspotEmailsPayload(*lfxV2CampaignServiceConnectionsListHubspotEmailsProjectIDFlag, *lfxV2CampaignServiceConnectionsListHubspotEmailsQFlag, *lfxV2CampaignServiceConnectionsListHubspotEmailsBearerTokenFlag)
@@ -2842,10 +2889,14 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    get-microsoft-ads-keywords: Read Microsoft Advertising keyword performance for this project's own campaigns, in the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account). Microsoft serves keyword performance only through its asynchronous Reporting service, which takes minutes, so rows come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no rows with metrics_pending=true. A report is served only while it covers every campaign the project owns. Saved reports are cached platform data. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for Microsoft.`)
 	fmt.Fprintln(os.Stderr, `    resolve-google-ads-campaign: Resolve one Google Ads campaign id to this service's own campaign and brief. A caller holding a keyword row has the PLATFORM's numeric campaign id; every mutation route here is keyed by this service's campaign UUID under its brief. Nothing else bridges the two, so a keyword table cannot act on its own rows without this. A pure READ: it enumerates nothing and mutates nothing, and it is scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate the keyword and audience reads use — so it cannot be used to discover whether ANOTHER project owns a given upstream id, which on a shared ad account is the question that must not be answerable. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** The project genuinely owning no such campaign is an answer the caller acts on by refusing the action, and it must be distinguishable from the route or the project being wrong, which is what a 404 would say. **`+"`"+`matches`+"`"+` is an array, but a valid database can never return more than one entry.** Migration 000020's `+"`"+`uq_campaigns_platform_campaign_live`+"`"+` is a UNIQUE index on (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than per-project — so scoping to a project can only narrow one row to zero or one. The array is DEFENSIVE against that invariant lapsing (a dropped index, a narrowed predicate, a platform added to this read but not to the index), not a claim that duplicates occur: a single-ref contract would force some layer to pick a row, and picking would mutate a campaign nobody named. A caller receiving more than one must refuse rather than choose. This is NOT a list endpoint under rule 3: it is a keyed lookup returning the matches for one supplied id, with no collection, pagination or filtering.`)
 	fmt.Fprintln(os.Stderr, `    resolve-microsoft-ads-campaign: Resolve one Microsoft Advertising campaign id to this service's own campaign and brief. The Microsoft twin of resolve-google-ads-campaign: a caller holding a row from get-microsoft-ads-keywords has Microsoft's numeric CampaignId, while apply-keyword-actions and add-negative-keywords are keyed by this service's campaign UUID under its brief. A pure READ of this service's own tables: Microsoft is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** **`+"`"+`matches`+"`"+` CAN hold more than one entry here, unlike Google:** Microsoft campaign ids are minted per ad account, so migration 000020's unique index deliberately covers Google Ads only, and a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. Not a list endpoint under rule 3: a keyed lookup for one supplied id.`)
+	fmt.Fprintln(os.Stderr, `    resolve-meta-ads-campaign: Resolve one Meta campaign id to this service's own campaign and brief. The Meta twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service's own tables: Meta is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** **`+"`"+`matches`+"`"+` CAN hold more than one entry:** migration 000020's unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.`)
+	fmt.Fprintln(os.Stderr, `    resolve-reddit-ads-campaign: Resolve one Reddit campaign id to this service's own campaign and brief. The Reddit twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service's own tables: Reddit is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** **`+"`"+`matches`+"`"+` CAN hold more than one entry:** migration 000020's unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.`)
+	fmt.Fprintln(os.Stderr, `    resolve-twitter-ads-campaign: Resolve one X/Twitter campaign id to this service's own campaign and brief. The X/Twitter twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service's own tables: X/Twitter is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** **`+"`"+`matches`+"`"+` CAN hold more than one entry:** migration 000020's unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.`)
 	fmt.Fprintln(os.Stderr, `    list-meta-ads-accounts: Enumerate the Meta ad accounts accessible via the stored connection credential. Returns act_-prefixed account ids, ready to store as the connection's account_id. Accounts Meta reports as disabled, unsettled or closed are included with the reason in their label rather than filtered out, so the caller can see why an account they expected cannot be used.`)
 	fmt.Fprintln(os.Stderr, `    list-linkedin-ads-accounts: Enumerate the LinkedIn ad accounts accessible via the stored connection credential. Returns bare numeric account ids, ready to store as the connection's account_id.`)
 	fmt.Fprintln(os.Stderr, `    list-microsoft-ads-accounts: Enumerate the Microsoft Advertising accounts accessible via the stored connection credential, across every customer the credential can reach. Returns account ids as digits, ready to store as the connection's account_id; the label carries Microsoft's human-facing account number, which is what its own UI shows.`)
 	fmt.Fprintln(os.Stderr, `    list-twitter-ads-accounts: Enumerate the X/Twitter Ads accounts accessible via the stored connection credential. Returns account ids as the alphanumeric handle X uses, ready to store as the connection's account_id. Accounts that are under review or rejected are RETURNED with the reason in the label rather than hidden, so a caller whose only account is unusable sees it and why. DELETED accounts are a different case and are not promised: the walk does not send `+"`"+`with_deleted`+"`"+`, so it takes X's documented default of false and deleted accounts are normally excluded upstream — a deleted account is not a choice. The per-row deleted flag is still honoured defensively, so a row X flags anyway is labelled rather than passing as live.`)
+	fmt.Fprintln(os.Stderr, `    list-reddit-ads-accounts: Enumerate the Reddit ad accounts accessible via the stored connection credential: every business the credential can access, then each business's ad accounts. Returns account ids in the form the connection's account_id stores. The label carries the account name, its currency when reported, and the business it was listed under. All or nothing: an upstream failure, a throttle that outlasts the bounded retry, a malformed response or a walk past its page or item bound is a 503, never a short or empty list. An account reachable through two businesses is listed once.`)
 	fmt.Fprintln(os.Stderr, `    list-hubspot-emails: Search the marketing emails reachable via the stored HubSpot connection, most-recently-updated first. This is a TEMPLATE picker, not an account picker: a HubSpot connection is already scoped to the portal its private-app token authenticates against, but staging an email campaign clones a caller-specified source email (sourceEmailId is required and has no default), so the caller has to be able to find one.`)
 	fmt.Fprintln(os.Stderr, `    search-hubspot-campaigns: Find LF HubSpot marketing campaigns by name, to read back an existing campaign's `+"`"+`hs_utm`+"`"+` token. **THE NAMESPACE IS PORTAL-WIDE.** HubSpot campaigns are not scoped to a project, so this returns every campaign in the portal the connection authenticates against, regardless of which project scopes the path. `+"`"+`project_id`+"`"+` gates permission AND selects WHICH portal is visible: a HubSpot connection is stored per project with its own token and `+"`"+`portal_id`+"`"+`, and a project with none resolves the LF system connection — so two projects see the same campaigns when they are configured against the same portal, which is the ordinary case under the LF umbrella, whose foundations share one portal. The portal-wide part is a property of HubSpot's data model rather than a gap in the scoping here, and it is why the create route below needs a warning. The match is HubSpot's own `+"`"+`query`+"`"+` search over its default searchable properties: NOT an exact-name lookup, and NOT relevance-ranked — the CRM v3 search API has no relevance sort, and no `+"`"+`sorts`+"`"+` is sent, so the order is UNSPECIFIED. **Do not read the first row as the best match** — the search is token-based, so a hit can merely share a token with the query. Every match is returned, in the order HubSpot returned them, rather than narrowed to a best one, because choosing between similarly-named campaigns needs a human reading the names — collapsing them here would hide the ambiguity from the only party able to resolve it. **An empty `+"`"+`campaigns`+"`"+` array is a 200, not a 404**: 'no campaign is named that' is the answer a caller acts on by offering to create one, and it must be distinguishable from a search that failed. A campaign with no `+"`"+`utm`+"`"+` is a real result and is returned as one — an absent token does NOT mean the campaign was not found, and treating it that way would prompt a duplicate create. **The result set is CAPPED at 200 and there is no paging.** A campaign ranked below the cap is not returned, and a caller reads an absent campaign as licence to create one — so an operator who cannot find a campaign should search a narrower term rather than assume it does not exist. 200 is HubSpot's own per-request maximum (raised from 100 in September 2024), so the gap between "not in the top N" and "does not exist" is as small as one request can make it. **`+"`"+`capped`+"`"+` reports when that gap is actually open**, derived from HubSpot's own total rather than from the returned count — an exactly-full page and a truncated one are the same length. While `+"`"+`capped`+"`"+` is true the caller must not offer an unqualified create: the campaign it would duplicate may be one of the matches HubSpot did not return. This is NOT a list endpoint under rule 3: it is a keyed query returning the matches for one supplied term. It IS a collection — `+"`"+`campaigns`+"`"+` is an array and `+"`"+`q`+"`"+` narrows it — but a BOUNDED one: a single unpaged request capped at 200, with no cursor and no filters beyond the search term, so rule 3's concern about an open-ended listing surface does not apply.`)
 	fmt.Fprintln(os.Stderr, `    create-hubspot-campaign: Create an LF HubSpot marketing campaign, returning the `+"`"+`hs_utm`+"`"+` token when the response carries one. **`+"`"+`utm`+"`"+` MAY BE ABSENT ON A SUCCESSFUL CREATE**, and that is not an error: the marketing create is not documented to return the property, and this route does no follow-up read — a second call after a non-idempotent write is another failure point whose failure would make a campaign that EXISTS look like one that was never created. An absent token means only that this response did not carry one, NOT that the campaign has none configured; the ordinary lookup reads it back. What IS required is the id: an id-less 2xx is refused as unconfirmed, because a campaign that cannot be addressed is not a usable answer. **THIS WRITE IS VISIBLE PORTAL-WIDE.** The campaign namespace is the whole HubSpot portal this project's connection authenticates against, so a campaign created here appears for everyone working in that portal however this path is scoped. WHICH portal depends on the connection — they are stored per project with their own token and `+"`"+`portal_id`+"`"+`, and a project with none resolves the LF system connection — so for LF foundations, which share one portal, this IS visible to every other foundation working in it; projects on a different portal do not see each other's campaigns. A caller MUST warn before invoking it, and must not put anything project-sensitive in the name. **It does not check for an existing campaign first, and that is deliberate.** A search-then-create inside one call would still race any concurrent caller and could not prevent a duplicate; the check belongs with the human who can read the candidate names. Search first, show the matches, create only if the operator confirms none is right. This method always creates. `+"`"+`hs_utm`+"`"+` is assigned by HubSpot, never supplied here, and is read back from the create response rather than re-fetched — so the returned token is the one HubSpot actually assigned rather than one this service guessed. **A 2xx carrying no id is reported as an error**, because the campaign may or may not exist and cannot be addressed either way: the caller must check HubSpot rather than retry into a second copy. Other failures fall into FOUR classes, and the status tells them apart. **400 — nothing was created, and the request is correctable.** Either HubSpot rejected it on the merits (a definite non-429 4xx), or the stored connection EXISTS but is not usable as configured. A 401/403 on a connection the PROJECT owns says so in its own words, because retrying another name cannot fix a permission problem. The SAME rejection on the shared LF connection — used when the project has none of its own — is a 500 instead: that scope is unaddressable over HTTP, so a 400 would tell the caller to repair a row they cannot reach. Retrying another NAME cannot fix a permission problem. **404 — no HubSpot connection is configured for this project.** Distinct from the 400 above, which means one exists and is broken: the remedy is to connect HubSpot, not to fix a credential. **500 — the shared LF connection was refused on permissions, the stored credential could not be decrypted**, or the service is otherwise faulted BEFORE the request went out. Not the operator's to fix, and not retryable by them. 500 is reserved for that pre-send position: a fault discovered AFTER the create returned without error is a 503, because by then the campaign may exist and only this service's reading of the outcome failed. Those three prove nothing reached HubSpot, which is why they are reported as themselves rather than as an unconfirmed outcome: sending an operator to look for a campaign that was never attempted hides the remedy they actually need. **503 — the outcome could not be confirmed, OR the request never left this service.** Those two share a status because both are retryable-when-things-recover rather than correctable by the caller, and the MESSAGE distinguishes them: a pre-send failure (DNS, dial, an already-cancelled context) can promise nothing was created, which the unconfirmed case cannot. Everything else lands here too, including any failure this service cannot positively classify: a non-idempotent write into a shared namespace fails CLOSED, so an unrecognised error is treated as possibly-committed rather than reported as a clean failure. HubSpot marks mutating transport, 429, 3xx and 5xx failures as possibly-committed, and so is a 2xx whose body could not be decoded. Verify in HubSpot before creating it again.`)
@@ -3885,6 +3936,72 @@ func lfxV2CampaignServiceConnectionsResolveMicrosoftAdsCampaignUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections resolve-microsoft-ads-campaign --project-id \"cncf\" --platform-campaign-id \"413296582\" --bearer-token \"eyJhbGci...\"")
 }
 
+func lfxV2CampaignServiceConnectionsResolveMetaAdsCampaignUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections resolve-meta-ads-campaign", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -platform-campaign-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Resolve one Meta campaign id to this service's own campaign and brief. The Meta twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service's own tables: Meta is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** **`+"`"+`matches`+"`"+` CAN hold more than one entry:** migration 000020's unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -platform-campaign-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections resolve-meta-ads-campaign --project-id \"cncf\" --platform-campaign-id \"120210000000000001\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsResolveRedditAdsCampaignUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections resolve-reddit-ads-campaign", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -platform-campaign-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Resolve one Reddit campaign id to this service's own campaign and brief. The Reddit twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service's own tables: Reddit is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** **`+"`"+`matches`+"`"+` CAN hold more than one entry:** migration 000020's unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -platform-campaign-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections resolve-reddit-ads-campaign --project-id \"cncf\" --platform-campaign-id \"1234567890123456789\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsResolveTwitterAdsCampaignUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections resolve-twitter-ads-campaign", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -platform-campaign-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Resolve one X/Twitter campaign id to this service's own campaign and brief. The X/Twitter twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service's own tables: X/Twitter is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** **`+"`"+`matches`+"`"+` CAN hold more than one entry:** migration 000020's unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -platform-campaign-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections resolve-twitter-ads-campaign --project-id \"cncf\" --platform-campaign-id \"8wxyz\" --bearer-token \"eyJhbGci...\"")
+}
+
 func lfxV2CampaignServiceConnectionsListMetaAdsAccountsUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections list-meta-ads-accounts", os.Args[0])
@@ -3963,6 +4080,26 @@ func lfxV2CampaignServiceConnectionsListTwitterAdsAccountsUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-twitter-ads-accounts --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceConnectionsListRedditAdsAccountsUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections list-reddit-ads-accounts", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Enumerate the Reddit ad accounts accessible via the stored connection credential: every business the credential can access, then each business's ad accounts. Returns account ids in the form the connection's account_id stores. The label carries the account name, its currency when reported, and the business it was listed under. All or nothing: an upstream failure, a throttle that outlasts the bounded retry, a malformed response or a walk past its page or item bound is a 503, never a short or empty list. An account reachable through two businesses is listed once.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections list-reddit-ads-accounts --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsListHubspotEmailsUsage() {

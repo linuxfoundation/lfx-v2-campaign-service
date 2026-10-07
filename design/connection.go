@@ -746,7 +746,7 @@ var GoogleAdsConnection = Type("google-ads-connection", func() {
 // added; the per-provider FORM belongs in each method's own example, where adding a method
 // forces the author to supply one.
 var AccessibleAccount = Type("accessible-account", func() {
-	Attribute("id", String, "Account identifier in the ad platform's OWN namespace, ready to store as the connection's account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method's own example shows its provider's form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.")
+	Attribute("id", String, "Account identifier in the ad platform's OWN namespace, ready to store as the connection's account_id verbatim. The format is per-provider and is whatever that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads; an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter; a letters-digits-underscores id such as `t2_gv9wtbfa` on Reddit — so a caller must treat it as an OPAQUE string and must not validate, normalise or re-derive it. Each discovery method's own example shows its provider's form. Storing it unchanged is what matters: the connection validation for each provider accepts only its own format.")
 	Attribute("label", String, "Human-readable account name or label")
 	Required("id")
 })
@@ -1279,6 +1279,56 @@ func microsoftKeywordsWindowEnum() {
 
 // ─── Connection service ───
 
+// localCampaignRefMethod declares a DB-only campaign-ref method for a platform whose ids are
+// not Google's int64 decimal: resolve-meta-ads-campaign, resolve-reddit-ads-campaign and
+// resolve-twitter-ads-campaign (LFXV2-2665). Same payload shape, result type, error set, auth
+// and HTTP shape as resolve-microsoft-ads-campaign — only the id rule, its example and the
+// prose differ. The Google and Microsoft methods are left as written so their contract is
+// byte-identical; the service mirrors each id rule (internal/service/connection_keywords.go).
+func localCampaignRefMethod(method, platformName, slug, idPattern string, idMaxLen int, idDesc, idExample string) {
+	Method(method, func() {
+		Description("Resolve one " + platformName + " campaign id to this service's own campaign and brief. " +
+			"The " + platformName + " twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. " +
+			"A pure READ of this service's own tables: " + platformName + " is never contacted, no connection is " +
+			"resolved, and nothing is mutated. Scoped to the project's own campaigns by the same " +
+			"`project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. " +
+			"**An unowned id is 200 with an empty `matches`, not 404.** " +
+			"**`matches` CAN hold more than one entry:** migration 000020's unique index covers Google Ads " +
+			"only, so a project whose connection was re-pointed between accounts can hold two live rows " +
+			"with the same id. A caller receiving more than one must refuse rather than choose. " +
+			"A malformed id is refused with 400 before any lookup. " +
+			"Not a list endpoint under rule 3: a keyed lookup for one supplied id.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("platform_campaign_id", String, idDesc, func() {
+				Pattern(idPattern)
+				MaxLength(idMaxLen)
+				Example(idExample)
+			})
+			Required("project_id", "platform_campaign_id")
+		})
+		Result(PlatformCampaignResolution)
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		// The same 503 as the Google and Microsoft methods: resolveBackendWithOrch refuses while
+		// storage and the orchestrator are not wired, which in no-database mode lasts for the
+		// life of the process.
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/" + slug + "/campaign-ref")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("platform_campaign_id")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+}
+
 var _ = Service("lfx-v2-campaign-service-connections", func() {
 	Description("Manage a project's singleton, per-provider ad-platform connections.")
 
@@ -1556,6 +1606,22 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	// Meta, Reddit and X twins of resolve-microsoft-ads-campaign (LFXV2-2665). Each id rule
+	// mirrors the platform package's ValidateCampaignID, which the service applies too so a
+	// non-HTTP caller gets the same 400.
+	localCampaignRefMethod("resolve-meta-ads-campaign", "Meta", "meta-ads",
+		`^[1-9][0-9]{0,31}$`, 32,
+		"The Meta campaign id to resolve. Digits only, no leading zero, at most 32 digits.",
+		"120210000000000001")
+	localCampaignRefMethod("resolve-reddit-ads-campaign", "Reddit", "reddit-ads",
+		`^[A-Za-z0-9_]+$`, 64,
+		"The Reddit campaign id to resolve. Letters, digits and underscores, at most 64 characters.",
+		"1234567890123456789")
+	localCampaignRefMethod("resolve-twitter-ads-campaign", "X/Twitter", "twitter-ads",
+		`^[A-Za-z0-9]+$`, 64,
+		"The X/Twitter campaign id to resolve. Letters and digits, at most 64 characters.",
+		"8wxyz")
+
 	Method("list-meta-ads-accounts", func() {
 		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +
 			"Returns act_-prefixed account ids, ready to store as the connection's account_id. " +
@@ -1696,6 +1762,44 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
 		HTTP(func() {
 			GET("/projects/{project_id}/connection-twitter-ads/accounts")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			connectionAuthErrorResponses()
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
+	Method("list-reddit-ads-accounts", func() {
+		Description("Enumerate the Reddit ad accounts accessible via the stored connection credential: " +
+			"every business the credential can access, then each business's ad accounts. Returns " +
+			"account ids in the form the connection's account_id stores. The label carries the " +
+			"account name, its currency when reported, and the business it was listed under. " +
+			"All or nothing: an upstream failure, a throttle that outlasts the bounded retry, a " +
+			"malformed response or a walk past its page or item bound is a 503, never a short or " +
+			"empty list. An account reachable through two businesses is listed once.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Required("project_id")
+		})
+		Result(func() {
+			// Per-provider example, for the reason spelled out on list-google-ads-accounts.
+			Attribute("accounts", ArrayOf(AccessibleAccount), func() {
+				Example([]map[string]any{
+					{"id": "t2_gv9wtbfa", "label": "Linux Foundation [USD] (The Linux Foundation)"},
+					{"id": "t2_8k2mzq1x", "label": "CNCF [USD] (The Linux Foundation)"},
+				})
+			})
+			Required("accounts")
+		})
+		Error("NotFound", NotFoundError, "Resource not found")
+		authErrors()
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/connection-reddit-ads/accounts")
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			Response("NotFound", StatusNotFound)
@@ -1927,9 +2031,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// Account-scoped monitor reads. Four separate methods rather than a union, for the same
 	// reason the list-*-accounts methods above are separate: Goa cannot express a
 	// per-platform result union, and the house convention is one method per platform sharing
-	// one result type (AccountMonitor). Unlike list-*-accounts, every platform gets one here —
-	// including Reddit, which has no ListAccounts dispatcher implementation but does have an
-	// account-scoped metrics read (see AccountMetricsReader in internal/service/orchestrator.go).
+	// one result type (AccountMonitor). Every ad platform gets one here, Reddit included — it
+	// has an account-scoped metrics read (see AccountMetricsReader in
+	// internal/service/orchestrator.go) and, since LFXV2-2665, list-reddit-ads-accounts too.
 	//
 	// account_id is supplied by the caller rather than resolved from the stored connection:
 	// this ports the BFF's account-scoped monitor endpoints, which read a raw ad account

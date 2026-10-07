@@ -903,6 +903,54 @@ type ResolveMicrosoftAdsCampaignResponseBody struct {
 	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
 }
 
+// ResolveMetaAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body.
+type ResolveMetaAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
+	// How many matches were found.
+	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
+}
+
+// ResolveRedditAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body.
+type ResolveRedditAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
+	// How many matches were found.
+	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
+}
+
+// ResolveTwitterAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body.
+type ResolveTwitterAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
+	// How many matches were found.
+	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
+}
+
 // ListMetaAdsAccountsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body.
@@ -928,6 +976,13 @@ type ListMicrosoftAdsAccountsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
 // endpoint HTTP response body.
 type ListTwitterAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
+}
+
+// ListRedditAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body.
+type ListRedditAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts,omitempty" json:"accounts,omitempty" xml:"accounts,omitempty"`
 }
 
@@ -4349,6 +4404,186 @@ type ResolveMicrosoftAdsCampaignUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ResolveMetaAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveMetaAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMetaAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveMetaAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMetaAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveMetaAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMetaAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveMetaAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMetaAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveMetaAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveMetaAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveMetaAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveRedditAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveRedditAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveRedditAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveRedditAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveRedditAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveRedditAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveRedditAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveRedditAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveRedditAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveRedditAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveRedditAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveRedditAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveTwitterAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveTwitterAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveTwitterAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveTwitterAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveTwitterAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveTwitterAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveTwitterAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveTwitterAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveTwitterAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveTwitterAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveTwitterAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveTwitterAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4583,6 +4818,66 @@ type ListTwitterAdsAccountsPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ListTwitterAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListRedditAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListRedditAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListRedditAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListRedditAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsAccountsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListRedditAdsAccountsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListRedditAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListRedditAdsAccountsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -5330,8 +5625,9 @@ type AccessibleAccountResponseBody struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
 	// connection's account_id verbatim. The format is per-provider and is whatever
 	// that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads;
-	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a
-	// caller must treat it as an OPAQUE string and must not validate, normalise or
+	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter; a
+	// letters-digits-underscores id such as `t2_gv9wtbfa` on Reddit — so a caller
+	// must treat it as an OPAQUE string and must not validate, normalise or
 	// re-derive it. Each discovery method's own example shows its provider's form.
 	// Storing it unchanged is what matters: the connection validation for each
 	// provider accepts only its own format.
@@ -10032,6 +10328,285 @@ func NewResolveMicrosoftAdsCampaignUnauthorized(body *ResolveMicrosoftAdsCampaig
 	return v
 }
 
+// NewResolveMetaAdsCampaignPlatformCampaignResolutionOK builds a
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint result from a HTTP "OK" response.
+func NewResolveMetaAdsCampaignPlatformCampaignResolutionOK(body *ResolveMetaAdsCampaignResponseBody) *lfxv2campaignserviceconnections.PlatformCampaignResolution {
+	v := &lfxv2campaignserviceconnections.PlatformCampaignResolution{
+		PlatformCampaignID: *body.PlatformCampaignID,
+		MatchCount:         *body.MatchCount,
+	}
+	v.Matches = make([]*lfxv2campaignserviceconnections.CampaignRef, len(body.Matches))
+	for i, val := range body.Matches {
+		if val == nil {
+			v.Matches[i] = nil
+			continue
+		}
+		v.Matches[i] = unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(val)
+	}
+
+	return v
+}
+
+// NewResolveMetaAdsCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign
+// endpoint BadRequest error.
+func NewResolveMetaAdsCampaignBadRequest(body *ResolveMetaAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMetaAdsCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign
+// endpoint ServiceUnavailable error.
+func NewResolveMetaAdsCampaignServiceUnavailable(body *ResolveMetaAdsCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMetaAdsCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign
+// endpoint InternalServerError error.
+func NewResolveMetaAdsCampaignInternalServerError(body *ResolveMetaAdsCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMetaAdsCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign
+// endpoint NotFound error.
+func NewResolveMetaAdsCampaignNotFound(body *ResolveMetaAdsCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMetaAdsCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign
+// endpoint PayloadTooLarge error.
+func NewResolveMetaAdsCampaignPayloadTooLarge(body *ResolveMetaAdsCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveMetaAdsCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign
+// endpoint Unauthorized error.
+func NewResolveMetaAdsCampaignUnauthorized(body *ResolveMetaAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignPlatformCampaignResolutionOK builds a
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint result from a HTTP "OK" response.
+func NewResolveRedditAdsCampaignPlatformCampaignResolutionOK(body *ResolveRedditAdsCampaignResponseBody) *lfxv2campaignserviceconnections.PlatformCampaignResolution {
+	v := &lfxv2campaignserviceconnections.PlatformCampaignResolution{
+		PlatformCampaignID: *body.PlatformCampaignID,
+		MatchCount:         *body.MatchCount,
+	}
+	v.Matches = make([]*lfxv2campaignserviceconnections.CampaignRef, len(body.Matches))
+	for i, val := range body.Matches {
+		if val == nil {
+			v.Matches[i] = nil
+			continue
+		}
+		v.Matches[i] = unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(val)
+	}
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// endpoint BadRequest error.
+func NewResolveRedditAdsCampaignBadRequest(body *ResolveRedditAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// endpoint ServiceUnavailable error.
+func NewResolveRedditAdsCampaignServiceUnavailable(body *ResolveRedditAdsCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// endpoint InternalServerError error.
+func NewResolveRedditAdsCampaignInternalServerError(body *ResolveRedditAdsCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// endpoint NotFound error.
+func NewResolveRedditAdsCampaignNotFound(body *ResolveRedditAdsCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// endpoint PayloadTooLarge error.
+func NewResolveRedditAdsCampaignPayloadTooLarge(body *ResolveRedditAdsCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// endpoint Unauthorized error.
+func NewResolveRedditAdsCampaignUnauthorized(body *ResolveRedditAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignPlatformCampaignResolutionOK builds a
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint result from a HTTP "OK" response.
+func NewResolveTwitterAdsCampaignPlatformCampaignResolutionOK(body *ResolveTwitterAdsCampaignResponseBody) *lfxv2campaignserviceconnections.PlatformCampaignResolution {
+	v := &lfxv2campaignserviceconnections.PlatformCampaignResolution{
+		PlatformCampaignID: *body.PlatformCampaignID,
+		MatchCount:         *body.MatchCount,
+	}
+	v.Matches = make([]*lfxv2campaignserviceconnections.CampaignRef, len(body.Matches))
+	for i, val := range body.Matches {
+		if val == nil {
+			v.Matches[i] = nil
+			continue
+		}
+		v.Matches[i] = unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(val)
+	}
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// endpoint BadRequest error.
+func NewResolveTwitterAdsCampaignBadRequest(body *ResolveTwitterAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// endpoint ServiceUnavailable error.
+func NewResolveTwitterAdsCampaignServiceUnavailable(body *ResolveTwitterAdsCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// endpoint InternalServerError error.
+func NewResolveTwitterAdsCampaignInternalServerError(body *ResolveTwitterAdsCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// endpoint NotFound error.
+func NewResolveTwitterAdsCampaignNotFound(body *ResolveTwitterAdsCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// endpoint PayloadTooLarge error.
+func NewResolveTwitterAdsCampaignPayloadTooLarge(body *ResolveTwitterAdsCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// endpoint Unauthorized error.
+func NewResolveTwitterAdsCampaignUnauthorized(body *ResolveTwitterAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListMetaAdsAccountsResultOK builds a
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint result from a HTTP "OK" response.
@@ -10382,6 +10957,96 @@ func NewListTwitterAdsAccountsPayloadTooLarge(body *ListTwitterAdsAccountsPayloa
 // lfx-v2-campaign-service-connections service list-twitter-ads-accounts
 // endpoint Unauthorized error.
 func NewListTwitterAdsAccountsUnauthorized(body *ListTwitterAdsAccountsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewListRedditAdsAccountsResultOK builds a
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint result from a HTTP "OK" response.
+func NewListRedditAdsAccountsResultOK(body *ListRedditAdsAccountsResponseBody) *lfxv2campaignserviceconnections.ListRedditAdsAccountsResult {
+	v := &lfxv2campaignserviceconnections.ListRedditAdsAccountsResult{}
+	v.Accounts = make([]*lfxv2campaignserviceconnections.AccessibleAccount, len(body.Accounts))
+	for i, val := range body.Accounts {
+		if val == nil {
+			v.Accounts[i] = nil
+			continue
+		}
+		v.Accounts[i] = unmarshalAccessibleAccountResponseBodyToLfxv2campaignserviceconnectionsAccessibleAccount(val)
+	}
+
+	return v
+}
+
+// NewListRedditAdsAccountsBadRequest builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts
+// endpoint BadRequest error.
+func NewListRedditAdsAccountsBadRequest(body *ListRedditAdsAccountsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsAccountsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts
+// endpoint ServiceUnavailable error.
+func NewListRedditAdsAccountsServiceUnavailable(body *ListRedditAdsAccountsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsAccountsInternalServerError builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts
+// endpoint InternalServerError error.
+func NewListRedditAdsAccountsInternalServerError(body *ListRedditAdsAccountsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsAccountsNotFound builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts
+// endpoint NotFound error.
+func NewListRedditAdsAccountsNotFound(body *ListRedditAdsAccountsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsAccountsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts
+// endpoint PayloadTooLarge error.
+func NewListRedditAdsAccountsPayloadTooLarge(body *ListRedditAdsAccountsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListRedditAdsAccountsUnauthorized builds a
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts
+// endpoint Unauthorized error.
+func NewListRedditAdsAccountsUnauthorized(body *ListRedditAdsAccountsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
 	v := &lfxv2campaignserviceconnections.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -12137,6 +12802,72 @@ func ValidateResolveMicrosoftAdsCampaignResponseBody(body *ResolveMicrosoftAdsCa
 	return
 }
 
+// ValidateResolveMetaAdsCampaignResponseBody runs the validations defined on
+// Resolve-Meta-Ads-CampaignResponseBody
+func ValidateResolveMetaAdsCampaignResponseBody(body *ResolveMetaAdsCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Matches == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("matches", "body"))
+	}
+	if body.MatchCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_count", "body"))
+	}
+	for _, e := range body.Matches {
+		if e != nil {
+			if err2 := ValidateCampaignRefResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateResolveRedditAdsCampaignResponseBody runs the validations defined on
+// Resolve-Reddit-Ads-CampaignResponseBody
+func ValidateResolveRedditAdsCampaignResponseBody(body *ResolveRedditAdsCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Matches == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("matches", "body"))
+	}
+	if body.MatchCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_count", "body"))
+	}
+	for _, e := range body.Matches {
+		if e != nil {
+			if err2 := ValidateCampaignRefResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateResolveTwitterAdsCampaignResponseBody runs the validations defined
+// on Resolve-Twitter-Ads-CampaignResponseBody
+func ValidateResolveTwitterAdsCampaignResponseBody(body *ResolveTwitterAdsCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Matches == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("matches", "body"))
+	}
+	if body.MatchCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_count", "body"))
+	}
+	for _, e := range body.Matches {
+		if e != nil {
+			if err2 := ValidateCampaignRefResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
 // ValidateListMetaAdsAccountsResponseBody runs the validations defined on
 // List-Meta-Ads-AccountsResponseBody
 func ValidateListMetaAdsAccountsResponseBody(body *ListMetaAdsAccountsResponseBody) (err error) {
@@ -12188,6 +12919,22 @@ func ValidateListMicrosoftAdsAccountsResponseBody(body *ListMicrosoftAdsAccounts
 // ValidateListTwitterAdsAccountsResponseBody runs the validations defined on
 // List-Twitter-Ads-AccountsResponseBody
 func ValidateListTwitterAdsAccountsResponseBody(body *ListTwitterAdsAccountsResponseBody) (err error) {
+	if body.Accounts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
+	}
+	for _, e := range body.Accounts {
+		if e != nil {
+			if err2 := ValidateAccessibleAccountResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListRedditAdsAccountsResponseBody runs the validations defined on
+// List-Reddit-Ads-AccountsResponseBody
+func ValidateListRedditAdsAccountsResponseBody(body *ListRedditAdsAccountsResponseBody) (err error) {
 	if body.Accounts == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("accounts", "body"))
 	}
@@ -16290,6 +17037,232 @@ func ValidateResolveMicrosoftAdsCampaignUnauthorizedResponseBody(body *ResolveMi
 	return
 }
 
+// ValidateResolveMetaAdsCampaignBadRequestResponseBody runs the validations
+// defined on resolve-meta-ads-campaign_BadRequest_response_body
+func ValidateResolveMetaAdsCampaignBadRequestResponseBody(body *ResolveMetaAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMetaAdsCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// resolve-meta-ads-campaign_ServiceUnavailable_response_body
+func ValidateResolveMetaAdsCampaignServiceUnavailableResponseBody(body *ResolveMetaAdsCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMetaAdsCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// resolve-meta-ads-campaign_InternalServerError_response_body
+func ValidateResolveMetaAdsCampaignInternalServerErrorResponseBody(body *ResolveMetaAdsCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMetaAdsCampaignNotFoundResponseBody runs the validations
+// defined on resolve-meta-ads-campaign_NotFound_response_body
+func ValidateResolveMetaAdsCampaignNotFoundResponseBody(body *ResolveMetaAdsCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMetaAdsCampaignPayloadTooLargeResponseBody runs the
+// validations defined on
+// resolve-meta-ads-campaign_PayloadTooLarge_response_body
+func ValidateResolveMetaAdsCampaignPayloadTooLargeResponseBody(body *ResolveMetaAdsCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveMetaAdsCampaignUnauthorizedResponseBody runs the validations
+// defined on resolve-meta-ads-campaign_Unauthorized_response_body
+func ValidateResolveMetaAdsCampaignUnauthorizedResponseBody(body *ResolveMetaAdsCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveRedditAdsCampaignBadRequestResponseBody runs the validations
+// defined on resolve-reddit-ads-campaign_BadRequest_response_body
+func ValidateResolveRedditAdsCampaignBadRequestResponseBody(body *ResolveRedditAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveRedditAdsCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// resolve-reddit-ads-campaign_ServiceUnavailable_response_body
+func ValidateResolveRedditAdsCampaignServiceUnavailableResponseBody(body *ResolveRedditAdsCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveRedditAdsCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// resolve-reddit-ads-campaign_InternalServerError_response_body
+func ValidateResolveRedditAdsCampaignInternalServerErrorResponseBody(body *ResolveRedditAdsCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveRedditAdsCampaignNotFoundResponseBody runs the validations
+// defined on resolve-reddit-ads-campaign_NotFound_response_body
+func ValidateResolveRedditAdsCampaignNotFoundResponseBody(body *ResolveRedditAdsCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveRedditAdsCampaignPayloadTooLargeResponseBody runs the
+// validations defined on
+// resolve-reddit-ads-campaign_PayloadTooLarge_response_body
+func ValidateResolveRedditAdsCampaignPayloadTooLargeResponseBody(body *ResolveRedditAdsCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveRedditAdsCampaignUnauthorizedResponseBody runs the
+// validations defined on resolve-reddit-ads-campaign_Unauthorized_response_body
+func ValidateResolveRedditAdsCampaignUnauthorizedResponseBody(body *ResolveRedditAdsCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveTwitterAdsCampaignBadRequestResponseBody runs the validations
+// defined on resolve-twitter-ads-campaign_BadRequest_response_body
+func ValidateResolveTwitterAdsCampaignBadRequestResponseBody(body *ResolveTwitterAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveTwitterAdsCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// resolve-twitter-ads-campaign_ServiceUnavailable_response_body
+func ValidateResolveTwitterAdsCampaignServiceUnavailableResponseBody(body *ResolveTwitterAdsCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveTwitterAdsCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// resolve-twitter-ads-campaign_InternalServerError_response_body
+func ValidateResolveTwitterAdsCampaignInternalServerErrorResponseBody(body *ResolveTwitterAdsCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveTwitterAdsCampaignNotFoundResponseBody runs the validations
+// defined on resolve-twitter-ads-campaign_NotFound_response_body
+func ValidateResolveTwitterAdsCampaignNotFoundResponseBody(body *ResolveTwitterAdsCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveTwitterAdsCampaignPayloadTooLargeResponseBody runs the
+// validations defined on
+// resolve-twitter-ads-campaign_PayloadTooLarge_response_body
+func ValidateResolveTwitterAdsCampaignPayloadTooLargeResponseBody(body *ResolveTwitterAdsCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveTwitterAdsCampaignUnauthorizedResponseBody runs the
+// validations defined on
+// resolve-twitter-ads-campaign_Unauthorized_response_body
+func ValidateResolveTwitterAdsCampaignUnauthorizedResponseBody(body *ResolveTwitterAdsCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateListMetaAdsAccountsBadRequestResponseBody runs the validations
 // defined on list-meta-ads-accounts_BadRequest_response_body
 func ValidateListMetaAdsAccountsBadRequestResponseBody(body *ListMetaAdsAccountsBadRequestResponseBody) (err error) {
@@ -16580,6 +17553,80 @@ func ValidateListTwitterAdsAccountsPayloadTooLargeResponseBody(body *ListTwitter
 // ValidateListTwitterAdsAccountsUnauthorizedResponseBody runs the validations
 // defined on list-twitter-ads-accounts_Unauthorized_response_body
 func ValidateListTwitterAdsAccountsUnauthorizedResponseBody(body *ListTwitterAdsAccountsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsAccountsBadRequestResponseBody runs the validations
+// defined on list-reddit-ads-accounts_BadRequest_response_body
+func ValidateListRedditAdsAccountsBadRequestResponseBody(body *ListRedditAdsAccountsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsAccountsServiceUnavailableResponseBody runs the
+// validations defined on
+// list-reddit-ads-accounts_ServiceUnavailable_response_body
+func ValidateListRedditAdsAccountsServiceUnavailableResponseBody(body *ListRedditAdsAccountsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsAccountsInternalServerErrorResponseBody runs the
+// validations defined on
+// list-reddit-ads-accounts_InternalServerError_response_body
+func ValidateListRedditAdsAccountsInternalServerErrorResponseBody(body *ListRedditAdsAccountsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsAccountsNotFoundResponseBody runs the validations
+// defined on list-reddit-ads-accounts_NotFound_response_body
+func ValidateListRedditAdsAccountsNotFoundResponseBody(body *ListRedditAdsAccountsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsAccountsPayloadTooLargeResponseBody runs the
+// validations defined on list-reddit-ads-accounts_PayloadTooLarge_response_body
+func ValidateListRedditAdsAccountsPayloadTooLargeResponseBody(body *ListRedditAdsAccountsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListRedditAdsAccountsUnauthorizedResponseBody runs the validations
+// defined on list-reddit-ads-accounts_Unauthorized_response_body
+func ValidateListRedditAdsAccountsUnauthorizedResponseBody(body *ListRedditAdsAccountsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

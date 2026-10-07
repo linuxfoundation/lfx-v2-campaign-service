@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
@@ -30,24 +29,6 @@ const (
 	graphCodeInvalidParameter = 100
 	graphSubcodeObjectMissing = 33
 )
-
-// ErrNotACampaignID reports that the caller's id could not name a Meta campaign at all, so no
-// request was sent. A PERMANENT input fault: the adopt handler maps it to 400.
-var ErrNotACampaignID = errors.New("meta: not a campaign id")
-
-// campaignIDRE is the canonical Graph node id spelling: decimal digits, no leading zero, no
-// padding. Graph ids are 64-bit, so twenty digits bounds every real one.
-var campaignIDRE = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
-
-// ValidateCampaignID reports whether campaignID is the canonical spelling of a Meta campaign id.
-// Padding is refused rather than trimmed: trimming would turn "this id is malformed" into "this
-// id is campaign N" one layer below a service that has already declined to normalise it.
-func ValidateCampaignID(campaignID string) error {
-	if !campaignIDRE.MatchString(campaignID) {
-		return fmt.Errorf("%w: want the decimal node id with no leading zero", ErrNotACampaignID)
-	}
-	return nil
-}
 
 // adoptCampaignFields is exactly the field set the adoption read asks for. Only id, name, status
 // and account_id decide anything; the rest are read so the response is the campaign's full

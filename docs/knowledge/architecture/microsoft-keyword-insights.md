@@ -119,6 +119,8 @@ under its brief. `GET /projects/{project_id}/microsoft-ads/campaign-ref?platform
   scoped to `google-ads` because Microsoft ids are minted per ad account, so a project
   re-pointed between accounts can hold two live rows for the same id. Every match is returned and
   the caller must refuse rather than pick.
+- Meta, Reddit and X gained the same lookup in LFXV2-2665 (`/{meta,reddit,twitter}-ads/campaign-ref`)
+  through the same helper, each with its own platform id rule; see `internal-service`.
 
 ## Sources
 

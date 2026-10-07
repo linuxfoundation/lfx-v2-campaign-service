@@ -142,10 +142,10 @@ func TestMetaGetCampaign_ExhaustedThrottleIsAnErrorNotAbsence(t *testing.T) {
 
 func TestMetaGetCampaign_MalformedIDRefusedBeforeAnyRequest(t *testing.T) {
 	c, seen := lookupTestClient(t, http.StatusInternalServerError, `{}`)
-	for _, id := range []string{"", "0", "0123", "abc", "act_777", " 123", "123 ", "12/34", "123456789012345678901"} {
+	for _, id := range []string{"", "0", "0123", "abc", "act_777", " 123", "123 ", "12/34", "123456789012345678901234567890123"} {
 		ref, err := c.GetCampaign(context.Background(), id)
-		if !errors.Is(err, ErrNotACampaignID) || ref != nil {
-			t.Errorf("GetCampaign(%q) = %+v, %v; want ErrNotACampaignID", id, ref, err)
+		if !errors.Is(err, ErrInvalidCampaignID) || ref != nil {
+			t.Errorf("GetCampaign(%q) = %+v, %v; want ErrInvalidCampaignID", id, ref, err)
 		}
 	}
 	if n := len(seen()); n != 0 {

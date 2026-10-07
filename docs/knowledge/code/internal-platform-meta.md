@@ -720,13 +720,20 @@ inconclusive one; the operator was told to reauthorize a credential Meta never l
 status — nothing was parsed, so nothing was learned. `APIError.Message` falls back to the raw
 response body, which is why the dispatcher never echoes it.
 
+## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
+
+`ValidateCampaignID` is the id rule `resolve-meta-ads-campaign` applies before any lookup:
+digits only, no leading zero (`numericIDRE` admits one; a stored Meta id never has it, so
+`"0123"` could only come back as a confident "not yours"), at most 32, untrimmed. Returns
+`ErrInvalidCampaignID`. It contacts nothing.
+
 ## Adoption read (`campaign_lookup.go`, LFXV2-2665)
 
 `GetCampaign` is the read `MetaDispatcher.LookupCampaign` makes to adopt an existing campaign:
 one `GET /{campaign_id}?fields=id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy`
 through `doRequest`, so a 429 or HTTP-400 rate-limit code is retried and an exhausted one is an
-error. `ValidateCampaignID` (decimal node id, no leading zero, no padding, ≤20 digits) runs first
-and returns `ErrNotACampaignID` with no request. Graph code 100 + `error_subcode` 33 ("does not
+error. `ValidateCampaignID` (the campaign-ref id rule above) runs first
+and returns `ErrInvalidCampaignID` with no request. Graph code 100 + `error_subcode` 33 ("does not
 exist, cannot be loaded with this token, or does not support this operation" — all an absence under
 this token) and a `status` of `DELETED` or `ARCHIVED` are `(nil, nil)`. `ACTIVE`/`PAUSED` is a ref;
 any other status, a missing name, an id echo that differs, a body `identityjson.Check` refuses or

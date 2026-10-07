@@ -298,11 +298,21 @@ var twitterAdsAccountDiscovery = accountDiscovery{
 		"with consumer_key, consumer_secret, access_token and access_token_secret set",
 }
 
+// redditAdsListDiscovery is the account-discovery descriptor for list-reddit-ads-accounts
+// (LFXV2-2665). Its empty `operation` makes label() read "account discovery", like the other
+// providers' *AccountDiscovery vars; connection_monitor.go's redditAdsAccountDiscovery predates
+// it and names the "account monitor" operation, so it is not reused here.
+var redditAdsListDiscovery = accountDiscovery{
+	provider:    model.ProviderRedditAds,
+	displayName: "reddit ads",
+	notUsableRemedy: "check that it is active and that the stored credential is valid json " +
+		"with client_id, client_secret and refresh_token set",
+}
+
 // redditAdsConnectionDiscovery is the connection-test descriptor for Reddit Ads (LFXV2-2665),
 // distinct from connection_monitor.go's redditAdsAccountDiscovery in exactly the way that file's
 // own per-surface descriptors are distinct from this file's: same provider, different
-// `operation`. This service still has no Reddit account-enumeration path, so neither descriptor
-// is ever passed to listAccounts.
+// `operation`. Account enumeration uses redditAdsListDiscovery above.
 //
 // The wire names are design/connection.go's RedditAdsCredentials, which is what a caller can
 // act on — not the Go keys the blob is persisted under.
@@ -814,6 +824,17 @@ func (s *ConnectionService) ListMicrosoftAdsAccounts(ctx context.Context, p *con
 	return &conn.ListMicrosoftAdsAccountsResult{Accounts: accounts}, nil
 }
 
+// ListRedditAdsAccounts enumerates the Reddit ad accounts the stored credential reaches, across
+// every business it can access (LFXV2-2665). Ids are returned in the form the connection's
+// account_id stores (^[A-Za-z0-9_]+$, at most 64), so the answer is directly assignable.
+func (s *ConnectionService) ListRedditAdsAccounts(ctx context.Context, p *conn.ListRedditAdsAccountsPayload) (*conn.ListRedditAdsAccountsResult, error) {
+	accounts, err := s.listAccounts(ctx, p.ProjectID, redditAdsListDiscovery)
+	if err != nil {
+		return nil, err
+	}
+	return &conn.ListRedditAdsAccountsResult{Accounts: accounts}, nil
+}
+
 // ListTwitterAdsAccounts enumerates the X Ads accounts the stored credential reaches.
 //
 // X's ids arrive as ALPHANUMERIC handles (e.g. "18ce54d4x5t"), not digits, and are returned
@@ -867,8 +888,7 @@ func (s *ConnectionService) ListHubspotEmails(ctx context.Context, p *conn.ListH
 		// keys on ErrAccountsUnsupported, and the two are separate sentinels precisely
 		// because the capabilities are independent — HubSpot searches emails and has no ad
 		// accounts, while the AccountLister-capable platforms are the reverse — they enumerate
-		// accounts and search no emails. Not "the ad platforms": Reddit is an ad platform
-		// and implements neither capability, which is the membership distinction below. Stated
+		// accounts and search no emails. Stated
 		// as the SHAPE rather than by naming which providers implement AccountLister: that
 		// membership only grows, and an enumerating comment is falsified by the next provider
 		// added without anything failing — which is why no roster is written here. For the
