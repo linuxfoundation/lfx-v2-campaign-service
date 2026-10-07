@@ -756,15 +756,22 @@ func TestSetSendList_RejectsSendListInSuppression(t *testing.T) {
 // and the send goes to their union. Every id is trimmed, blanks and duplicates are dropped, and
 // order is kept, so the PATCH names exactly the lists the audience records.
 func TestSetSendList_MultiInclude(t *testing.T) {
-	var body map[string]any
+	// The handler runs on the server's goroutine: hand the body to the test goroutine over a
+	// channel, and report a decode failure with t.Errorf (FailNow must run on the test goroutine).
+	bodies := make(chan map[string]any, 1)
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		body = decodeBody(t, r)
+		var got map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		bodies <- got
 		_, _ = io.WriteString(w, `{"id":"999"}`)
 	})
 	if _, err := c.SetSendList(context.Background(), "999",
 		[]string{" 101 ", "102", "", "101", "103"}, []string{"900"}); err != nil {
 		t.Fatalf("SetSendList: %v", err)
 	}
+	body := <-bodies
 	ils := body["to"].(map[string]any)["contactIlsLists"].(map[string]any)
 	inc, _ := ils["include"].([]any)
 	want := []any{"101", "102", "103"}

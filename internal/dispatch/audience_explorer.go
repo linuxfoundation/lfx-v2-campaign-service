@@ -1589,10 +1589,15 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string,
 	if merr != nil {
 		return nil, merr
 	}
+	// The ids HubSpot returned, not the caller's spelling: the recorded include set must name the
+	// same lists the master column does, id for id.
+	sourceIDs := []string{readBackID(master, include[0])}
 	for _, id := range include[1:] {
-		if _, ierr := read(id); ierr != nil {
+		l, ierr := read(id)
+		if ierr != nil {
 			return nil, ierr
 		}
+		sourceIDs = append(sourceIDs, readBackID(l, id))
 	}
 	for _, id := range suppress {
 		if _, serr := read(id); serr != nil {
@@ -1609,7 +1614,7 @@ func (x *AudienceExplorer) AttachExisting(ctx context.Context, projectID string,
 	}
 	return &audience.ComposeOutcome{
 		Master:                 audience.ComposedList{ListRow: listRow(master)},
-		SourceListIDs:          append([]string{master.ListID}, include[1:]...),
+		SourceListIDs:          sourceIDs,
 		PortalID:               portalID,
 		AttachedSuppressionIDs: suppress,
 		Attached:               true,
@@ -1975,4 +1980,13 @@ func sendDetailsURL(client *hubspot.Client, email hubspot.Email) string {
 		return u
 	}
 	return email.AppURL
+}
+
+// readBackID is the id HubSpot returned for a list, falling back to the requested id when the
+// response carried none.
+func readBackID(l *hubspot.List, requested string) string {
+	if id := strings.TrimSpace(l.ListID); id != "" {
+		return id
+	}
+	return requested
 }

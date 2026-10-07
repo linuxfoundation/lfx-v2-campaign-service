@@ -744,8 +744,6 @@ func (c *Client) emailEditURL(emailID string) string {
 	return c.appBaseURL + "/email/" + c.account.PortalID + "/edit/" + emailID + "/settings"
 }
 
-// cleanIDs trims, drops empties, and returns a non-nil slice (so an omitted list
-// serializes as [] not null).
 // uniqueIDs is cleanIDs with duplicates dropped, first occurrence kept. Used for send lists,
 // where a repeated id is harmless to HubSpot but would make the recorded include set read
 // as more lists than the email actually targets.
@@ -760,6 +758,8 @@ func uniqueIDs(ids []string) []string {
 	return out
 }
 
+// cleanIDs trims, drops empties, and returns a non-nil slice (so an omitted list
+// serializes as [] not null).
 func cleanIDs(ids []string) []string {
 	out := make([]string, 0, len(ids))
 	for _, s := range ids {

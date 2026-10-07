@@ -5,6 +5,8 @@ package service
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
@@ -179,6 +181,10 @@ func TestAttachExistingAudienceRefusesAmbiguousOrContradictoryLists(t *testing.T
 		{"blank include entry", &explore.AudienceAttachExistingInput{BriefID: "brief-1", IncludeListIds: []string{"31027", " "}}, "blank"},
 		{"include also suppressed", &explore.AudienceAttachExistingInput{BriefID: "brief-1",
 			IncludeListIds: []string{"31027", "31028"}, SuppressionListIds: []string{"s1", " 31028 "}}, "31028"},
+		{"non-numeric include id", &explore.AudienceAttachExistingInput{BriefID: "brief-1", IncludeListIds: []string{"31027", "abc"}}, "not a HubSpot list id"},
+		{"oversized include id", &explore.AudienceAttachExistingInput{BriefID: "brief-1", IncludeListIds: []string{strings.Repeat("1", 33)}}, "not a HubSpot list id"},
+		{"includes and suppressions over the combined cap", &explore.AudienceAttachExistingInput{BriefID: "brief-1",
+			IncludeListIds: numericIDs(1, 150), SuppressionListIds: numericIDs(1000, 51)}, "together cannot name more than 200"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			explorer := &attachExplorer{}
@@ -203,4 +209,13 @@ func TestAttachExistingAudienceMapsAMissingIncludeListTo404(t *testing.T) {
 	var nf *explore.NotFoundError
 	require.ErrorAs(t, err, &nf)
 	assert.Zero(t, repo.calls)
+}
+
+// numericIDs returns n distinct numeric list ids starting at from.
+func numericIDs(from, n int) []string {
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, strconv.Itoa(from+i))
+	}
+	return out
 }

@@ -1,6 +1,6 @@
 # 2026-10-07 — A brief audience can send to several existing HubSpot lists directly
 
-**Feature** — `attach-existing` accepts `include_list_ids` (1–200 existing HubSpot lists) as an
+**Update** — `attach-existing` accepts `include_list_ids` (1–200 existing HubSpot lists) as an
 alternative to `master_list_id`, so an operator can send to several lists they already have
 without composing a master list first. HubSpot's `contactIlsLists.include` is an array, so the
 lists themselves are the recipients and HubSpot unions them.
@@ -21,3 +21,10 @@ lists themselves are the recipients and HubSpot unions them.
   stop matching the send set. `include_list_ids` is response-only on the audience view and the
   attach result.
 - **Not changed:** the wizard's explicit `send_list_ids` override still refuses more than one id.
+
+**Fix** — pre-PR review: an attach now refuses an include id that is not a numeric HubSpot list id
+(at most 32 digits), and caps include plus suppression lists at 200 together, since each is read
+back with its own HubSpot GET. The recorded include set is the ids HubSpot read back, so its first
+entry always equals `platform_master_list_id`. Migration `000040` also adds a CHECK that
+`include_list_ids` is NULL or a JSON array. The explicit `send_list_ids` override still takes one
+list; its 400 now says why and points at `include_list_ids`.

@@ -465,9 +465,11 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 	}
 	// Only the include_list_ids form records the include set. The single-master form keeps
 	// writing the row it always has, so every existing reader and send path is untouched.
+	// The read-back ids, not the caller's strings: SourceListIDs holds the id HubSpot returned for
+	// each list, so include_list_ids[0] always equals the platform_master_list_id recorded beside it.
 	var recordedIncludes []string
 	if multi {
-		recordedIncludes = includeIDs
+		recordedIncludes = outcome.SourceListIDs
 	}
 	recorded, rerr := s.recordComposedAudience(ctx, repo, p.ProjectID, briefID, outcome,
 		strings.TrimSpace(derefStr(p.Attach.InclusionSummary)), recordedIncludes)
@@ -504,6 +506,22 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 // overlap here is refused: HubSpot applies exclusions after inclusions, so an id on both sides
 // would remove that whole list from the send, and with several includes the operator cannot
 // tell from the response which group quietly went missing.
+// maxAttachListIDs caps the include and suppression lists of one attach together: each is read
+// back from HubSpot with its own GET. maxAttachListIDLength bounds one list id.
+const (
+	maxAttachListIDs      = 200
+	maxAttachListIDLength = 32
+)
+
+func isASCIIDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
 func attachIncludeIDs(in *explore.AudienceAttachExistingInput) (ids []string, multi bool, err error) {
 	master := strings.TrimSpace(derefStr(in.MasterListID))
 	hasInclude := len(in.IncludeListIds) > 0
@@ -516,11 +534,25 @@ func attachIncludeIDs(in *explore.AudienceAttachExistingInput) (ids []string, mu
 		return []string{master}, false, nil
 	}
 	for _, id := range in.IncludeListIds {
-		if strings.TrimSpace(id) == "" {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
 			return nil, false, &explore.BadRequestError{Code: "400", Message: "an include_list_ids entry cannot be blank"}
+		}
+		// HubSpot ILS list ids are numeric. Validating the allowed shape keeps an oversized or
+		// malformed id from costing a HubSpot round trip each.
+		if len(trimmed) > maxAttachListIDLength || !isASCIIDigits(trimmed) {
+			return nil, false, &explore.BadRequestError{Code: "400", Message: fmt.Sprintf("include_list_ids entry %q is not a HubSpot list id", trimmed)}
 		}
 	}
 	ids = audience.UniqueIDs(in.IncludeListIds)
+	// Every include AND every suppression id is read back from HubSpot one GET at a time, so the
+	// two caps (200 each) alone would let one request spend 400 calls of the portal's rate limit.
+	if len(ids)+len(audience.UniqueIDs(in.SuppressionListIds)) > maxAttachListIDs {
+		return nil, false, &explore.BadRequestError{
+			Code:    "400",
+			Message: fmt.Sprintf("include_list_ids and suppression_list_ids together cannot name more than %d lists", maxAttachListIDs),
+		}
+	}
 	suppressed := make(map[string]struct{}, len(in.SuppressionListIds))
 	for _, id := range in.SuppressionListIds {
 		suppressed[strings.TrimSpace(id)] = struct{}{}

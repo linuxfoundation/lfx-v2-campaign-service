@@ -1437,11 +1437,13 @@ func (s *BriefService) resolveWizardSendList(ctx context.Context, client HubSpot
 	// send_list_ids takes priority over send_list_id, per the design's own wording.
 	if ids := trimmedNonEmpty(p.SendListIds); len(ids) > 0 {
 		if len(ids) > 1 {
-			// HubSpot takes ONE ILS list per send. Refusing is the honest answer: silently
-			// using the first would send to a subset of the audience the operator named.
+			// The explicit override names ONE list by design; a send to several lists goes through
+			// the brief's audience (attach-existing with include_list_ids), which records the set
+			// dispatch and the wizard both read. Refusing is the honest answer: silently using the
+			// first would send to a subset of the audience the operator named.
 			return nil, nil, "", &briefs.BadRequestError{
 				Code:    "400",
-				Message: "a HubSpot send takes a single recipient list; supply one send list id",
+				Message: "an explicit send_list_ids override takes a single list; to send to several lists, attach them to the brief's audience with include_list_ids",
 			}
 		}
 		return ids[:1], suppression, "explicit", nil

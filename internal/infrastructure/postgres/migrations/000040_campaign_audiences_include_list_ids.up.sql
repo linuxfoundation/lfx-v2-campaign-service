@@ -25,3 +25,12 @@
 
 ALTER TABLE campaign_audiences
     ADD COLUMN IF NOT EXISTS include_list_ids JSONB NULL;
+
+-- The shape is enforced in Go (SendListIDs fails closed on anything that is not a string array);
+-- the database refuses a non-array too, so an out-of-band write cannot store one. The column is
+-- new and NULL on every row, so validating the constraint scans nothing it can fail on.
+ALTER TABLE campaign_audiences
+    DROP CONSTRAINT IF EXISTS campaign_audiences_include_list_ids_is_array;
+ALTER TABLE campaign_audiences
+    ADD CONSTRAINT campaign_audiences_include_list_ids_is_array
+    CHECK (include_list_ids IS NULL OR jsonb_typeof(include_list_ids) = 'array');
