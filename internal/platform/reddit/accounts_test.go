@@ -305,6 +305,77 @@ func TestListAdAccounts_ItemBoundIsReadPlusOne(t *testing.T) {
 	}
 }
 
+// The ACCOUNT bound is read plus one too, and counts unique accounts across every business and
+// page: exactly maxDiscoveredAccounts is an answer, one more is an error and never a truncation.
+// The ids are spread over two businesses of two pages each, and the second business re-lists one
+// of the first's accounts — that repeat is deduplicated, so it must not count toward the bound.
+func TestListAdAccounts_AccountItemBoundIsReadPlusOne(t *testing.T) {
+	const businesses, pagesPerBusiness = 2, 2
+	// accountsPage renders one page of the spread: business b, page p of n unique accounts, with
+	// t2_0 (already listed by b0) prepended to b1's first page as a cross-business repeat.
+	accountsPage := func(s *discoveryStub, n, b, p int) string {
+		chunks := businesses * pagesPerBusiness
+		per := (n + chunks - 1) / chunks
+		lo, hi := (b*pagesPerBusiness+p)*per, (b*pagesPerBusiness+p+1)*per
+		hi = min(hi, n)
+		parts := make([]string, 0, per+1)
+		if b == 1 && p == 0 {
+			parts = append(parts, `{"id":"t2_0"}`)
+		}
+		for i := lo; i < hi; i++ {
+			parts = append(parts, fmt.Sprintf(`{"id":"t2_%d"}`, i))
+		}
+		body := `{"data":[` + strings.Join(parts, ",") + `]`
+		if p+1 < pagesPerBusiness {
+			body += `,"pagination":` + s.next(fmt.Sprintf("%s?page.token=%d", adAccountsPath(fmt.Sprintf("b%d", b)), p+1))
+		}
+		return body + `}`
+	}
+	for _, tc := range []struct {
+		n       int
+		wantErr bool
+	}{{maxDiscoveredAccounts, false}, {maxDiscoveredAccounts + 1, true}} {
+		t.Run(fmt.Sprint(tc.n), func(t *testing.T) {
+			stub := &discoveryStub{respond: func(s *discoveryStub, key string, _ int) (int, string) {
+				if key == businessesPath {
+					return 200, `{"data":[{"id":"b0"},{"id":"b1"}]}`
+				}
+				for b := 0; b < businesses; b++ {
+					for p := 0; p < pagesPerBusiness; p++ {
+						want := adAccountsPath(fmt.Sprintf("b%d", b))
+						if p > 0 {
+							want += fmt.Sprintf("?page.token=%d", p)
+						}
+						if key == want {
+							return 200, accountsPage(s, tc.n, b, p)
+						}
+					}
+				}
+				return 404, `{}`
+			}}
+			got, err := newDiscoveryClient(t, stub).ListAdAccounts(context.Background())
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("n=%d: err = %v, wantErr %v", tc.n, err, tc.wantErr)
+			}
+			if tc.wantErr {
+				if !errors.Is(err, ErrDiscoveryMalformed) {
+					t.Errorf("err = %v, want ErrDiscoveryMalformed", err)
+				}
+				if got != nil {
+					t.Errorf("got %d accounts alongside the bound error; want nil", len(got))
+				}
+				return
+			}
+			if len(got) != tc.n {
+				t.Fatalf("got %d accounts, want all %d", len(got), tc.n)
+			}
+			if wantReqs := 1 + businesses*pagesPerBusiness; len(stub.seen()) != wantReqs {
+				t.Errorf("requests = %d, want %d (every page of both businesses read)", len(stub.seen()), wantReqs)
+			}
+		})
+	}
+}
+
 // One account reachable through two businesses is offered once, under the first business.
 func TestListAdAccounts_AnAccountUnderTwoBusinessesIsListedOnce(t *testing.T) {
 	stub := &discoveryStub{respond: func(_ *discoveryStub, key string, _ int) (int, string) {

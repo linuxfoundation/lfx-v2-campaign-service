@@ -2012,4 +2012,8 @@ and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta
 (LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
 `platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
 platform error. `internal/apivalidation/campaign_ref_id_drift_test.go` pins that the Goa
-Pattern/MaxLength and the platform validator accept the same ids.
+Pattern/MaxLength and the platform validator accept the same ids. Over HTTP that fixed message is
+reached only by a caller the decoder lets through: the generated decoder applies the design's
+Pattern/MaxLength FIRST, so a malformed id is answered by Goa's own `invalid_pattern` /
+`invalid_length` 400. That one is non-echoing too, but because of the server-wide response encoder
+in [cmd/campaign-service](cmd-campaign-service.md), not because of `platformCampaignIDRule`.
