@@ -84,7 +84,12 @@ their asynchronous stats-jobs contract
 published documentation and has NOT been exercised against a live X Ads account. Only exactly
 `"true"` enables it, read per call (`twitterMonitorEnabled` in
 `internal/dispatch/twitter_monitor.go`); off, the monitor and the audience read answer the same
-400 as a platform without them. X's per-campaign metrics read is not behind it.
+400 as a platform without them. X's per-campaign metrics read is not behind it. Because those
+features' limits (the audience read's per-account job budget, the account-keyed write pacer)
+are per PROCESS, `templates/deployment.yaml` FAILS to render when the flag is on (via
+`app.environment` or `app.extraEnv`, or sourced with `valueFrom`, which the template cannot read
+and treats as on) together with `replicaCount` > 1 or `autoscaling.enabled` with
+`maxReplicas` > 1 (`TestDeploymentRefusesXStatsJobsOnMultipleReplicas`).
 
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while

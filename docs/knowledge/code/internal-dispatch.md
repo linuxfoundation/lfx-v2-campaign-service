@@ -2090,14 +2090,20 @@ are counted per account for `twitterAudienceAbandonedJobHold` (60 minutes — th
 them finished; `admitJobs`, run by the slot holder, refuses (503) a read whose
 `twitter.AudienceJobCount` would take the account past `twitterAudienceOutstandingJobBudget`
 (12 — two full reads, leaving most of X's 100 concurrent jobs per account to the account monitor),
-asking X first only when over budget. The scope in the key means a cached result
+asking X first only when over budget. A create that failed AMBIGUOUSLY is reported as
+`AudienceJobsAbandonedError.Unknown` and recorded as an ANONYMOUS entry (id ""): never sent to X
+for reconciliation (it has no id), it only expires with the hold, and reconciling the named jobs
+beside it keeps it. `NewTwitterDispatcher` appends `twitter.WithAccountPacers` with ONE
+registry to every client it builds, so every connection to one ad account in the process shares
+that account's write pacer and stats-job reservations. All of this is per process; the chart
+refuses more than one replica while `TWITTER_METRICS_ENABLED` is on. The scope in the key means a cached result
 is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
 (N callers → one set of jobs, a second account read refused while the first runs, cache hit
 creates no jobs and expires by TTL and by account-local day, failures not cached) and
 `twitter_audience_guard_test.go` (leader cancelled during fetch or slot wait → joiner re-leads;
 joiner's own cancellation is its own error; an upstream failure is shared, fetched once; a joined
 result across midnight re-leads; the abandoned-job budget, X's answer and the hold; slots do not
-grow with accounts).
+grow with accounts; anonymous jobs only expire and survive reconciliation).
 
 ## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
 

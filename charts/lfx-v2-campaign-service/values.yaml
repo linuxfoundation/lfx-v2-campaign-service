@@ -293,6 +293,9 @@ app:
     # other than "true" is treated as off, so a typo fails closed.
     # Flip to "true" only after the contract is verified against a live X ad
     # account; at that point the gate is removed and this key goes away.
+    # While "true", the deployment must run ONE replica: those features' limits
+    # are per process, and templates/deployment.yaml refuses to render the flag
+    # with replicaCount > 1 (or autoscaling past one).
     TWITTER_METRICS_ENABLED:
       value: "false"
 
