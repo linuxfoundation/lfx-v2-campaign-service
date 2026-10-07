@@ -242,6 +242,8 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 		}
 	}()
 
+	// Etag mirrors the claimed version: nothing below persists, so a 200 hands back the row's
+	// unchanged version.
 	out := &briefs.MetaAdSetStatusChange{
 		CampaignID:      p.CampaignID,
 		AdSetID:         p.AdSetID,
@@ -252,16 +254,16 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 	if terr != nil {
 		var unconfirmed interface{ Unconfirmed() bool }
 		if errors.As(terr, &unconfirmed) && unconfirmed.Unconfirmed() {
-			// The single write was SENT and its outcome is unknown. Reported as such — never as
-			// success, never as "nothing changed" — and the lock is held for the cooldown so a
-			// second caller cannot pile another write onto an ambiguous one.
+			// The single write was SENT and its outcome is unknown. Answered exactly as every
+			// other money lever answers it (toggle-campaign-status, budget, keyword actions): a
+			// 503 that says so — never success, never "nothing changed" — with the lock held
+			// for the cooldown so a second caller cannot pile another write onto it.
 			slog.WarnContext(ctx, "meta ad set status change is UNCONFIRMED (the platform may or may not reflect it)",
 				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
 				"ad_set_id", p.AdSetID, "requested_status", p.Status, "error", safeErrSummary(terr))
 			releaseNow = false
 			campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
-			out.Outcome = model.MetaAdSetUnconfirmed
-			return out, nil
+			return nil, errAdSetUnconfirmed()
 		}
 		return nil, s.classifyMetaAdSetError(ctx, "toggle", p.ProjectID, p.BriefID, p.CampaignID, existing.Platform, terr)
 	}
@@ -273,8 +275,7 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 			"project_id", p.ProjectID, "campaign_id", p.CampaignID, "ad_set_id", p.AdSetID)
 		releaseNow = false
 		campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
-		out.Outcome = model.MetaAdSetUnconfirmed
-		return out, nil
+		return nil, errAdSetUnconfirmed()
 	}
 	out.Outcome = res.Outcome
 	out.PreviousStatus = optionalString(res.PreviousStatus)
@@ -294,13 +295,20 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 	return out, nil
 }
 
+// errAdSetUnconfirmed is the fixed answer for a write whose outcome is unknown.
+func errAdSetUnconfirmed() error {
+	return &briefs.ConnServiceUnavailableError{Code: "503", Message: "the ad set status change is unconfirmed — it may or may not have been applied on Meta; read the ad sets before retrying"}
+}
+
 // classifyMetaAdSetError maps an orchestrator failure onto this service's error set. verb is
 // "read" or "toggle". Upstream text is logged (bounded), never returned: every client message is a
 // fixed sentence.
 //
-// No arm answers 404: the only 404 these endpoints give is a missing campaign ROW, decided before
-// the orchestrator is called. A project with no Meta connection is a 409 (repair the state) for
-// that reason, unlike the settings readback.
+// Two arms answer 404, as on every sibling per-campaign lever: a missing campaign ROW (decided
+// before the orchestrator is called) and a project with no Meta connection at all — matched on
+// domain.ErrConnectionAbsent, the sentinel only the connection lookup's absence carries, never on a
+// bare ErrNotFound some other layer might wrap. Nothing Meta says (Graph 100/33 included) is ever
+// a 404.
 func (s *BriefService) classifyMetaAdSetError(ctx context.Context, verb, projectID, briefID, campaignID string, platform model.Provider, aerr error) error {
 	logFields := []any{"project_id", projectID, "brief_id", briefID, "campaign_id", campaignID, "platform", platform, "op", verb + "_meta_ad_sets"}
 	failed := "the campaign's ad sets could not be read from Meta"
@@ -327,6 +335,12 @@ func (s *BriefService) classifyMetaAdSetError(ctx context.Context, verb, project
 		slog.WarnContext(ctx, "meta ad set refused: it is not this campaign's under the connected ad account",
 			append(logFields, "error", safeErrSummary(aerr))...)
 		return &briefs.ConflictError{Code: "409", Message: "the ad set does not belong to this campaign under the connected ad account" + nothing}
+	case errors.Is(aerr, domain.ErrMetaAdSetNotRecorded):
+		return &briefs.ConflictError{Code: "409", Message: "only the ad set this service created for the campaign can be activated here — this one's targeting was never verified by this service; activate it in Meta Ads Manager. Pausing any of the campaign's ad sets is allowed" + nothing}
+	case errors.Is(aerr, domain.ErrStoredPlatformIDInvalid):
+		slog.WarnContext(ctx, "meta ad sets blocked: the campaign row's stored platform id is not a valid Meta id",
+			append(logFields, "error", safeErrSummary(aerr))...)
+		return &briefs.ConflictError{Code: "409", Message: "the campaign's stored Meta id is not valid, so its ad sets cannot be addressed" + nothing}
 	case errors.Is(aerr, domain.ErrMetaAdSetUnwritable):
 		return &briefs.ConflictError{Code: "409", Message: "the ad set is deleted or archived on Meta, so its status cannot be changed" + nothing}
 	case errors.Is(aerr, domain.ErrCampaignProvenanceUnknown):
@@ -361,8 +375,10 @@ func (s *BriefService) classifyMetaAdSetError(ctx context.Context, verb, project
 		slog.WarnContext(ctx, "meta ad sets blocked: no ad account selected on the project's connection",
 			"project_id", projectID, "platform", platform, "reason", unusableConnectionReason(aerr))
 		return &briefs.ConflictError{Code: "409", Message: "this project's Meta connection has no ad account selected — save an ad account id on the connection first" + nothing}
-	case errors.Is(aerr, domain.ErrNotFound):
-		return &briefs.ConflictError{Code: "409", Message: "this project has no Meta connection; connect Meta first" + nothing}
+	case errors.Is(aerr, domain.ErrConnectionAbsent):
+		slog.WarnContext(ctx, "meta ad sets blocked: no connection configured for this project and provider",
+			"project_id", projectID, "platform", platform)
+		return &briefs.NotFoundError{Code: "404", Message: "this project has no connection for the campaign's ad platform; connect Meta before reading or changing its ad sets"}
 	case errors.Is(aerr, domain.ErrConnectionNotUsable):
 		slog.WarnContext(ctx, "connection is not usable for meta ad sets",
 			"project_id", projectID, "platform", platform, "reason", unusableConnectionReason(aerr))

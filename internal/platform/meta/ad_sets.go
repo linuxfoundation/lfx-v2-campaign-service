@@ -538,9 +538,14 @@ const (
 	AdSetWriteUnconfirmed
 )
 
-// ClassifyAdSetWrite maps UpdateAdSetStatusOnce's error onto its outcome. nil is APPLIED. The
-// ambiguity rule is the create path's (createOutcomeAmbiguous via IsOutcomeUnconfirmed), so a
-// write and a create can never disagree about what "may have been applied" means.
+// ClassifyAdSetWrite maps UpdateAdSetStatusOnce's error onto its outcome. nil is APPLIED.
+//
+// REJECTED ("nothing was changed") is OPT-IN, because telling an operator a write did not land
+// when it may have is the dangerous direction. It is answered only when Meta's own Graph error
+// envelope was read and says the refusal is definite: not a throttle (429 or a rate-limit code —
+// IsOutcomeUnconfirmed), not `is_transient`, not Graph's generic code 1 ("unknown error") or 2
+// ("service temporarily unavailable"), and not an HTTP 408. Every other *APIError — an HTML body,
+// an unread envelope, a 5xx/3xx — is UNCONFIRMED.
 func ClassifyAdSetWrite(err error) AdSetWriteOutcome {
 	if err == nil {
 		return AdSetWriteApplied
@@ -550,7 +555,11 @@ func ClassifyAdSetWrite(err error) AdSetWriteOutcome {
 	}
 	var ae *APIError
 	if errors.As(err, &ae) {
-		return AdSetWriteRejected
+		if ae.EnvelopeParsed && !ae.IsTransient && ae.Code != 1 && ae.Code != 2 &&
+			ae.StatusCode != http.StatusRequestTimeout && ae.StatusCode >= 400 && ae.StatusCode < 500 {
+			return AdSetWriteRejected
+		}
+		return AdSetWriteUnconfirmed
 	}
 	// Every other error do() returns is produced before a request is sent: the entry-time
 	// context check, a missing token, a body encode or request build failure, or a pre-connect

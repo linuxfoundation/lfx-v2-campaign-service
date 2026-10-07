@@ -1032,6 +1032,9 @@ func TestProbeLocalRefusalsCoverTheResolverVocabulary(t *testing.T) {
 		// Probes never resolve through that fallback (they use resolveOwned), and it is not
 		// returned as an error outcome in the first place.
 		"ErrSystemConnectionOrigin": "a provenance marker, not a failure",
+		// Never returned alone: noOwnConnection wraps it ALONGSIDE domain.ErrNotFound, which the
+		// gate lists, so every error carrying it is already classified as a local refusal.
+		"ErrConnectionAbsent": "always wrapped together with ErrNotFound, which the gate lists",
 	}
 
 	src, err := os.ReadFile(filepath.Join("..", "dispatch", "creds.go"))

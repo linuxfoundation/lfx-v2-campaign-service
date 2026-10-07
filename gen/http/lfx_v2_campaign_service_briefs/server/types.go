@@ -871,15 +871,12 @@ type ToggleMetaAdSetStatusResponseBody struct {
 	AdSetID string `form:"ad_set_id" json:"ad_set_id" xml:"ad_set_id"`
 	// The status requested
 	RequestedStatus string `form:"requested_status" json:"requested_status" xml:"requested_status"`
-	// The configured status the pre-write read observed (APPLIED and
-	// ALREADY_IN_STATE). Absent when the outcome is UNCONFIRMED.
+	// The configured status the pre-write read observed.
 	PreviousStatus *string `form:"previous_status,omitempty" json:"previous_status,omitempty" xml:"previous_status,omitempty"`
 	// APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read
-	// showed the ad set already at the requested status, so NOTHING WAS SENT.
-	// UNCONFIRMED — the single write was sent and its outcome is unknown (a
-	// timeout, a 5xx, a throttle after send, or a 2xx that did not confirm
-	// success): it MAY OR MAY NOT have been applied — read the ad sets again
-	// before retrying.
+	// showed the ad set already at the requested status, so NOTHING WAS SENT. (A
+	// write whose outcome is unknown is never a 200: it is a 503 saying the change
+	// is unconfirmed.)
 	Outcome string `form:"outcome" json:"outcome" xml:"outcome"`
 }
 

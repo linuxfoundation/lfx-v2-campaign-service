@@ -892,6 +892,8 @@ func (e *APIError) copyEnvelope(g *graphError) {
 	e.FBTraceID = g.FBTraceID
 	e.ErrorSubcode = g.ErrorSubcode
 	e.blameFields = g.blameFieldSpecs()
+	e.IsTransient = g.IsTransient
+	e.EnvelopeParsed = true
 }
 
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
@@ -909,6 +911,8 @@ type graphError struct {
 	// ErrorData carries error_data, whose blame_field_specs names the request field(s) at
 	// fault. Kept raw and read only through blameFieldSpecs, which bounds it.
 	ErrorData json.RawMessage `json:"error_data"`
+	// IsTransient is Graph's own "retrying may succeed" flag. Read only to CLASSIFY a write.
+	IsTransient bool `json:"is_transient"`
 }
 
 // Bounds on what blameFieldSpecs retains from an untrusted body: a real spec names one or two
@@ -987,6 +991,12 @@ type APIError struct {
 	FBTraceID string
 	// ErrorSubcode is the envelope's error_subcode, 0 when absent.
 	ErrorSubcode int
+	// IsTransient is the envelope's is_transient flag. EnvelopeParsed records that a Graph error
+	// envelope was actually read onto this error (copyEnvelope), so a classifier can tell "Meta
+	// said X" from "we never read what Meta said". Both are read only to classify a write
+	// (ClassifyAdSetWrite); every other caller ignores them.
+	IsTransient    bool
+	EnvelopeParsed bool
 	// blameFields is error_data.blame_field_specs, bounded (see blameFieldSpecs). Unexported and
 	// never rendered by Error(): it is read only to CLASSIFY a refusal — which request field
 	// Meta blamed — never to describe one.

@@ -4638,7 +4638,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-meta-ad-set-status lfx-v2-campaign-service-briefs
-            description: 'Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. `ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE on an ADOPTED campaign is refused (409) exactly as the campaign toggle refuses it: adoption records no ad set and does not verify targeting, so un-pause it in Meta Ads Manager; PAUSED is always allowed. An ad set Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: APPLIED when Meta confirms it, UNCONFIRMED (still 200) when it was sent and its outcome is unknown — a throttle, a 5xx, a timeout or an unconfirmed 2xx — which may or may not have been applied, so read the ad sets before retrying; the campaign''s write lock is then held for a cooldown. A failure BEFORE the write, or a definite refusal of it, is a 503 whose message says nothing was changed. The ad set''s status is NOT stored on the campaign row, so the returned ETag is the row''s UNCHANGED version (as when a created_degraded campaign is paused). Any platform but Meta is 400.'
+            description: 'Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. `ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set''s targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign''s ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign''s write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set''s status WAS changed on Meta. The ad set''s status is NOT stored on the campaign row, so the returned ETag is the row''s UNCHANGED version (as when a created_degraded campaign is paused). NOTE: toggle-campaign-status cascades an ACTIVATE to the recorded ad set, so a campaign ACTIVATE re-activates the recorded ad set; a deliberate ad-set pause does not survive a campaign pause/resume. Any platform but Meta is 400.'
             operationId: lfx-v2-campaign-service-briefs#toggle-meta-ad-set-status
             parameters:
                 - name: project_id
@@ -22102,15 +22102,14 @@ components:
                     example: Officiis laboriosam provident dolorem id velit.
                 outcome:
                     type: string
-                    description: 'APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad set already at the requested status, so NOTHING WAS SENT. UNCONFIRMED — the single write was sent and its outcome is unknown (a timeout, a 5xx, a throttle after send, or a 2xx that did not confirm success): it MAY OR MAY NOT have been applied — read the ad sets again before retrying.'
+                    description: 'APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad set already at the requested status, so NOTHING WAS SENT. (A write whose outcome is unknown is never a 200: it is a 503 saying the change is unconfirmed.)'
                     example: APPLIED
                     enum:
                         - APPLIED
                         - ALREADY_IN_STATE
-                        - UNCONFIRMED
                 previous_status:
                     type: string
-                    description: The configured status the pre-write read observed (APPLIED and ALREADY_IN_STATE). Absent when the outcome is UNCONFIRMED.
+                    description: The configured status the pre-write read observed.
                     example: ACTIVE
                 requested_status:
                     type: string
@@ -22144,15 +22143,14 @@ components:
                     example: 6f9619ff-8b86-d011-b42d-00c04fc964ff
                 outcome:
                     type: string
-                    description: 'APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad set already at the requested status, so NOTHING WAS SENT. UNCONFIRMED — the single write was sent and its outcome is unknown (a timeout, a 5xx, a throttle after send, or a 2xx that did not confirm success): it MAY OR MAY NOT have been applied — read the ad sets again before retrying.'
+                    description: 'APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad set already at the requested status, so NOTHING WAS SENT. (A write whose outcome is unknown is never a 200: it is a 503 saying the change is unconfirmed.)'
                     example: APPLIED
                     enum:
                         - APPLIED
                         - ALREADY_IN_STATE
-                        - UNCONFIRMED
                 previous_status:
                     type: string
-                    description: The configured status the pre-write read observed (APPLIED and ALREADY_IN_STATE). Absent when the outcome is UNCONFIRMED.
+                    description: The configured status the pre-write read observed.
                     example: ACTIVE
                 requested_status:
                     type: string

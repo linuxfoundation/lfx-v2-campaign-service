@@ -179,7 +179,9 @@ func TestListMetaAdSets_StatusMapping(t *testing.T) {
 		{"unknown provenance", errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch, errors.New(secret)), 409},
 		{"account mismatch", fmt.Errorf("%s: %w", secret, domain.ErrCampaignAccountMismatch), 409},
 		{"upstream identity mismatch", fmt.Errorf("%s: %w", secret, domain.ErrCampaignUpstreamIdentityMismatch), 409},
-		{"no connection is 409, never 404", fmt.Errorf("%s: %w", secret, domain.ErrNotFound), 409},
+		{"no connection is 404, as on every sibling lever", fmt.Errorf("%s: %w: %w", secret, domain.ErrNotFound, domain.ErrConnectionAbsent), 404},
+		{"another not-found source is not the connection answer", fmt.Errorf("%s: %w", secret, domain.ErrNotFound), 503},
+		{"invalid stored platform id", fmt.Errorf("%s: %w", secret, domain.ErrStoredPlatformIDInvalid), 409},
 		{"connection not usable", fmt.Errorf("%s: %w", secret, domain.ErrConnectionNotUsable), 409},
 		{"no account selected", fmt.Errorf("%w: %w: %s", domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, secret), 409},
 		{"system connection not usable", fmt.Errorf("%w: %w: %s", domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable, secret), 500},
@@ -195,6 +197,12 @@ func TestListMetaAdSets_StatusMapping(t *testing.T) {
 			}
 			if strings.Contains(errMessage(err), secret) {
 				t.Fatalf("client message leaks upstream text: %q", errMessage(err))
+			}
+			if msg := errMessage(err); (tc.want == 404 || strings.HasPrefix(tc.name, "another not-found")) && strings.Contains(msg, "no connection") != (tc.want == 404) {
+				t.Fatalf("connection wording mismatch for %q: %q", tc.name, msg)
+			}
+			if tc.name == "invalid stored platform id" && (!strings.Contains(errMessage(err), "stored Meta id") || strings.Contains(errMessage(err), "ad account")) {
+				t.Fatalf("an invalid stored id was described as an account problem: %q", errMessage(err))
 			}
 		})
 	}
@@ -234,12 +242,15 @@ func TestToggleMetaAdSetStatus_AlreadyInState(t *testing.T) {
 	}
 }
 
-func TestToggleMetaAdSetStatus_UnconfirmedIsReportedAndHoldsTheLock(t *testing.T) {
-	d := &adSetDispatcher{toggleErr: fmt.Errorf("wrapped: %w", adSetUnconfirmedErr{msg: "meta API POST /888 failed (429)"})}
+// UNCONFIRMED is answered as every other money lever answers it: a 503 with fixed text, no
+// result (so no ETag), and the write lock held for the cooldown.
+func TestToggleMetaAdSetStatus_UnconfirmedIs503AndHoldsTheLock(t *testing.T) {
+	d := &adSetDispatcher{toggleErr: fmt.Errorf("wrapped: %w", adSetUnconfirmedErr{msg: "meta API POST /888 failed (429) fbtrace_id=SECRET123"})}
 	s, repo := adSetService(metaCampaignRow(), model.ProviderMetaAds, d)
 	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "ACTIVE"))
-	if err != nil || res.Outcome != "UNCONFIRMED" || res.PreviousStatus != nil || *res.Etag != `"3"` {
-		t.Fatalf("got %+v, %v; want a 200 UNCONFIRMED outcome", res, err)
+	const want = "the ad set status change is unconfirmed — it may or may not have been applied on Meta; read the ad sets before retrying"
+	if res != nil || !isStatus(err, 503) || errMessage(err) != want {
+		t.Fatalf("got %+v, %T %q; want a 503 with the fixed unconfirmed text", res, err, errMessage(err))
 	}
 	if repo.cooldowns != 1 {
 		t.Errorf("cooldown releases = %d, want 1", repo.cooldowns)
@@ -248,10 +259,10 @@ func TestToggleMetaAdSetStatus_UnconfirmedIsReportedAndHoldsTheLock(t *testing.T
 
 func TestToggleMetaAdSetStatus_UnrecognisedOutcomeIsNeverSuccess(t *testing.T) {
 	d := &adSetDispatcher{toggle: &model.MetaAdSetStatusResult{Outcome: "DONE"}}
-	s, _ := adSetService(metaCampaignRow(), model.ProviderMetaAds, d)
+	s, repo := adSetService(metaCampaignRow(), model.ProviderMetaAds, d)
 	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "ACTIVE"))
-	if err != nil || res.Outcome != "UNCONFIRMED" {
-		t.Fatalf("got %+v, %v", res, err)
+	if res != nil || !isStatus(err, 503) || !strings.Contains(errMessage(err), "unconfirmed") || repo.cooldowns != 1 {
+		t.Fatalf("got %+v, %T %q, cooldowns %d", res, err, errMessage(err), repo.cooldowns)
 	}
 }
 
@@ -318,6 +329,8 @@ func TestToggleMetaAdSetStatus_ErrorMappingUsesFixedText(t *testing.T) {
 		{"adopted activate", fmt.Errorf("%w: %s", domain.ErrCampaignNotProvisioned, secret), 409, "ADOPTED"},
 		{"not this campaign's ad set", fmt.Errorf("%s: %w", secret, domain.ErrMetaAdSetNotInCampaign), 409, "does not belong to this campaign"},
 		{"deleted ad set", fmt.Errorf("%s: %w", secret, domain.ErrMetaAdSetUnwritable), 409, "deleted or archived"},
+		{"activate a non-recorded ad set", fmt.Errorf("%s: %w", secret, domain.ErrMetaAdSetNotRecorded), 409, "only the ad set this service created"},
+		{"invalid stored platform id", fmt.Errorf("%s: %w", secret, domain.ErrStoredPlatformIDInvalid), 409, "stored Meta id is not valid"},
 		{"invalid ad set id", fmt.Errorf("%s: %w", secret, domain.ErrMetaAdSetInvalid), 400, "ad_set_id"},
 		{"unknown provenance", errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch, errors.New(secret)), 409, "does not record which ad account"},
 		{"account mismatch", fmt.Errorf("%s: %w", secret, domain.ErrCampaignAccountMismatch), 409, "different ad account"},

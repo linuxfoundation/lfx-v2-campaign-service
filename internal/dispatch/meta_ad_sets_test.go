@@ -405,3 +405,52 @@ func TestMeta_ToggleMetaAdSetStatus_PreSendFailureIsNotSent(t *testing.T) {
 		t.Fatalf("requests = %+v", api.requests())
 	}
 }
+
+// ---- review fixes ---------------------------------------------------------
+
+// A stored id that is not a canonical Meta id is refused locally with its own sentinel — Meta is
+// never asked, so it must not read as "Meta reports another account".
+func TestMeta_AdSets_InvalidStoredIDIsItsOwnRefusal(t *testing.T) {
+	d, api := adSetDispatcher(t, adSetReadRoutes())
+	row := adSetRow()
+	row.PlatformCampaignID = "0555"
+	_, rerr := d.ReadMetaAdSets(context.Background(), "proj", model.ProviderMetaAds, row, model.MetricsWindowLast30Days)
+	_, terr := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, row, "888", model.MetaAdSetStatusPaused)
+	for _, err := range []error{rerr, terr} {
+		if !errors.Is(err, domain.ErrStoredPlatformIDInvalid) || errors.Is(err, domain.ErrCampaignUpstreamIdentityMismatch) {
+			t.Fatalf("err = %v, want ErrStoredPlatformIDInvalid alone", err)
+		}
+	}
+	if n := len(api.requests()); n != 0 {
+		t.Fatalf("sent %d request(s)", n)
+	}
+}
+
+// ACTIVATE is allowed only on the recorded ad set; PAUSE on any of the campaign's ad sets.
+func TestMeta_ToggleMetaAdSetStatus_ActivateOnlyTheRecordedAdSet(t *testing.T) {
+	other := `{"id":"889","campaign_id":"555","account_id":"777","status":"PAUSED"}`
+	routes := map[string]settingsRoute{
+		"GET /889":  {status: 200, body: other},
+		"POST /889": {status: 200, body: `{"success":true}`},
+	}
+	d, api := adSetDispatcher(t, routes)
+	_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "889", model.MetaAdSetStatusActive)
+	if !errors.Is(err, domain.ErrMetaAdSetNotRecorded) || len(api.requests()) != 0 {
+		t.Fatalf("err = %v, requests = %d; want ErrMetaAdSetNotRecorded with zero requests", err, len(api.requests()))
+	}
+	routes["GET /889"] = settingsRoute{status: 200, body: `{"id":"889","campaign_id":"555","account_id":"777","status":"ACTIVE"}`}
+	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "889", model.MetaAdSetStatusPaused)
+	if err != nil || res.Outcome != model.MetaAdSetApplied || api.count(http.MethodPost) != 1 {
+		t.Fatalf("pause of a non-recorded ad set: %+v, %v", res, err)
+	}
+}
+
+// No connection at all carries ErrConnectionAbsent, which the service answers 404.
+func TestMeta_AdSets_NoConnectionCarriesConnectionAbsent(t *testing.T) {
+	api := newAdSetAPI(t, adSetReadRoutes())
+	d := NewMetaDispatcher(fakeConnReader{err: domain.ErrNotFound}, identityEncryptor{}, meta.WithBaseURL(api.srv.URL))
+	_, err := d.ReadMetaAdSets(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), model.MetricsWindowLast30Days)
+	if !errors.Is(err, domain.ErrConnectionAbsent) || len(api.requests()) != 0 {
+		t.Fatalf("err = %v, requests = %d", err, len(api.requests()))
+	}
+}

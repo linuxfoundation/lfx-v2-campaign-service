@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Meta Ad-Set Monitor and Pause/Resume"
-description: "Ad-set-level monitor-and-optimize for Meta: a live read of a campaign's ad sets with status, own budget and delivery counters, and a single-ad-set pause/resume guarded by the campaign row's ETag, provenance proven before any write, one unretried write classified APPLIED / UNCONFIRMED / ALREADY_IN_STATE, and no persistence."
+description: "Ad-set-level monitor-and-optimize for Meta: a live read of a campaign's ad sets with status, own budget and delivery counters, and a single-ad-set pause/resume guarded by the campaign row's ETag, provenance proven before any write, ACTIVATE limited to the recorded ad set, one unretried write answered APPLIED / ALREADY_IN_STATE or a 503 when unconfirmed, and no persistence."
 resource: "internal/service/meta_ad_sets.go"
 ---
 
@@ -41,7 +41,11 @@ readback's rendering — and are absent (never guessed) for an unmapped currency
 Provenance is the settings readback's: unknown provenance (`ErrCampaignProvenanceUnknown`) is 409
 before a credential is resolved; a recorded account that differs from the connection is 409 with
 zero requests. Graph 100/33 on the campaign is unverifiable (503), never a 404: the only 404 is a
-missing campaign row. A project with no Meta connection is 409 here, not 404, for that reason.
+missing campaign row — or a project with no Meta connection at all (404, as on every sibling
+lever), matched on `domain.ErrConnectionAbsent`, which only the connection lookup's absence
+(`noOwnConnection`) carries, never on a bare `ErrNotFound`. A stored platform campaign id that is
+not a canonical Meta id is refused locally with `ErrStoredPlatformIDInvalid` (409) — Meta is never
+asked, so the answer never claims Meta reported anything.
 
 ## The toggle
 
@@ -53,7 +57,9 @@ Order, every refusal before the write:
    campaign's write lock is claimed at the version.
 2. Dispatcher: provenance as for the read (409, zero requests); `ACTIVE` on a row that records no
    ad set — an ADOPTED campaign — refused (`ErrCampaignNotProvisioned`, 409, zero requests), the
-   campaign toggle's rule; `PAUSED` always allowed.
+   campaign toggle's rule; `ACTIVE` on any ad set OTHER than the recorded one refused
+   (`ErrMetaAdSetNotRecorded`, 409, zero requests) — a hand-added ad set's targeting was never
+   verified here; `PAUSED` allowed on any of the campaign's ad sets.
 3. `GET /{ad_set_id}?fields=id,campaign_id,account_id,status`: must report this campaign under
    the connection's account (`ErrMetaAdSetNotInCampaign`, 409); `DELETED`/`ARCHIVED` is
    `ErrMetaAdSetUnwritable` (409); any other unrecognised status, or any read failure (100/33
@@ -63,19 +69,39 @@ Order, every refusal before the write:
 
 ### Write-safety classification (`meta.ClassifyAdSetWrite`)
 
+REJECTED is OPT-IN: only a Graph error envelope that was actually read (`APIError.EnvelopeParsed`),
+with `is_transient` false, a code other than 1 (unknown error) or 2 (service temporarily
+unavailable), a 4xx status other than 408, and not a throttle, says "nothing was changed". Every
+other `*APIError` is UNCONFIRMED.
+
 | What happened | Class | Answer |
 |---|---|---|
 | 2xx with `{"success":true}` | APPLIED | 200 `APPLIED` |
 | Read showed requested status | — (not sent) | 200 `ALREADY_IN_STATE` |
-| 2xx without `success:true`, or undecodable | UNCONFIRMED | 200 `UNCONFIRMED`, lock held 30 s |
-| 429, or 4xx with a Graph rate-limit code | UNCONFIRMED (not retried) | 200 `UNCONFIRMED`, lock held |
-| 5xx, 3xx, unreadable error envelope | UNCONFIRMED | 200 `UNCONFIRMED`, lock held |
-| Transport failure / timeout after connect | UNCONFIRMED | 200 `UNCONFIRMED`, lock held |
+| 2xx without `success:true`, or undecodable | UNCONFIRMED | 503 "unconfirmed — read the ad sets before retrying", lock held 30 s |
+| 429, or a Graph rate-limit code (not retried) | UNCONFIRMED | same |
+| 5xx, 3xx, 408, unreadable/HTML body, `is_transient`, code 1 or 2 | UNCONFIRMED | same |
+| Transport failure / timeout after connect | UNCONFIRMED | same |
 | Context already done, pre-connect dial error, request build | NOT_SENT | 503 "nothing was changed" |
-| Definite 4xx (not a throttle) | REJECTED | 503 "nothing was changed" |
+| Definite 4xx (parsed envelope, not transient, not code 1/2/throttle) | REJECTED | 503 "nothing was changed" |
 
-The ambiguity rule is the create path's (`IsOutcomeUnconfirmed` → `createOutcomeAmbiguous`), so a
-write and a create never disagree. Client messages are fixed sentences; Meta's text is logged.
+UNCONFIRMED is answered exactly as `toggle-campaign-status`, the budget lever and keyword actions
+answer it: a 503 with fixed text and no result (so no ETag), with the write lock held for
+`unconfirmedLockCooldown`. The ambiguity rule underneath is the create path's
+(`IsOutcomeUnconfirmed` → `createOutcomeAmbiguous`). Client messages are fixed sentences; Meta's
+text is logged.
+
+### Other failures
+
+| Case | Answer |
+|---|---|
+| Pre-write ad-set read fails or is unverifiable (100/33 included) | 503 "nothing was changed" |
+| No Meta connection | 404 |
+| Connection unusable / no ad account selected | 409 |
+| LF system connection unusable or missing, credential decryption, service defect | 500 |
+| Provenance unknown, account mismatch, invalid stored id, ad set not this campaign's/account's, not recorded (ACTIVE), adopted (ACTIVE), DELETED/ARCHIVED | 409 |
+| APPLIED, but `VerifyClaimedVersion` finds the row changed or deleted | 409 "the ad set's status WAS changed on Meta, but this campaign was modified or deleted by another request meanwhile; read the ad sets before retrying" |
+| APPLIED, but the row verification itself errors | 503 stating the status WAS changed on Meta |
 
 ### ETag
 
@@ -84,6 +110,14 @@ is not bumped. The response's `ETag` is the row's unchanged version — the prec
 `created_degraded` campaign — and after an `APPLIED` write `VerifyClaimedVersion` proves no other
 writer changed the row under the claim (409 if one did). If-Match still serialises this write
 with every other campaign writer through the claim.
+
+## Interaction with the campaign toggle (known, product decision pending)
+
+`toggle-campaign-status` on Meta cascades an ACTIVATE to the campaign's RECORDED ad set
+(`UpdateCampaignAndChildrenStatus`). So **a campaign ACTIVATE re-activates the recorded ad set: a
+deliberate ad-set pause made here does not survive a campaign pause/resume.** The campaign toggle
+is deliberately unchanged; an operator who paused the recorded ad set must pause it again after
+resuming the campaign.
 
 ## Verified from Meta's docs only (not against a live account)
 

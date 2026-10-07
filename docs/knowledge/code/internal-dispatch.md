@@ -2029,13 +2029,18 @@ resolved; `requireMetaAccountID`; `meta.ValidateAccountID`; `verifyMetaAccountMa
 `ErrCampaignUpstreamIdentityMismatch`, renders budgets with `formatMinorUnits` (absent for an
 unmapped currency), marks `Recorded` from `metaAdSetID`, and stamps `ReadAt` from the
 `settingsNow` clock tests pin. The toggle refuses `ACTIVE` with `ErrCampaignNotProvisioned` when
-the row records no ad set (adopted) before any request, reads the ad set
+the row records no ad set (adopted), and `ErrMetaAdSetNotRecorded` for any ad set but the
+recorded one, before any request; a non-canonical stored campaign id is
+`ErrStoredPlatformIDInvalid` on both paths; then it reads the ad set
 (`GetAdSetState`), refuses another campaign's or account's ad set
 (`ErrMetaAdSetNotInCampaign`) and DELETED/ARCHIVED (`ErrMetaAdSetUnwritable`), answers
 `ALREADY_IN_STATE` with no write, and otherwise sends ONE `UpdateAdSetStatusOnce`, classified by
 `meta.ClassifyAdSetWrite`: unconfirmed → `unconfirmedToggleError`; not-sent and rejected →
 ordinary errors. See [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 Tests: `meta_ad_sets_test.go`.
+
+`noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
+a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
 
 ## Account discovery (optional capability)
 

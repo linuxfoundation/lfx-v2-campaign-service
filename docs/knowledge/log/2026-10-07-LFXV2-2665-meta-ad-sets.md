@@ -1,4 +1,4 @@
-# 2026-10-08 — LFXV2-2665 Meta ad-set read and pause/resume
+# 2026-10-07 — LFXV2-2665 Meta ad-set read and pause/resume
 
 **Update** — Added ad-set-level monitor-and-optimize for Meta:
 

@@ -2034,9 +2034,9 @@ and `toggle_meta_ad_set_status`). The orchestrator checks the capability before 
 a non-Meta row is 400 whatever its state. The toggle follows `ToggleCampaignStatus`'s
 concurrency contract — If-Match (428/412 against the loaded row), validation and
 `SupportsMetaAdSetToggle` before `ClaimCampaignVersion`, an UNCONFIRMED outcome holding the lock
-for `unconfirmedLockCooldown` — but persists nothing: the ETag returned is the unchanged version,
-checked with `VerifyClaimedVersion` after an APPLIED write. UNCONFIRMED is a 200 outcome, not an
-error. `classifyMetaAdSetError` maps every failure to fixed text and never answers 404 (no
-connection is 409); the only 404 is a missing campaign row. See
+for `unconfirmedLockCooldown` and answering a 503 with fixed text, as every money lever does — but
+persists nothing: a 200's ETag is the unchanged version, checked with `VerifyClaimedVersion` after
+an APPLIED write. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
+missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 

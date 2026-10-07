@@ -350,6 +350,11 @@ func TestUpdateAdSetStatusOnce_Classification(t *testing.T) {
 		{"502 unreadable envelope", adSetReply{502, `<html>`}, AdSetWriteUnconfirmed},
 		{"400 definite refusal", adSetReply{400, `{"error":{"message":"Invalid parameter","code":100}}`}, AdSetWriteRejected},
 		{"403 definite refusal", adSetReply{403, `{"error":{"message":"denied","code":200}}`}, AdSetWriteRejected},
+		{"400 code 1 (unknown error)", adSetReply{400, `{"error":{"message":"An unknown error occurred","code":1}}`}, AdSetWriteUnconfirmed},
+		{"400 code 2 (service unavailable)", adSetReply{400, `{"error":{"message":"Service temporarily unavailable","code":2}}`}, AdSetWriteUnconfirmed},
+		{"400 is_transient", adSetReply{400, `{"error":{"message":"try again","code":100,"is_transient":true}}`}, AdSetWriteUnconfirmed},
+		{"400 HTML body", adSetReply{400, `<html><body>Bad Request</body></html>`}, AdSetWriteUnconfirmed},
+		{"408", adSetReply{408, `{"error":{"message":"timeout","code":100}}`}, AdSetWriteUnconfirmed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newAdSetServer(t, map[string][]adSetReply{"POST /888": {tc.reply, {200, `{"success":true}`}}})
@@ -418,9 +423,20 @@ func TestUpdateAdSetStatusOnce_TimeoutAfterSendIsUnconfirmed(t *testing.T) {
 		c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{}, WithBaseURL(srv.URL))
 		done <- c.UpdateAdSetStatusOnce(ctx, "888", StatusPaused)
 	}()
-	<-received
+	select {
+	case <-received:
+	case err := <-done:
+		t.Fatalf("returned before the request reached the server: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never reached the server")
+	}
 	cancel()
-	err := <-done
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the write did not return after its context was cancelled")
+	}
 	if got := ClassifyAdSetWrite(err); got != AdSetWriteUnconfirmed {
 		t.Fatalf("outcome = %v (err %v), want UNCONFIRMED", got, err)
 	}

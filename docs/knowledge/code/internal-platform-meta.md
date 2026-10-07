@@ -816,6 +816,8 @@ Insights row for an unlisted ad set is returned with `Listed: false`. `GetAdSetS
 `id,campaign_id,account_id,status` for the toggle. `UpdateAdSetStatusOnce` POSTs `{"status": …}`
 through `do(..., retryThrottle=false)` — exactly one request, a throttle never repeated — and
 requires `{"success":true}`; `ClassifyAdSetWrite` maps its error to APPLIED / NOT_SENT / REJECTED /
-UNCONFIRMED using `IsOutcomeUnconfirmed`. `ValidateAdSetID` is `ValidateCampaignID`'s rule and
+UNCONFIRMED using `IsOutcomeUnconfirmed`; REJECTED is opt-in — only a parsed Graph envelope
+(`APIError.EnvelopeParsed`, set by `copyEnvelope`) that is not `is_transient` (`APIError.IsTransient`),
+not code 1/2, not a 408 and not a throttle; every other `*APIError` is UNCONFIRMED. `ValidateAdSetID` is `ValidateCampaignID`'s rule and
 returns the existing `ErrInvalidAdSetID`. Tests: `ad_sets_test.go`.
 

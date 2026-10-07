@@ -69,8 +69,9 @@ func (d *MetaDispatcher) ReadMetaAdSets(ctx context.Context, projectID string, p
 	}
 	if campaign == nil || meta.ValidateCampaignID(campaign.PlatformCampaignID) != nil {
 		// A stored id that is not a canonical Meta id cannot be addressed; refused before any
-		// credential work. (An empty one never reaches here — the orchestrator refuses it.)
-		return nil, fmt.Errorf("%s: the campaign's stored platform id is not a canonical Meta campaign id: %w", op, domain.ErrCampaignUpstreamIdentityMismatch)
+		// credential work, with its OWN sentinel — Meta was never asked, so nothing may be said
+		// about what Meta reports. (An empty one never reaches here — the orchestrator refuses it.)
+		return nil, fmt.Errorf("%s: the campaign's stored platform id is not a canonical Meta campaign id: %w", op, domain.ErrStoredPlatformIDInvalid)
 	}
 	client, accountID, err := d.metaAdSetScope(ctx, op, projectID, platform, campaign)
 	if err != nil {
@@ -127,7 +128,8 @@ func (d *MetaDispatcher) ReadMetaAdSets(ctx context.Context, projectID string, p
 //  3. ACTIVE on a row that records no ad set — an ADOPTED campaign, or one never fully
 //     provisioned — is refused (ErrCampaignNotProvisioned, 409) with zero requests, exactly as the
 //     campaign toggle refuses it: this service has not verified that anything under the campaign
-//     can serve. PAUSED is always allowed.
+//     can serve. ACTIVE on any ad set other than the recorded one is refused too
+//     (ErrMetaAdSetNotRecorded, 409, zero requests). PAUSED is allowed on any of its ad sets.
 //  4. The ad set is READ (GET /{id}?fields=id,campaign_id,account_id,status) and must report this
 //     row's platform campaign under the connection's account (ErrMetaAdSetNotInCampaign, 409). A
 //     DELETED or ARCHIVED ad set is ErrMetaAdSetUnwritable (409); any other status that is not
@@ -152,7 +154,7 @@ func (d *MetaDispatcher) ToggleMetaAdSetStatus(ctx context.Context, projectID st
 		return nil, fmt.Errorf("%s: unsupported ad set status %q", op, status)
 	}
 	if campaign == nil || meta.ValidateCampaignID(campaign.PlatformCampaignID) != nil {
-		return nil, fmt.Errorf("%s: the campaign's stored platform id is not a canonical Meta campaign id: %w", op, domain.ErrCampaignUpstreamIdentityMismatch)
+		return nil, fmt.Errorf("%s: the campaign's stored platform id is not a canonical Meta campaign id: %w", op, domain.ErrStoredPlatformIDInvalid)
 	}
 	client, accountID, err := d.metaAdSetScope(ctx, op, projectID, platform, campaign)
 	if err != nil {
@@ -161,6 +163,12 @@ func (d *MetaDispatcher) ToggleMetaAdSetStatus(ctx context.Context, projectID st
 	if metaStatus == meta.StatusActive && metaAdSetID(campaign) == "" {
 		return nil, fmt.Errorf("%w: %s: meta campaign %s records no ad set of its own — it was ADOPTED, which does not verify targeting, or never fully provisioned — so this service will not activate anything under it; activate in Meta Ads Manager",
 			domain.ErrCampaignNotProvisioned, op, campaign.PlatformCampaignID)
+	}
+	// ACTIVATE only the ad set this service created: one added by hand in Ads Manager has
+	// targeting this service never verified. Decided before any request. PAUSE is unrestricted.
+	if metaStatus == meta.StatusActive && adSetID != metaAdSetID(campaign) {
+		return nil, fmt.Errorf("%s: ad set %s is not the ad set this service created for campaign %s: %w",
+			op, adSetID, campaign.PlatformCampaignID, domain.ErrMetaAdSetNotRecorded)
 	}
 
 	state, err := client.GetAdSetState(ctx, adSetID)
