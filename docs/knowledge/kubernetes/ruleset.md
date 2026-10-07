@@ -40,7 +40,7 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `/accounts` for hubspot and `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
-   providers, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `meta-ads/audience` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine
+   providers, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(meta-ads|twitter-ads)/audience` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine
    `audience-builder/*` leaves). The audience-builder family (LFXV2-2770) is enumerated
    entry by entry rather than covered by an `audience-builder/**` wildcard: two of its
    leaves are two segments deep (`lists/search`, `qa/run`) so a single-segment capture

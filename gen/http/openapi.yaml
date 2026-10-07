@@ -10923,6 +10923,100 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/twitter-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-twitter-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read X (Twitter) Ads audience insights — age, gender and device platform — for this project''s own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `buckets` array and X is not contacted. The window NAMES are the X metrics read''s — today, yesterday or the last 7 days including today — but the days are taken on the ad ACCOUNT''s calendar (its timezone), whereas the metrics read uses UTC days, so on a non-UTC account the two cover different instants and their totals are not directly comparable; longer windows are refused (400). Identical reads are shared and successful results reused for a few minutes, and at most one read per ad account runs at a time, because each read holds stats-job slots on an account shared across foundations. `all_counters_null` flags segment rows that carried no measurement. All three segmentations must load or the request fails (503). Billed charge is in the account''s own currency (`account_currency`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.'
+            operationId: lfx-v2-campaign-service-connections#get-twitter-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: 'Reporting window; defaults to last_7_days when omitted. X windows only: longer ones are refused.'
+                  required: false
+                  type: string
+                  enum:
+                    - today
+                    - yesterday
+                    - last_7_days
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/TwitterAdsAudience'
+                        required:
+                            - window
+                            - buckets
+                            - bucket_count
+                            - all_counters_null
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: Conflict response.
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/twitter-ads/campaign-ref:
         get:
             tags:
@@ -11075,7 +11169,7 @@ definitions:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
+                      pacing_label: underspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -11093,7 +11187,7 @@ definitions:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
+                      pacing_label: underspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -11111,25 +11205,7 @@ definitions:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: overspending
+                      pacing_label: underspending
                       pacing_pct: 87
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
@@ -11187,7 +11263,7 @@ definitions:
                   impressions: 48200
                   is_search_channel: true
                   name: KubeCon NA 2026 - Search
-                  pacing_label: overspending
+                  pacing_label: underspending
                   pacing_pct: 87
                   pacing_unknown: false
                   platform_campaign_id: "24183781329"
@@ -11205,43 +11281,7 @@ definitions:
                   impressions: 48200
                   is_search_channel: true
                   name: KubeCon NA 2026 - Search
-                  pacing_label: overspending
-                  pacing_pct: 87
-                  pacing_unknown: false
-                  platform_campaign_id: "24183781329"
-                  spend: 482.13
-                  start_date: "2026-08-01"
-                  status: ENABLED
-                  total_budget: 5000
-                - budget_day: 150
-                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                  clicks: 3110
-                  conversions: 12.5
-                  ctr: 6.45
-                  end_date: "2026-11-30"
-                  fetch_failed: false
-                  impressions: 48200
-                  is_search_channel: true
-                  name: KubeCon NA 2026 - Search
-                  pacing_label: overspending
-                  pacing_pct: 87
-                  pacing_unknown: false
-                  platform_campaign_id: "24183781329"
-                  spend: 482.13
-                  start_date: "2026-08-01"
-                  status: ENABLED
-                  total_budget: 5000
-                - budget_day: 150
-                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                  clicks: 3110
-                  conversions: 12.5
-                  ctr: 6.45
-                  end_date: "2026-11-30"
-                  fetch_failed: false
-                  impressions: 48200
-                  is_search_channel: true
-                  name: KubeCon NA 2026 - Search
-                  pacing_label: overspending
+                  pacing_label: underspending
                   pacing_pct: 87
                   pacing_unknown: false
                   platform_campaign_id: "24183781329"
@@ -11360,7 +11400,7 @@ definitions:
             pacing_label:
                 type: string
                 description: The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value "normal" rather than carrying no label at all, since the enum has no unknown member.
-                example: overspending
+                example: normal
                 enum:
                     - normal
                     - underspending
@@ -11408,7 +11448,7 @@ definitions:
             impressions: 48200
             is_search_channel: true
             name: KubeCon NA 2026 - Search
-            pacing_label: overspending
+            pacing_label: normal
             pacing_pct: 87
             pacing_unknown: false
             platform_campaign_id: "24183781329"
@@ -11508,25 +11548,24 @@ definitions:
             brief_id:
                 type: string
                 description: Owning brief
-                example: Facilis minima consequatur voluptate.
+                example: Beatae non.
             id:
                 type: string
                 description: Audience UUID
-                example: Exercitationem cum aut.
+                example: Debitis placeat et.
             include_list_ids:
                 type: array
                 items:
                     type: string
-                    example: Voluptatum rerum deleniti et porro aspernatur et.
+                    example: Et accusantium sed qui eum.
                 description: Existing lists the send goes to directly when the audience was attached to several lists; platform_master_list_id is then the first of them. Absent for a single master list
                 example:
-                    - Qui eum voluptatem et ut maxime.
-                    - At dolor.
-                    - Sit iusto odio ullam.
+                    - Ut maxime occaecati at dolor quam.
+                    - Iusto odio ullam nemo et aperiam.
             inclusion_summary:
                 type: string
                 description: 'Human-readable provenance: how the audience was built (past events, geo, topic)'
-                example: Minima molestias eveniet distinctio.
+                example: Qui voluptatum rerum deleniti et.
             platform:
                 type: string
                 description: Platform the audience is built on
@@ -11536,15 +11575,15 @@ definitions:
             platform_master_list_id:
                 type: string
                 description: Pointer to the built master list in the platform (empty until built)
-                example: Non voluptatem accusamus.
+                example: Quibusdam iste.
             project_id:
                 type: string
                 description: Owning project
-                example: Placeat et nemo eius.
+                example: Eius dolorem facilis minima consequatur voluptate.
             status:
                 type: string
                 description: Build lifecycle status
-                example: built
+                example: building
                 enum:
                     - building
                     - built
@@ -11553,28 +11592,28 @@ definitions:
                 type: array
                 items:
                     type: string
-                    example: Iste eaque.
+                    example: Quas architecto corporis sint atque.
                 description: Platform suppression list ids applied to the master
                 example:
-                    - Corporis sint atque nesciunt nisi.
-                    - Mollitia odio.
+                    - Accusantium mollitia odio.
                     - Ab molestias in non natus.
                     - Rem laborum repellat atque.
+                    - Minima molestias eveniet distinctio.
             version:
                 type: integer
                 description: Optimistic-concurrency version
-                example: 6104681043146542203
+                example: 5143514189829376517
                 format: int64
         example:
-            brief_id: Consectetur aperiam quisquam possimus vel.
-            id: Aperiam repudiandae id.
+            brief_id: Possimus vel minima non.
+            id: Animi fugiat ex rerum eaque.
             include_list_ids:
                 - Quod dolorem modi odio quaerat odit.
                 - Ullam velit atque quasi et.
             inclusion_summary: Aperiam sequi expedita ut et.
             platform: hubspot
-            platform_master_list_id: Ipsa deserunt debitis id mollitia incidunt harum.
-            project_id: Fugiat ex rerum eaque doloribus nihil aut.
+            platform_master_list_id: Debitis id mollitia incidunt harum.
+            project_id: Nihil aut nulla consectetur aperiam.
             status: building
             suppression_list_ids:
                 - Labore qui ex quas eum.
@@ -11669,23 +11708,21 @@ definitions:
                     - Esse ut dolores dolorem nemo quo.
         example:
             audience:
-                id: Ipsam consequatur qui illo totam.
+                id: Autem impedit.
                 include_list_ids:
-                    - Eaque autem impedit tenetur voluptatibus.
-                    - Libero quia quam harum molestiae cupiditate.
-                    - Et eum ex doloremque quia.
                     - Adipisci vel.
-                platform_master_list_id: Expedita commodi in dolores.
-                status: Dignissimos in tempore quo consequatur sint qui.
-                version: 2665235381625546478
+                    - Eum itaque.
+                platform_master_list_id: Cupiditate ab et eum ex doloremque.
+                status: Voluptatibus voluptatem libero quia quam.
+                version: 8863999726549706441
             include_list_ids:
                 - Rerum saepe vero officia nisi.
                 - Et assumenda.
             master:
-                hubspot_url: Aut tempora dolorem neque assumenda sed.
-                list_id: Et quisquam dicta.
-                name: Eaque enim est libero enim quo.
-                size: 1044974661555074612
+                hubspot_url: Non illum expedita commodi in dolores nemo.
+                list_id: Fuga dignissimos in tempore.
+                name: Consequatur sint.
+                size: 5819128318477114636
             suppression_list_ids:
                 - Illo eum omnis delectus.
                 - Et non.
@@ -11815,20 +11852,18 @@ definitions:
                 $ref: '#/definitions/AudienceComposedList'
         example:
             audience:
-                id: Ipsam consequatur qui illo totam.
+                id: Autem impedit.
                 include_list_ids:
-                    - Eaque autem impedit tenetur voluptatibus.
-                    - Libero quia quam harum molestiae cupiditate.
-                    - Et eum ex doloremque quia.
                     - Adipisci vel.
-                platform_master_list_id: Expedita commodi in dolores.
-                status: Dignissimos in tempore quo consequatur sint qui.
-                version: 2665235381625546478
+                    - Eum itaque.
+                platform_master_list_id: Cupiditate ab et eum ex doloremque.
+                status: Voluptatibus voluptatem libero quia quam.
+                version: 8863999726549706441
             master:
-                hubspot_url: Aut tempora dolorem neque assumenda sed.
-                list_id: Et quisquam dicta.
-                name: Eaque enim est libero enim quo.
-                size: 1044974661555074612
+                hubspot_url: Non illum expedita commodi in dolores nemo.
+                list_id: Fuga dignissimos in tempore.
+                name: Consequatur sint.
+                size: 5819128318477114636
             recorded: false
             source_list_ids:
                 - Culpa temporibus dicta iusto consequatur error sint.
@@ -11836,10 +11871,10 @@ definitions:
                 - Quas omnis architecto quasi totam modi sit.
                 - Adipisci eos quod et et facilis quaerat.
             suppression:
-                hubspot_url: Aut tempora dolorem neque assumenda sed.
-                list_id: Et quisquam dicta.
-                name: Eaque enim est libero enim quo.
-                size: 1044974661555074612
+                hubspot_url: Non illum expedita commodi in dolores nemo.
+                list_id: Fuga dignissimos in tempore.
+                name: Consequatur sint.
+                size: 5819128318477114636
         required:
             - master
             - source_list_ids
@@ -11872,17 +11907,17 @@ definitions:
         example:
             code: "500"
             master:
-                hubspot_url: Aut tempora dolorem neque assumenda sed.
-                list_id: Et quisquam dicta.
-                name: Eaque enim est libero enim quo.
-                size: 1044974661555074612
+                hubspot_url: Non illum expedita commodi in dolores nemo.
+                list_id: Fuga dignissimos in tempore.
+                name: Consequatur sint.
+                size: 5819128318477114636
             master_name: Voluptatem minus sint qui magni.
             message: Compose failed after creating or possibly creating platform state that must be reconciled before retrying.
             suppression:
-                hubspot_url: Aut tempora dolorem neque assumenda sed.
-                list_id: Et quisquam dicta.
-                name: Eaque enim est libero enim quo.
-                size: 1044974661555074612
+                hubspot_url: Non illum expedita commodi in dolores nemo.
+                list_id: Fuga dignissimos in tempore.
+                name: Consequatur sint.
+                size: 5819128318477114636
             suppression_name: Eos voluptatum cumque numquam.
         required:
             - code
@@ -12046,38 +12081,38 @@ definitions:
                     $ref: '#/definitions/AudienceDiscoveredList'
                 description: Classified lists, newest-matching first
                 example:
-                    - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                      list_id: Error eos repudiandae voluptate.
-                      list_type: Occaecati repellendus autem ullam odio quis sed.
-                      name: Enim aut laborum sequi non.
-                      reason: Beatae magni est officiis enim.
+                    - hubspot_url: Iure soluta autem aperiam.
+                      list_id: Ut voluptatem velit eos aut est est.
+                      list_type: Sed qui quae qui optio.
+                      name: Ut ut amet et.
+                      reason: Dolor exercitationem eum placeat dolores.
                       scope: past
-                      signal: last_sent
-                      size: 5905524817060597977
-                    - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                      list_id: Error eos repudiandae voluptate.
-                      list_type: Occaecati repellendus autem ullam odio quis sed.
-                      name: Enim aut laborum sequi non.
-                      reason: Beatae magni est officiis enim.
+                      signal: page_view
+                      size: 524743839385113023
+                    - hubspot_url: Iure soluta autem aperiam.
+                      list_id: Ut voluptatem velit eos aut est est.
+                      list_type: Sed qui quae qui optio.
+                      name: Ut ut amet et.
+                      reason: Dolor exercitationem eum placeat dolores.
                       scope: past
-                      signal: last_sent
-                      size: 5905524817060597977
-                    - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                      list_id: Error eos repudiandae voluptate.
-                      list_type: Occaecati repellendus autem ullam odio quis sed.
-                      name: Enim aut laborum sequi non.
-                      reason: Beatae magni est officiis enim.
+                      signal: page_view
+                      size: 524743839385113023
+                    - hubspot_url: Iure soluta autem aperiam.
+                      list_id: Ut voluptatem velit eos aut est est.
+                      list_type: Sed qui quae qui optio.
+                      name: Ut ut amet et.
+                      reason: Dolor exercitationem eum placeat dolores.
                       scope: past
-                      signal: last_sent
-                      size: 5905524817060597977
-                    - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                      list_id: Error eos repudiandae voluptate.
-                      list_type: Occaecati repellendus autem ullam odio quis sed.
-                      name: Enim aut laborum sequi non.
-                      reason: Beatae magni est officiis enim.
+                      signal: page_view
+                      size: 524743839385113023
+                    - hubspot_url: Iure soluta autem aperiam.
+                      list_id: Ut voluptatem velit eos aut est est.
+                      list_type: Sed qui quae qui optio.
+                      name: Ut ut amet et.
+                      reason: Dolor exercitationem eum placeat dolores.
                       scope: past
-                      signal: last_sent
-                      size: 5905524817060597977
+                      signal: page_view
+                      size: 524743839385113023
             missing_signals:
                 type: array
                 items:
@@ -12103,45 +12138,43 @@ definitions:
             event:
                 brand_short: KubeCon
                 event_dates:
-                    - Eaque ut.
-                    - Et aspernatur delectus rem sit.
-                    - Iste et alias quis magni ad.
-                    - Soluta et quam.
+                    - Odio quis sed consequatur velit atque nam.
+                    - In eveniet explicabo voluptatem et quis totam.
                 event_name: KubeCon Europe 2026
             inspected: 6170440439749785644
             lists:
-                - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                  list_id: Error eos repudiandae voluptate.
-                  list_type: Occaecati repellendus autem ullam odio quis sed.
-                  name: Enim aut laborum sequi non.
-                  reason: Beatae magni est officiis enim.
+                - hubspot_url: Iure soluta autem aperiam.
+                  list_id: Ut voluptatem velit eos aut est est.
+                  list_type: Sed qui quae qui optio.
+                  name: Ut ut amet et.
+                  reason: Dolor exercitationem eum placeat dolores.
                   scope: past
-                  signal: last_sent
-                  size: 5905524817060597977
-                - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                  list_id: Error eos repudiandae voluptate.
-                  list_type: Occaecati repellendus autem ullam odio quis sed.
-                  name: Enim aut laborum sequi non.
-                  reason: Beatae magni est officiis enim.
+                  signal: page_view
+                  size: 524743839385113023
+                - hubspot_url: Iure soluta autem aperiam.
+                  list_id: Ut voluptatem velit eos aut est est.
+                  list_type: Sed qui quae qui optio.
+                  name: Ut ut amet et.
+                  reason: Dolor exercitationem eum placeat dolores.
                   scope: past
-                  signal: last_sent
-                  size: 5905524817060597977
-                - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                  list_id: Error eos repudiandae voluptate.
-                  list_type: Occaecati repellendus autem ullam odio quis sed.
-                  name: Enim aut laborum sequi non.
-                  reason: Beatae magni est officiis enim.
+                  signal: page_view
+                  size: 524743839385113023
+                - hubspot_url: Iure soluta autem aperiam.
+                  list_id: Ut voluptatem velit eos aut est est.
+                  list_type: Sed qui quae qui optio.
+                  name: Ut ut amet et.
+                  reason: Dolor exercitationem eum placeat dolores.
                   scope: past
-                  signal: last_sent
-                  size: 5905524817060597977
-                - hubspot_url: Atque nam voluptatem in eveniet explicabo.
-                  list_id: Error eos repudiandae voluptate.
-                  list_type: Occaecati repellendus autem ullam odio quis sed.
-                  name: Enim aut laborum sequi non.
-                  reason: Beatae magni est officiis enim.
+                  signal: page_view
+                  size: 524743839385113023
+                - hubspot_url: Iure soluta autem aperiam.
+                  list_id: Ut voluptatem velit eos aut est est.
+                  list_type: Sed qui quae qui optio.
+                  name: Ut ut amet et.
+                  reason: Dolor exercitationem eum placeat dolores.
                   scope: past
-                  signal: last_sent
-                  size: 5905524817060597977
+                  signal: page_view
+                  size: 524743839385113023
             missing_signals:
                 - lf_newsletter_opt_in
                 - education_enrollment
@@ -12462,12 +12495,12 @@ definitions:
                     $ref: '#/definitions/AudienceQaFinding'
                 description: Findings that produced the verdict
                 example:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
             verdict:
                 type: string
                 description: Check verdict
@@ -12478,15 +12511,15 @@ definitions:
                     - FAIL
         example:
             findings:
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
             verdict: NEEDS VERIFY
         required:
             - verdict
@@ -12506,52 +12539,52 @@ definitions:
         example:
             current_registrants:
                 findings:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                verdict: FAIL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                verdict: PASS
             exclusion_completeness:
-                exclusion_count: 6999759832046413903
+                exclusion_count: 2929009055899621288
                 findings:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
                 verdict: NEEDS VERIFY
             signal_mapping:
                 findings:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                verdict: FAIL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                verdict: PASS
             suppression:
                 applied_gdpr: false
-                applied_opt_out: false
+                applied_opt_out: true
                 findings:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                verdict: FAIL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                verdict: PASS
         required:
             - signal_mapping
             - suppression
@@ -12571,18 +12604,18 @@ definitions:
                     $ref: '#/definitions/AudienceQaFinding'
                 description: Findings that produced the verdict
                 example:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
             verdict:
                 type: string
                 description: Check verdict
@@ -12594,18 +12627,18 @@ definitions:
         example:
             exclusion_count: 6316548930220766906
             findings:
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
             verdict: FAIL
         required:
             - verdict
@@ -12649,18 +12682,18 @@ definitions:
                     $ref: '#/definitions/AudienceQaCandidate'
                 description: Matches to choose between; set only when needs_disambiguation is true
                 example:
-                    - list_id: Ab itaque tempore vel quia cum quas.
-                      name: Minus sit necessitatibus.
-                      size: 19518519031323718
-                    - list_id: Ab itaque tempore vel quia cum quas.
-                      name: Minus sit necessitatibus.
-                      size: 19518519031323718
-                    - list_id: Ab itaque tempore vel quia cum quas.
-                      name: Minus sit necessitatibus.
-                      size: 19518519031323718
-                    - list_id: Ab itaque tempore vel quia cum quas.
-                      name: Minus sit necessitatibus.
-                      size: 19518519031323718
+                    - list_id: Aperiam et ab.
+                      name: Tempore vel quia cum.
+                      size: 2189869435686207205
+                    - list_id: Aperiam et ab.
+                      name: Tempore vel quia cum.
+                      size: 2189869435686207205
+                    - list_id: Aperiam et ab.
+                      name: Tempore vel quia cum.
+                      size: 2189869435686207205
+                    - list_id: Aperiam et ab.
+                      name: Tempore vel quia cum.
+                      size: 2189869435686207205
             checks:
                 $ref: '#/definitions/AudienceQaChecks'
             findings:
@@ -12669,15 +12702,15 @@ definitions:
                     $ref: '#/definitions/AudienceQaFinding'
                 description: Every finding across all checks, most severe first
                 example:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
             hubspot_url:
                 type: string
                 description: Deep link to the audited list
@@ -12704,71 +12737,71 @@ definitions:
                     - FAIL
         example:
             candidates:
-                - list_id: Ab itaque tempore vel quia cum quas.
-                  name: Minus sit necessitatibus.
-                  size: 19518519031323718
-                - list_id: Ab itaque tempore vel quia cum quas.
-                  name: Minus sit necessitatibus.
-                  size: 19518519031323718
+                - list_id: Aperiam et ab.
+                  name: Tempore vel quia cum.
+                  size: 2189869435686207205
+                - list_id: Aperiam et ab.
+                  name: Tempore vel quia cum.
+                  size: 2189869435686207205
             checks:
                 current_registrants:
                     findings:
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                    verdict: FAIL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                    verdict: PASS
                 exclusion_completeness:
-                    exclusion_count: 6999759832046413903
+                    exclusion_count: 2929009055899621288
                     findings:
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
                     verdict: NEEDS VERIFY
                 signal_mapping:
                     findings:
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                    verdict: FAIL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                    verdict: PASS
                 suppression:
                     applied_gdpr: false
-                    applied_opt_out: false
+                    applied_opt_out: true
                     findings:
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                        - fix: Illo eveniet.
-                          message: Debitis ea molestiae eum voluptatum.
-                          severity: HIGH
-                    verdict: FAIL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                        - fix: Eum voluptatum accusamus illo eveniet eum.
+                          message: Ipsa aut est et est debitis ea.
+                          severity: CRITICAL
+                    verdict: PASS
             findings:
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
             hubspot_url: Dolore eligendi ipsam dolorum inventore dolor.
             list_id: Ea aut officiis laboriosam qui maiores consequuntur.
             name: Tempora eos sed quibusdam minus et.
@@ -12794,12 +12827,12 @@ definitions:
                     $ref: '#/definitions/AudienceQaFinding'
                 description: Findings that produced the verdict
                 example:
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
-                    - fix: Illo eveniet.
-                      message: Debitis ea molestiae eum voluptatum.
-                      severity: HIGH
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
+                    - fix: Eum voluptatum accusamus illo eveniet eum.
+                      message: Ipsa aut est et est debitis ea.
+                      severity: CRITICAL
             verdict:
                 type: string
                 description: Check verdict
@@ -12812,12 +12845,12 @@ definitions:
             applied_gdpr: false
             applied_opt_out: true
             findings:
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
-                - fix: Illo eveniet.
-                  message: Debitis ea molestiae eum voluptatum.
-                  severity: HIGH
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
+                - fix: Eum voluptatum accusamus illo eveniet eum.
+                  message: Ipsa aut est et est debitis ea.
+                  severity: CRITICAL
             verdict: FAIL
         required:
             - verdict
@@ -15631,21 +15664,20 @@ definitions:
                 $ref: '#/definitions/AudienceComposeMasterInput'
         example:
             compose:
-                brand_short: Nesciunt minus natus non.
-                brief_id: 38523b70-12ca-4a7e-a5ad-69128fb32854
+                brand_short: Sed impedit.
+                brief_id: 03d80800-bb8d-495f-88c6-626a4b8ea887
                 event_dates:
+                    - Explicabo dolorem totam non.
+                    - Nesciunt sed magnam sed vero nulla.
+                event_name: Quaerat qui ut ut.
+                exclude_list_ids:
+                    - Eius nulla suscipit ullam accusamus.
                     - Sint molestiae occaecati.
                     - Quos labore est ut ratione.
-                    - Ut occaecati tenetur minima.
-                event_name: Nam eius nulla suscipit ullam.
-                exclude_list_ids:
-                    - Qui facilis neque sed alias.
-                    - Id ducimus excepturi est et est.
-                    - Deleniti non in iure dolores et quis.
-                inclusion_summary: Excepturi sit minus.
+                inclusion_summary: Sed sapiente aspernatur ipsam consequatur qui illo.
                 list_ids:
-                    - Omnis distinctio possimus.
-                name: Recusandae similique assumenda ut quia.
+                    - Nesciunt minus natus non.
+                name: Ut occaecati tenetur minima.
         required:
             - compose
     LfxV2CampaignServiceAudienceBuilderDiscoverAudienceListsRequestBody:
@@ -15803,43 +15835,43 @@ definitions:
                     $ref: '#/definitions/AudienceSuppressionList'
                 description: Suppression rows, standard first
                 example:
-                    - category: standard
-                      hubspot_url: Ducimus dolorem ut aspernatur.
-                      key: At voluptatem.
-                      label: Quis dignissimos voluptatem et labore sit.
-                      list_id: Qui dignissimos.
-                      name: Eaque eveniet autem ut unde dolore id.
-                      size: 8072057564072383899
-                    - category: standard
-                      hubspot_url: Ducimus dolorem ut aspernatur.
-                      key: At voluptatem.
-                      label: Quis dignissimos voluptatem et labore sit.
-                      list_id: Qui dignissimos.
-                      name: Eaque eveniet autem ut unde dolore id.
-                      size: 8072057564072383899
-                    - category: standard
-                      hubspot_url: Ducimus dolorem ut aspernatur.
-                      key: At voluptatem.
-                      label: Quis dignissimos voluptatem et labore sit.
-                      list_id: Qui dignissimos.
-                      name: Eaque eveniet autem ut unde dolore id.
-                      size: 8072057564072383899
+                    - category: brand
+                      hubspot_url: Et consequatur quis optio.
+                      key: Modi vel aut rerum.
+                      label: Ad minus vero assumenda cum nemo.
+                      list_id: Nobis assumenda aut dolorem ea veniam.
+                      name: Quae adipisci doloribus ullam.
+                      size: 8621661089838068890
+                    - category: brand
+                      hubspot_url: Et consequatur quis optio.
+                      key: Modi vel aut rerum.
+                      label: Ad minus vero assumenda cum nemo.
+                      list_id: Nobis assumenda aut dolorem ea veniam.
+                      name: Quae adipisci doloribus ullam.
+                      size: 8621661089838068890
+                    - category: brand
+                      hubspot_url: Et consequatur quis optio.
+                      key: Modi vel aut rerum.
+                      label: Ad minus vero assumenda cum nemo.
+                      list_id: Nobis assumenda aut dolorem ea veniam.
+                      name: Quae adipisci doloribus ullam.
+                      size: 8621661089838068890
         example:
             lists:
-                - category: standard
-                  hubspot_url: Ducimus dolorem ut aspernatur.
-                  key: At voluptatem.
-                  label: Quis dignissimos voluptatem et labore sit.
-                  list_id: Qui dignissimos.
-                  name: Eaque eveniet autem ut unde dolore id.
-                  size: 8072057564072383899
-                - category: standard
-                  hubspot_url: Ducimus dolorem ut aspernatur.
-                  key: At voluptatem.
-                  label: Quis dignissimos voluptatem et labore sit.
-                  list_id: Qui dignissimos.
-                  name: Eaque eveniet autem ut unde dolore id.
-                  size: 8072057564072383899
+                - category: brand
+                  hubspot_url: Et consequatur quis optio.
+                  key: Modi vel aut rerum.
+                  label: Ad minus vero assumenda cum nemo.
+                  list_id: Nobis assumenda aut dolorem ea veniam.
+                  name: Quae adipisci doloribus ullam.
+                  size: 8621661089838068890
+                - category: brand
+                  hubspot_url: Et consequatur quis optio.
+                  key: Modi vel aut rerum.
+                  label: Ad minus vero assumenda cum nemo.
+                  list_id: Nobis assumenda aut dolorem ea veniam.
+                  name: Quae adipisci doloribus ullam.
+                  size: 8621661089838068890
         required:
             - lists
     LfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsResponseBody:
@@ -15852,32 +15884,32 @@ definitions:
                     $ref: '#/definitions/AudienceMasterListBrief'
                 description: Master lists, newest quarter first
                 example:
-                    - hubspot_url: Doloremque rerum sed consequatur dolor quia.
-                      list_id: Ea veniam illum quae adipisci doloribus.
-                      name: Dolor dolor eum et consequatur quis optio.
-                      size: 3519661115667163110
-                    - hubspot_url: Doloremque rerum sed consequatur dolor quia.
-                      list_id: Ea veniam illum quae adipisci doloribus.
-                      name: Dolor dolor eum et consequatur quis optio.
-                      size: 3519661115667163110
-                    - hubspot_url: Doloremque rerum sed consequatur dolor quia.
-                      list_id: Ea veniam illum quae adipisci doloribus.
-                      name: Dolor dolor eum et consequatur quis optio.
-                      size: 3519661115667163110
-                    - hubspot_url: Doloremque rerum sed consequatur dolor quia.
-                      list_id: Ea veniam illum quae adipisci doloribus.
-                      name: Dolor dolor eum et consequatur quis optio.
-                      size: 3519661115667163110
+                    - hubspot_url: Neque sed alias.
+                      list_id: Magnam saepe incidunt nisi.
+                      name: Sint consequuntur omnis distinctio possimus non aliquid.
+                      size: 6091096155753835440
+                    - hubspot_url: Neque sed alias.
+                      list_id: Magnam saepe incidunt nisi.
+                      name: Sint consequuntur omnis distinctio possimus non aliquid.
+                      size: 6091096155753835440
+                    - hubspot_url: Neque sed alias.
+                      list_id: Magnam saepe incidunt nisi.
+                      name: Sint consequuntur omnis distinctio possimus non aliquid.
+                      size: 6091096155753835440
+                    - hubspot_url: Neque sed alias.
+                      list_id: Magnam saepe incidunt nisi.
+                      name: Sint consequuntur omnis distinctio possimus non aliquid.
+                      size: 6091096155753835440
         example:
             lists:
-                - hubspot_url: Doloremque rerum sed consequatur dolor quia.
-                  list_id: Ea veniam illum quae adipisci doloribus.
-                  name: Dolor dolor eum et consequatur quis optio.
-                  size: 3519661115667163110
-                - hubspot_url: Doloremque rerum sed consequatur dolor quia.
-                  list_id: Ea veniam illum quae adipisci doloribus.
-                  name: Dolor dolor eum et consequatur quis optio.
-                  size: 3519661115667163110
+                - hubspot_url: Neque sed alias.
+                  list_id: Magnam saepe incidunt nisi.
+                  name: Sint consequuntur omnis distinctio possimus non aliquid.
+                  size: 6091096155753835440
+                - hubspot_url: Neque sed alias.
+                  list_id: Magnam saepe incidunt nisi.
+                  name: Sint consequuntur omnis distinctio possimus non aliquid.
+                  size: 6091096155753835440
         required:
             - lists
     LfxV2CampaignServiceAudienceBuilderPreviewAudienceCountRequestBody:
@@ -15940,24 +15972,24 @@ definitions:
                     $ref: '#/definitions/AudienceListSearchResult'
                 description: Matching lists
                 example:
-                    - hubspot_url: Qui quae qui optio.
-                      list_id: Est est eum ut ut amet et.
-                      name: Blanditiis nihil dolor exercitationem eum placeat dolores.
-                      size: 147151161225000943
-                    - hubspot_url: Qui quae qui optio.
-                      list_id: Est est eum ut ut amet et.
-                      name: Blanditiis nihil dolor exercitationem eum placeat dolores.
-                      size: 147151161225000943
+                    - hubspot_url: Eveniet autem ut unde dolore.
+                      list_id: Quis dignissimos voluptatem et labore sit.
+                      name: Qui dignissimos.
+                      size: 3902565370307149484
+                    - hubspot_url: Eveniet autem ut unde dolore.
+                      list_id: Quis dignissimos voluptatem et labore sit.
+                      name: Qui dignissimos.
+                      size: 3902565370307149484
         example:
             lists:
-                - hubspot_url: Qui quae qui optio.
-                  list_id: Est est eum ut ut amet et.
-                  name: Blanditiis nihil dolor exercitationem eum placeat dolores.
-                  size: 147151161225000943
-                - hubspot_url: Qui quae qui optio.
-                  list_id: Est est eum ut ut amet et.
-                  name: Blanditiis nihil dolor exercitationem eum placeat dolores.
-                  size: 147151161225000943
+                - hubspot_url: Eveniet autem ut unde dolore.
+                  list_id: Quis dignissimos voluptatem et labore sit.
+                  name: Qui dignissimos.
+                  size: 3902565370307149484
+                - hubspot_url: Eveniet autem ut unde dolore.
+                  list_id: Quis dignissimos voluptatem et labore sit.
+                  name: Qui dignissimos.
+                  size: 3902565370307149484
         required:
             - lists
     LfxV2CampaignServiceAudiencesCreateAudienceRequestBody:
@@ -15968,14 +16000,14 @@ definitions:
                 $ref: '#/definitions/AudienceInput'
         example:
             audience:
-                inclusion_summary: Ullam qui rerum numquam quo.
+                inclusion_summary: A quia magnam culpa ipsam totam.
                 platform: hubspot
-                platform_master_list_id: Debitis vitae.
+                platform_master_list_id: Vitae unde velit eos eius accusantium odit.
                 status: building
                 suppression_list_ids:
-                    - Eos eius.
-                    - Odit rerum commodi ea et.
+                    - Ea et.
                     - Et et itaque qui repudiandae magnam.
+                    - Ullam qui rerum numquam quo.
         required:
             - audience
     LfxV2CampaignServiceAudiencesListAudiencesResponseBody:
@@ -15987,88 +16019,88 @@ definitions:
                 items:
                     $ref: '#/definitions/Audience'
                 example:
-                    - brief_id: Odit illo ut ut.
-                      etag: Voluptatum pariatur non ratione quo ullam.
-                      id: Ipsam aperiam et totam in.
+                    - brief_id: Dolore aliquam est autem.
+                      etag: Qui quo et praesentium perferendis et unde.
+                      id: Mollitia ducimus sunt.
                       include_list_ids:
-                        - Autem vel eos minima sunt.
-                        - Est deserunt maiores consequatur.
-                      inclusion_summary: Voluptatem optio.
+                        - Ut magnam facilis non facilis dolor consectetur.
+                        - Error quisquam recusandae nesciunt et itaque.
+                        - A debitis ut ea.
+                      inclusion_summary: Quo ullam.
                       platform: hubspot
-                      platform_master_list_id: Modi nostrum.
-                      project_id: Numquam voluptatem maiores ipsam dicta cum odit.
-                      status: building
+                      platform_master_list_id: Minima sunt quas.
+                      project_id: Aliquam voluptatem.
+                      status: built
                       suppression_list_ids:
-                        - Sed perspiciatis.
-                        - Atque laboriosam unde facilis.
-                        - Ut quas officiis mollitia ducimus sunt repellendus.
-                      version: 6930564073904951910
-                    - brief_id: Odit illo ut ut.
-                      etag: Voluptatum pariatur non ratione quo ullam.
-                      id: Ipsam aperiam et totam in.
+                        - Maiores consequatur.
+                        - Ea voluptatum pariatur non.
+                      version: 4949368133670372217
+                    - brief_id: Dolore aliquam est autem.
+                      etag: Qui quo et praesentium perferendis et unde.
+                      id: Mollitia ducimus sunt.
                       include_list_ids:
-                        - Autem vel eos minima sunt.
-                        - Est deserunt maiores consequatur.
-                      inclusion_summary: Voluptatem optio.
+                        - Ut magnam facilis non facilis dolor consectetur.
+                        - Error quisquam recusandae nesciunt et itaque.
+                        - A debitis ut ea.
+                      inclusion_summary: Quo ullam.
                       platform: hubspot
-                      platform_master_list_id: Modi nostrum.
-                      project_id: Numquam voluptatem maiores ipsam dicta cum odit.
-                      status: building
+                      platform_master_list_id: Minima sunt quas.
+                      project_id: Aliquam voluptatem.
+                      status: built
                       suppression_list_ids:
-                        - Sed perspiciatis.
-                        - Atque laboriosam unde facilis.
-                        - Ut quas officiis mollitia ducimus sunt repellendus.
-                      version: 6930564073904951910
+                        - Maiores consequatur.
+                        - Ea voluptatum pariatur non.
+                      version: 4949368133670372217
         example:
             audiences:
-                - brief_id: Odit illo ut ut.
-                  etag: Voluptatum pariatur non ratione quo ullam.
-                  id: Ipsam aperiam et totam in.
+                - brief_id: Dolore aliquam est autem.
+                  etag: Qui quo et praesentium perferendis et unde.
+                  id: Mollitia ducimus sunt.
                   include_list_ids:
-                    - Autem vel eos minima sunt.
-                    - Est deserunt maiores consequatur.
-                  inclusion_summary: Voluptatem optio.
+                    - Ut magnam facilis non facilis dolor consectetur.
+                    - Error quisquam recusandae nesciunt et itaque.
+                    - A debitis ut ea.
+                  inclusion_summary: Quo ullam.
                   platform: hubspot
-                  platform_master_list_id: Modi nostrum.
-                  project_id: Numquam voluptatem maiores ipsam dicta cum odit.
-                  status: building
+                  platform_master_list_id: Minima sunt quas.
+                  project_id: Aliquam voluptatem.
+                  status: built
                   suppression_list_ids:
-                    - Sed perspiciatis.
-                    - Atque laboriosam unde facilis.
-                    - Ut quas officiis mollitia ducimus sunt repellendus.
-                  version: 6930564073904951910
-                - brief_id: Odit illo ut ut.
-                  etag: Voluptatum pariatur non ratione quo ullam.
-                  id: Ipsam aperiam et totam in.
+                    - Maiores consequatur.
+                    - Ea voluptatum pariatur non.
+                  version: 4949368133670372217
+                - brief_id: Dolore aliquam est autem.
+                  etag: Qui quo et praesentium perferendis et unde.
+                  id: Mollitia ducimus sunt.
                   include_list_ids:
-                    - Autem vel eos minima sunt.
-                    - Est deserunt maiores consequatur.
-                  inclusion_summary: Voluptatem optio.
+                    - Ut magnam facilis non facilis dolor consectetur.
+                    - Error quisquam recusandae nesciunt et itaque.
+                    - A debitis ut ea.
+                  inclusion_summary: Quo ullam.
                   platform: hubspot
-                  platform_master_list_id: Modi nostrum.
-                  project_id: Numquam voluptatem maiores ipsam dicta cum odit.
-                  status: building
+                  platform_master_list_id: Minima sunt quas.
+                  project_id: Aliquam voluptatem.
+                  status: built
                   suppression_list_ids:
-                    - Sed perspiciatis.
-                    - Atque laboriosam unde facilis.
-                    - Ut quas officiis mollitia ducimus sunt repellendus.
-                  version: 6930564073904951910
-                - brief_id: Odit illo ut ut.
-                  etag: Voluptatum pariatur non ratione quo ullam.
-                  id: Ipsam aperiam et totam in.
+                    - Maiores consequatur.
+                    - Ea voluptatum pariatur non.
+                  version: 4949368133670372217
+                - brief_id: Dolore aliquam est autem.
+                  etag: Qui quo et praesentium perferendis et unde.
+                  id: Mollitia ducimus sunt.
                   include_list_ids:
-                    - Autem vel eos minima sunt.
-                    - Est deserunt maiores consequatur.
-                  inclusion_summary: Voluptatem optio.
+                    - Ut magnam facilis non facilis dolor consectetur.
+                    - Error quisquam recusandae nesciunt et itaque.
+                    - A debitis ut ea.
+                  inclusion_summary: Quo ullam.
                   platform: hubspot
-                  platform_master_list_id: Modi nostrum.
-                  project_id: Numquam voluptatem maiores ipsam dicta cum odit.
-                  status: building
+                  platform_master_list_id: Minima sunt quas.
+                  project_id: Aliquam voluptatem.
+                  status: built
                   suppression_list_ids:
-                    - Sed perspiciatis.
-                    - Atque laboriosam unde facilis.
-                    - Ut quas officiis mollitia ducimus sunt repellendus.
-                  version: 6930564073904951910
+                    - Maiores consequatur.
+                    - Ea voluptatum pariatur non.
+                  version: 4949368133670372217
         required:
             - audiences
     LfxV2CampaignServiceAudiencesUpdateAudienceRequestBody:
@@ -16080,14 +16112,14 @@ definitions:
         example:
             audience:
                 clear_suppression_lists: false
-                inclusion_summary: Saepe eius earum.
-                platform_master_list_id: Velit corrupti dicta pariatur.
-                status: failed
+                inclusion_summary: Pariatur deserunt aut rem molestiae assumenda.
+                platform_master_list_id: Sit omnis.
+                status: built
                 suppression_list_ids:
-                    - Deserunt minima quis impedit.
-                    - In voluptate debitis earum voluptates repellat.
-                    - Aut et ut dolorem tempore.
-                    - Repellendus dolore expedita commodi sit omnis et.
+                    - Saepe eius earum.
+                    - Porro iusto.
+                    - Est est molestias reprehenderit placeat.
+                    - Esse odio dolorem similique sapiente ab.
         required:
             - audience
     LfxV2CampaignServiceBriefsAddNegativeKeywordsRequestBody:
@@ -16943,7 +16975,15 @@ definitions:
                   name: KubeCon NA 2026
                   start_date: "2026-11-01"
                   utm: kubecon-na-2026
-            capped: true
+                - id: "112233445566"
+                  name: KubeCon NA 2026
+                  start_date: "2026-11-01"
+                  utm: kubecon-na-2026
+                - id: "112233445566"
+                  name: KubeCon NA 2026
+                  start_date: "2026-11-01"
+                  utm: kubecon-na-2026
+            capped: false
         required:
             - campaigns
             - capped
@@ -17259,25 +17299,25 @@ definitions:
             name:
                 type: string
                 description: Internal email name, as it appears in the HubSpot email list
-                example: Tempore ad libero.
+                example: Libero omnis ea ut consequatur nulla quod.
             state:
                 type: string
                 description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.
-                example: Iste quam.
+                example: Aspernatur molestiae ab vel delectus.
             subject:
                 type: string
                 description: Subject line
-                example: Ea ut consequatur nulla quod quisquam voluptatem.
+                example: Voluptatem molestias iste quam consequuntur error eligendi.
             updated_at:
                 type: string
                 description: Last-modified timestamp (ISO-8601)
-                example: Error eligendi eius aspernatur molestiae ab.
+                example: Deserunt et voluptas.
         example:
             id: "112233445566"
-            name: Delectus voluptatem deserunt.
-            state: Veritatis praesentium architecto molestiae commodi ut nam.
-            subject: Voluptas dolor.
-            updated_at: Blanditiis ipsum voluptatem architecto.
+            name: Quis veritatis praesentium architecto.
+            state: Architecto commodi ipsa dolor.
+            subject: Commodi ut nam debitis blanditiis ipsum.
+            updated_at: Quod accusantium.
         required:
             - id
     MetaAdSet:
@@ -17804,7 +17844,7 @@ definitions:
             window:
                 type: string
                 description: The reporting window these counters cover
-                example: this_month
+                example: last_30_days
                 enum:
                     - today
                     - last_7_days
@@ -18057,6 +18097,34 @@ definitions:
                       quality_score: 7
                       status: UNKNOWN
                       text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: PHRASE
+                      quality_score: 7
+                      status: UNKNOWN
+                      text: kubernetes training
+                    - ad_group_id: "176216228"
+                      ad_group_name: Registration - Exact
+                      campaign_id: "21234567890"
+                      campaign_name: KubeCon NA 2026 - Search
+                      clicks: 311
+                      conversions: 12.5
+                      cost_micros: 1284000
+                      criterion_id: "305729261"
+                      ctr: 0.0645
+                      impressions: 4820
+                      match_type: PHRASE
+                      quality_score: 7
+                      status: UNKNOWN
+                      text: kubernetes training
             truncated:
                 type: boolean
                 description: True when this project's campaigns have more keywords than were returned. The rows are the TOP ones by impressions, not the project's full keyword set.
@@ -18135,7 +18203,7 @@ definitions:
                   status: UNKNOWN
                   text: kubernetes training
             truncated: false
-            window: last_month
+            window: this_month
         required:
             - window
             - rows
@@ -18506,6 +18574,136 @@ definitions:
             - client_id
             - client_secret
             - refresh_token
+    TwitterAdsAudience:
+        title: TwitterAdsAudience
+        type: object
+        properties:
+            account_currency:
+                type: string
+                description: ISO 4217 currency of the ad account that cost_micros is denominated in, as X reports it on the account. ABSENT when X was not contacted (the project has no X campaigns of its own) or the account carries no currency.
+                example: USD
+                pattern: ^[A-Z]{3}$
+            all_counters_null:
+                type: boolean
+                description: 'True when, for at least one dimension, X returned segment rows whose every counter was null or absent. The zeros in that dimension are then NOT a measurement: it is either no delivery in the window or X''s reported defect where segmented stats jobs succeed with all-null metrics, and the two cannot be told apart.'
+                example: false
+            bucket_count:
+                type: integer
+                description: How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.
+                example: 3
+                format: int64
+            buckets:
+                type: array
+                items:
+                    $ref: '#/definitions/TwitterAdsAudienceBucket'
+                description: Every bucket across the three segmentations, discriminated by `dimension`. Ordered by dimension (age, gender, platform), then impressions descending, then value.
+                example:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: age
+                      impressions: 9000
+                      value: 25-34
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: gender
+                      impressions: 9000
+                      value: Female
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: platform
+                      impressions: 9000
+                      value: iOS
+            window:
+                type: string
+                description: The reporting window these counters cover, as days on the ad ACCOUNT's calendar (its timezone) — not the UTC days the X campaign metrics read uses for the same window name
+                example: yesterday
+                enum:
+                    - today
+                    - yesterday
+                    - last_7_days
+        example:
+            account_currency: USD
+            all_counters_null: false
+            bucket_count: 3
+            buckets:
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: age
+                  impressions: 9000
+                  value: 25-34
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: gender
+                  impressions: 9000
+                  value: Female
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: platform
+                  impressions: 9000
+                  value: iOS
+            window: last_7_days
+        required:
+            - window
+            - buckets
+            - bucket_count
+            - all_counters_null
+    TwitterAdsAudienceBucket:
+        title: TwitterAdsAudienceBucket
+        type: object
+        properties:
+            clicks:
+                type: integer
+                description: Clicks over the window
+                example: 742
+                format: int64
+            cost_micros:
+                type: integer
+                description: Billed charge over the window (X's billed_charge_local_micro) in micro-units of the ad account's currency (see account_currency). This service performs no FX conversion.
+                example: 3120000
+                format: int64
+            ctr:
+                type: number
+                description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                example: 0.0578
+                format: double
+            dimension:
+                type: string
+                description: 'Which segmentation this bucket belongs to: age (X segmentation_type AGE), gender (GENDER) or platform (PLATFORMS)'
+                example: age
+                enum:
+                    - age
+                    - gender
+                    - platform
+            impressions:
+                type: integer
+                description: Impressions over the window
+                example: 12840
+                format: int64
+            value:
+                type: string
+                description: X's segment name for this bucket, verbatim (for example an age range, a gender or a device platform). A value outside a conservative charset fails the read rather than being returned.
+                example: iOS
+                pattern: ^[A-Za-z0-9](?:[A-Za-z0-9 _+.\-]{0,62}[A-Za-z0-9+])?$
+        example:
+            clicks: 270
+            cost_micros: 2700000
+            ctr: 0.03
+            dimension: platform
+            impressions: 9000
+            value: iOS
+        required:
+            - dimension
+            - value
+            - impressions
+            - clicks
+            - cost_micros
+            - ctr
     TwitterAdsConnection:
         title: TwitterAdsConnection
         type: object

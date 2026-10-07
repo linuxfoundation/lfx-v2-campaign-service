@@ -30,14 +30,14 @@ func UsageCommands() []string {
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
 		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|list-meta-ad-sets|toggle-meta-ad-set-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
-		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-meta-ads-audience|get-microsoft-ads-keywords|get-microsoft-ads-audience|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
+		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-meta-ads-audience|get-twitter-ads-audience|get-microsoft-ads-keywords|get-microsoft-ads-audience|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam qui rerum numquam quo.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Debitis vitae.\",\n         \"status\": \"building\",\n         \"suppression_list_ids\": [\n            \"Eos eius.\",\n            \"Odit rerum commodi ea et.\",\n            \"Et et itaque qui repudiandae magnam.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"fa494294-62a0-41e2-8613-ddfa861e3e62\" --bearer-token \"eyJhbGci...\"" + "\n" +
+	return os.Args[0] + " " + "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"A quia magnam culpa ipsam totam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Vitae unde velit eos eius accusantium odit.\",\n         \"status\": \"building\",\n         \"suppression_list_ids\": [\n            \"Ea et.\",\n            \"Et et itaque qui repudiandae magnam.\",\n            \"Ullam qui rerum numquam quo.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"b75e49dd-d37f-44ec-8cd0-b06c17551923\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-audience-builder get-audience-builder-capabilities --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-briefs create-brief --body '{\n      \"brief\": {\n         \"copy\": \"Exercitationem officia corrupti tempora ea.\",\n         \"delivery_type\": \"email\",\n         \"event_details\": \"Ut hic distinctio non recusandae et qui.\",\n         \"event_slug\": \"zfu\",\n         \"keywords\": \"Totam unde.\",\n         \"platforms\": [\n            \"Nisi nihil aut molestias aut excepturi.\",\n            \"Ullam esse voluptate non autem.\"\n         ],\n         \"program_type\": \"events\",\n         \"stage\": \"Registration Push\",\n         \"targeting\": \"Ipsa sint optio nobis quae corporis.\",\n         \"url\": \"Dolores aut quia.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
 		os.Args[0] + " " + "lfx-v2-campaign-service-connections create-google-ads --body '{\n      \"config\": {\n         \"account_id\": \"8666746580\",\n         \"label\": \"TLF Main\",\n         \"login_customer_id\": \"9746983954\"\n      },\n      \"credentials\": {\n         \"client_id\": \"Corrupti amet delectus.\",\n         \"client_secret\": \"Quia magni quae autem ut.\",\n         \"developer_token\": \"Perferendis pariatur ratione quos a illum est.\",\n         \"refresh_token\": \"Iusto consectetur natus ratione consequatur necessitatibus ea.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"" + "\n" +
@@ -587,6 +587,11 @@ func ParseEndpoint(
 		lfxV2CampaignServiceConnectionsGetMetaAdsAudienceWindowFlag      = lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags.String("window", "", "")
 		lfxV2CampaignServiceConnectionsGetMetaAdsAudienceBearerTokenFlag = lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags.String("bearer-token", "", "")
 
+		lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceFlags           = flag.NewFlagSet("get-twitter-ads-audience", flag.ExitOnError)
+		lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceProjectIDFlag   = lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
+		lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceWindowFlag      = lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceFlags.String("window", "", "")
+		lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceBearerTokenFlag = lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceFlags.String("bearer-token", "", "")
+
 		lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsFlags           = flag.NewFlagSet("get-microsoft-ads-keywords", flag.ExitOnError)
 		lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsProjectIDFlag   = lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsFlags.String("project-id", "REQUIRED", "Project UUID or slug that scopes the connection")
 		lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsWindowFlag      = lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsFlags.String("window", "", "")
@@ -807,6 +812,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsGetGoogleAdsKeywordsFlags.Usage = lfxV2CampaignServiceConnectionsGetGoogleAdsKeywordsUsage
 	lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetGoogleAdsAudienceUsage
 	lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetMetaAdsAudienceUsage
+	lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceUsage
 	lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsFlags.Usage = lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsUsage
 	lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceFlags.Usage = lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceUsage
 	lfxV2CampaignServiceConnectionsResolveGoogleAdsCampaignFlags.Usage = lfxV2CampaignServiceConnectionsResolveGoogleAdsCampaignUsage
@@ -1175,6 +1181,9 @@ func ParseEndpoint(
 
 			case "get-meta-ads-audience":
 				epf = lfxV2CampaignServiceConnectionsGetMetaAdsAudienceFlags
+
+			case "get-twitter-ads-audience":
+				epf = lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceFlags
 
 			case "get-microsoft-ads-keywords":
 				epf = lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsFlags
@@ -1577,6 +1586,9 @@ func ParseEndpoint(
 			case "get-meta-ads-audience":
 				endpoint = c.GetMetaAdsAudience()
 				data, err = lfxv2campaignserviceconnectionsc.BuildGetMetaAdsAudiencePayload(*lfxV2CampaignServiceConnectionsGetMetaAdsAudienceProjectIDFlag, *lfxV2CampaignServiceConnectionsGetMetaAdsAudienceWindowFlag, *lfxV2CampaignServiceConnectionsGetMetaAdsAudienceBearerTokenFlag)
+			case "get-twitter-ads-audience":
+				endpoint = c.GetTwitterAdsAudience()
+				data, err = lfxv2campaignserviceconnectionsc.BuildGetTwitterAdsAudiencePayload(*lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceProjectIDFlag, *lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceWindowFlag, *lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceBearerTokenFlag)
 			case "get-microsoft-ads-keywords":
 				endpoint = c.GetMicrosoftAdsKeywords()
 				data, err = lfxv2campaignserviceconnectionsc.BuildGetMicrosoftAdsKeywordsPayload(*lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsProjectIDFlag, *lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsWindowFlag, *lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsBearerTokenFlag)
@@ -1697,7 +1709,7 @@ func lfxV2CampaignServiceAudiencesCreateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam qui rerum numquam quo.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Debitis vitae.\",\n         \"status\": \"building\",\n         \"suppression_list_ids\": [\n            \"Eos eius.\",\n            \"Odit rerum commodi ea et.\",\n            \"Et et itaque qui repudiandae magnam.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"fa494294-62a0-41e2-8613-ddfa861e3e62\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences create-audience --body '{\n      \"audience\": {\n         \"inclusion_summary\": \"A quia magnam culpa ipsam totam.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Vitae unde velit eos eius accusantium odit.\",\n         \"status\": \"building\",\n         \"suppression_list_ids\": [\n            \"Ea et.\",\n            \"Et et itaque qui repudiandae magnam.\",\n            \"Ullam qui rerum numquam quo.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"b75e49dd-d37f-44ec-8cd0-b06c17551923\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
@@ -1721,7 +1733,7 @@ func lfxV2CampaignServiceAudiencesGetAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences get-audience --project-id \"cncf\" --brief-id \"2ac3b7e7-8b89-463a-8912-0731cebb1c2f\" --audience-id \"1fe6714c-a241-4cc5-a6b0-287f45811464\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences get-audience --project-id \"cncf\" --brief-id \"9719312b-5b18-47dd-8f29-64fbf5959596\" --audience-id \"b78a59e5-9b4e-4123-b7ac-9af0f52a02e9\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesListAudiencesUsage() {
@@ -1743,7 +1755,7 @@ func lfxV2CampaignServiceAudiencesListAudiencesUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences list-audiences --project-id \"cncf\" --brief-id \"1aa881f3-1ff6-4701-845f-43b12c3bf8e8\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences list-audiences --project-id \"cncf\" --brief-id \"91802d02-bee6-4704-a9ac-f2bf5f6b4687\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudiencesUpdateAudienceUsage() {
@@ -1771,7 +1783,7 @@ func lfxV2CampaignServiceAudiencesUpdateAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences update-audience --body '{\n      \"audience\": {\n         \"clear_suppression_lists\": false,\n         \"inclusion_summary\": \"Saepe eius earum.\",\n         \"platform_master_list_id\": \"Velit corrupti dicta pariatur.\",\n         \"status\": \"failed\",\n         \"suppression_list_ids\": [\n            \"Deserunt minima quis impedit.\",\n            \"In voluptate debitis earum voluptates repellat.\",\n            \"Aut et ut dolorem tempore.\",\n            \"Repellendus dolore expedita commodi sit omnis et.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"1cceede4-480a-4791-9971-9d953d0c34e5\" --audience-id \"77e52c14-feac-4744-ac49-a0e8ab5bda0c\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences update-audience --body '{\n      \"audience\": {\n         \"clear_suppression_lists\": false,\n         \"inclusion_summary\": \"Pariatur deserunt aut rem molestiae assumenda.\",\n         \"platform_master_list_id\": \"Sit omnis.\",\n         \"status\": \"built\",\n         \"suppression_list_ids\": [\n            \"Saepe eius earum.\",\n            \"Porro iusto.\",\n            \"Est est molestias reprehenderit placeat.\",\n            \"Esse odio dolorem similique sapiente ab.\"\n         ]\n      }\n   }' --project-id \"cncf\" --brief-id \"ddfb5048-7145-4807-abfe-f9d812021438\" --audience-id \"28d7677e-ba3e-4201-a0a7-4a0870300f4c\" --bearer-token \"eyJhbGci...\" --if-match \"3\"")
 }
 
 func lfxV2CampaignServiceAudiencesBuildAudienceUsage() {
@@ -1793,7 +1805,7 @@ func lfxV2CampaignServiceAudiencesBuildAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences build-audience --project-id \"cncf\" --brief-id \"a0b9b5e3-ff19-4fd5-bbaa-54d020c6c811\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audiences build-audience --project-id \"cncf\" --brief-id \"fbe05b23-1a10-435c-833c-782e134c724a\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceAudienceBuilderUsage displays the usage of the
@@ -1877,7 +1889,7 @@ func lfxV2CampaignServiceAudienceBuilderSearchAudienceListsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder search-audience-lists --project-id \"cncf\" --q \"27\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder search-audience-lists --project-id \"cncf\" --q \"nmc\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsUsage() {
@@ -1901,7 +1913,7 @@ func lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-suppression-lists --project-id \"cncf\" --brand-short \"Iure soluta autem aperiam.\" --event-name \"Libero enim odit numquam quia placeat aut.\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-suppression-lists --project-id \"cncf\" --brand-short \"Necessitatibus fuga ducimus dolorem ut aspernatur.\" --event-name \"Ad optio magnam sequi esse.\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentUsage() {
@@ -1927,7 +1939,7 @@ func lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-last-sent --project-id \"cncf\" --event-name \"p\" --brand-short \"Sequi esse at modi vel aut rerum.\" --limit 7 --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-last-sent --project-id \"cncf\" --event-name \"x79\" --brand-short \"Dolor quia amet vero dolorum incidunt.\" --limit 5 --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsUsage() {
@@ -1951,7 +1963,7 @@ func lfxV2CampaignServiceAudienceBuilderGetExistingAudienceMasterListsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-existing-audience-master-lists --project-id \"cncf\" --event-name \"qo\" --brand-short \"Nemo esse nobis assumenda aut.\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-existing-audience-master-lists --project-id \"cncf\" --event-name \"5s\" --brand-short \"Tempore eum laboriosam iure odio.\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountUsage() {
@@ -1973,7 +1985,7 @@ func lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder preview-audience-count --body '{\n      \"list_ids\": [\n         \"Incidunt officia nihil.\",\n         \"Dolores dignissimos perferendis tempore eum laboriosam iure.\",\n         \"At magnam saepe incidunt nisi est.\"\n      ]\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder preview-audience-count --body '{\n      \"list_ids\": [\n         \"Excepturi est et est totam.\",\n         \"Non in iure dolores et quis id.\",\n         \"Similique assumenda ut.\"\n      ]\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage() {
@@ -1995,7 +2007,7 @@ func lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder compose-audience-master --body '{\n      \"compose\": {\n         \"brand_short\": \"Nesciunt minus natus non.\",\n         \"brief_id\": \"38523b70-12ca-4a7e-a5ad-69128fb32854\",\n         \"event_dates\": [\n            \"Sint molestiae occaecati.\",\n            \"Quos labore est ut ratione.\",\n            \"Ut occaecati tenetur minima.\"\n         ],\n         \"event_name\": \"Nam eius nulla suscipit ullam.\",\n         \"exclude_list_ids\": [\n            \"Qui facilis neque sed alias.\",\n            \"Id ducimus excepturi est et est.\",\n            \"Deleniti non in iure dolores et quis.\"\n         ],\n         \"inclusion_summary\": \"Excepturi sit minus.\",\n         \"list_ids\": [\n            \"Omnis distinctio possimus.\"\n         ],\n         \"name\": \"Recusandae similique assumenda ut quia.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder compose-audience-master --body '{\n      \"compose\": {\n         \"brand_short\": \"Sed impedit.\",\n         \"brief_id\": \"03d80800-bb8d-495f-88c6-626a4b8ea887\",\n         \"event_dates\": [\n            \"Explicabo dolorem totam non.\",\n            \"Nesciunt sed magnam sed vero nulla.\"\n         ],\n         \"event_name\": \"Quaerat qui ut ut.\",\n         \"exclude_list_ids\": [\n            \"Eius nulla suscipit ullam accusamus.\",\n            \"Sint molestiae occaecati.\",\n            \"Quos labore est ut ratione.\"\n         ],\n         \"inclusion_summary\": \"Sed sapiente aspernatur ipsam consequatur qui illo.\",\n         \"list_ids\": [\n            \"Nesciunt minus natus non.\"\n         ],\n         \"name\": \"Ut occaecati tenetur minima.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceUsage() {
@@ -2039,7 +2051,7 @@ func lfxV2CampaignServiceAudienceBuilderRunAudienceQaUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder run-audience-qa --body '{\n      \"event_name\": \"qf\",\n      \"list_ref\": \"lss\",\n      \"targets_ca\": false,\n      \"targets_eu\": true\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder run-audience-qa --body '{\n      \"event_name\": \"v\",\n      \"list_ref\": \"nls\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceBriefsUsage displays the usage of the
@@ -3011,6 +3023,7 @@ func lfxV2CampaignServiceConnectionsUsage() {
 	fmt.Fprintln(os.Stderr, `    get-google-ads-keywords: Read Google Ads keyword performance for this project's own campaigns, live from the platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad account: the Google Ads customer is shared across foundations, so an account-wide read would return other projects' keywords. A pure read-through — nothing is persisted, and this service stores no keyword of its own. Rows are the TOP keywords by impressions over the window, capped; `+"`"+`truncated`+"`"+` reports whether the project's campaigns hold more. The returned criterion_id/ad_group_id pairs are the handles the keyword-actions endpoint takes.`)
 	fmt.Fprintln(os.Stderr, `    get-google-ads-audience: Read Google Ads audience demographics — age, gender and device — for this project's own campaigns, live from the platform. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, which is a Google Ads customer shared across foundations. A pure read-through; nothing is persisted. The three breakdowns are returned in one array discriminated by `+"`"+`dimension`+"`"+`. Each breakdown covers the SAME traffic independently, so impressions must be totalled within a dimension, never across them. Google's UNDETERMINED/UNKNOWN buckets are returned as-is rather than dropped: they are real unattributed traffic, and hiding them would make the buckets silently under-sum.`)
 	fmt.Fprintln(os.Stderr, `    get-meta-ads-audience: Read Meta audience insights — age and gender (one combined breakdown) and placement (publisher_platform and platform_position) — for this project's own campaigns, live from the Meta Marketing API Insights edge of the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the request filters on those campaign ids and every returned row is checked against them, because the account is shared across foundations. A pure read-through; nothing is persisted. A project with no Meta campaigns of its own receives an empty `+"`"+`buckets`+"`"+` array and Meta is not contacted. Both breakdowns must load or the request fails (503): each covers the same traffic independently, and one presented without the other is a partial picture. Spend is in the account's own currency (`+"`"+`account_currency`+"`"+`); no FX conversion is performed. There is no conversions counter: Meta reports conversions only as per-action-type entries, not as one scalar.`)
+	fmt.Fprintln(os.Stderr, `    get-twitter-ads-audience: Read X (Twitter) Ads audience insights — age, gender and device platform — for this project's own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `+"`"+`buckets`+"`"+` array and X is not contacted. The window NAMES are the X metrics read's — today, yesterday or the last 7 days including today — but the days are taken on the ad ACCOUNT's calendar (its timezone), whereas the metrics read uses UTC days, so on a non-UTC account the two cover different instants and their totals are not directly comparable; longer windows are refused (400). Identical reads are shared and successful results reused for a few minutes, and at most one read per ad account runs at a time, because each read holds stats-job slots on an account shared across foundations. `+"`"+`all_counters_null`+"`"+` flags segment rows that carried no measurement. All three segmentations must load or the request fails (503). Billed charge is in the account's own currency (`+"`"+`account_currency`+"`"+`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.`)
 	fmt.Fprintln(os.Stderr, `    get-microsoft-ads-keywords: Read Microsoft Advertising keyword performance for this project's own campaigns, in the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account). Microsoft serves keyword performance only through its asynchronous Reporting service, which takes minutes, so rows come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no rows with metrics_pending=true. A report is served only while it covers every campaign the project owns. Saved reports are cached platform data. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true. Age/gender audience demographics are served by get-microsoft-ads-audience.`)
 	fmt.Fprintln(os.Stderr, `    get-microsoft-ads-audience: Read Microsoft Advertising audience demographics — one bucket per (age group, gender) — for this project's own campaigns. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project's OWN connection only (never the LF system account). Microsoft serves demographics only through its asynchronous Reporting service (AgeGenderAudienceReportRequest), so buckets come from the last finished report — see metrics_as_of and metrics_pending — while the next one builds; the first read returns no buckets with metrics_pending=true. A report is served only while it covers every campaign the project owns. A project with no Microsoft campaigns of its own receives an empty `+"`"+`buckets`+"`"+` array and Microsoft is not contacted. There is NO device breakdown: Microsoft's age/gender report has no device dimension. Spend is in the account's own currency; no FX conversion is performed. Off (400, not supported) unless MICROSOFT_METRICS_ENABLED is true.`)
 	fmt.Fprintln(os.Stderr, `    resolve-google-ads-campaign: Resolve one Google Ads campaign id to this service's own campaign and brief. A caller holding a keyword row has the PLATFORM's numeric campaign id; every mutation route here is keyed by this service's campaign UUID under its brief. Nothing else bridges the two, so a keyword table cannot act on its own rows without this. A pure READ: it enumerates nothing and mutates nothing, and it is scoped to the project's own campaigns by the same `+"`"+`project_id`+"`"+` predicate the keyword and audience reads use — so it cannot be used to discover whether ANOTHER project owns a given upstream id, which on a shared ad account is the question that must not be answerable. **An unowned id is 200 with an empty `+"`"+`matches`+"`"+`, not 404.** The project genuinely owning no such campaign is an answer the caller acts on by refusing the action, and it must be distinguishable from the route or the project being wrong, which is what a 404 would say. **`+"`"+`matches`+"`"+` is an array, but a valid database can never return more than one entry.** Migration 000020's `+"`"+`uq_campaigns_platform_campaign_live`+"`"+` is a UNIQUE index on (platform, platform_campaign_id) over every live Google Ads row, and it is global rather than per-project — so scoping to a project can only narrow one row to zero or one. The array is DEFENSIVE against that invariant lapsing (a dropped index, a narrowed predicate, a platform added to this read but not to the index), not a claim that duplicates occur: a single-ref contract would force some layer to pick a row, and picking would mutate a campaign nobody named. A caller receiving more than one must refuse rather than choose. This is NOT a list endpoint under rule 3: it is a keyed lookup returning the matches for one supplied id, with no collection, pagination or filtering.`)
@@ -4019,6 +4032,28 @@ func lfxV2CampaignServiceConnectionsGetMetaAdsAudienceUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-meta-ads-audience --project-id \"cncf\" --window \"last_7_days\" --bearer-token \"eyJhbGci...\"")
 }
 
+func lfxV2CampaignServiceConnectionsGetTwitterAdsAudienceUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-twitter-ads-audience", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -window STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Read X (Twitter) Ads audience insights — age, gender and device platform — for this project's own campaigns, live from the X Ads API on the connected ad account. Scoped to the campaigns this service holds for the project, NOT to the ad account: the stats requests name those campaign ids and every returned row is checked against them, because the account is shared across foundations. X serves segmented stats ONLY through its asynchronous stats-jobs API, so one read creates one job per segmentation per 20 campaigns (at most 40 campaigns), waits for them inside the request and downloads the results; nothing is persisted. A project with no X campaigns of its own receives an empty `+"`"+`buckets`+"`"+` array and X is not contacted. The window NAMES are the X metrics read's — today, yesterday or the last 7 days including today — but the days are taken on the ad ACCOUNT's calendar (its timezone), whereas the metrics read uses UTC days, so on a non-UTC account the two cover different instants and their totals are not directly comparable; longer windows are refused (400). Identical reads are shared and successful results reused for a few minutes, and at most one read per ad account runs at a time, because each read holds stats-job slots on an account shared across foundations. `+"`"+`all_counters_null`+"`"+` flags segment rows that carried no measurement. All three segmentations must load or the request fails (503). Billed charge is in the account's own currency (`+"`"+`account_currency`+"`"+`); no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares the stats-jobs contract.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -window STRING: `)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-twitter-ads-audience --project-id \"cncf\" --window \"last_7_days\" --bearer-token \"eyJhbGci...\"")
+}
+
 func lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-connections get-microsoft-ads-keywords", os.Args[0])
@@ -4038,7 +4073,7 @@ func lfxV2CampaignServiceConnectionsGetMicrosoftAdsKeywordsUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-microsoft-ads-keywords --project-id \"cncf\" --window \"last_7_days\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-microsoft-ads-keywords --project-id \"cncf\" --window \"last_30_days\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceUsage() {
@@ -4060,7 +4095,7 @@ func lfxV2CampaignServiceConnectionsGetMicrosoftAdsAudienceUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-microsoft-ads-audience --project-id \"cncf\" --window \"last_30_days\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-connections get-microsoft-ads-audience --project-id \"cncf\" --window \"this_month\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceConnectionsResolveGoogleAdsCampaignUsage() {

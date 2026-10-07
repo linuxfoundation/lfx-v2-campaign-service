@@ -848,6 +848,34 @@ type GetMetaAdsAudienceResponseBody struct {
 	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
 }
 
+// GetTwitterAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body.
+type GetTwitterAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as days on the ad ACCOUNT's
+	// calendar (its timezone) — not the UTC days the X campaign metrics read uses
+	// for the same window name
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Every bucket across the three segmentations, discriminated by `dimension`.
+	// Ordered by dimension (age, gender, platform), then impressions descending,
+	// then value.
+	Buckets []*TwitterAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+	// ISO 4217 currency of the ad account that cost_micros is denominated in, as X
+	// reports it on the account. ABSENT when X was not contacted (the project has
+	// no X campaigns of its own) or the account carries no currency.
+	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
+	// True when, for at least one dimension, X returned segment rows whose every
+	// counter was null or absent. The zeros in that dimension are then NOT a
+	// measurement: it is either no delivery in the window or X's reported defect
+	// where segmented stats jobs succeed with all-null metrics, and the two cannot
+	// be told apart.
+	AllCountersNull *bool `form:"all_counters_null,omitempty" json:"all_counters_null,omitempty" xml:"all_counters_null,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -4375,6 +4403,79 @@ type GetMetaAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetTwitterAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetTwitterAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetTwitterAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetTwitterAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetTwitterAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetTwitterAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetTwitterAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetTwitterAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetTwitterAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6039,6 +6140,28 @@ type MetaAdsAudienceBucketResponseBody struct {
 	// (see account_currency). This service performs no FX conversion.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// TwitterAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type TwitterAdsAudienceBucketResponseBody struct {
+	// Which segmentation this bucket belongs to: age (X segmentation_type AGE),
+	// gender (GENDER) or platform (PLATFORMS)
+	Dimension *string `form:"dimension,omitempty" json:"dimension,omitempty" xml:"dimension,omitempty"`
+	// X's segment name for this bucket, verbatim (for example an age range, a
+	// gender or a device platform). A value outside a conservative charset fails
+	// the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Billed charge over the window (X's billed_charge_local_micro) in micro-units
+	// of the ad account's currency (see account_currency). This service performs
+	// no FX conversion.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
@@ -10570,6 +10693,114 @@ func NewGetMetaAdsAudienceUnauthorized(body *GetMetaAdsAudienceUnauthorizedRespo
 	return v
 }
 
+// NewGetTwitterAdsAudienceTwitterAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetTwitterAdsAudienceTwitterAdsAudienceOK(body *GetTwitterAdsAudienceResponseBody) *lfxv2campaignserviceconnections.TwitterAdsAudience {
+	v := &lfxv2campaignserviceconnections.TwitterAdsAudience{
+		Window:          *body.Window,
+		BucketCount:     *body.BucketCount,
+		AccountCurrency: body.AccountCurrency,
+		AllCountersNull: *body.AllCountersNull,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.TwitterAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalTwitterAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsTwitterAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint BadRequest error.
+func NewGetTwitterAdsAudienceBadRequest(body *GetTwitterAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceConflict builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint Conflict error.
+func NewGetTwitterAdsAudienceConflict(body *GetTwitterAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint ServiceUnavailable error.
+func NewGetTwitterAdsAudienceServiceUnavailable(body *GetTwitterAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint InternalServerError error.
+func NewGetTwitterAdsAudienceInternalServerError(body *GetTwitterAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceNotFound builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint NotFound error.
+func NewGetTwitterAdsAudienceNotFound(body *GetTwitterAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint PayloadTooLarge error.
+func NewGetTwitterAdsAudiencePayloadTooLarge(body *GetTwitterAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint Unauthorized error.
+func NewGetTwitterAdsAudienceUnauthorized(body *GetTwitterAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK builds a
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint result from a HTTP "OK" response.
@@ -13492,6 +13723,39 @@ func ValidateGetMetaAdsAudienceResponseBody(body *GetMetaAdsAudienceResponseBody
 	for _, e := range body.Buckets {
 		if e != nil {
 			if err2 := ValidateMetaAdsAudienceBucketResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.AccountCurrency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_currency", *body.AccountCurrency, "^[A-Z]{3}$"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceResponseBody runs the validations defined on
+// Get-Twitter-Ads-AudienceResponseBody
+func ValidateGetTwitterAdsAudienceResponseBody(body *GetTwitterAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.AllCountersNull == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("all_counters_null", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := ValidateTwitterAdsAudienceBucketResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -17763,6 +18027,97 @@ func ValidateGetMetaAdsAudienceUnauthorizedResponseBody(body *GetMetaAdsAudience
 	return
 }
 
+// ValidateGetTwitterAdsAudienceBadRequestResponseBody runs the validations
+// defined on get-twitter-ads-audience_BadRequest_response_body
+func ValidateGetTwitterAdsAudienceBadRequestResponseBody(body *GetTwitterAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceConflictResponseBody runs the validations
+// defined on get-twitter-ads-audience_Conflict_response_body
+func ValidateGetTwitterAdsAudienceConflictResponseBody(body *GetTwitterAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on
+// get-twitter-ads-audience_ServiceUnavailable_response_body
+func ValidateGetTwitterAdsAudienceServiceUnavailableResponseBody(body *GetTwitterAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on
+// get-twitter-ads-audience_InternalServerError_response_body
+func ValidateGetTwitterAdsAudienceInternalServerErrorResponseBody(body *GetTwitterAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceNotFoundResponseBody runs the validations
+// defined on get-twitter-ads-audience_NotFound_response_body
+func ValidateGetTwitterAdsAudienceNotFoundResponseBody(body *GetTwitterAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudiencePayloadTooLargeResponseBody runs the
+// validations defined on get-twitter-ads-audience_PayloadTooLarge_response_body
+func ValidateGetTwitterAdsAudiencePayloadTooLargeResponseBody(body *GetTwitterAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on get-twitter-ads-audience_Unauthorized_response_body
+func ValidateGetTwitterAdsAudienceUnauthorizedResponseBody(body *GetTwitterAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody runs the validations
 // defined on get-microsoft-ads-keywords_BadRequest_response_body
 func ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) (err error) {
@@ -19699,6 +20054,38 @@ func ValidateMetaAdsAudienceBucketResponseBody(body *MetaAdsAudienceBucketRespon
 		if !(*body.Dimension == "age_gender" || *body.Dimension == "placement") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"age_gender", "placement"}))
 		}
+	}
+	return
+}
+
+// ValidateTwitterAdsAudienceBucketResponseBody runs the validations defined on
+// twitter-ads-audience-bucketResponseBody
+func ValidateTwitterAdsAudienceBucketResponseBody(body *TwitterAdsAudienceBucketResponseBody) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", "body"))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "age" || *body.Dimension == "gender" || *body.Dimension == "platform") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"age", "gender", "platform"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9](?:[A-Za-z0-9 _+.\\-]{0,62}[A-Za-z0-9+])?$"))
 	}
 	return
 }

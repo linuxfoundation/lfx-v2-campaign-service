@@ -158,6 +158,8 @@ func (o *Orchestrator) ReadReportedKeywordPerformance(ctx context.Context, proje
 	if perr != nil {
 		return nil, perr
 	}
+	// A report still BUILDING for another calendar period must not block one for this period.
+	supersedeOtherPeriodPending(callCtx, ctx, driver, snap, wantStart, wantEnd, now)
 	collectPendingInsightReport(callCtx, ctx, driver, snap, now)
 	// A finished report for another calendar period (the window rolled over since it was
 	// requested) is neither fresh nor servable: see discardOtherPeriod.

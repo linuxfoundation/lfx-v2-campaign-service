@@ -745,14 +745,15 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 	if jobs > maxStatsJobsPerReport {
 		return "", time.Time{}, time.Time{}, fmt.Errorf("%w (%d active)", ErrTooManyActiveCampaigns, len(ids))
 	}
-	if err := c.statsJobsFitBudget(ctx, jobs); err != nil {
+	slots, err := c.reserveStatsJobSlots(ctx, jobs)
+	if err != nil {
 		return "", time.Time{}, time.Time{}, err
 	}
 
 	jobIDs := make([]string, 0, jobs)
-	for i := 0; i < len(ids); i += statsJobMaxEntities {
+	for i, n := 0, 0; i < len(ids); i, n = i+statsJobMaxEntities, n+1 {
 		chunk := ids[i:min(i+statsJobMaxEntities, len(ids))]
-		id, jerr := c.createStatsJob(ctx, chunk, start, end)
+		id, jerr := c.createStatsJob(ctx, chunk, start, end, slots.at(n))
 		if jerr != nil {
 			return "", time.Time{}, time.Time{}, jerr
 		}
@@ -761,23 +762,90 @@ func (c *Client) SubmitAccountCampaignReport(ctx context.Context, days int) (rep
 	return strings.Join(jobIDs, ","), firstDay, lastDay, nil
 }
 
-// statsJobsFitBudget refuses (ErrStatsJobBudget) when ctx's deadline is closer than `jobs`
-// pacer intervals plus statsJobSubmitMargin. The deadline is wall-clock, so it is measured with
-// time.Until, not the injectable clock. With no deadline there is nothing to fit.
-func (c *Client) statsJobsFitBudget(ctx context.Context, jobs int) error {
-	deadline, ok := ctx.Deadline()
-	if !ok {
+// statsJobSlots are the write-pacer instants reserved for one batch of job POSTs, in order. A
+// nil value means the client does not pace (writeDelay <= 0): every POST may go at once.
+type statsJobSlots []time.Time
+
+func (s statsJobSlots) at(i int) time.Time {
+	if i < len(s) {
+		return s[i]
+	}
+	return time.Time{}
+}
+
+// reserveStatsJobSlots reserves `jobs` CONSECUTIVE write-pacer slots for one batch of stats-job
+// POSTs, atomically under writeMu, and returns their instants; each POST then waits for its own
+// slot (postStatsJob) instead of calling pace.
+//
+// Atomic because a snapshot is not enough: checking the backlog (nextWrite) and then pacing each
+// POST separately lets another writer on the shared client reserve slots between the check and
+// the POSTs, pushing this batch past its deadline and abandoning the jobs already created — a
+// partial job set. Reserving the whole batch first means nothing can slip in.
+//
+// The batch is refused (ErrStatsJobBudget), WITHOUT reserving anything, when ctx's deadline is
+// closer than the last reserved slot plus statsJobSubmitMargin. The deadline is wall-clock
+// (time.Until); the slots are in the pacer's own injectable clock, measured from timeFn. With no
+// deadline nothing is refused. A batch that fails part-way leaves its later slots consumed, which
+// only spaces later writers further apart — never closer than X's write budget.
+func (c *Client) reserveStatsJobSlots(ctx context.Context, jobs int) (statsJobSlots, error) {
+	if jobs <= 0 {
+		return nil, nil
+	}
+	if c.writeDelay <= 0 {
+		if deadline, ok := ctx.Deadline(); ok {
+			if left := time.Until(deadline); left < statsJobSubmitMargin {
+				return nil, fmt.Errorf("%w: %d jobs need about %s, %s left", ErrStatsJobBudget, jobs, statsJobSubmitMargin, left.Truncate(time.Millisecond))
+			}
+		}
+		return nil, nil
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	// Re-check cancellation under the lock, as pace does: sync.Mutex.Lock is not context-aware, so
+	// a caller can wait here behind other writers and have its context end meanwhile. Reserving a
+	// whole batch for a caller that will never POST would push every live writer back.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	now := c.timeFn()
+	first := now
+	if c.nextWrite.After(now) {
+		first = c.nextWrite
+	}
+	slots := make(statsJobSlots, jobs)
+	for i := range slots {
+		slots[i] = first.Add(time.Duration(i) * c.writeDelay)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		need := slots[jobs-1].Sub(now) + statsJobSubmitMargin
+		if left := time.Until(deadline); left < need {
+			return nil, fmt.Errorf("%w: %d jobs need about %s, %s left", ErrStatsJobBudget, jobs, need, left.Truncate(time.Millisecond))
+		}
+	}
+	c.nextWrite = slots[jobs-1].Add(c.writeDelay)
+	// Each reserved slot is one pacer admission, reported to the test hook as pace reports its own.
+	if c.onAdmit != nil {
+		for _, at := range slots {
+			c.onAdmit(ctx, at)
+		}
+	}
+	return slots, nil
+}
+
+// waitForSlot waits until slot on the pacer's clock (no wait for a zero slot).
+func (c *Client) waitForSlot(ctx context.Context, slot time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if slot.IsZero() {
 		return nil
 	}
-	pacing := time.Duration(0)
-	if c.writeDelay > 0 {
-		pacing = time.Duration(jobs) * c.writeDelay
+	if wait := slot.Sub(c.timeFn()); wait > 0 {
+		if err := sleepCtx(ctx, wait); err != nil {
+			return err
+		}
 	}
-	need := pacing + statsJobSubmitMargin
-	if left := time.Until(deadline); left < need {
-		return fmt.Errorf("%w: %d jobs need about %s, %s left", ErrStatsJobBudget, jobs, need, left.Truncate(time.Millisecond))
-	}
-	return nil
+	return ctx.Err()
 }
 
 // activeCampaignIDs reads the campaigns active in [start, end), deduplicated, in first-seen order.
@@ -817,10 +885,30 @@ func (c *Client) activeCampaignIDs(ctx context.Context, start, end time.Time) ([
 	return ids, nil
 }
 
-// createStatsJob POSTs one stats job and returns its id_str.
-func (c *Client) createStatsJob(ctx context.Context, campaignIDs []string, start, end time.Time) (string, error) {
-	if err := c.pace(ctx); err != nil {
-		return "", fmt.Errorf("create x stats job: %w", err)
+// createStatsJob POSTs one stats job at its reserved pacer slot and returns its id_str.
+func (c *Client) createStatsJob(ctx context.Context, campaignIDs []string, start, end, slot time.Time) (string, error) {
+	resp, err := c.postStatsJob(ctx, campaignIDs, start, end, "", slot)
+	if err != nil {
+		return "", err
+	}
+	var job statsJobElement
+	if resp == nil || len(resp.Data) == 0 || json.Unmarshal(resp.Data, &job) != nil {
+		return "", errors.New("create x stats job: response carried no job object")
+	}
+	if !validStatsJobID(job.IDStr) {
+		return "", errors.New("create x stats job: response carried no usable id_str")
+	}
+	return job.IDStr, nil
+}
+
+// postStatsJob waits for its reserved pacer slot (reserveStatsJobSlots), then POSTs one CAMPAIGN stats job over [start, end) with the parameter set
+// both job creators share: granularity=TOTAL, placement=ALL_ON_TWITTER,
+// metric_groups=ENGAGEMENT,BILLING. segmentation, when non-empty, is sent as segmentation_type
+// (the audience read; https://docs.x.com/x-ads-api/analytics, Segmentation). The caller decodes
+// the response.
+func (c *Client) postStatsJob(ctx context.Context, campaignIDs []string, start, end time.Time, segmentation string, slot time.Time) (*apiResponse, error) {
+	if err := c.waitForSlot(ctx, slot); err != nil {
+		return nil, fmt.Errorf("create x stats job: %w", err)
 	}
 	params := map[string]string{
 		"entity":        "CAMPAIGN",
@@ -831,18 +919,14 @@ func (c *Client) createStatsJob(ctx context.Context, campaignIDs []string, start
 		"placement":     "ALL_ON_TWITTER",
 		"metric_groups": "ENGAGEMENT,BILLING",
 	}
+	if segmentation != "" {
+		params["segmentation_type"] = segmentation
+	}
 	resp, err := c.doRequestAbs(ctx, http.MethodPost, c.statsJobsURL(), "stats/jobs", params, false /* a repeated create builds a second job */)
 	if err != nil {
-		return "", fmt.Errorf("create x stats job: %w", err)
+		return nil, fmt.Errorf("create x stats job: %w", err)
 	}
-	var job statsJobElement
-	if resp == nil || len(resp.Data) == 0 || json.Unmarshal(resp.Data, &job) != nil {
-		return "", errors.New("create x stats job: response carried no job object")
-	}
-	if !validStatsJobID(job.IDStr) {
-		return "", errors.New("create x stats job: response carried no usable id_str")
-	}
-	return job.IDStr, nil
+	return resp, nil
 }
 
 func validStatsJobID(id string) bool {

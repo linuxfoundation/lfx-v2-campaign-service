@@ -50,7 +50,7 @@ spec:
     # httproute.yaml is gated on the project `campaign_manager` relation. This is a
     # SINGLE rule covering every routed family — connections, briefs, campaigns
     # (under a brief), jobs, per-provider metrics, google-ads keywords/audience,
-    # meta-ads audience, and hubspot UTM — because they share the exact same
+    # meta-ads and twitter-ads audience, and hubspot UTM — because they share the exact same
     # authorization (D2:
     # campaign_manager on project:{projectId}, reads AND writes). Keeping them in one
     # rule preserves the chart↔route parity invariant (every heimdall-routed path has
@@ -195,6 +195,9 @@ spec:
           # Meta audience read (LFXV2-2665): the Meta sibling of google-ads/audience, a
           # campaign_manager read scoped to the project's own campaigns on the shared account.
           - path: /projects/:projectId/meta-ads/audience
+          # X audience read (LFXV2-2665): the X sibling of meta-ads/audience, a campaign_manager
+          # read scoped to the project's own campaigns on the shared account.
+          - path: /projects/:projectId/twitter-ads/audience
           # Meta, Reddit and X twins of the two campaign-ref lookups above (LFXV2-2665): the
           # same project-scoped read of this service's own tables, campaign_manager likewise.
           - path: /projects/:projectId/meta-ads/campaign-ref

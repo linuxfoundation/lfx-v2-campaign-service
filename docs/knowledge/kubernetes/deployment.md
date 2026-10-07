@@ -76,12 +76,15 @@ one synchronous JSON GET. With the gate off, a Microsoft metrics read returns th
 same 400 as Reddit's.
 
 `TWITTER_METRICS_ENABLED` is the third gate of this kind, defaulting to `"false"`, and it
-covers only the X Ads ACCOUNT MONITOR (LFXV2-2665): its asynchronous stats-jobs contract
+covers BOTH X Ads features built on stats jobs (LFXV2-2665) — the ACCOUNT MONITOR and the
+AUDIENCE READ (`twitter-ads/audience`, `twitterAudienceEnabled` in
+`internal/dispatch/twitter_audience.go`, checked by the orchestrator before the scope lookup):
+their asynchronous stats-jobs contract
 (`active_entities`, job create, job status, a downloaded gzip results file) follows X's
 published documentation and has NOT been exercised against a live X Ads account. Only exactly
 `"true"` enables it, read per call (`twitterMonitorEnabled` in
-`internal/dispatch/twitter_monitor.go`); off, the monitor answers the same 400 as a platform
-with no monitor. X's per-campaign metrics read is not behind it.
+`internal/dispatch/twitter_monitor.go`); off, the monitor and the audience read answer the same
+400 as a platform without them. X's per-campaign metrics read is not behind it.
 
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while

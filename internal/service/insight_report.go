@@ -53,11 +53,60 @@ func sameReportDay(a, b time.Time) bool {
 // 1 November, and serving it would label October's data as November's (likewise `today` across
 // midnight, or any window across a day). With the ready half dropped, the read behaves exactly as
 // when no report has finished: refreshInsightReport submits a replacement (unless one is already
-// pending) and the merge serves nothing, with metrics_as_of absent and metrics_pending set. The
-// stored row is untouched; the replacement overwrites it when it completes.
+// pending for THIS period — see supersedeOtherPeriodPending) and the merge serves nothing, with
+// metrics_as_of absent and metrics_pending set. The stored row is untouched; the replacement
+// overwrites it when it completes.
 func discardOtherPeriod[R any](snap *model.InsightReportSnapshot[R], wantStart, wantEnd time.Time) {
-	if r := snap.Ready; r != nil && (!sameReportDay(r.WindowStart, wantStart) || !sameReportDay(r.WindowEnd, wantEnd)) {
+	if r := snap.Ready; r != nil && !samePeriod(r.WindowStart, r.WindowEnd, wantStart, wantEnd) {
 		snap.Ready = nil
+	}
+}
+
+// samePeriod reports whether a report's saved dates are the dates wanted, day for day.
+func samePeriod(start, end, wantStart, wantEnd time.Time) bool {
+	return sameReportDay(start, wantStart) && sameReportDay(end, wantEnd)
+}
+
+// supersedeOtherPeriodPending clears a PENDING report requested for another calendar period — a
+// today or this_month report still building when the UTC date changed — so it no longer blocks a
+// submission for the period the window means now. Without this the store's single pending slot
+// stayed occupied by a report that can never be served (discardOtherPeriod would drop it on
+// collection), and the read showed nothing, with nothing building for the current period, until
+// the old report finished or was abandoned (up to accountReportAbandonAfter).
+//
+// It uses the store's existing compare-and-set on the pending report id (fail), recording the
+// supersession as the key's last failure, so:
+//   - exactly one request clears a given stale report; a request that loses the CAS re-reads the
+//     pending half and adopts whatever is there now (typically the winner's replacement), so it does
+//     not submit a second one once that is recorded;
+//   - a late collection of the old report — by a request still holding the old snapshot — can no
+//     longer complete it (its pending id is gone), and even the copy that request serves from
+//     memory is dropped by discardOtherPeriod, because its dates are not the current period's.
+//
+// Run BEFORE collectPendingInsightReport, so the stale report is not polled for nothing. The
+// replacement itself is submitted by refreshInsightReport, as for a key with nothing pending.
+func supersedeOtherPeriodPending[R any](callCtx, ctx context.Context, d insightReportDriver[R], snap *model.InsightReportSnapshot[R], wantStart, wantEnd, now time.Time) {
+	p := snap.Pending
+	if p == nil || samePeriod(p.WindowStart, p.WindowEnd, wantStart, wantEnd) {
+		return
+	}
+	key := snap.Key
+	reason := fmt.Sprintf("superseded: requested for %s..%s, but the window now means %s..%s",
+		p.WindowStart.UTC().Format("2006-01-02"), p.WindowEnd.UTC().Format("2006-01-02"),
+		wantStart.UTC().Format("2006-01-02"), wantEnd.UTC().Format("2006-01-02"))
+	applied, err := d.fail(callCtx, key, p.ReportID, reason, now)
+	if err != nil {
+		slog.WarnContext(ctx, d.read+": could not supersede a report pending for another period; will retry on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", err)
+		return
+	}
+	if applied {
+		snap.Pending = nil
+		return
+	}
+	// Lost the compare-and-set: the stale report was collected, failed or superseded meanwhile.
+	// Adopt the pending half as it is now; refreshInsightReport submits only if it is empty.
+	if latest, gerr := d.get(callCtx, key); gerr == nil {
+		snap.Pending = latest.Pending
 	}
 }
 

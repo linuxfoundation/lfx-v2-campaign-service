@@ -95,6 +95,18 @@ a replacement is submitted and the read answers as when no report has finished (
 November's (likewise `today` across midnight). The dates were already stored (000038/000041), so
 no migration was needed; the check is shared by both kinds (`discardOtherPeriod`).
 
+The same rule applies to a report still BUILDING across the boundary (#292 review). The pending
+half stores its requested dates (`pending_window_start` / `pending_window_end`), so a pending
+report for another period is superseded before anything is polled
+(`supersedeOtherPeriodPending`): it is cleared through the store's existing compare-and-set on
+the pending id (recorded as the key's last failure, "superseded: …") and a report for the current
+dates is submitted on the same read, which answers `metrics_pending: true`. A request that loses
+that compare-and-set re-reads the pending half and adopts the winner's replacement rather than
+submitting another; a late collection of the old report cannot complete (its id is no longer
+pending), and a copy served from memory is still dropped by `discardOtherPeriod`. Without this the
+old report blocked any submission for the new period until it finished or was abandoned (up to an
+hour).
+
 A finished report is served ONLY while it covers the project's current campaign scope. A
 campaign dispatched after the report was built makes the next read return no rows (and submit a
 new report) rather than a partial table the response could not mark as partial — the same

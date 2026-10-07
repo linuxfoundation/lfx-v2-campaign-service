@@ -220,6 +220,11 @@ type Client struct {
 	statsFileCompressedCap   int64
 	statsFileDecompressedCap int64
 
+	// audiencePollInterval is the wait between two job-status reads in GetAudienceInsights
+	// (audience.go). NewClient sets defaultAudiencePollInterval; only in-package tests lower it
+	// (withAudiencePollInterval).
+	audiencePollInterval time.Duration
+
 	// tzMu guards the account timezone AccountTimezone caches for accountTimezoneCacheFor.
 	tzMu  sync.Mutex
 	tzLoc *time.Location
@@ -306,6 +311,7 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		statsFileHosts:           []string{statsFileHost},
 		statsFileCompressedCap:   defaultStatsFileCompressedCap,
 		statsFileDecompressedCap: defaultStatsFileDecompressedCap,
+		audiencePollInterval:     defaultAudiencePollInterval,
 	}
 	for _, o := range opts {
 		o(c)

@@ -84,11 +84,16 @@ type TwitterDispatcher struct {
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// audience bounds the stats jobs the audience read creates per ad account (cache,
+	// singleflight, per-account slot); see twitterAudienceGuard. audienceNow is its clock; nil
+	// means the wall clock. A field only so tests can pin it.
+	audience    *twitterAudienceGuard
+	audienceNow func() time.Time
 }
 
 // NewTwitterDispatcher builds the adapter from the connection repo + encryptor.
 func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter.Option) *TwitterDispatcher {
-	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newTwitterAudienceGuard()}
 }
 
 // cachedTwitterClient returns the client for this connection, building it only when there is

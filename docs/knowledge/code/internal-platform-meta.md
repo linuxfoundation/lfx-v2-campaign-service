@@ -817,8 +817,9 @@ Insights row for an unlisted ad set is returned with `Listed: false`. `GetAdSetS
 through `do(..., retryThrottle=false)` — exactly one request, a throttle never repeated — and
 requires `{"success":true}` from a body that passes `identityjson.Check`; `ClassifyAdSetWrite` maps its error to APPLIED / NOT_SENT / REJECTED /
 UNCONFIRMED using `IsOutcomeUnconfirmed`; REJECTED is opt-in — only a parsed Graph envelope
-(`APIError.EnvelopeParsed`, set by `copyEnvelope` only when `do()` found the raw error body
-passes `identityjson.Check`) with a non-zero code, that is not `is_transient` (`APIError.IsTransient`),
+(`APIError.EnvelopeParsed`, set by `copyEnvelope` only when `do()` decoded the error body without
+a `json.Unmarshal` error AND the raw body passes `identityjson.Check`; the partially decoded
+fields are still copied for throttle detection and logging) with a non-zero code, that is not `is_transient` (`APIError.IsTransient`),
 not code 1/2, not a 408 and not a throttle; every other `*APIError` is UNCONFIRMED. `ValidateAdSetID` is `ValidateCampaignID`'s rule and
 returns the existing `ErrInvalidAdSetID`. Tests: `ad_sets_test.go`.
 
