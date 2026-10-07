@@ -4,7 +4,6 @@
 package meta
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // Audience breakdown dimension tokens. These are this broker's vocabulary, not Meta's: each
@@ -104,16 +105,40 @@ type AudienceInsights struct {
 
 // audienceRow is one Insights row. The breakdown values are POINTERS so an absent key is
 // distinguishable from an empty one; both are refused, but they are different defects.
+//
+// The three counters are RAW so an ABSENT key is distinguishable from an explicit JSON null.
+// Absence keeps the Meta metrics read's semantics — Meta omits a zero-valued counter, so an
+// omitted one is a measured 0 (parseMetricInt / parseSpendMicros on "") — but a PRESENT null
+// decodes into a plain string as "" too, and would then publish an authoritative zero for a
+// value Meta explicitly did not give. counterString refuses it. (campaign_id, account_currency
+// and the breakdown values need no such care: a null there is already refused as out of scope,
+// not an ISO code, or missing.)
 type audienceRow struct {
-	CampaignID        string  `json:"campaign_id"`
-	Impressions       string  `json:"impressions"`
-	Clicks            string  `json:"clicks"`
-	Spend             string  `json:"spend"`
-	AccountCurrency   string  `json:"account_currency"`
-	Age               *string `json:"age"`
-	Gender            *string `json:"gender"`
-	PublisherPlatform *string `json:"publisher_platform"`
-	PlatformPosition  *string `json:"platform_position"`
+	CampaignID        string          `json:"campaign_id"`
+	Impressions       json.RawMessage `json:"impressions"`
+	Clicks            json.RawMessage `json:"clicks"`
+	Spend             json.RawMessage `json:"spend"`
+	AccountCurrency   string          `json:"account_currency"`
+	Age               *string         `json:"age"`
+	Gender            *string         `json:"gender"`
+	PublisherPlatform *string         `json:"publisher_platform"`
+	PlatformPosition  *string         `json:"platform_position"`
+}
+
+// counterString returns a counter's string value: "" when the key was absent (a measured zero,
+// as in the metrics read), an error for an explicit null or a non-string value.
+func counterString(field string, raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	if string(raw) == "null" {
+		return "", fmt.Errorf("%s is an explicit null, not a measured value", field)
+	}
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", fmt.Errorf("%s is not a string (%d bytes)", field, len(raw))
+	}
+	return v, nil
 }
 
 func (r *audienceRow) value(key string) *string {
@@ -240,19 +265,31 @@ func (c *Client) readAudienceBreakdown(ctx context.Context, accountID, preset, f
 				Next string `json:"next"`
 			} `json:"paging"`
 		}
-		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		// The page is fetched RAW and checked as a whole before it is decoded. encoding/json
+		// resolves a repeated key — exact or case-folded, at ANY level — in favour of the last
+		// value with no error, so `{"data":[…rows…],"data":[]}` (or `"Data":[]`) would decode as
+		// Meta's authoritative empty answer and a populated audience would read as no delivery;
+		// a repeated `paging` could likewise end the walk early. identityjson.Check refuses
+		// that (and malformed UTF-8 / unpaired surrogates) with one linear, map-based pass over
+		// the document, under the decoder's own notion of key sameness.
+		var body json.RawMessage
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &body); err != nil {
 			return nil, "", err
 		}
 		malformed := func(format string, args ...any) error {
 			return &transportError{Method: http.MethodGet, Path: path, Err: fmt.Errorf(format, args...)}
 		}
+		if err := identityjson.Check(body); err != nil {
+			return nil, "", malformed("page %d: %v", page, err)
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			// The decoder's message can quote a value; report the shape only.
+			return nil, "", malformed("page %d: response is not an insights page of the expected shape", page)
+		}
 		if resp.Data == nil {
 			return nil, "", malformed("insights returned a 2xx response with no data field")
 		}
 		for i, raw := range *resp.Data {
-			if err := rejectDuplicateKeys(raw); err != nil {
-				return nil, "", malformed("page %d row %d: %v", page, i, err)
-			}
 			var row audienceRow
 			if err := json.Unmarshal(raw, &row); err != nil {
 				// The decoder's message can quote a value; report the shape only.
@@ -288,12 +325,18 @@ func (c *Client) readAudienceBreakdown(ctx context.Context, accountID, preset, f
 				return nil, "", malformed("page %d row %d: duplicate row for one campaign and segment", page, i)
 			}
 			seenRows[rowKey] = struct{}{}
-			impressions, errI := parseMetricInt(row.Impressions)
-			clicks, errC := parseMetricInt(row.Clicks)
+			impressionsS, errIS := counterString("impressions", row.Impressions)
+			clicksS, errCS := counterString("clicks", row.Clicks)
+			spendS, errSS := counterString("spend", row.Spend)
+			if err := errors.Join(errIS, errCS, errSS); err != nil {
+				return nil, "", malformed("page %d row %d: %v", page, i, err)
+			}
+			impressions, errI := parseMetricInt(impressionsS)
+			clicks, errC := parseMetricInt(clicksS)
 			if errI != nil || errC != nil {
 				return nil, "", malformed("page %d row %d: %s", page, i, malformedCounterSummary(errI, errC))
 			}
-			cost, errS := parseSpendMicros(row.Spend)
+			cost, errS := parseSpendMicros(spendS)
 			if errS != nil {
 				return nil, "", malformed("page %d row %d: %v", page, i, errS)
 			}
@@ -368,45 +411,4 @@ func finishAudienceBuckets(totals map[string]*AudienceBucket, order []string) []
 
 func audienceSortKey(b AudienceBucket) string {
 	return b.Age + "\x00" + b.Gender + "\x00" + b.PublisherPlatform + "\x00" + b.PlatformPosition
-}
-
-// rejectDuplicateKeys refuses a row object that repeats a top-level key UNDER THE DECODER'S
-// NOTION OF SAMENESS. encoding/json matches object keys to struct fields case-insensitively
-// (including Go's Unicode folds — KELVIN SIGN onto 'k', LONG S onto 's') and keeps the LAST
-// match silently, so both `{"campaign_id":"<theirs>","campaign_id":"<ours>"}` and
-// `{"Campaign_ID":"<theirs>","campaign_id":"<ours>"}` would pass the scope check on one value
-// while the row's provenance is genuinely ambiguous. Keys are therefore compared with
-// strings.EqualFold, not ==. Nested values are skipped whole; only this row's own keys matter.
-func rejectDuplicateKeys(raw json.RawMessage) error {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	tok, err := dec.Token()
-	if err != nil {
-		return fmt.Errorf("row is not valid JSON")
-	}
-	if d, ok := tok.(json.Delim); !ok || d != '{' {
-		return fmt.Errorf("row is not a JSON object")
-	}
-	var seen []string
-	for dec.More() {
-		keyTok, kerr := dec.Token()
-		if kerr != nil {
-			return fmt.Errorf("row is not valid JSON")
-		}
-		key, ok := keyTok.(string)
-		if !ok {
-			return fmt.Errorf("row is not valid JSON")
-		}
-		for _, prev := range seen {
-			if strings.EqualFold(prev, key) {
-				// The key is a JSON object key Meta sent; bounded by its length only.
-				return fmt.Errorf("row repeats a key, up to case folding (%d bytes)", len(key))
-			}
-		}
-		seen = append(seen, key)
-		var skip json.RawMessage
-		if derr := dec.Decode(&skip); derr != nil {
-			return fmt.Errorf("row is not valid JSON")
-		}
-	}
-	return nil
 }
