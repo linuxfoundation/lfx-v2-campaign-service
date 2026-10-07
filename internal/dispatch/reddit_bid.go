@@ -51,7 +51,7 @@ func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platf
 	adGroupID, _ := redditChildIDs(campaign)
 	adGroupID = strings.TrimSpace(adGroupID)
 	if adGroupID == "" {
-		return fmt.Errorf("write reddit campaign bid: campaign %s records no ad group created by this service, so there is no ad group whose bid this endpoint may set; change the bid in Reddit Ads Manager: %w",
+		return fmt.Errorf("write reddit campaign bid: campaign %s records no ad group created by this service — either it was never provisioned, or the campaign was ADOPTED, which records none — so there is no ad group whose bid this endpoint may set; change the bid in Reddit Ads Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBidUnwritable)
 	}
 

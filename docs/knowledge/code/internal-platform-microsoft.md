@@ -1284,3 +1284,27 @@ and an arm calling it would assert a match that can never happen. The classifica
 either way — the default is inconclusive too — only the claim would be false.
 `TestProbeInconclusive_PreSendDialErrorIsNotClaimed` keeps that note executable, and fails if the
 pre-send shape ever changes.
+
+## Adoption read (`campaign_lookup.go`, LFXV2-2665)
+
+`GetCampaign` is the read `MicrosoftDispatcher.LookupCampaign` makes to adopt an existing campaign.
+It rides the budget read's `GetCampaignsByIds` (`queryCampaignByIDGuarded`, `Campaigns/QueryByIds`,
+EVERY documented `CampaignType` — `Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App`
+— rather than the budget and bid reads' Search, AccountId in the body and `CustomerAccountId` on the request), so it inherits
+every answer rule that read applies, plus `identityjson.Check` over the raw 200 body before it is
+decoded — the budget and bid reads pass no guard and are unchanged. `Name`, `Status` and `CampaignType` were
+added to `msCampaignBudgetRead` as RAW fields so a shape this package does not expect in either can fail
+only the adoption read. `ValidateCampaignID` (canonical positive int64, no padding) runs first and
+returns `ErrNotACampaignID` with no request. `CampaignServiceInvalidCampaignId` (fault or
+PartialError) and status `Deleted` are `(nil, nil)`; Active, Paused, BudgetPaused,
+BudgetAndManualPaused and Suspended are a ref; any other status, a missing or blank Name, and every
+error the shared read raises are errors. The read is account-scoped and the Campaign object carries
+no account id, so the request's scope IS the provenance check — a campaign in another account is
+answered absent, as on Google. Because every type is requested, a live non-Search campaign comes
+back and is refused with `ErrNotSearchCampaign` — a DEFINITE answer the dispatcher maps to
+`domain.ErrAdoptionCampaignTypeUnsupported` (409 "adoption supports Microsoft Search campaigns
+only"), never an absence and never an adoption into the Search slot. Requesting Search alone left
+that answer resting on undocumented behaviour: a null slot (503) or, worse, an
+`InvalidCampaignId` PartialError read as absent (404 → a duplicate of a live campaign). A missing
+`CampaignType` is unverifiable, not assumed Search. The comma-separated flags spelling is from the
+REST documentation and has not been exercised live.

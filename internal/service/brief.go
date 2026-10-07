@@ -856,6 +856,31 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 			return nil, &briefs.BadRequestError{Code: "400", Message: "platform_campaign_id is not a valid campaign id for this platform"}
 		case errors.Is(lerr, ErrPlatformCampaignAbsent):
 			return nil, &briefs.NotFoundError{Code: "404", Message: "no such campaign exists on the ad platform under this project's connection"}
+		case errors.Is(lerr, ErrCampaignAccountMismatch):
+			// The platform answered and the campaign EXISTS — under an ad account other than
+			// the one this project's connection is bound to. Not a 404: that would tell the
+			// operator the campaign is missing and invite a duplicate of a live one. Not a 503
+			// either: the answer is definite, and a retry is refused identically. Reached on
+			// the platforms whose read is not wholly account-scoped by its request (Meta,
+			// whose node read is by id alone) or whose answer names its account (Reddit, X);
+			// Google and Microsoft scope the read to the account, so a foreign campaign is
+			// simply absent there. Both account ids stay server-side.
+			slog.WarnContext(ctx, "campaign adoption refused: the campaign belongs to a different ad account than the project's connection",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"platform_campaign_id", platformCampaignID)
+			return nil, &briefs.ConflictError{Code: "409", Message: "that campaign belongs to a different ad account than this project's connection; adoption can only bind a campaign in the project's own connected ad account"}
+		case errors.Is(lerr, domain.ErrAdoptionCampaignTypeUnsupported):
+			// Definite and permanent: the campaign exists, live, in the project's own account,
+			// and is a type this service has no slot for. Never 404 (a duplicate of a live
+			// campaign would follow) and never 503 (nothing a retry can change).
+			slog.WarnContext(ctx, "campaign adoption refused: the campaign is of a type this service cannot adopt",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+				"platform_campaign_id", platformCampaignID)
+			msg := "that campaign is of a type this service cannot adopt on this platform"
+			if platform == model.ProviderMicrosoftAds {
+				msg = "adoption supports Microsoft Search campaigns only; that campaign is of another type"
+			}
+			return nil, &briefs.ConflictError{Code: "409", Message: msg}
 		case errors.Is(lerr, domain.ErrServiceDefect):
 			// ABOVE every connection arm below, for the reason given on the metrics branch:
 			// the fault is in a request THIS SERVICE constructed, so "repair the connection"
