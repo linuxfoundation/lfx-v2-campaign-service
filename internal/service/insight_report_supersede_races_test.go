@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
@@ -155,25 +156,81 @@ func TestSupersede_UnresolvedFailsTheRead(t *testing.T) {
 // re-reads another stale report supersedes it.
 func TestSupersede_KeywordReadSharesTheRules(t *testing.T) {
 	for _, tc := range periodCases {
-		t.Run(tc.name, func(t *testing.T) {
-			snap := &model.KeywordReportSnapshot{Pending: &model.PendingKeywordReport{ReportID: "old-1", CampaignIDs: []string{"111"},
-				SubmittedAt: tc.asOf, WindowStart: tc.savedStart, WindowEnd: tc.savedEnd}}
-			r := &fakeKeywordReader{account: "123", submitID: "k-new", dates: utcWindowDates, submitNow: tc.after}
-			store := &fakeKeywordStore{snap: snap, getErr: nil}
-			o := keywordOrch([]string{"111"}, r, &failingKeywordStore{fakeKeywordStore: store, err: errors.New("db down")})
+		stale := func(id string) *model.PendingKeywordReport {
+			return &model.PendingKeywordReport{ReportID: id, CampaignIDs: []string{"111"},
+				SubmittedAt: tc.asOf, WindowStart: tc.savedStart, WindowEnd: tc.savedEnd}
+		}
+		read := func(store *scriptedKeywordStore) (*model.ReportedKeywordRead, *fakeKeywordReader, error) {
+			r := &fakeKeywordReader{account: "123", submitID: "k-new", dates: utcWindowDates, submitNow: tc.after,
+				check: &model.KeywordReportCheck{Status: model.AccountReportPending}}
+			o := keywordOrch([]string{"111"}, r, store)
 			o.SetInsightReportClock(func() time.Time { return tc.after })
-			if _, err := o.ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, tc.window); err == nil || r.checks+r.submits != 0 {
+			got, err := o.ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, tc.window)
+			return got, r, err
+		}
+		t.Run(tc.name+"/CAS error", func(t *testing.T) {
+			store := &scriptedKeywordStore{fakeKeywordStore: &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Pending: stale("old-1")}}, failErr: errors.New("db down")}
+			if _, r, err := read(store); err == nil || r.checks+r.submits != 0 {
 				t.Errorf("CAS error: err=%v checks=%d submits=%d, want a failed read with no upstream call", err, r.checks, r.submits)
+			}
+		})
+		t.Run(tc.name+"/re-read another stale report", func(t *testing.T) {
+			store := &scriptedKeywordStore{fakeKeywordStore: &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Pending: stale("old-1")}}}
+			store.onFail = func(f *fakeKeywordStore, id string) {
+				if id == "old-1" {
+					f.snap.Pending = stale("old-2") // a concurrent pre-midnight request won
+				}
+			}
+			got, r, err := read(store)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if r.submits != 1 || r.checks != 0 || !got.MetricsPending {
+				t.Errorf("submits=%d checks=%d pending=%v, want one submission, no poll", r.submits, r.checks, got.MetricsPending)
+			}
+			if p := store.snap.Pending; p == nil || p.ReportID != "k-new" || !p.WindowStart.Equal(tc.wantStart) || !p.WindowEnd.Equal(tc.wantEnd) {
+				t.Errorf("pending = %+v, want k-new for the current period (old-2 must not be adopted)", p)
 			}
 		})
 	}
 }
 
-type failingKeywordStore struct {
+// scriptedKeywordStore is scriptedAudienceStore's keyword twin: onFail scripts what a concurrent
+// request has done by the time this one fails the stale report; failErr makes the CAS itself fail.
+type scriptedKeywordStore struct {
 	*fakeKeywordStore
-	err error
+	onFail  func(s *fakeKeywordStore, reportID string)
+	failErr error
 }
 
-func (s *failingKeywordStore) FailKeywordReport(context.Context, model.KeywordReportKey, string, string, time.Time) (bool, error) {
-	return false, s.err
+func (s *scriptedKeywordStore) FailKeywordReport(ctx context.Context, key model.KeywordReportKey, reportID, reason string, at time.Time) (bool, error) {
+	if s.failErr != nil {
+		return false, s.failErr
+	}
+	if s.onFail != nil {
+		s.onFail(s.fakeKeywordStore, reportID)
+	}
+	return s.fakeKeywordStore.FailKeywordReport(ctx, key, reportID, reason, at)
+}
+
+// The lost-CAS re-read finds NOTHING saved for the key (domain.ErrNotFound): that is an empty
+// key, not a failure — the read submits exactly one current-period report and answers pending.
+func TestSupersede_ReReadNotFoundIsAnEmptyKey(t *testing.T) {
+	for _, tc := range periodCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &scriptedAudienceStore{fakeAudienceStore: &fakeAudienceStore{snap: &model.AudienceReportSnapshot{Pending: stalePending(tc, "old-1")}},
+				getErr: domain.ErrNotFound}
+			// Lose the CAS because the row is gone altogether (e.g. a cache row removed meanwhile):
+			// the re-read then finds nothing saved for the key.
+			store.onFail = func(f *fakeAudienceStore, _ string) { f.snap = nil }
+			got, r, err := readRacingAudience(t, tc, store)
+			if err != nil {
+				t.Fatalf("read: %v (a not-found re-read must not fail the read)", err)
+			}
+			if r.submits != 1 || r.checks != 0 || !got.MetricsPending || got.MetricsAsOf != nil {
+				t.Errorf("submits=%d checks=%d pending=%v as_of=%v, want exactly one submission and pending",
+					r.submits, r.checks, got.MetricsPending, got.MetricsAsOf)
+			}
+		})
+	}
 }

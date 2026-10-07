@@ -14,5 +14,8 @@ reads):
   answering `metrics_pending` for a period nothing is building for).
 - The read-order doc comments and a test header now say a stale-period pending report is
   superseded before collection.
+- Tests (#295 review) also cover a lost-CAS re-read that finds nothing saved for the key (treated
+  as an empty key: exactly one current-period submission, `metrics_pending`), and the keyword
+  read's lost-CAS re-read of another old-period report.
 
 See [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md).
