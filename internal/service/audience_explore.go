@@ -496,6 +496,24 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 	}, nil
 }
 
+// maxAttachListIDs caps the include and suppression lists of one attach together: each is read
+// back from HubSpot with its own GET. maxAttachListIDLength bounds one list id.
+const (
+	maxAttachListIDs      = 200
+	maxAttachListIDLength = 32
+)
+
+// isASCIIDigits reports whether s is a non-empty run of ASCII digits, the shape of a HubSpot
+// list id.
+func isASCIIDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
 // attachIncludeIDs resolves which lists an attach sends to, enforcing that the request names
 // them exactly one way: master_list_id (one list, the long-standing form) or include_list_ids
 // (several existing lists, sent to directly with no composed master). multi reports which form
@@ -506,22 +524,6 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 // overlap here is refused: HubSpot applies exclusions after inclusions, so an id on both sides
 // would remove that whole list from the send, and with several includes the operator cannot
 // tell from the response which group quietly went missing.
-// maxAttachListIDs caps the include and suppression lists of one attach together: each is read
-// back from HubSpot with its own GET. maxAttachListIDLength bounds one list id.
-const (
-	maxAttachListIDs      = 200
-	maxAttachListIDLength = 32
-)
-
-func isASCIIDigits(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return s != ""
-}
-
 func attachIncludeIDs(in *explore.AudienceAttachExistingInput) (ids []string, multi bool, err error) {
 	master := strings.TrimSpace(derefStr(in.MasterListID))
 	hasInclude := len(in.IncludeListIds) > 0
