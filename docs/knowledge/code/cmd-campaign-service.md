@@ -70,6 +70,25 @@ unbounded body. Extracting it lets a test drive the REAL chain — a security co
 presence is invisible to any test that exercises the mux directly. See
 [internal/middleware](internal-middleware.md) for the cap's rationale and sizing.
 
+## Decoder validation errors do not echo the rejected value (LFXV2-2665)
+
+Every generated server `buildMux` mounts is built with `nonEchoingErrorFormatter`
+(`error_formatter.go`) instead of a nil formatter. Goa's generated decoder applies a method's
+Pattern/MaxLength/Enum/range/format rules BEFORE the service method runs, and Goa's default
+formatter (`goahttp.NewErrorResponse`) puts the rejected value into the 400's message
+(`... but got value "..."`). A method's own fixed, non-echoing 400 — `platformCampaignIDRule` on
+the campaign-ref lookups, for one — is therefore never reached for those inputs, and the raw input
+came back in the body. The formatter keeps `NewErrorResponse`'s status, name, id and flags and
+rewrites only the messages of the value-echoing validation errors (`invalid_pattern`,
+`invalid_length`, `invalid_range`, `invalid_enum_value`, `invalid_format`, `invalid_field_type`)
+to a fixed sentence naming the FIELD — a design constant — never the value. The rules themselves
+are in the OpenAPI documents. A merged error is rewritten part by part from its history, and a
+non-echoing part keeps only its own text: `goa.MergeErrors` mutates the accumulating error in place
+and keeps it as the first entry of its own history, so that entry's message already carries every
+later part, echoing ones included. `missing_field`, `decode_payload` and every error a service
+method returns keep Goa's message. `validation_echo_test.go` drives a marker-bearing id through the
+real mux to all five `campaign-ref` routes and asserts no 400 body contains it.
+
 ## Mounting the audience-builder service (LFXV2-2770)
 
 `server.go` mounts the generated audience-builder endpoints alongside the rest. Its paths must

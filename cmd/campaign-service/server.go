@@ -121,7 +121,7 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 		goahttp.RequestDecoder,
 		goahttp.ResponseEncoder,
 		eh,
-		nil,
+		nonEchoingErrorFormatter,
 		koHTTPDir,
 		koHTTPDir,
 		koHTTPDir,
@@ -138,25 +138,25 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	if connEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: connEndpoints is nil (connection routes would be unmounted)")
 	}
-	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	connServer := connsvcsvr.New(connEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
 	connsvcsvr.Mount(mux, connServer)
 
 	if briefEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: briefEndpoints is nil (brief routes would be unmounted)")
 	}
-	briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	briefServer := briefsvcsvr.New(briefEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
 	briefsvcsvr.Mount(mux, briefServer)
 
 	if audienceEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: audienceEndpoints is nil (audience routes would be unmounted)")
 	}
-	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	audienceServer := audiencesvcsvr.New(audienceEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
 	audiencesvcsvr.Mount(mux, audienceServer)
 
 	if exploreEndpoints == nil {
 		return nil, fmt.Errorf("buildMux: exploreEndpoints is nil (audience-builder routes would be unmounted)")
 	}
-	exploreServer := exploresvcsvr.New(exploreEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nil)
+	exploreServer := exploresvcsvr.New(exploreEndpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, eh, nonEchoingErrorFormatter)
 	exploresvcsvr.Mount(mux, exploreServer)
 
 	// The email wizard's progress stream is the one route in this service that is not a Goa

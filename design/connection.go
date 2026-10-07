@@ -1347,10 +1347,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	// a generated method for a provider that cannot answer it would be a 400 by
 	// construction.
 	//
-	// Google Ads, Meta, LinkedIn, Microsoft and X have one. Reddit does not: its platform
-	// client has no ListAdAccounts, so its account id stays hand-entered on the connection
-	// until one is built. Do not add a method here for it without the dispatcher side —
-	// the endpoint would exist and always fail.
+	// Google Ads, Meta, LinkedIn, Microsoft, X and — as of LFXV2-2665 — Reddit have one
+	// (list-reddit-ads-accounts, below; reddit.ListAdAccounts behind RedditDispatcher's
+	// ListAccounts). Reddit's account_id is still Required on its connection config, so a
+	// Reddit connection is not credentials-first: discovery helps an operator choose the id
+	// to store, it does not let the connection be created without one. Do not add a method
+	// here for a provider without the dispatcher side — the endpoint would exist and always
+	// fail.
 	Method("list-google-ads-accounts", func() {
 		Description("Enumerate the Google Ads ad accounts accessible via the stored connection credential.")
 		Payload(func() {
