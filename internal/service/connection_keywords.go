@@ -112,6 +112,14 @@ func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projec
 		slog.WarnContext(ctx, "keyword insights blocked: a campaign in scope has a malformed platform id",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.ConflictError{Code: "409", Message: domain.ErrKeywordReportScopeInvalid.Error()}
+	case errors.Is(err, domain.ErrAudienceScopeTooLarge):
+		// The Meta audience read's twin of the arm above: refused locally, permanent while the
+		// project owns that many campaigns. Fixed, client-safe text.
+		return &conn.ConflictError{Code: "409", Message: domain.ErrAudienceScopeTooLarge.Error()}
+	case errors.Is(err, domain.ErrAudienceScopeInvalid):
+		slog.WarnContext(ctx, "audience insights blocked: a campaign in scope has a malformed platform id",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: domain.ErrAudienceScopeInvalid.Error()}
 	default:
 		return s.classifyDiscoveryError(ctx, projectID, d, err)
 	}

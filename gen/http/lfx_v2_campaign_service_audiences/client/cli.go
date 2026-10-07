@@ -23,7 +23,7 @@ func BuildCreateAudiencePayload(lfxV2CampaignServiceAudiencesCreateAudienceBody 
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudiencesCreateAudienceBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam eaque suscipit harum.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Et ab laboriosam sunt quis.\",\n         \"status\": \"building\",\n         \"suppression_list_ids\": [\n            \"Sunt quis odio enim nam id voluptatem.\",\n            \"Vero alias temporibus illum.\"\n         ]\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"audience\": {\n         \"inclusion_summary\": \"Ullam eaque suscipit harum.\",\n         \"platform\": \"hubspot\",\n         \"platform_master_list_id\": \"Quis omnis animi sunt quis odio.\",\n         \"status\": \"building\",\n         \"suppression_list_ids\": [\n            \"Id voluptatem.\",\n            \"Vero alias temporibus illum.\"\n         ]\n      }\n   }'")
 		}
 		if body.Audience == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("audience", "body"))

@@ -1917,6 +1917,30 @@ Tests (`microsoft_keyword_report_test.go`): gate off on all three methods, every
 zero upstream calls, the provenance filter, the system-fallback refusal, the submitted scope
 (Campaigns only, no `AccountIds`), and the poll states.
 
+## Meta audience read (`meta_audience.go`, LFXV2-2665)
+
+`MetaDispatcher` implements `service.MetaAudienceReader` (`ReadMetaAudienceInsights`), a
+capability SEPARATE from `KeywordInsightsReader`: Meta has no keyword read, and its audience
+shape (a combined age+gender breakdown, a two-valued placement) does not fit `AudienceBucket`.
+Every other dispatcher — Google, LinkedIn, Microsoft, Reddit, X — lacks it, so the orchestrator
+answers `ErrKeywordInsightsUnsupported` (400) for them.
+
+Order mirrors `GoogleAdsDispatcher.ReadAudienceInsights`: window first (`metaMetricsWindow` →
+`ErrMetricsWindowUnsupported`), then `resolveMetaCredentials` through
+`existingResolver("")` — ordinary project-then-system resolution, so a fallback project reads
+only its own campaigns, and no connection at all is `domain.ErrNotFound` (404) — then
+`requireMetaAccountID` (`ErrConnectionNotUsable` + `ErrAccountNotSelected`) and
+`meta.ValidateAccountID` on the stored id (`act_<digits>`, else `ErrConnectionNotUsable`), then
+`metaScopeForAccount`: every stored id must be a canonical Meta campaign id
+(`domain.ErrAudienceScopeInvalid`, 409) and ANY entry whose recorded creation account
+(`metaCreationAccountID`) differs from the connection's refuses the whole read with
+`ErrCampaignAccountMismatch` (409), `googleAdsScopeForCustomer`'s rule. Only then is
+`meta.Client.GetAudienceInsights` called; `meta.ErrAudienceScopeTooLarge` /
+`ErrAudienceScopeInvalid` are re-tagged with the domain sentinels, every upstream failure is
+returned unclassified (503 at the service). Tests: `meta_audience_test.go` (mapping, every
+refusal with zero upstream calls, partial mismatch, unknown provenance proceeds, 403 stays
+unclassified).
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`

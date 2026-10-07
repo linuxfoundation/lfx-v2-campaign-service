@@ -2862,6 +2862,22 @@ type KeywordInsightsReader interface {
 	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error)
 }
 
+// MetaAudienceReader is an OPTIONAL dispatcher capability: Meta's age+gender and placement
+// audience breakdowns for the campaigns a project OWNS, live from the platform. Type-asserted
+// like KeywordInsightsReader, so a dispatcher without it — every platform but Meta — yields
+// ErrKeywordInsightsUnsupported → 400, the same answer the Google audience read gives an
+// unsupported platform.
+//
+// Separate from KeywordInsightsReader because its result is a different shape (a combined
+// age,gender breakdown and a two-valued placement, not one value per dimension) and because
+// Meta has no keyword read: folding it in would force Meta to implement a keyword method it
+// cannot serve. scope carries the same contract as KeywordInsightsReader's: never empty from
+// the orchestrator, and the adapter must refuse the whole read on any provenance mismatch
+// rather than drop entries.
+type MetaAudienceReader interface {
+	ReadMetaAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.MetaAudienceInsights, error)
+}
+
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
 // existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
 // clean ErrKeywordActionsUnsupported → 400.
@@ -3029,6 +3045,43 @@ func (o *Orchestrator) ReadAudienceInsights(ctx context.Context, projectID strin
 	}
 	if ai.Buckets == nil {
 		ai.Buckets = []model.AudienceBucket{}
+	}
+	return ai, nil
+}
+
+// ReadMetaAudienceInsights reads Meta audience breakdowns across the project's OWN campaigns.
+// Same shape as ReadAudienceInsights: capability check, scope from this service's own rows, an
+// empty scope answered WITHOUT contacting the platform (an unscoped Insights read on the shared
+// ad account would expose every other project's audience), and the nil-result guards.
+func (o *Orchestrator) ReadMetaAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.MetaAudienceInsights, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(MetaAudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if len(scope) == 0 {
+		return &model.MetaAudienceInsights{Window: window, Buckets: []model.MetaAudienceBucket{}}, nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	ai, rerr := reader.ReadMetaAudienceInsights(callCtx, projectID, platform, window, scope)
+	o.recordUpstream(ctx, platform, opReadAudience, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if ai == nil {
+		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
+	}
+	if ai.Buckets == nil {
+		ai.Buckets = []model.MetaAudienceBucket{}
 	}
 	return ai, nil
 }

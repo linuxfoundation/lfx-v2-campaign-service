@@ -161,6 +161,21 @@ type Service interface {
 	// than dropped: they are real unattributed traffic, and hiding them would make
 	// the buckets silently under-sum.
 	GetGoogleAdsAudience(context.Context, *GetGoogleAdsAudiencePayload) (res *GoogleAdsAudience, err error)
+	// Read Meta audience insights — age and gender (one combined breakdown) and
+	// placement (publisher_platform and platform_position) — for this project's
+	// own campaigns, live from the Meta Marketing API Insights edge of the
+	// connected ad account. Scoped to the campaigns this service holds for the
+	// project, NOT to the ad account: the request filters on those campaign ids
+	// and every returned row is checked against them, because the account is
+	// shared across foundations. A pure read-through; nothing is persisted. A
+	// project with no Meta campaigns of its own receives an empty `buckets` array
+	// and Meta is not contacted. Both breakdowns must load or the request fails
+	// (503): each covers the same traffic independently, and one presented without
+	// the other is a partial picture. Spend is in the account's own currency
+	// (`account_currency`); no FX conversion is performed. There is no conversions
+	// counter: Meta reports conversions only as per-action-type entries, not as
+	// one scalar.
+	GetMetaAdsAudience(context.Context, *GetMetaAdsAudiencePayload) (res *MetaAdsAudience, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
 	// campaigns this service holds for the project, NOT to the connected ad
@@ -483,7 +498,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [65]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
+var MethodNames = [66]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -857,6 +872,17 @@ type GetLinkedinAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// GetMetaAdsAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-meta-ads-audience method.
+type GetMetaAdsAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Platform-agnostic reporting window; defaults to last_30_days when omitted
+	Window *string
 }
 
 // GetMetaAdsPayload is the payload type of the
@@ -1305,6 +1331,50 @@ type MarketingEmail struct {
 	State *string
 	// Last-modified timestamp (ISO-8601)
 	UpdatedAt *string
+}
+
+// MetaAdsAudience is the result type of the
+// lfx-v2-campaign-service-connections service get-meta-ads-audience method.
+type MetaAdsAudience struct {
+	// The reporting window these counters cover
+	Window string
+	// Every bucket across both breakdowns, discriminated by `dimension`. Ordered
+	// by dimension (age_gender, then placement) then impressions descending.
+	Buckets []*MetaAdsAudienceBucket
+	// How many buckets are in `buckets`, across both dimensions. Each dimension
+	// independently covers the same traffic, so summing any counter across
+	// dimensions double-counts it — total within one dimension only.
+	BucketCount int
+	// ISO 4217 currency of the ad account that cost_micros is denominated in, as
+	// Meta reports it. ABSENT when no bucket was returned.
+	AccountCurrency *string
+}
+
+type MetaAdsAudienceBucket struct {
+	// Which breakdown this bucket belongs to: age_gender (Meta's combined
+	// age,gender breakdown) or placement (publisher_platform,platform_position)
+	Dimension string
+	// Meta's age bucket, verbatim (e.g. 25-34, 65+, Unknown). Present only on
+	// age_gender buckets.
+	Age *string
+	// Meta's gender bucket, verbatim (male, female, unknown). Present only on
+	// age_gender buckets.
+	Gender *string
+	// Meta's publisher platform, verbatim (e.g. facebook, instagram,
+	// audience_network, messenger). Present only on placement buckets.
+	PublisherPlatform *string
+	// Meta's placement within the publisher platform, verbatim (e.g. feed,
+	// instagram_stories). Present only on placement buckets.
+	PlatformPosition *string
+	// Impressions over the window
+	Impressions int64
+	// Clicks over the window
+	Clicks int64
+	// Spend over the window in micro-units of the ad account's native currency
+	// (see account_currency). This service performs no FX conversion.
+	CostMicros int64
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64
 }
 
 // MetaAdsConnection is the result type of the

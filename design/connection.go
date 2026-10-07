@@ -1459,6 +1459,45 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("get-meta-ads-audience", func() {
+		Description("Read Meta audience insights — age and gender (one combined breakdown) and placement " +
+			"(publisher_platform and platform_position) — for this project's own campaigns, live from the " +
+			"Meta Marketing API Insights edge of the connected ad account. Scoped to the campaigns this " +
+			"service holds for the project, NOT to the ad account: the request filters on those campaign " +
+			"ids and every returned row is checked against them, because the account is shared across " +
+			"foundations. A pure read-through; nothing is persisted. A project with no Meta campaigns of " +
+			"its own receives an empty `buckets` array and Meta is not contacted. Both breakdowns must load " +
+			"or the request fails (503): each covers the same traffic independently, and one presented " +
+			"without the other is a partial picture. Spend is in the account's own currency " +
+			"(`account_currency`); no FX conversion is performed. There is no conversions counter: Meta " +
+			"reports conversions only as per-action-type entries, not as one scalar.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id")
+		})
+		Result(MetaAdsAudience)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/meta-ads/audience")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("get-microsoft-ads-keywords", func() {
 		Description("Read Microsoft Advertising keyword performance for this project's own campaigns, in " +
 			"the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for " +
