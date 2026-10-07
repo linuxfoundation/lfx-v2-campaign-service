@@ -6,7 +6,6 @@ package meta
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -21,22 +20,13 @@ const (
 	StatusArchived = "ARCHIVED"
 )
 
-// graphCodeInvalidParameter + graphSubcodeObjectMissing is the Graph API's structured "this node
-// does not exist, cannot be loaded with this token, or does not support this operation" answer
-// (code 100, error_subcode 33). It is the only answer this client reads as an ABSENCE; see
-// GetCampaign for why the "cannot be loaded" half of it is still an absence for adoption.
-const (
-	graphCodeInvalidParameter = 100
-	graphSubcodeObjectMissing = 33
-)
-
 // adoptCampaignFields is exactly the field set the adoption read asks for. Only id, name, status
 // and account_id are interpreted — but the CAMPAIGN-ONLY fields (objective, daily_budget,
 // lifetime_budget, bid_strategy) are LOAD-BEARING all the same. GET /{id} accepts ANY node id, and
 // an ad set or ad also has id, name, status and account_id; asking for a field only a campaign
-// has is what makes Graph refuse a non-campaign node (code 100 without subcode 33, "nonexisting
-// field" — an unverifiable 503 here). Trimming them would make an ad set or ad id adoptable as a
-// campaign. TestMetaGetCampaign_RequestsCampaignOnlyFields pins that they are sent.
+// has is what makes Graph refuse a non-campaign node (code 100, "nonexisting field" — an
+// unverifiable 503 here, like every Graph error). Trimming them would make an ad set or ad id
+// adoptable as a campaign. TestMetaGetCampaign_RequestsCampaignOnlyFields pins that they are sent.
 const adoptCampaignFields = "id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy"
 
 // CampaignRef is what the adoption read learns about one campaign.
@@ -76,14 +66,17 @@ type campaignLookupWire struct {
 // The outcomes are the CampaignAdopter contract's:
 //
 //   - a live campaign (status ACTIVE or PAUSED)     -> (ref, nil)
-//   - Graph code 100 / error_subcode 33              -> (nil, nil)
 //   - a campaign whose status is DELETED or ARCHIVED -> (nil, nil)
 //   - anything unverifiable                          -> (nil, error)
 //
-// Code 100/33 means "does not exist, cannot be loaded due to missing permissions, or does not
-// support this operation". All three are an absence UNDER THIS CONNECTION'S TOKEN, which is the
-// question adoption asks: a campaign this token cannot load is not one this project can bind.
-// It is matched on the structured code and subcode, never on Meta's message text.
+// The ONLY absence this read reports is one Meta PROVES: the node answered, and its own status
+// says it is deleted or archived. Graph code 100 / error_subcode 33 is deliberately NOT an
+// absence, on any HTTP status: Meta documents it as "does not exist, cannot be loaded due to
+// missing permissions, or does not support this operation", so it cannot tell a missing campaign
+// from one the token simply cannot see — a revoked grant, a token for the wrong business, an
+// account removed from the system user. Reporting that as "no such campaign" (404) is the
+// ambiguous absence an operator acts on by creating a duplicate of a campaign that may be live,
+// so it is unverifiable (503) like every other error, and so is any 401/403.
 //
 // DELETED and ARCHIVED are absences for the reason a REMOVED campaign is one on Google: the node
 // still answers, but it is terminal (Meta documents an archived object as deletable only), it
@@ -105,11 +98,7 @@ func (c *Client) GetCampaign(ctx context.Context, campaignID string) (*CampaignR
 	}
 	var raw json.RawMessage
 	if err := c.doRequest(ctx, http.MethodGet, "/"+campaignID+"?fields="+adoptCampaignFields, nil, &raw); err != nil {
-		var ae *APIError
-		if errors.As(err, &ae) && ae.StatusCode >= 400 && ae.StatusCode < 500 &&
-			ae.Code == graphCodeInvalidParameter && ae.ErrorSubcode == graphSubcodeObjectMissing {
-			return nil, nil
-		}
+		// Every Graph error — 100/33 included, see above — is unverifiable: none proves absence.
 		return nil, fmt.Errorf("meta campaign lookup for %s: %w", campaignID, err)
 	}
 	if err := identityjson.Check(raw); err != nil {

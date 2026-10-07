@@ -54,18 +54,19 @@ type Service interface {
 	// google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other
 	// platform answers 400. The read is one get-campaign-by-id under the project's
 	// OWN connection (never the shared LF system account), and the campaign must
-	// belong to that connection's ad account. Returns 404 when the platform
-	// answers that it holds no such campaign (a deleted, removed or archived
-	// campaign counts as absent), 503 when the campaign could not be verified (the
-	// platform was unreachable or throttled, or answered with something
-	// untrustworthy - its existence is unknown), 409 when this brief already has a
-	// live campaign on that platform / that campaign is already bound to another
-	// brief (in any project, since several foundations share one upstream ad
-	// account) / the platform reports the campaign under a different ad account
-	// than the project's connection / the campaign is of a type that platform's
-	// slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost
-	// approval during the read / the project has no ad-platform connection of its
-	// own, and 400 when the platform has no adoption capability wired or
+	// belong to that connection's ad account. Returns 404 only when the platform
+	// PROVES it holds no such campaign (a deleted, removed or archived campaign
+	// counts as absent), 503 when the campaign could not be verified (the platform
+	// was unreachable or throttled, answered with something untrustworthy, or gave
+	// a not-found that could equally be an access, auth or account problem - its
+	// existence is unknown), 409 when this brief already has a live campaign on
+	// that platform / that campaign is already bound to another brief (in any
+	// project, since several foundations share one upstream ad account) / the
+	// platform reports the campaign under a different ad account than the
+	// project's connection / the campaign is of a type that platform's slot cannot
+	// hold (Microsoft adopts Search campaigns only) / the brief lost approval
+	// during the read / the project has no ad-platform connection of its own, and
+	// 400 when the platform has no adoption capability wired or
 	// platform_campaign_id is malformed for that platform (checked before any
 	// connection work). An adopted campaign records only the campaign itself (id,
 	// name, account), never its children. The metrics read and the settings

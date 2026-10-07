@@ -24,14 +24,9 @@ const (
 	StatusDeleted               = "Deleted"
 )
 
-// allCampaignTypes is every value of the v13 CampaignType flags enum
-// (https://learn.microsoft.com/en-us/advertising/campaign-management-service/campaigntype), sent
-// by the adoption lookup so a campaign of ANY type is returned rather than filtered out. Filtering
-// to Search left a non-Search campaign's answer resting on undocumented behaviour — a null slot
-// (unverifiable) or, worse, an InvalidCampaignId PartialError that would read as "absent" and
-// invite a duplicate of a live campaign. Comma-separated, as the REST JSON surface renders a
-// flags enum.
-const allCampaignTypes = "Search,Shopping,DynamicSearchAds,Audience,Hotel,PerformanceMax,App"
+// The adoption read asks for allCampaignTypes (monitor.go) — the documented, space-delimited v13
+// set of all eight types — so a live campaign of any type, ObjectiveBased included, is returned
+// and then refused definitely when it is not Search, rather than filtered out of the answer.
 
 // ErrNotSearchCampaign reports a DEFINITE answer: the campaign exists in this account, but it is
 // not a Search campaign, the only type this service creates and so the only one with a slot to
