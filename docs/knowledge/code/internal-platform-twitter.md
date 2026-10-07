@@ -1165,7 +1165,8 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
   pacer and never retried on a 429. Before the first POST, `reserveStatsJobSlots` reserves the
   whole batch's consecutive pacer slots atomically under `writeMu` (so no concurrent writer can
-  interleave and push the batch past its deadline), refusing — nothing reserved, no job created —
+  interleave and push the batch past its deadline; the context is re-checked under the lock, so a
+  caller cancelled while queued reserves nothing), refusing — nothing reserved, no job created —
   with `ErrStatsJobBudget` when the last slot (after any backlog already queued) plus
   `statsJobSubmitMargin` (2s) does not fit the context deadline's remaining time (wall-clock
   `time.Until`); each POST then waits for its own slot, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
@@ -1346,7 +1347,8 @@ keeps the zeros from passing as a measurement instead. Job POSTs use `reserveSta
 budget and no concurrent writer can split the batch. A failure that leaves jobs running on X —
 any failure while creating or awaiting them — is `*AudienceJobsAbandonedError` carrying the job
 ids X confirmed (Unwrap keeps the sentinels); `RunningStatsJobs(ctx, ids)` answers which of them
-X still lists as not finished (one status read, `identityjson`-checked; queued, processing,
-unlisted and unrecognised all count as running), and `AudienceJobCount(ids)` is how many jobs a
+X still lists as not finished (one status read, `identityjson`-checked; an answer naming an
+unrequested job or one job twice is an error, so a malformed answer never releases a job; queued,
+processing, unlisted and unrecognised all count as running), and `AudienceJobCount(ids)` is how many jobs a
 read would create — both for the dispatcher's per-account job budget. UNVERIFIED against a live account: the segmented file shape and
 `segment_name` vocabulary.

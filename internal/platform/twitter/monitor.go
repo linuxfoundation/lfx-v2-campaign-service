@@ -801,6 +801,12 @@ func (c *Client) reserveStatsJobSlots(ctx context.Context, jobs int) (statsJobSl
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	// Re-check cancellation under the lock, as pace does: sync.Mutex.Lock is not context-aware, so
+	// a caller can wait here behind other writers and have its context end meanwhile. Reserving a
+	// whole batch for a caller that will never POST would push every live writer back.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	now := c.timeFn()
 	first := now
 	if c.nextWrite.After(now) {

@@ -271,8 +271,9 @@ func (e *AudienceJobsAbandonedError) Unwrap() error { return e.Err }
 // RunningStatsJobs reports which of ids X does not yet list as finished (SUCCESS, FAILED/FAILURE,
 // CANCELLED) — queued, processing, unlisted and unrecognised are all read conservatively as still
 // running — with ONE status read (job_ids accepts
-// up to 200 ids; at most maxRunningJobsQuery are asked). Any failure, or an untrustworthy body,
-// is an error and the caller keeps counting every id.
+// up to 200 ids; at most maxRunningJobsQuery are asked). Any failure, an untrustworthy body, or an
+// answer naming an unrequested job or one job twice is an error, and the caller keeps counting
+// every id.
 func (c *Client) RunningStatsJobs(ctx context.Context, ids []string) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -303,8 +304,22 @@ func (c *Client) RunningStatsJobs(ctx context.Context, ids []string) ([]string, 
 	if err := json.Unmarshal(resp.Data, &els); err != nil {
 		return nil, errors.New("read x stats jobs: data is not a list of jobs")
 	}
-	status := make(map[string]string, len(els))
+	// The same trust rules as readAudienceJobs: an answer naming a job not asked about, or one
+	// job twice, is malformed, and a malformed answer must never RELEASE a job — with
+	// last-wins decoding, a repeat saying PROCESSING then SUCCESS would free a running job's
+	// budget. So it fails closed: an error, on which the caller keeps counting every id.
+	status := make(map[string]string, len(ids))
+	asked := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		asked[id] = true
+	}
 	for _, el := range els {
+		if !asked[el.IDStr] {
+			return nil, errors.New("read x stats jobs: the answer names a job this read did not ask about")
+		}
+		if _, dup := status[el.IDStr]; dup {
+			return nil, errors.New("read x stats jobs: the answer names one job twice")
+		}
 		status[el.IDStr] = strings.ToUpper(strings.TrimSpace(el.Status))
 	}
 	running := make([]string, 0, len(ids))

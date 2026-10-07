@@ -827,3 +827,58 @@ func TestReserveStatsJobSlots_RefusalReservesNothing(t *testing.T) {
 		t.Error("a refused batch moved the pacer")
 	}
 }
+
+// The abandoned-job reconciliation read applies readAudienceJobs' trust rules: a repeated id (even
+// one claiming SUCCESS after PROCESSING) or an id not asked about fails closed — an error, on
+// which the caller keeps counting every job — and never releases a job.
+func TestRunningStatsJobs_FailsClosedOnUntrustworthyAnswers(t *testing.T) {
+	for name, body := range map[string]string{
+		"duplicate id, conflicting statuses": `{"data":[{"id_str":"101","status":"PROCESSING"},{"id_str":"101","status":"SUCCESS"},{"id_str":"102","status":"SUCCESS"}]}`,
+		"unrequested id":                     `{"data":[{"id_str":"101","status":"SUCCESS"},{"id_str":"999","status":"SUCCESS"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeXAudience(t)
+			f.set(func(f *fakeXAudience) { f.statusBody = func([]string) string { return body } })
+			running, err := f.client(audienceNow).RunningStatsJobs(context.Background(), []string{"101", "102"})
+			if err == nil {
+				t.Fatalf("running = %v with no error; a malformed answer must not release jobs", running)
+			}
+		})
+	}
+	// A well-formed answer still releases terminal jobs and keeps the rest.
+	f := newFakeXAudience(t)
+	f.set(func(f *fakeXAudience) {
+		f.statusBody = func([]string) string {
+			return `{"data":[{"id_str":"101","status":"SUCCESS"},{"id_str":"102","status":"PROCESSING"}]}`
+		}
+	})
+	running, err := f.client(audienceNow).RunningStatsJobs(context.Background(), []string{"101", "102", "103"})
+	if err != nil || strings.Join(running, ",") != "102,103" {
+		t.Errorf("running = %v, %v; want 102 (processing) and 103 (unlisted)", running, err)
+	}
+}
+
+// A caller whose context ends while it waits for writeMu reserves nothing: the pacer's next
+// write is unchanged, so live writers are not pushed back for a batch that will never POST.
+func TestReserveStatsJobSlots_CancelledWhileWaitingReservesNothing(t *testing.T) {
+	c := NewClient(Credentials{}, AccountConfig{AccountID: "account123"}, WithWriteDelay(time.Second))
+	ctx, cancel := context.WithCancel(context.Background())
+	c.writeMu.Lock() // another writer holds the pacer
+	before := c.nextWrite
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.reserveStatsJobSlots(ctx, 6)
+		done <- err
+	}()
+	// Cancel while the lock is held, then let the reservation through. Whether the goroutine
+	// reached Lock before or after the cancel, it takes the lock with a dead context — the case
+	// the re-check under the lock exists for — so no sleep is needed to stage it.
+	cancel()
+	c.writeMu.Unlock()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if got := c.nextWriteAt(); !got.Equal(before) {
+		t.Errorf("nextWrite moved from %v to %v for a cancelled caller", before, got)
+	}
+}
