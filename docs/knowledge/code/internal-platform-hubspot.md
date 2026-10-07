@@ -402,7 +402,8 @@ Two guards were added to `readEmailCounters`, so they apply to the per-campaign 
   two entries and is accepted.
 - **Explicit null.** `counters` decodes into `map[string]*int64`; a `null` value is
   `ErrNullCounter` (the key named only when it is in the static vocabulary). An ABSENT key keeps
-  its omitted-zero meaning.
+  its omitted-zero meaning. The check runs BEFORE the empty-`emails` answer, so a body that lists
+  no email and carries a null counter is refused rather than read as `ErrNoSentEmailInWindow`.
 
 `renamedCounter` now takes the list of counters the CALLER reads: `GetEmailMetrics` passes the
 six it maps, `GetEmailCounters` the seven including `spamreport`, so a response that drops

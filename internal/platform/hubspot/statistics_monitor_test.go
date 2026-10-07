@@ -95,15 +95,21 @@ func TestGetEmailCounters_MapsSevenCountersAndSendsTheSpan(t *testing.T) {
 
 // An explicit null counter is refused on BOTH reads that share the decode — decoded into an
 // integer it would be an authoritative 0. An absent counter keeps its omitted-zero meaning.
+// That holds for an EMPTY emails list too: a null counter beside no email fails closed rather
+// than reading as "not sent".
 func TestStatistics_ExplicitNullCounterIsRefused(t *testing.T) {
-	body := statsBody(t, `[4242]`, `{"sent":1000,"delivered":950,"bounce":null}`)
-	c, _ := monitorClient(t, body)
-	start, end, _ := c.MonitorSpan(30)
-	if _, err := c.GetEmailCounters(context.Background(), "4242", start, end); !errors.Is(err, ErrNullCounter) {
-		t.Errorf("GetEmailCounters err = %v, want ErrNullCounter", err)
-	}
-	if _, err := c.GetEmailMetrics(context.Background(), "4242", model.MetricsWindowLast30Days); !errors.Is(err, ErrNullCounter) {
-		t.Errorf("GetEmailMetrics err = %v, want ErrNullCounter", err)
+	for name, emails := range map[string]string{"one email": `[4242]`, "empty list": `[]`} {
+		t.Run(name, func(t *testing.T) {
+			body := statsBody(t, emails, `{"sent":1000,"delivered":950,"bounce":null}`)
+			c, _ := monitorClient(t, body)
+			start, end, _ := c.MonitorSpan(30)
+			if _, err := c.GetEmailCounters(context.Background(), "4242", start, end); !errors.Is(err, ErrNullCounter) {
+				t.Errorf("GetEmailCounters err = %v, want ErrNullCounter", err)
+			}
+			if _, err := c.GetEmailMetrics(context.Background(), "4242", model.MetricsWindowLast30Days); !errors.Is(err, ErrNullCounter) {
+				t.Errorf("GetEmailMetrics err = %v, want ErrNullCounter", err)
+			}
+		})
 	}
 }
 

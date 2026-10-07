@@ -349,6 +349,18 @@ func (c *Client) readEmailCounters(ctx context.Context, id int64, start, end tim
 	}
 	emails := *resp.Emails
 
+	// An EXPLICIT null counter is refused before anything else reads the map — and before the
+	// empty-list answer below, so a body that lists no email AND carries a null counter fails
+	// closed rather than reading as "not sent". Decoded into int64 it would become an
+	// authoritative 0 with no error — `"bounce":null` reading as "no bounces" — while an ABSENT
+	// key keeps the meaning HubSpot's omission of a zero counter gives it (see ErrRenamedCounter
+	// for why absence alone is not evidence of anything).
+	// A null is neither: HubSpot said the key exists and declined to give it a value.
+	counters, err := nonNullCounters(resp.Aggregate.Counters)
+	if err != nil {
+		return nil, err
+	}
+
 	// An EMPTY `emails` means HubSpot matched no SENT email to this id within the span.
 	// That is the whole claim: the span selects by SEND time, so an email sent outside it,
 	// a staged draft that was never sent, and an id that does not exist all arrive here
@@ -370,16 +382,6 @@ func (c *Client) readEmailCounters(ctx context.Context, id int64, start, end tim
 	if !isExactlyID(emails, id) {
 		return nil, fmt.Errorf("%w: asked for %d, response covers %d email(s)",
 			ErrStatisticsFilterNotHonored, id, len(emails))
-	}
-
-	// An EXPLICIT null counter is refused before anything else reads the map. Decoded into
-	// int64 it would become an authoritative 0 with no error — `"bounce":null` reading as "no
-	// bounces" — while an ABSENT key keeps the meaning HubSpot's omission of a zero counter
-	// gives it (see ErrRenamedCounter for why absence alone is not evidence of anything).
-	// A null is neither: HubSpot said the key exists and declined to give it a value.
-	counters, err := nonNullCounters(resp.Aggregate.Counters)
-	if err != nil {
-		return nil, err
 	}
 
 	// The vocabulary guard, and the reason it is not `len(counters) > 0`: a MISSING or
