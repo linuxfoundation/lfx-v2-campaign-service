@@ -37,7 +37,9 @@ type fakeXAudience struct {
 	mu sync.Mutex
 	// account is the GET accounts/:id body.
 	account string
-	// createStatus, when non-zero, answers every job POST with that status.
+	// createStatus, when non-zero, answers every job POST after the first createOK with that
+	// status.
+	createOK     int
 	createStatus int
 	// createBody, when set, replaces the job POST body ("%s" receives the new job id).
 	createBody string
@@ -84,7 +86,7 @@ func (f *fakeXAudience) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, f.account)
 	case r.Method == http.MethodPost && r.URL.Path == "/12/stats/jobs/accounts/account123":
 		f.posts = append(f.posts, r.URL.Query())
-		if f.createStatus != 0 {
+		if f.createStatus != 0 && len(f.posts) > f.createOK {
 			w.WriteHeader(f.createStatus)
 			_, _ = fmt.Fprintf(w, `{"errors":[{"code":"X","message":%q}]}`, audienceCanary)
 			return
@@ -741,9 +743,9 @@ func TestGetAudienceInsights_PacerBacklogRefusesBeforeAnyPost(t *testing.T) {
 	f := newFakeXAudience(t)
 	c := f.client(audienceNow)
 	c.writeDelay = 10 * time.Millisecond
-	c.writeMu.Lock()
-	c.nextWrite = audienceNow.Add(30 * time.Second)
-	c.writeMu.Unlock()
+	c.pacer.mu.Lock()
+	c.pacer.next = audienceNow.Add(30 * time.Second)
+	c.pacer.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	start := time.Now()
@@ -863,8 +865,8 @@ func TestRunningStatsJobs_FailsClosedOnUntrustworthyAnswers(t *testing.T) {
 func TestReserveStatsJobSlots_CancelledWhileWaitingReservesNothing(t *testing.T) {
 	c := NewClient(Credentials{}, AccountConfig{AccountID: "account123"}, WithWriteDelay(time.Second))
 	ctx, cancel := context.WithCancel(context.Background())
-	c.writeMu.Lock() // another writer holds the pacer
-	before := c.nextWrite
+	c.pacer.mu.Lock() // another writer holds the pacer
+	before := c.pacer.next
 	done := make(chan error, 1)
 	go func() {
 		_, err := c.reserveStatsJobSlots(ctx, 6)
@@ -874,11 +876,103 @@ func TestReserveStatsJobSlots_CancelledWhileWaitingReservesNothing(t *testing.T)
 	// reached Lock before or after the cancel, it takes the lock with a dead context — the case
 	// the re-check under the lock exists for — so no sleep is needed to stage it.
 	cancel()
-	c.writeMu.Unlock()
+	c.pacer.mu.Unlock()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
 	if got := c.nextWriteAt(); !got.Equal(before) {
 		t.Errorf("nextWrite moved from %v to %v for a cancelled caller", before, got)
+	}
+}
+
+// Two clients for ONE ad account (two projects' connections to the shared LF account) built with
+// the same registry share one pacer: their concurrent batch reservations never interleave, and a
+// client for another account is unaffected.
+func TestAccountPacers_ClientsForOneAccountShareReservations(t *testing.T) {
+	reg := NewAccountPacers()
+	mk := func(account string) *Client {
+		return NewClient(Credentials{}, AccountConfig{AccountID: account}, WithWriteDelay(10*time.Millisecond), WithAccountPacers(reg))
+	}
+	a, b, other := mk("account123"), mk("account123"), mk("account456")
+	if a.pacer != b.pacer || a.pacer == other.pacer {
+		t.Fatal("clients for one account must share a pacer, and another account's must not")
+	}
+	const rounds = 20
+	var wg sync.WaitGroup
+	batches := make(chan statsJobSlots, 2*rounds)
+	for i := 0; i < rounds; i++ {
+		for _, c := range []*Client{a, b} {
+			wg.Add(1)
+			go func(c *Client) {
+				defer wg.Done()
+				s, err := c.reserveStatsJobSlots(context.Background(), 3)
+				if err != nil {
+					t.Errorf("reserve: %v", err)
+					return
+				}
+				batches <- s
+			}(c)
+		}
+	}
+	wg.Wait()
+	close(batches)
+	var all []statsJobSlots
+	for s := range batches {
+		all = append(all, s)
+	}
+	for i := range all {
+		for j := range all {
+			if i == j {
+				continue
+			}
+			first, last := all[i][0], all[i][len(all[i])-1]
+			for _, at := range all[j] {
+				if !at.Before(first) && !at.After(last) {
+					t.Fatalf("a batch slot %s falls inside another batch [%s, %s]", at, first, last)
+				}
+			}
+		}
+	}
+	if !other.nextWriteAt().IsZero() {
+		t.Error("another account's pacer moved")
+	}
+}
+
+// A failed create that may have committed upstream is charged as an UNKNOWN job, alongside the
+// jobs already created; a definite 4xx rejection charges nothing.
+func TestGetAudienceInsights_AmbiguousCreatesAreCharged(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		createOK    int
+		body        string
+		wantIDs     int
+		wantUnknown int
+		abandoned   bool
+	}{
+		{name: "first create 500", status: http.StatusInternalServerError, wantUnknown: 1, abandoned: true},
+		{name: "first create 503", status: http.StatusServiceUnavailable, wantUnknown: 1, abandoned: true},
+		{name: "first create throttled", status: http.StatusTooManyRequests, wantUnknown: 1, abandoned: true},
+		{name: "first create 400", status: http.StatusBadRequest},
+		{name: "first create 403", status: http.StatusForbidden},
+		{name: "second create 502 after one job", status: http.StatusBadGateway, createOK: 1, wantIDs: 1, wantUnknown: 1, abandoned: true},
+		{name: "second create 400 after one job", status: http.StatusBadRequest, createOK: 1, wantIDs: 1, abandoned: true},
+		{name: "2xx with no usable id", body: `{"data":{"status":"PROCESSING","x":"%s"}}`, wantUnknown: 1, abandoned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeXAudience(t)
+			f.set(func(f *fakeXAudience) { f.createStatus, f.createOK, f.createBody = tc.status, tc.createOK, tc.body })
+			_, err := f.client(audienceNow).GetAudienceInsights(context.Background(), WindowToday, []string{"c1"})
+			if err == nil {
+				t.Fatal("read succeeded")
+			}
+			var ab *AudienceJobsAbandonedError
+			if errors.As(err, &ab) != tc.abandoned {
+				t.Fatalf("abandoned = %v (%v), want %v", !tc.abandoned, err, tc.abandoned)
+			}
+			if tc.abandoned && (len(ab.JobIDs) != tc.wantIDs || ab.Unknown != tc.wantUnknown) {
+				t.Errorf("JobIDs %v, Unknown %d; want %d ids and %d unknown", ab.JobIDs, ab.Unknown, tc.wantIDs, tc.wantUnknown)
+			}
+		})
 	}
 }

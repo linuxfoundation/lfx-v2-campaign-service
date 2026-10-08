@@ -1132,3 +1132,44 @@ func TestScrapePortCannotDriftFromServicePort(t *testing.T) {
 		}
 	})
 }
+
+// TestDeploymentRefusesXStatsJobsOnMultipleReplicas pins the single-replica guard: the X
+// stats-job features' limits (audience job budget, account pacer) are per process, so the chart
+// refuses TWITTER_METRICS_ENABLED with more than one replica — set through either env input, or
+// sourced where the template cannot see it — and still renders every other combination.
+func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	const on = "app.environment.TWITTER_METRICS_ENABLED.value=true"
+	for _, tc := range []struct {
+		name   string
+		set    []string
+		refuse bool
+	}{
+		{"default (flag off, one replica)", nil, false},
+		{"flag on, one replica", []string{on}, false},
+		{"flag off, three replicas", []string{"replicaCount=3"}, false},
+		{"flag on, two replicas", []string{on, "replicaCount=2"}, true},
+		{"flag on via extraEnv, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
+		{"flag from a secret, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=null", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
+		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true},
+		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}
+			for _, s := range tc.set {
+				args = append(args, "--set", s)
+			}
+			out, err := exec.Command("helm", args...).CombinedOutput()
+			switch {
+			case tc.refuse && err == nil:
+				t.Fatalf("rendered with %v; want the single-replica refusal", tc.set)
+			case tc.refuse && !strings.Contains(string(out), "Run one replica while the flag is on"):
+				t.Errorf("failed, but not on the guard:\n%s", out)
+			case !tc.refuse && err != nil:
+				t.Fatalf("refused %v: %v\n%s", tc.set, err, out)
+			}
+		})
+	}
+}

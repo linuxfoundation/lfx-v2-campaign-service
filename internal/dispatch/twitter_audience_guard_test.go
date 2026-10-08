@@ -357,3 +357,52 @@ func TestTwitterAudienceGuard_SlotsDoNotGrowWithAccounts(t *testing.T) {
 		t.Errorf("%d slots and %d abandoned-job entries left after idle accounts, want none", len(g.slots), len(g.abandoned))
 	}
 }
+
+// Anonymous jobs (creates that may have committed with no id) count against the budget, are never
+// sent to X for reconciliation, and are released only when their hold expires.
+func TestTwitterAudienceGuard_AnonymousJobsOnlyExpire(t *testing.T) {
+	clock := &guardClock{t: guardNow()}
+	g := newTwitterAudienceGuard()
+	failAnon := func(context.Context) (*twitter.AudienceInsights, error) {
+		return nil, &twitter.AudienceJobsAbandonedError{Unknown: 1, Err: errors.New("create x stats job: 503")}
+	}
+	for i := 0; i < 12; i++ {
+		if _, err := g.read(context.Background(), "acc1", "k"+strconv.Itoa(i), 1, clock.now, nil, failAnon); err == nil {
+			t.Fatal("expected the failure")
+		}
+	}
+	var asked atomic.Int32
+	running := func(_ context.Context, ids []string) ([]string, error) {
+		asked.Add(1)
+		return nil, nil // X would say nothing is running — but it cannot be asked about these
+	}
+	ok := func(context.Context) (*twitter.AudienceInsights, error) { return guardResult(), nil }
+	if _, err := g.read(context.Background(), "acc1", "next", 1, clock.now, running, ok); err == nil || !strings.Contains(err.Error(), "may still be running") {
+		t.Fatalf("err = %v, want the budget refusal", err)
+	}
+	if asked.Load() != 0 {
+		t.Errorf("X was asked %d time(s) about jobs with no id", asked.Load())
+	}
+	clock.set(clock.now().Add(twitterAudienceAbandonedJobHold))
+	if _, err := g.read(context.Background(), "acc1", "next", 1, clock.now, running, ok); err != nil {
+		t.Errorf("after the hold: %v", err)
+	}
+}
+
+// Reconciling named jobs must not drop the anonymous ones beside them: X says the six named jobs
+// finished, but six anonymous ones still count until their hold expires.
+func TestTwitterAudienceGuard_ReconciliationKeepsAnonymousJobs(t *testing.T) {
+	clock := &guardClock{t: guardNow()}
+	g := newTwitterAudienceGuard()
+	_, _ = g.read(context.Background(), "acc1", "a", 6, clock.now, nil, func(context.Context) (*twitter.AudienceInsights, error) {
+		return nil, &twitter.AudienceJobsAbandonedError{JobIDs: []string{"1", "2", "3", "4", "5", "6"}, Unknown: 6, Err: errors.New("unfinished")}
+	})
+	allDone := func(context.Context, []string) ([]string, error) { return nil, nil }
+	ok := func(context.Context) (*twitter.AudienceInsights, error) { return guardResult(), nil }
+	if _, err := g.read(context.Background(), "acc1", "b", 7, clock.now, allDone, ok); err == nil {
+		t.Error("6 anonymous jobs + 7 planned exceeds the budget of 12; the read must be refused")
+	}
+	if _, err := g.read(context.Background(), "acc1", "c", 6, clock.now, allDone, ok); err != nil {
+		t.Errorf("6 anonymous + 6 planned fits: %v", err)
+	}
+}

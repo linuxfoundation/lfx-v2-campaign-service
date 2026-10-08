@@ -1716,7 +1716,8 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"uses UTC days, so on a non-UTC account the two cover different instants and their totals are " +
 			"not directly comparable; longer windows are refused (400). Identical reads are shared and " +
 			"successful results reused for a few minutes, and at most one read per ad account runs at a " +
-			"time, because each read holds stats-job slots on an account shared across foundations. " +
+			"time, because each read holds stats-job slots on an account shared across foundations; these " +
+			"limits are per service process, and the deployment runs one replica while the flag is on. " +
 			"`all_counters_null` flags segment rows that carried no measurement. All three segmentations must load or " +
 			"the request fails (503). Billed charge is in the account's own currency (`account_currency`); " +
 			"no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) " +

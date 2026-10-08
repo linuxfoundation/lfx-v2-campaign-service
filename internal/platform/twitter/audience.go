@@ -200,27 +200,35 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 
 	jobs := make([]audienceJob, 0, nJobs)
 	seenJobs := make(map[string]struct{}, nJobs)
-	// abandoned reports a failure that leaves the jobs created so far running on X.
-	abandoned := func(err error) error {
-		if len(jobs) == 0 {
+	// abandoned reports a failure that leaves jobs running on X: the ones created so far, plus
+	// `unknown` creates that may have committed although X returned no usable id.
+	abandoned := func(err error, unknown int) error {
+		if len(jobs) == 0 && unknown == 0 {
 			return err
 		}
 		ids := make([]string, 0, len(jobs))
 		for _, j := range jobs {
 			ids = append(ids, j.id)
 		}
-		return &AudienceJobsAbandonedError{JobIDs: ids, Err: err}
+		return &AudienceJobsAbandonedError{JobIDs: ids, Unknown: unknown, Err: err}
 	}
 	for _, seg := range audienceSegmentations {
 		for _, batch := range batches {
-			id, jerr := c.createAudienceJob(ctx, batch, start, end, seg.segmentation, slots.at(len(jobs)))
+			id, maybeCreated, jerr := c.createAudienceJob(ctx, batch, start, end, seg.segmentation, slots.at(len(jobs)))
 			if jerr != nil {
-				// A failed create may itself have committed on X (an ambiguous 5xx or 429); its id
-				// is unknown, so only the jobs already confirmed are reported.
-				return nil, abandoned(fmt.Errorf("get x audience insights (%s): %w", seg.dimension, jerr))
+				// An AMBIGUOUS failed create (5xx, transport, a throttled POST, or a 2xx whose
+				// body named no usable job) may have committed on X with an id we never learn:
+				// it is charged as one unknown job. A definite 4xx rejection created nothing.
+				unknown := 0
+				if maybeCreated {
+					unknown = 1
+				}
+				return nil, abandoned(fmt.Errorf("get x audience insights (%s): %w", seg.dimension, jerr), unknown)
 			}
 			if _, dup := seenJobs[id]; dup {
-				return nil, abandoned(errors.New("get x audience insights: x returned the same stats job id for two jobs"))
+				// X accepted this create but answered with an id it already gave: the new job's
+				// real id is unknown.
+				return nil, abandoned(errors.New("get x audience insights: x returned the same stats job id for two jobs"), 1)
 			}
 			seenJobs[id] = struct{}{}
 			scope := make(map[string]struct{}, len(batch))
@@ -236,7 +244,7 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 		// Not every job reached SUCCESS (still building, failed, or unreadable): report them all
 		// as possibly running. A failed job no longer holds a slot, but RunningStatsJobs sorts
 		// that out on the caller's next check.
-		return nil, abandoned(fmt.Errorf("get x audience insights: %w", err))
+		return nil, abandoned(fmt.Errorf("get x audience insights: %w", err), 0)
 	}
 
 	fold := newAudienceFold()
@@ -257,12 +265,15 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window MetricsWindow, 
 
 // AudienceJobsAbandonedError wraps a GetAudienceInsights failure that left stats jobs on X which
 // this read will never collect: they keep running — each holding one of the account's 100
-// concurrent-job slots — until they finish or X expires them. JobIDs are the jobs X confirmed.
-// The caller (the dispatcher's guard) counts them against the account until RunningStatsJobs
-// reports them done. Unwrap keeps every sentinel in Err matchable.
+// concurrent-job slots — until they finish or X expires them. JobIDs are the jobs X confirmed;
+// Unknown counts creates that may have committed although no usable id came back (an ambiguous
+// POST failure, an unusable 2xx body, a repeated id). The caller (the dispatcher's guard) counts
+// JobIDs until RunningStatsJobs reports them done, and Unknown ones until its hold expires — they
+// cannot be asked about. Unwrap keeps every sentinel in Err matchable.
 type AudienceJobsAbandonedError struct {
-	JobIDs []string
-	Err    error
+	JobIDs  []string
+	Unknown int
+	Err     error
 }
 
 func (e *AudienceJobsAbandonedError) Error() string { return e.Err.Error() }
@@ -451,26 +462,29 @@ func (c *Client) readAudienceAccount(ctx context.Context) (*time.Location, strin
 }
 
 // createAudienceJob creates one segmented stats job and returns its id_str, refusing a response
-// identityjson would not trust.
-func (c *Client) createAudienceJob(ctx context.Context, campaignIDs []string, start, end time.Time, segmentation string, slot time.Time) (string, error) {
+// identityjson would not trust. On failure, maybeCreated reports whether X may nonetheless have
+// created the job: an ambiguous POST failure (createOutcomeAmbiguous: transport, 5xx, a throttled
+// or redirected POST) or ANY 2xx whose body this read cannot use — X answered success, so a job
+// exists even though its id is unknown. A definite 4xx rejection or a pre-send failure is false.
+func (c *Client) createAudienceJob(ctx context.Context, campaignIDs []string, start, end time.Time, segmentation string, slot time.Time) (id string, maybeCreated bool, err error) {
 	resp, err := c.postStatsJob(ctx, campaignIDs, start, end, segmentation, slot)
 	if err != nil {
-		return "", err
+		return "", createOutcomeAmbiguous(err), err
 	}
 	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
-		return "", errors.New("create x stats job: response carried no job object")
+		return "", true, errors.New("create x stats job: response carried no job object")
 	}
 	if err := identityjson.Check(resp.raw); err != nil {
-		return "", fmt.Errorf("create x stats job: %w", err)
+		return "", true, fmt.Errorf("create x stats job: %w", err)
 	}
 	var job statsJobElement
 	if json.Unmarshal(resp.Data, &job) != nil {
-		return "", errors.New("create x stats job: response carried no job object")
+		return "", true, errors.New("create x stats job: response carried no job object")
 	}
 	if !validStatsJobID(job.IDStr) {
-		return "", errors.New("create x stats job: response carried no usable id_str")
+		return "", true, errors.New("create x stats job: response carried no usable id_str")
 	}
-	return job.IDStr, nil
+	return job.IDStr, false, nil
 }
 
 // awaitAudienceJobs reads every job's status with ONE request per poll (job_ids, "up to 200",
