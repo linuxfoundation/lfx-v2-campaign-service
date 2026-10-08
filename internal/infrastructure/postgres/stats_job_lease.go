@@ -100,6 +100,8 @@ type StatsJobLease struct {
 
 	// connectTimeout bounds opening conn (statsJobLeaseConnectTimeout; shortened by tests).
 	connectTimeout time.Duration
+	// beforeRelease, nil outside tests, runs between Own's last check and releaseSlot.
+	beforeRelease func()
 	// lockSQL is the try-lock statement (statsJobLeaseLockSQL). A field only so an in-package
 	// test can make it fail AFTER the lock is granted.
 	lockSQL string
@@ -157,14 +159,22 @@ func (l *StatsJobLease) acquireSlot(ctx context.Context) error {
 }
 
 // releaseSlot hands the slot back. If the lease was closed while the slot was held, the holder
-// closes the session on its way out — Close may have given up waiting for the slot.
-func (l *StatsJobLease) releaseSlot() {
-	if l.closed.Load() && l.conn != nil {
-		closeCtx, cancel := context.WithTimeout(context.Background(), statsJobLeasePingTimeout)
-		l.closeSession(closeCtx, closeCtx)
-		cancel()
+// closes the session on its way out — Close may have given up waiting for the slot. It reports
+// whether it did, so Own can refuse ownership on the SAME reading of closed that decided the
+// session's fate: a success can never be returned for a session this call itself closed. (If
+// Close begins after that reading, Close closes the session once it gets the slot — after Own has
+// returned, which is ordinary shutdown of an already-admitted request.)
+func (l *StatsJobLease) releaseSlot() (closedSession bool) {
+	if l.closed.Load() {
+		closedSession = true
+		if l.conn != nil {
+			closeCtx, cancel := context.WithTimeout(context.Background(), statsJobLeasePingTimeout)
+			l.closeSession(closeCtx, closeCtx)
+			cancel()
+		}
 	}
 	<-l.sem
+	return closedSession
 }
 
 // dbCtx is a context for one database step: detached from the request, cancelled by Close, and
@@ -176,7 +186,7 @@ func (l *StatsJobLease) dbCtx(d time.Duration) (context.Context, context.CancelF
 // Own implements domain.StatsJobLease. Only a lock Postgres reports as held elsewhere is
 // ErrStatsJobLeaseNotHeld; everything else that prevents establishing ownership is
 // ErrStatsJobLeaseUnavailable.
-func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
+func (l *StatsJobLease) Own(ctx context.Context, accountID string) (err error) {
 	if l == nil || l.pool == nil || l.pool.Pool == nil {
 		return fmt.Errorf("%w: no database to hold the lease on", domain.ErrStatsJobLeaseUnavailable)
 	}
@@ -186,7 +196,14 @@ func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 	if err := l.acquireSlot(ctx); err != nil {
 		return unavailable(err)
 	}
-	defer l.releaseSlot()
+	defer func() {
+		if l.beforeRelease != nil {
+			l.beforeRelease() // test hook: the gap between admit and releaseSlot
+		}
+		if l.releaseSlot() && err == nil {
+			err = unavailable(errLeaseClosed)
+		}
+	}()
 	// A request that has already ended does no database work at all: no ping, no lock. Every
 	// lease is kept.
 	if cerr := ctx.Err(); cerr != nil {
@@ -238,13 +255,13 @@ func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 	// ever release a lock this attempt itself may have taken.
 	lockCtx, cancel := l.dbCtx(statsJobLeasePingTimeout)
 	var acquired bool
-	err := l.conn.QueryRow(lockCtx, l.lockSQL, statsJobLeaseClass, key).Scan(&acquired)
+	lockErr := l.conn.QueryRow(lockCtx, l.lockSQL, statsJobLeaseClass, key).Scan(&acquired)
 	cancel()
-	if err != nil {
+	if lockErr != nil {
 		if l.closed.Load() {
 			return unavailable(errLeaseClosed) // closing the session drops whatever was granted
 		}
-		return l.recoverFailedLock(ctx, key, err)
+		return l.recoverFailedLock(ctx, key, lockErr)
 	}
 	if !acquired {
 		// Postgres answered "held elsewhere". The ONLY ErrStatsJobLeaseNotHeld.

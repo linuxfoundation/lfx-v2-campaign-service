@@ -72,4 +72,7 @@
 - Both success paths of `Own` (an already-held key, a newly taken lock) now end in `admit`, which
   refuses ownership if the request ended during the detached database steps or `Close` began
   meanwhile. A newly taken lock stays tracked so it is not orphaned.
+- `Close` beginning after `admit` but before the slot is released could still leave `Own`
+  reporting success for a session `releaseSlot` then closed. `releaseSlot` now reports whether it
+  closed the session, and `Own` refuses on that same reading of `closed`.
 - Tests for each; each fails with its fix reverted.

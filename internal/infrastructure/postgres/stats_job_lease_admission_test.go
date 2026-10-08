@@ -236,3 +236,19 @@ func TestLiveStatsJobLease_NewLockIsNotAdmittedAfterTheRequestEnds(t *testing.T)
 		t.Errorf("Own on a live request: %v, want owned with no lock call", err)
 	}
 }
+
+// Close can begin AFTER admit's check but before the slot is released; releaseSlot then closes the
+// session, so Own must not report success for it. The result and the session's fate are decided
+// on one reading of closed.
+func TestStatsJobLease_CloseBetweenAdmitAndReleaseIsRefused(t *testing.T) {
+	lease, _, closes := stubbedLease(t)
+	lease.heldKeys[lease.key("acc")] = true
+	lease.beforeRelease = func() { lease.closed.Store(true) }
+	err := lease.Own(context.Background(), "acc")
+	if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) || !errors.Is(err, errLeaseClosed) {
+		t.Fatalf("err = %v, want Unavailable wrapping errLeaseClosed", err)
+	}
+	if closes.Load() != 1 || lease.conn != nil {
+		t.Errorf("closes = %d, conn nil = %v; want the session closed once", closes.Load(), lease.conn == nil)
+	}
+}
