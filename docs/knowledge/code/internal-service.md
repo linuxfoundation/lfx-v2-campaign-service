@@ -137,7 +137,9 @@ claim targets its own slot version and gets the skip / reconciliation-required a
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
 reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
 three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
-platform result is a plain "not available yet" refusal; nothing is created. `CreateCampaigns`
+platform result is a plain "not available yet" refusal; nothing is created. That index is
+dropped one release after the per-slot adopt/claim lock ships (see the postgres concept), so an
+image-only rollback never returns to a lock-free binary on a schema without it. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
 `model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
 campaigns by a name that does not yet vary by slot version (see the dispatch concept).
@@ -145,8 +147,9 @@ campaigns by a name that does not yet vary by slot version (see the dispatch con
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT
 DO NOTHING of a `pending` campaign row, so exactly one worker across replicas
-wins the claim (the unique index arbitrates) with no held connection or blocking
-lock. A worker that loses the claim reuses the existing row instead of dispatching
+wins the claim (the unique index arbitrates); the INSERT runs in a short transaction under a
+per-slot advisory lock that `AdoptCampaign` also takes, so an adopt never lands beside a
+claimed row, and nothing is held once it commits. A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
 orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on

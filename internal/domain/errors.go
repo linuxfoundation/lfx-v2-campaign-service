@@ -1196,8 +1196,11 @@ var (
 	// ErrSlotVersionUnavailable indicates a request for ANOTHER campaign on a slot that
 	// already has one could not be claimed because the schema still enforces one live
 	// campaign per (brief, platform, variant). Migration 000037 adds the per-slot-version
-	// index alongside the old one, and the old one is dropped a release later (expand/
-	// contract); until then this is the expected answer to new_version, not a fault.
+	// index alongside the old one. The old one is NOT dropped the release after 000037: the
+	// per-slot adopt/claim lock ships first, in its own release, and the drop (a later contract
+	// migration) ships one release AFTER that lock, so an image-only rollback never runs a
+	// lock-free binary without the old index (expand → lock → contract). Until that drop this
+	// is the expected answer to new_version, not a fault.
 	// Nothing was created upstream.
 	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
 

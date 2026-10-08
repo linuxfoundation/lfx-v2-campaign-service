@@ -180,13 +180,62 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   stays for one release (expand/contract), and while it does a claim for `slot_version` 2
   violates it — not the arbiter, so `DO NOTHING` does not apply — and `ClaimCampaignDispatch`
   classifies that `23505` as `domain.ErrSlotVersionUnavailable` — for slot versions above 1
-  only. Postgres pre-checks only the arbiter, so CONCURRENT slot-1 claims can all pass it and
-  the losers then hit `23505` on the legacy index; at slot 1 that is a lost race and is answered
-  like the arbiter conflict (not claimed, winner's row), pinned live by
+  only. Postgres pre-checks only the arbiter, so CONCURRENT slot-1 claims that do not hold the
+  slot lock (a previous binary's, during a rollout) can all pass it and the losers then hit
+  `23505` on the legacy index; at slot 1 that is a lost race and is answered like the arbiter
+  conflict (not claimed, winner's row), pinned live by
   `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`. `AdoptCampaign` classifies `23505` by
   index name for the same reason: the legacy slot index means `ErrConflict`, only
   `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
-  `requiredIndexes` until the follow-up release drops the narrower one.
+  `requiredIndexes` until the index-drop release removes the narrower one.
+
+  **Per-slot advisory lock, staged one release BEFORE the index drop.** Once the three-column
+  index is gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
+  writes `slot_version` 1, so its `ON CONFLICT` arm cannot see a live version 2, and an adopt
+  racing a `new_version` claim would conflict on no index. So `ClaimCampaignDispatch` (now a
+  short transaction), `UpsertCampaign` and `AdoptCampaign` each take
+  `pg_advisory_xact_lock(<'slot' namespace>, hashtext(brief_id::uuid::text|platform|variant))`
+  before writing, and `AdoptCampaign` then checks for ANY live row on the slot
+  (`slotLiveRowExistsQuery`) and returns `ErrConflict` if one exists. The lock is held to
+  COMMIT and READ COMMITTED takes a fresh snapshot per statement, so the adopt's check sees
+  everything an earlier holder wrote. Adopt takes the slot lock BEFORE its brief `FOR UPDATE`:
+  the claim's INSERT takes `FOR KEY SHARE` on the brief through the FK, and the reverse order
+  deadlocks (Postgres aborts one with `40P01` — observed live when the adopt took the slot lock
+  AFTER its brief `FOR UPDATE`; with no adopt lock at all there is no wait edge and no cycle,
+  only the unserialized race the lock exists to close).
+  The two-int lock form keeps these keys out of the bigint space `hashCampaignID`'s session
+  locks use; a hash collision between two slots only serializes them. Nothing does platform I/O
+  under the lock.
+
+  The comments inside migrations `000036` and `000037` still say the old index is dropped "a
+  release later". That timeline is superseded by the staging below; the files are applied (shipped
+  in v1.0.17) and the migrations README forbids editing an applied migration, so they are left
+  as written and this concept, with `domain.ErrSlotVersionUnavailable`'s comment, is the
+  authority.
+
+  The lock ships FIRST and the index drop (the contract migration, plus removing
+  `uq_campaigns_brief_platform_variant_live` from `requiredIndexes`, plus retiring
+  `ErrSlotVersionUnavailable` and the legacy-index `23505` handling) ships **one release after
+  this lock is deployed**. That ordering is what makes an image-only rollback safe: reverting the
+  image does not revert the schema (see the deployment concept), and the binary before this one
+  takes no slot lock — so if the drop shipped alongside the lock, a rollback would leave that
+  lock-free binary's adopt preflight free to race a slot-2 claim and bind slot 1 beside it. With
+  the drop a release later, every binary that can run against the contracted schema, including
+  the one a rollback returns to, already takes the lock; and rolling back THIS release leaves the
+  three-column index in place, which enforces the empty-slot rule by itself. Until the drop, the
+  lock is redundant with that index for correctness, which is why it can ship alone. Residual,
+  by design, once the index is gone: an adopt that commits FIRST on a slot whose only campaign
+  was just deleted, followed by a `new_version` claim computed from the pre-delete read, leaves
+  the adopted version 1 plus version 2 — ordered, distinct versions, which is what
+  `new_version` asks for. Pinned live (against the schema this release ships, with the legacy
+  index present) by `TestLiveSlotVersionDuringExpandPhase`,
+  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`,
+  `TestLiveConcurrentNewVersionClaimsHaveOneWinner` (catches a missing lock, race-dependently:
+  unserialized, a loser can hit the legacy index and return `ErrSlotVersionUnavailable`),
+  `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
+  `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` and
+  `TestLiveClaimAndAdoptWaitForTheSlotLock` (deterministic: with the adopt's lock removed the
+  adopt inserts slot 1 while the lock is held and the test fails).
 
   `max_cpc_bid` (added by `000039`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
   max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like

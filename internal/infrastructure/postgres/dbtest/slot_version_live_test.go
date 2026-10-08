@@ -6,16 +6,73 @@ package dbtest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
 )
+
+// liveSlotLockSQL is the repo's lockCampaignSlotQuery with its namespace argument inlined,
+// copied rather than imported (the constant is unexported, and this package tests the
+// migrated schema from outside). A drift between the two fails
+// TestLiveClaimAndAdoptWaitForTheSlotLock — the repo would then take a DIFFERENT lock from
+// the one this test holds, and the "must block" assertions would see it run straight through.
+const liveSlotLockSQL = `SELECT pg_advisory_xact_lock(1936486260::int4,
+	hashtext($1::uuid::text || '|' || $2::text || '|' || $3::text))`
+
+// countLive returns the number of live campaign rows on one (brief, platform, variant) slot.
+func countLive(ctx context.Context, t *testing.T, pool *pgxpool.Pool, briefID string, p model.Provider, variant string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status <> 'deleted'`,
+		briefID, string(p), variant).Scan(&n); err != nil {
+		t.Fatalf("count live rows: %v", err)
+	}
+	return n
+}
+
+// createSlotVersion claims and completes one slot version through the real repo methods, the
+// way dispatchPlatform does, and returns the completed row.
+func createSlotVersion(ctx context.Context, t *testing.T, repo *postgres.CampaignRepo, project, briefID string, p model.Provider, slotVersion int) *model.Campaign {
+	t.Helper()
+	jobID := uuid.NewString()
+	claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, slotVersion, jobID, nil)
+	if err != nil {
+		t.Fatalf("claim slot %d: %v", slotVersion, err)
+	}
+	if !claimed {
+		t.Fatalf("claim slot %d: not claimed", slotVersion)
+	}
+	created, err := repo.UpsertCampaign(ctx, &model.Campaign{
+		ProjectID: project, BriefID: briefID, JobID: &jobID,
+		Platform: p, Variant: model.VariantDefault, SlotVersion: slotVersion,
+		CampaignName: dbtest.UniqueID(t, "campaign"), Status: model.CampaignStatusCreated,
+		PlatformCampaignID: dbtest.UniqueID(t, "upstream"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("upsert slot %d: %v", slotVersion, err)
+	}
+	return created
+}
+
+func adoptInto(ctx context.Context, t *testing.T, repo *postgres.CampaignRepo, project, briefID string, p model.Provider) (*model.Campaign, error) {
+	t.Helper()
+	return repo.AdoptCampaign(ctx, &model.Campaign{
+		ProjectID: project, BriefID: briefID, Platform: p, Variant: model.VariantDefault,
+		PlatformCampaignID: dbtest.UniqueID(t, "adopted"),
+		CampaignName:       dbtest.UniqueID(t, "campaign"),
+		Status:             model.CampaignStatusCreated,
+	}, 1, nil)
+}
 
 // TestLiveSlotVersionDuringExpandPhase drives the real claim/upsert/read methods against the
 // schema this release ships: 000037's four-column index AND 000022's three-column one.
@@ -96,19 +153,30 @@ func TestLiveSlotVersionDuringExpandPhase(t *testing.T) {
 	}
 }
 
-// TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError pins the race the expand phase opened.
-// The claim names the four-column index as its arbiter, and Postgres pre-checks only the arbiter,
-// so concurrent slot-1 claims can all pass it; every loser then hits 23505 on 000022's legacy
-// index once the winner commits. That must read as a lost claim (the winner's row), not as
-// ErrSlotVersionUnavailable: a double-submitted first create is a skip or a reuse, never a
-// "not available yet" failure.
+// TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError pins the first-create race. A
+// double-submitted first create is a skip or a reuse, never an error: exactly one claim wins
+// and every other one gets the winner's row. With the claims serialized by the slot lock, the
+// losers see the winner's committed row and conflict on the arbiter (DO NOTHING). Without the
+// lock (a previous binary's claim during a rollout) a loser can instead hit 23505 on 000022's
+// index, which ClaimCampaignDispatch still classifies as a lost claim for exactly that case.
 func TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
 	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
 	briefID, project := insertApprovedBrief(ctx, t, pool)
 
-	const n = 16
+	winners, errs := raceClaims(ctx, repo, project, briefID, model.ProviderMicrosoftAds, model.FirstSlotVersion, 16)
+	if winners != 1 {
+		t.Errorf("winners = %d, want exactly 1", winners)
+	}
+	if len(errs) > 0 {
+		t.Errorf("%d concurrent slot-1 claims errored, want 0; first: %v", len(errs), errs[0])
+	}
+}
+
+// raceClaims fires n concurrent claims of one slot version and returns how many won, plus
+// every error — a lost claim that came back without that slot version's row counts as one.
+func raceClaims(ctx context.Context, repo *postgres.CampaignRepo, project, briefID string, p model.Provider, slotVersion, n int) (int, []error) {
 	var (
 		wg      sync.WaitGroup
 		mu      sync.Mutex
@@ -121,8 +189,8 @@ func TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			claimed, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderMicrosoftAds,
-				model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil)
+			claimed, row, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p,
+				model.VariantDefault, slotVersion, uuid.NewString(), nil)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -130,18 +198,326 @@ func TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError(t *testing.T) {
 				errs = append(errs, err)
 			case claimed:
 				winners++
-			case row == nil || row.SlotVersion != model.FirstSlotVersion:
-				errs = append(errs, errors.New("lost claim returned no slot-1 row"))
+			case row == nil || row.SlotVersion != slotVersion:
+				errs = append(errs, fmt.Errorf("lost claim returned no slot-%d row", slotVersion))
 			}
 		}()
 	}
 	close(start)
 	wg.Wait()
+	return winners, errs
+}
 
+// TestLiveConcurrentNewVersionClaimsHaveOneWinner races claims that computed the SAME next
+// version (a double-submitted form) on a slot whose slot-1 campaign was deleted, so 000022's
+// three-column index — still in place this release — admits slot 2. One must win, the others
+// get the winner's row, and nothing errors: the orchestrator reports them as skipped or
+// reused, so the form makes one campaign, not two.
+//
+// It catches a missing slot lock while 000022's index exists (race-dependent, not
+// deterministic — TestLiveClaimAndAdoptWaitForTheSlotLock is the deterministic pin; with the
+// claim's lock removed this failed in one of three runs). Unserialized, a loser can pass
+// the arbiter pre-check, then wait on the winner's entry in the legacy index and get 23505
+// there — which above slot 1 ClaimCampaignDispatch reports as ErrSlotVersionUnavailable.
+// Serialized, each loser runs after the winner committed and conflicts on the arbiter instead.
+//
+// The distinct-version race (slots 3..8 claimed concurrently, each exactly once) needs the
+// contracted schema and ships with the index drop, one release after this lock.
+func TestLiveConcurrentNewVersionClaimsHaveOneWinner(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	first := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status='deleted' WHERE id=$1`, first.ID); err != nil {
+		t.Fatalf("soft-delete slot 1: %v", err)
+	}
+
+	winners, errs := raceClaims(ctx, repo, project, briefID, p, 2, 16)
 	if winners != 1 {
-		t.Errorf("winners = %d, want exactly 1", winners)
+		t.Errorf("same-version race: winners = %d, want exactly 1", winners)
 	}
 	if len(errs) > 0 {
-		t.Errorf("%d of %d concurrent slot-1 claims errored, want 0; first: %v", len(errs), n, errs[0])
+		t.Errorf("same-version race: %d claims errored, want 0; first: %v", len(errs), errs[0])
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Errorf("live rows on the slot = %d, want 1", live)
+	}
+}
+
+// TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow races a first-create claim against an adopt
+// of the same empty slot, many times over. Whichever lands first, the slot must end with
+// exactly ONE live row: either the claim won and the adopt is a 409 (ErrConflict), or the adopt
+// won and the claim lost, handing back the adopted row. Never both, never an error other
+// than that 409.
+func TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	p := model.ProviderMicrosoftAds
+
+	for i := 0; i < 20; i++ {
+		briefID, project := insertApprovedBrief(ctx, t, pool)
+		var (
+			wg       sync.WaitGroup
+			claimed  bool
+			claimRow *model.Campaign
+			claimErr error
+			adopted  *model.Campaign
+			adoptErr error
+			start    = make(chan struct{})
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			claimed, claimRow, claimErr = repo.ClaimCampaignDispatch(ctx, project, briefID, p,
+				model.VariantDefault, model.FirstSlotVersion, uuid.NewString(), nil)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			adopted, adoptErr = adoptInto(ctx, t, repo, project, briefID, p)
+		}()
+		close(start)
+		wg.Wait()
+
+		if claimErr != nil {
+			t.Fatalf("round %d: claim errored: %v", i, claimErr)
+		}
+		switch {
+		case claimed:
+			if !errors.Is(adoptErr, domain.ErrConflict) {
+				t.Fatalf("round %d: claim won but adopt returned (%v, %v), want ErrConflict", i, adopted, adoptErr)
+			}
+		default:
+			if adoptErr != nil {
+				t.Fatalf("round %d: claim lost but adopt failed too: %v", i, adoptErr)
+			}
+			if claimRow == nil || claimRow.ID != adopted.ID {
+				t.Fatalf("round %d: lost claim returned %v, want the adopted row %s", i, claimRow, adopted.ID)
+			}
+		}
+		if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+			t.Fatalf("round %d: live rows on the slot = %d, want exactly 1", i, live)
+		}
+	}
+}
+
+// TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion is the hole dropping 000022's
+// index would open without the adopt's occupancy check. Adopt always writes slot_version 1, so
+// its ON CONFLICT arm only sees a live slot-1 row; once 000022's index is gone, a slot whose
+// slot-1 campaign was deleted but whose slot-2 campaign is live would accept the adopt BESIDE
+// it. Adopt binds only an empty slot, so it must be a 409 and write nothing.
+//
+// While 000022's index exists (this release) it refuses the adopt too, so the test pins the
+// OUTCOME here, not which guard produced it; the index-drop release is where it becomes
+// binding on the occupancy check alone.
+func TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	// Slot 1 is deleted BEFORE slot 2 is claimed: 000022's index admits one live row per slot.
+	first := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status='deleted' WHERE id=$1`, first.ID); err != nil {
+		t.Fatalf("soft-delete slot 1: %v", err)
+	}
+	createSlotVersion(ctx, t, repo, project, briefID, p, 2)
+
+	if _, err := adoptInto(ctx, t, repo, project, briefID, p); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("adopt onto a slot holding a live slot-2 campaign: err=%v, want ErrConflict", err)
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live rows on the slot = %d, want 1: the refused adopt must write nothing", live)
+	}
+}
+
+// TestLiveClaimAndAdoptWaitForTheSlotLock pins the serialization itself, deterministically,
+// rather than hoping a race lands in the window.
+//
+// The test plays a claim of slot 2 that holds the slot lock, as insertDispatchClaim does, but
+// has NOT inserted anything yet. That ordering is the point: an INSERT would take FOR KEY SHARE
+// on the brief through the foreign key, which blocks the adopt's FOR UPDATE on its own and
+// would make the adopt wait even with no slot lock at all. With only the advisory lock held,
+// nothing but the slot lock can stop the adopt — without it the adopt finds the slot empty and
+// inserts slot 1 straight away, failing the "still blocked" assertion. Then the "claim"
+// inserts its slot-2 row and commits, and the adopt must see that row and answer 409. A real
+// claim of the same slot version must wait for the lock too, and then find the committed row:
+// not claimed, no error.
+func TestLiveClaimAndAdoptWaitForTheSlotLock(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, liveSlotLockSQL, briefID, string(p), model.VariantDefault); err != nil {
+		t.Fatalf("take the slot lock: %v", err)
+	}
+	var holderPID int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holderPID); err != nil {
+		t.Fatalf("read the lock holder's backend pid: %v", err)
+	}
+
+	adoptDone := make(chan error, 1)
+	go func() {
+		_, aerr := adoptInto(ctx, t, repo, project, briefID, p)
+		adoptDone <- aerr
+	}()
+	type claimResult struct {
+		claimed bool
+		err     error
+	}
+	claimDone := make(chan claimResult, 1)
+	go func() {
+		c, _, cerr := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, uuid.NewString(), nil)
+		claimDone <- claimResult{c, cerr}
+	}()
+
+	// Positive evidence, not a timeout: PostgreSQL must show BOTH workers waiting on the lock
+	// holder's backend. A timeout alone passes when a goroutine is merely slow to reach the
+	// database — and once the holder commits, the remaining assertions pass without any lock.
+	waitForBackendsBlockedBy(ctx, t, pool, holderPID, 2, func() string {
+		select {
+		case aerr := <-adoptDone:
+			return fmt.Sprintf("adopt finished (%v) while the slot lock was held; it must wait for it", aerr)
+		case r := <-claimDone:
+			return fmt.Sprintf("claim finished (%+v) while the slot lock was held; it must wait for it", r)
+		default:
+			return ""
+		}
+	})
+
+	// Only now does the "claim" write its row — the adopt and the real claim are parked on the
+	// slot lock, so this INSERT's FK lock on the brief contends with nobody.
+	if _, err := tx.Exec(ctx, `INSERT INTO campaigns
+		(project_id, brief_id, platform, variant, slot_version, campaign_name, status)
+		VALUES ($1, $2, $3, $4, 2, '', 'pending')`, project, briefID, string(p), model.VariantDefault); err != nil {
+		t.Fatalf("insert the slot-2 claim: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit the slot-2 claim: %v", err)
+	}
+
+	select {
+	case aerr := <-adoptDone:
+		if !errors.Is(aerr, domain.ErrConflict) {
+			t.Fatalf("adopt after the slot-2 claim committed: err=%v, want ErrConflict", aerr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("adopt still blocked after the lock was released")
+	}
+	select {
+	case r := <-claimDone:
+		if r.err != nil || r.claimed {
+			t.Fatalf("slot-2 claim after the lock was released: claimed=%v err=%v, want the committed "+
+				"row handed back (not claimed, no error)", r.claimed, r.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("claim still blocked after the lock was released")
+	}
+
+	// Only the committed slot-2 "claim"; no adopted slot 1 and no second slot-2 row.
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live rows on the slot = %d, want 1 (the slot-2 claim, and no adopted slot 1)", live)
+	}
+}
+
+// TestLiveUpsertWaitsForTheSlotLock pins the third writer the per-slot lock serializes: the
+// INSERT arm of UpsertCampaign can create a live row for an empty slot, so it must wait for a
+// held slot lock exactly as a claim and an adopt do. Like the test above, the lock is held with
+// nothing inserted, so the slot lock is the only thing that can stop the upsert; removing the
+// lockCampaignSlot call from UpsertCampaign makes it finish while the lock is held.
+func TestLiveUpsertWaitsForTheSlotLock(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, liveSlotLockSQL, briefID, string(p), model.VariantDefault); err != nil {
+		t.Fatalf("take the slot lock: %v", err)
+	}
+	var holderPID int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&holderPID); err != nil {
+		t.Fatalf("read the lock holder's backend pid: %v", err)
+	}
+
+	upsertDone := make(chan error, 1)
+	go func() {
+		_, uerr := repo.UpsertCampaign(ctx, &model.Campaign{
+			ProjectID: project, BriefID: briefID,
+			Platform: p, Variant: model.VariantDefault, SlotVersion: 1,
+			CampaignName: dbtest.UniqueID(t, "campaign"), Status: model.CampaignStatusCreated,
+			PlatformCampaignID: dbtest.UniqueID(t, "upstream"),
+		}, nil)
+		upsertDone <- uerr
+	}()
+
+	waitForBackendsBlockedBy(ctx, t, pool, holderPID, 1, func() string {
+		select {
+		case uerr := <-upsertDone:
+			return fmt.Sprintf("upsert finished (%v) while the slot lock was held; it must wait for it", uerr)
+		default:
+			return ""
+		}
+	})
+
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("release the slot lock: %v", err)
+	}
+	select {
+	case uerr := <-upsertDone:
+		if uerr != nil {
+			t.Fatalf("upsert after the lock was released: %v", uerr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("upsert still blocked after the lock was released")
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live rows on the slot = %d, want 1 (the upserted row)", live)
+	}
+}
+
+// waitForBackendsBlockedBy blocks until PostgreSQL reports at least want backends waiting on the
+// lock holder's backend (pg_blocking_pids), the positive evidence that the calls under test reached
+// the database and are parked on the lock. finished reports a call that returned while the lock was
+// held — the specific defect, reported as such rather than as a timeout — or "" while none has.
+func waitForBackendsBlockedBy(ctx context.Context, t *testing.T, pool *pgxpool.Pool, holderPID, want int, finished func() string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if msg := finished(); msg != "" {
+			t.Fatal(msg)
+		}
+		var blocked int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE $1 = ANY(pg_blocking_pids(pid))`, holderPID).Scan(&blocked); err != nil {
+			t.Fatalf("inspect pg_stat_activity for backends blocked on the slot lock: %v", err)
+		}
+		if blocked >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d backend(s) blocked on the slot-lock holder, want %d: the calls under test "+
+				"are not waiting on the per-slot advisory lock", blocked, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -1520,10 +1520,11 @@ func dispatchOutcomeFor(res platformResult) string {
 
 // dispatchPlatform creates (or reuses) the campaign for a single platform.
 // Single-flight is enforced by an atomic claim row (ClaimCampaignDispatch:
-// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING) — no held connection,
-// no blocking lock — so two concurrent create-campaigns for the same pair cannot
-// both create an upstream campaign: exactly one wins the claim (the unique index
-// arbitrates); the other reuses the existing row or, if it's still pending, is
+// INSERT ... ON CONFLICT (brief_id, platform, variant, slot_version) ... DO NOTHING, in a
+// short transaction under the per-slot advisory lock, which waits only for local statements
+// on the same slot and holds nothing after commit) — so two concurrent create-campaigns for
+// the same slot version cannot both create an upstream campaign: exactly one wins the claim
+// (the unique index arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
 
@@ -1736,14 +1737,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		return res
 	}
 
-	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
-	// platform). Exactly one worker across all replicas wins (the unique index
-	// arbitrates) — no held connection, no blocking lock.
+	// Single-flight claim: atomically insert a 'pending' placeholder for this slot version
+	// of (brief, platform, variant). Exactly one worker across all replicas wins (the unique
+	// index arbitrates). The INSERT runs in a short transaction under the per-slot advisory
+	// lock — it waits only for local statements on the same slot, and nothing is held once
+	// it commits, so no connection is held across the platform call below.
 	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
 	if errors.Is(err, domain.ErrSlotVersionUnavailable) {
-		// Expected until the release after 000037 drops the old one-campaign-per-slot index,
-		// which still rejects the second campaign. Nothing was written or created, so this
-		// is a plain refusal rather than a fault.
+		// Expected until the release after this one drops 000022's one-campaign-per-slot
+		// index, which still rejects the second campaign. That drop is staged one release
+		// after the per-slot lock ships, so an image-only rollback to the previous binary
+		// (which takes no slot lock) still finds the index in place. Nothing was written or
+		// created, so this is a plain refusal rather than a fault.
 		slog.WarnContext(ctx, "new campaign version refused: the schema still allows one live campaign per slot",
 			"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "slot_version", slotVersion)
 		res.Error = "creating another campaign on this platform for the same brief is not available yet"
