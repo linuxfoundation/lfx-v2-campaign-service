@@ -1879,13 +1879,20 @@ soft-delete table) and `TestListRecentProjectPlatformCampaigns_Live` (`TEST_DATA
 account, `pg_try_advisory_lock(statsJobLeaseClass, fnv32a(account))` — the two-int form, a key
 space separate from `ClaimCampaignVersion`'s one-bigint locks — held on a DEDICATED pooled
 connection for as long as the process owns the account. No migration. `Own` re-verifies a held
-lease by pinging its connection on every call; a failed ping means the session (and lock) may be
-gone, so the connection is destroyed and the lock tried afresh — typically lost to the pod that
+lease by pinging its connection on every call, on a DETACHED context with its own 2s timeout so a
+cancelled or expired request cannot make a healthy session look dead; a failed ping on a request
+that has already ended keeps the lease and refuses only that request
+(`ErrStatsJobLeaseUnavailable`). A failed ping with a live caller means the session (and lock) may
+be gone, so the connection is destroyed and the lock tried afresh — typically lost to the pod that
 took it, so new submissions stop at the first call after a loss (admission control, not fencing:
 a submission already admitted is not recalled). Try, never wait. A failed lock query destroys the
-connection (the lock may have been granted server-side). `Close` unlocks and returns every held
+connection (the lock may have been granted server-side). Only a lock Postgres reports as held
+elsewhere is `ErrStatsJobLeaseNotHeld`; no database, a failed acquire or lock query, an ended
+request or a closed lease are `ErrStatsJobLeaseUnavailable` (same 503, its own fixed text, so
+an operator is not told another pod owns the jobs). `Close` unlocks and returns every held
 connection and is called by `Container.Close` BEFORE `pool.Close`, which would otherwise block on
 them. Cost: one pooled connection per owned account. `StatsJobLeaseLockKeys` exposes the keys as
 they appear in `pg_locks` (`objsubid` 2). Live tests: `dbtest/stats_job_lease_live_test.go` (two
 leases cannot both own one account; Close hands it over; a terminated owner session lets another
-take it and the former owner refuses).
+take it and the former owner refuses; a cancelled or expired check keeps the lock in `pg_locks`
+and the next live check still owns it; no database is Unavailable).

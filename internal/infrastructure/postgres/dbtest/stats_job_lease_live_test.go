@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -63,7 +64,8 @@ func TestLiveStatsJobLease_OneOwnerPerAccountAndReleaseOnClose(t *testing.T) {
 	if err := b.Own(ctx, account); err != nil {
 		t.Errorf("b.Own after a closed: %v", err)
 	}
-	if err := a.Own(ctx, account); !errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
+	// A closed (shutting-down) lease refuses as Unavailable: nothing was asked of Postgres.
+	if err := a.Own(ctx, account); !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) {
 		t.Errorf("a closed lease must refuse: %v", err)
 	}
 }
@@ -95,5 +97,49 @@ func TestLiveStatsJobLease_SessionLossStopsTheFormerOwner(t *testing.T) {
 	}
 	if err := a.Own(ctx, account); !errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
 		t.Errorf("a.Own after losing its session: err = %v, want ErrStatsJobLeaseNotHeld", err)
+	}
+}
+
+// A check made on a request that has already ended (cancelled or past its deadline) must not
+// read as a lost session: the lease stays held in pg_locks, another instance still cannot take
+// it, and the next live check still owns it. Only that request is refused, as Unavailable.
+func TestLiveStatsJobLease_EndedRequestKeepsTheLease(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	account := dbtest.UniqueID(t, "xkeep")
+	a := postgres.NewStatsJobLease(&postgres.Pool{Pool: pool})
+	b := postgres.NewStatsJobLease(&postgres.Pool{Pool: pool})
+	t.Cleanup(func() { a.Close(ctx); b.Close(ctx) })
+
+	if err := a.Own(ctx, account); err != nil {
+		t.Fatalf("a.Own: %v", err)
+	}
+	pid := leaseHolderPID(ctx, t, pool, account)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	expired, cancel2 := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel2()
+	for name, dead := range map[string]context.Context{"cancelled": cancelled, "expired": expired} {
+		if err := a.Own(dead, account); !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) {
+			t.Errorf("%s: a.Own = %v, want ErrStatsJobLeaseUnavailable", name, err)
+		}
+		if got := leaseHolderPID(ctx, t, pool, account); got != pid {
+			t.Fatalf("%s: lease holder %d after the check, want %d (the lock was dropped)", name, got, pid)
+		}
+	}
+	if err := b.Own(ctx, account); !errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
+		t.Errorf("b.Own: %v, want ErrStatsJobLeaseNotHeld", err)
+	}
+	if err := a.Own(ctx, account); err != nil {
+		t.Errorf("a.Own with a live context: %v; the owner must still own it", err)
+	}
+}
+
+// A lease that cannot reach a database answers Unavailable, never "another instance owns it".
+func TestLiveStatsJobLease_NoDatabaseIsUnavailable(t *testing.T) {
+	l := postgres.NewStatsJobLease(&postgres.Pool{})
+	err := l.Own(context.Background(), "acc")
+	if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) || errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
+		t.Errorf("err = %v, want only ErrStatsJobLeaseUnavailable", err)
 	}
 }

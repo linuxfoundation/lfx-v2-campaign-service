@@ -15,6 +15,14 @@ import (
 // client-safe text: it reaches the HTTP body.
 var ErrStatsJobLeaseNotHeld = errors.New("another instance owns X stats jobs; retry")
 
+// ErrStatsJobLeaseUnavailable indicates this instance could not establish whether it owns the X
+// stats-job lease — the database could not be asked (no connection, a failed lock query, the
+// request ended mid-check) — so, as with ErrStatsJobLeaseNotHeld, it creates no stats jobs. It is
+// a separate sentinel because "another pod owns it" is false here and would misdirect an
+// operator. Same 503 everywhere; the wrapped detail is logged, never sent. The message is fixed,
+// client-safe text.
+var ErrStatsJobLeaseUnavailable = errors.New("coordination of X stats jobs is unavailable; retry")
+
 // StatsJobLease makes ONE process the owner of X stats-job creation per ad account, across pods.
 //
 // The X stats-job features' limits — the audience read's per-account outstanding-job budget,
@@ -25,8 +33,8 @@ var ErrStatsJobLeaseNotHeld = errors.New("another instance owns X stats jobs; re
 // this lease is the runtime guarantee.
 type StatsJobLease interface {
 	// Own returns nil when this process holds the lease for accountID — re-verifying a held lease
-	// is still alive, and trying to acquire it otherwise (never waiting). Any other outcome, a
-	// lease held elsewhere or a database that cannot answer, is an error wrapping
-	// ErrStatsJobLeaseNotHeld, and the caller must not create stats jobs.
+	// is still alive, and trying to acquire it otherwise (never waiting). A lease held elsewhere
+	// is ErrStatsJobLeaseNotHeld; a database (or request) that cannot answer is
+	// ErrStatsJobLeaseUnavailable. On either the caller must not create stats jobs.
 	Own(ctx context.Context, accountID string) error
 }

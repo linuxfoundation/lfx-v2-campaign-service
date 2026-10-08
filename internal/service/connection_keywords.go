@@ -120,6 +120,13 @@ func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projec
 		slog.WarnContext(ctx, "audience insights blocked: a campaign in scope has a malformed platform id",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.ConflictError{Code: "409", Message: domain.ErrAudienceScopeInvalid.Error()}
+	case errors.Is(err, domain.ErrStatsJobLeaseUnavailable):
+		// Whether this instance owns the X stats-job lease could not be established (the
+		// database could not be asked). Same 503 as the arm below, with its own fixed text so
+		// it does not claim another instance owns the jobs; the detail is logged only.
+		slog.WarnContext(ctx, "audience insights refused: the x stats-job lease could not be checked",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConnServiceUnavailableError{Code: "503", Message: domain.ErrStatsJobLeaseUnavailable.Error()}
 	case errors.Is(err, domain.ErrStatsJobLeaseNotHeld):
 		// The X audience read on a pod that does not own the account's stats-job lease (another
 		// pod does, or the database could not be asked). Transient — a retry may reach the owner —

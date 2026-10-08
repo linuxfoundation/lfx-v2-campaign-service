@@ -100,8 +100,9 @@ type TwitterDispatcher struct {
 // monitor's report submission must hold before creating X stats jobs. Call once, before serving.
 func (d *TwitterDispatcher) SetStatsJobLease(l domain.StatsJobLease) { d.statsLease = l }
 
-// ownStatsJobs refuses (domain.ErrStatsJobLeaseNotHeld) unless this pod holds the stats-job lease
-// for accountID. Called before anything that creates stats jobs, and before any request to X on
+// ownStatsJobs refuses unless this pod holds the stats-job lease for accountID —
+// domain.ErrStatsJobLeaseNotHeld when another pod owns it, domain.ErrStatsJobLeaseUnavailable
+// when ownership could not be established. Called before anything that creates stats jobs, and before any request to X on
 // those paths, so a non-owner pod never contacts X for them.
 func (d *TwitterDispatcher) ownStatsJobs(ctx context.Context, accountID string) error {
 	if d.statsLease == nil {

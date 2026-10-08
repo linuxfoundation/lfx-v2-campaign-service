@@ -24,4 +24,14 @@
   `TestPublishedSpecsAgreeOnOperationText` turns any future drift into a failure.
 - **Pacer comments.** `pace`, `TwitterDispatcher.clients` and the credcache roster no longer
   describe the write pacer as per client instance; it is per ad account (`AccountPacers`).
+- **#298 review: a cancelled request keeps the lease; a distinct "unavailable" answer.** The
+  liveness ping ran on the caller's context, so a cancelled or expired request made a healthy
+  session look dead and destroyed the lock, letting another pod take the account while this one
+  still had jobs outstanding. The ping now runs on a detached context with its own 2s timeout,
+  and a failed ping on a request that has already ended KEEPS the lease (that request is refused);
+  a dead context never starts an acquire. Failures to establish ownership (no database, a failed
+  acquire or lock query, an ended request) are now `domain.ErrStatsJobLeaseUnavailable` ("coordination
+  of X stats jobs is unavailable; retry"), mapped to the same 503 with its own fixed text
+  and logged at warn; only a lock Postgres reports as held elsewhere is
+  `ErrStatsJobLeaseNotHeld`.
 - Tests for each; each fails with its fix reverted.

@@ -2099,8 +2099,8 @@ that account's write pacer and stats-job reservations. All of this is per proces
 pods the dispatcher asks its `domain.StatsJobLease` (`SetStatsJobLease`, bound by the container
 to `postgres.StatsJobLease`) before anything that creates stats jobs — the audience read, before
 contacting X, and `SubmitAccountReport`, before submitting: a pod that does not own the
-account's lease returns `domain.ErrStatsJobLeaseNotHeld` (audience read: 503 with that fixed
-text; monitor: the orchestrator's transient submission failure — logged, the saved report still
+account's lease returns `domain.ErrStatsJobLeaseNotHeld`, or `ErrStatsJobLeaseUnavailable`
+when ownership could not be established (audience read: 503 with that sentinel's fixed text; monitor: the orchestrator's transient submission failure — logged, the saved report still
 served). A nil lease (no database; the direct-construction tests) admits everything. The chart's
 render-time replica refusal is a first line of defence only (it cannot see an out-of-band scale
 or an external HPA). Test: `TestTwitter_StatsJobLease_NonOwnerRefusesWithoutContactingX`. The scope in the key means a cached result

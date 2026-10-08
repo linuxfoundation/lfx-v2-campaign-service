@@ -71,43 +71,67 @@ func statsJobLeaseKey(accountID string) int32 {
 }
 
 // Own implements domain.StatsJobLease.
+//
+// The caller's context bounds only what this request is willing to WAIT for; it never decides
+// whether the lease is lost. The liveness ping runs on a detached context with its own timeout,
+// so a request that was cancelled or timed out cannot make a healthy session look dead — which
+// would destroy the lock and let another pod take the account while this one still has jobs
+// outstanding. If the ping fails while the caller's context is already done, the lease is KEPT
+// and the call answers ErrStatsJobLeaseUnavailable; only a ping that fails with a live caller is
+// treated as a lost session.
 func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 	if l == nil || l.pool == nil || l.pool.Pool == nil {
-		return fmt.Errorf("%w: no database to hold the lease on", domain.ErrStatsJobLeaseNotHeld)
+		return fmt.Errorf("%w: no database to hold the lease on", domain.ErrStatsJobLeaseUnavailable)
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
-		return fmt.Errorf("%w: shutting down", domain.ErrStatsJobLeaseNotHeld)
+		return fmt.Errorf("%w: shutting down", domain.ErrStatsJobLeaseUnavailable)
 	}
 	if conn, ok := l.held[accountID]; ok {
-		pingCtx, cancel := context.WithTimeout(ctx, statsJobLeasePingTimeout)
+		pingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statsJobLeasePingTimeout)
 		err := conn.Ping(pingCtx)
 		cancel()
 		if err == nil {
+			if cerr := ctx.Err(); cerr != nil {
+				// Still the owner, but this request is over: it must not go on to create jobs.
+				return fmt.Errorf("%w: %w", domain.ErrStatsJobLeaseUnavailable, cerr)
+			}
 			return nil
 		}
+		if cerr := ctx.Err(); cerr != nil {
+			// A failed ping on a request that has already ended proves nothing about the
+			// session. Keep the lease; the next live check decides.
+			return fmt.Errorf("%w: %w", domain.ErrStatsJobLeaseUnavailable, cerr)
+		}
 		// The session — and with it the lock — may be gone. Destroy the connection (never return
-		// a possibly lock-bearing session to the pool) and try afresh below.
+		// a possibly lock-bearing session to the pool) and try afresh below. destroyLeaseConn
+		// closes on its own detached, bounded context.
 		slog.WarnContext(ctx, "x stats-job lease connection failed its liveness check; the lease is treated as lost",
 			"error", err)
 		delete(l.held, accountID)
 		destroyLeaseConn(ctx, conn)
 	}
+	if cerr := ctx.Err(); cerr != nil {
+		// Nothing held and nothing to wait for: do not start an acquire a dead context would
+		// abort half-way (and whose possibly-granted lock would then need destroying).
+		return fmt.Errorf("%w: %w", domain.ErrStatsJobLeaseUnavailable, cerr)
+	}
 
 	conn, err := l.pool.Acquire(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: acquire a connection: %w", domain.ErrStatsJobLeaseNotHeld, err)
+		return fmt.Errorf("%w: acquire a connection: %w", domain.ErrStatsJobLeaseUnavailable, err)
 	}
 	var acquired bool
 	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1, $2)", statsJobLeaseClass, statsJobLeaseKey(accountID)).Scan(&acquired); err != nil {
 		// The lock may have been granted server-side even though the client saw an error (a
 		// cancelled context mid-call), so the session must not go back to the pool.
 		destroyLeaseConn(ctx, conn)
-		return fmt.Errorf("%w: try the lock: %w", domain.ErrStatsJobLeaseNotHeld, err)
+		return fmt.Errorf("%w: try the lock: %w", domain.ErrStatsJobLeaseUnavailable, err)
 	}
 	if !acquired {
-		// Postgres answered "held elsewhere": nothing is held on this session.
+		// Postgres answered "held elsewhere": nothing is held on this session. The ONLY
+		// ErrStatsJobLeaseNotHeld.
 		conn.Release()
 		return domain.ErrStatsJobLeaseNotHeld
 	}
