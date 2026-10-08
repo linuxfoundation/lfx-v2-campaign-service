@@ -371,9 +371,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// Account-scoped monitor reads (LFX One BFF /api/campaigns/*/monitor port):
 		// ruled for exactly the six providers with a monitor dispatcher —
 		// google-ads, linkedin-ads, meta-ads and reddit-ads (AccountMetricsReader) and
-		// microsoft-ads and twitter-ads (AccountReportReader, report-backed). The hubspot
-		// rejected row further down pins that the
-		// alternation was not widened to every connection provider by accident.
+		// microsoft-ads and twitter-ads (AccountReportReader, report-backed) — plus hubspot's
+		// email monitor on its own branch (below). The hubspot /accounts rejected row further
+		// down pins that the discovery alternation was not widened to every connection
+		// provider by accident.
 		{"/projects/p1/connection-google-ads/account-monitor", true},
 		{"/projects/p1/connection-linkedin-ads/account-monitor", true},
 		{"/projects/p1/connection-meta-ads/account-monitor", true},
@@ -382,6 +383,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// X joined with its report-backed monitor (LFXV2-2665): stats jobs, served from a
 		// saved copy. This row is what fails if only one chart side is edited.
 		{"/projects/p1/connection-twitter-ads/account-monitor", true},
+		// HubSpot's email monitor (LFXV2-2665) is on the hubspot branch, not the ad-provider
+		// discovery branch: project-scoped to the emails this service recorded, no account_id.
+		{"/projects/p1/connection-hubspot/account-monitor", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},
@@ -511,10 +515,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// what fails if the discovery branch is widened to every connection-* provider.
 		{"/projects/p1/connection-hubspot/accounts", false},
 		{"/projects/p1/connection-google-ads/emails", false},
-		// hubspot has no ad account and no monitor dispatcher — account-monitor must not
-		// be admitted for it now that the monitor branch spans every ad provider with
-		// discovery.
-		{"/projects/p1/connection-hubspot/account-monitor", false},
+		// hubspot's account-monitor is accepted (above); its discovery-shaped siblings are not.
+		{"/projects/p1/connection-hubspot/account-monitor/x", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},

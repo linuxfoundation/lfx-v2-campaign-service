@@ -30,13 +30,14 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    monitor capabilities — google-ads, meta-ads, linkedin-ads and reddit-ads via
    `AccountMetricsReader`, microsoft-ads and twitter-ads via the report-backed
    `AccountReportReader` (per-account monitoring/pacing, LFXV2-2665) — and
-   `connection-hubspot/emails` (marketing-email search, LFXV2-3197) and
-   `connection-hubspot/campaigns` (campaign UTM lookup and create, LFXV2-2641). The HTTPRoute
-   regex spells out TWO branches for the same reason — google-ads/meta-ads/linkedin-ads/
+   `connection-hubspot/emails` (marketing-email search, LFXV2-3197),
+   `connection-hubspot/campaigns` (campaign UTM lookup and create, LFXV2-2641) and
+   `connection-hubspot/account-monitor` (the project-scoped email monitor, LFXV2-2665). The
+   HTTPRoute regex spells out TWO branches for the same reason — google-ads/meta-ads/linkedin-ads/
    microsoft-ads/twitter-ads/reddit-ads with both `accounts` and `account-monitor`, and
-   hubspot with `emails`/`campaigns` (reddit-ads had a third branch, `account-monitor` only,
-   until LFXV2-2665) — because folding them together would rule `/accounts` for hubspot,
-   `/emails` for google-ads, and `/account-monitor` for hubspot, none of which is served. `parity_test` fails if the
+   hubspot with `emails`/`campaigns`/`account-monitor` (reddit-ads had a third branch,
+   `account-monitor` only, until LFXV2-2665) — because folding them together would rule
+   `/accounts` for hubspot and `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
    `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
    providers, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(meta-ads|twitter-ads)/audience` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine

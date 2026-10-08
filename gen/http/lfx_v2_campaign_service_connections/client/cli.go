@@ -2365,3 +2365,44 @@ func BuildMonitorTwitterAdsAccountPayload(lfxV2CampaignServiceConnectionsMonitor
 
 	return v, nil
 }
+
+// BuildMonitorHubspotAccountPayload builds the payload for the
+// lfx-v2-campaign-service-connections monitor-hubspot-account endpoint from
+// CLI flags.
+func BuildMonitorHubspotAccountPayload(lfxV2CampaignServiceConnectionsMonitorHubspotAccountProjectID string, lfxV2CampaignServiceConnectionsMonitorHubspotAccountDays string, lfxV2CampaignServiceConnectionsMonitorHubspotAccountBearerToken string) (*lfxv2campaignserviceconnections.MonitorHubspotAccountPayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsMonitorHubspotAccountProjectID
+	}
+	var days int
+	{
+		var v int64
+		v, err = strconv.ParseInt(lfxV2CampaignServiceConnectionsMonitorHubspotAccountDays, 10, strconv.IntSize)
+		days = int(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for days, must be INT")
+		}
+		if days < 7 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 7, true))
+		}
+		if days > 90 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("days", days, 90, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsMonitorHubspotAccountBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsMonitorHubspotAccountBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.MonitorHubspotAccountPayload{}
+	v.ProjectID = projectID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v, nil
+}

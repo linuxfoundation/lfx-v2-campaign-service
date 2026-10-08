@@ -46,8 +46,41 @@ func Check(raw []byte) error {
 		return errors.Join(ErrUntrustworthy, errors.New("it carries malformed UTF-8 bytes, which decoding would silently replace with U+FFFD"))
 	case hasUnpairedSurrogateEscape(raw):
 		return errors.Join(ErrUntrustworthy, errors.New("it carries an unpaired surrogate escape, which decoding would silently replace with U+FFFD"))
-	case hasDuplicateKeys(raw):
+	case hasDuplicateKeys(raw, foldKey):
 		return errors.Join(ErrUntrustworthy, errors.New("an object in it declares the same key twice, so it describes more than one value and the decoder would silently pick one"))
+	}
+	return nil
+}
+
+// CheckExactKeys is Check with duplicate keys compared EXACTLY (after JSON unescaping) rather
+// than under the decoder's case-insensitive struct-field fold. It is for a document whose objects
+// decode into Go MAPS, which encoding/json keys exactly: `{"Mobile":1,"mobile":2}` is two distinct
+// entries there, not an ambiguity, while `{"mobile":1,"mobile":2}` still silently keeps the last
+// value and is refused. A caller decoding some levels into structs must check those levels' keys
+// under the fold itself (see FoldedKeyCollision).
+func CheckExactKeys(raw []byte) error {
+	switch {
+	case !utf8.Valid(raw):
+		return errors.Join(ErrUntrustworthy, errors.New("it carries malformed UTF-8 bytes, which decoding would silently replace with U+FFFD"))
+	case hasUnpairedSurrogateEscape(raw):
+		return errors.Join(ErrUntrustworthy, errors.New("it carries an unpaired surrogate escape, which decoding would silently replace with U+FFFD"))
+	case hasDuplicateKeys(raw, func(k string) string { return k }):
+		return errors.Join(ErrUntrustworthy, errors.New("an object in it declares the same key twice, so it describes more than one value and the decoder would silently pick one"))
+	}
+	return nil
+}
+
+// FoldedKeyCollision reports whether two of keys are the same under the decoder's struct-field
+// fold — the case CheckExactKeys deliberately leaves to callers, for the object levels they decode
+// into structs.
+func FoldedKeyCollision(keys []string) error {
+	seen := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		f := foldKey(k)
+		if _, dup := seen[f]; dup {
+			return errors.Join(ErrUntrustworthy, errors.New("an object in it declares the same field twice under different letter case, and the decoder would silently pick one"))
+		}
+		seen[f] = struct{}{}
 	}
 	return nil
 }
@@ -56,7 +89,7 @@ func Check(raw []byte) error {
 // decoder's own notion of sameness (foldKey). The whole document is walked, not only the
 // fields a caller reads: a duplicate anywhere is evidence the producer is not emitting what the
 // caller thinks it is. Malformed JSON returns false (see Check).
-func hasDuplicateKeys(b []byte) bool {
+func hasDuplicateKeys(b []byte, fold func(string) string) bool {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	// One frame per still-open container: the keys seen so far in an object, nil for an array.
@@ -86,7 +119,7 @@ func hasDuplicateKeys(b []byte) bool {
 		case string:
 			if expectKey {
 				seen := stack[len(stack)-1]
-				k := foldKey(t)
+				k := fold(t)
 				if _, dup := seen[k]; dup {
 					return true
 				}

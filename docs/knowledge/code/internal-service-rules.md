@@ -17,7 +17,8 @@ resource: "internal/service"
 directory.** The six `monitor_*.go` files (`monitor_google.go`,
 `monitor_linkedin.go`, `monitor_meta.go`, `monitor_reddit.go`,
 `monitor_microsoft.go`, `monitor_twitter.go`) back the account-scoped `/account-monitor`
-endpoints. The first four were ported from the LFX One BFF's own four historically
+endpoints, and a seventh, `monitor_hubspot.go`, backs HubSpot's project-scoped email monitor
+(see the HubSpot section at the end). The first four were ported from the LFX One BFF's own four historically
 divergent rule engines; `monitor_microsoft.go` was written here, on the same shared helpers,
 for Microsoft's report-backed monitor (daily budgets only, so Google's daily pacing model;
 a shared-budget campaign arrives `PacingUnknown` and is neither paced nor called a
@@ -251,3 +252,22 @@ reached the platform at all, so its spend figure is not evidence about pacing.
 An earlier version listed only the provisioning states, which produced all three errors at once:
 `paused` and `pending` raised underspending, while `active` — the one status where delivery is
 unambiguously expected — raised nothing.
+
+## HubSpot email monitor rules (`monitor_hubspot.go`, LFXV2-2665)
+
+`EvaluateHubSpotMonitor(emails)` returns `[]model.AccountMonitorActionItem`, HIGH first via the
+shared `sortByPriority`; there is no pacing (an email has no budget or spend) and so no row
+output. `HubSpotRates(counters)` derives FRACTIONS — open, click and unsubscribe over delivered,
+bounce over sent, spam reports over delivered — each nil on a zero denominator; call it on SUMMED counters for a total.
+A finding carries `CampaignID` (the service campaign UUID) and `EmailID` (the HubSpot email id).
+
+Thresholds are heuristics (named constants with their reasons beside them), not HubSpot limits:
+
+| Rule | Priority | Gate |
+| --- | --- | --- |
+| sent > 0 and delivered = 0 | HIGH | none (text says a send may still be in progress) |
+| bounce rate > 5% / > 2% | HIGH / MED | sent ≥ 100 |
+| spam reports / delivered ≥ 0.3% and ≥ 5 reports / > 0.1% and ≥ 3 reports | HIGH / MED | delivered ≥ 100 |
+| unsubscribe rate > 1% | MED | delivered ≥ 100 |
+| open rate < 15% (opens are inflated by image pre-fetch, so this can only under-report) | MED | delivered ≥ 100 |
+| click rate < 1% | LOW | delivered ≥ 100 |

@@ -4219,3 +4219,27 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
 fetched from HubSpot once per `RunQA` call, not once per reference.
 
+## HubSpot email account monitor (`hubspot_monitor.go`, LFXV2-2665)
+
+`HubSpotDispatcher.ReadEmailMonitor` implements `service.EmailMonitorReader`. Order: `days`
+re-checked (`validateMonitorDays`); the connection via `resolveHubSpotClientWithCreds` — the
+project's own, else the LF system row, exactly as Dispatch and ReadMetrics (the per-email portal
+check, not the resolver, is the boundary; neither row → `ErrNotFound`); `MonitorSpan(days)`; the
+token's portal via `AuthenticatedPortalID` on its own `portalLookupTimeout`; then
+`hubspotMonitorTargets` turns the campaigns the orchestrator passed into emails — each row's own
+email then its recorded `Result.abTestVariant`, deduplicated by email id (first, newest row
+wins, see below) — counting as unattributable any whose row records no `portalId`, another portal, or a
+non-canonical id; those are never sent upstream. A `Result` that fails to decode at all — a
+type error included, which would otherwise leave the fields decoded before it — is treated as
+recording no portal; if it is still a JSON object with a non-null `abTestVariant`, that variant is
+counted unattributable alongside the row's own email rather than vanishing. Soft-deleted rows are read and marked `Deleted`; an email on both a deleted and a live row is
+owned by the live one. One `GetEmailCounters` per email through an
+`errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read).
+A 401/403 on token-info or statistics is tagged `ErrConnectionNotUsable` through
+`res.systemScoped` (400 own token, 500 LF fallback token), as SearchEmails/SearchCampaigns do.
+`AsOf` is the client clock (`hubspot.WithClock`/`Client.Now`) at the LAST upstream response.
+Attribution is decided BEFORE de-duplication and only attributable emails are de-duplicated,
+keyed portal+id: an id is unique only within its portal, so a foreign-portal or malformed row
+with the same number must neither suppress an attributable row nor escape the unattributable
+count. `ErrNoSentEmailInWindow` is counted
+(`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
