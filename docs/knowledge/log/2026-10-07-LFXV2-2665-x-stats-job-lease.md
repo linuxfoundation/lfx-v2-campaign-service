@@ -65,4 +65,8 @@
   in-flight `Own` closes the session on its way out (exactly once). Ownership is tracked by key:
   colliding ids share one lock and one owner, and the lock attempt and its recovery unlock only
   run for a key the session did not already hold.
+- `Close` with an already-expired context could return with the slot free and the idle session
+  left open, because a `select` with both cases ready picks at random. It now takes a free slot
+  first and waits (bounded by its context) only for a slot an in-flight `Own` holds;
+  `TestStatsJobLease_ExpiredCloseStillClosesAnIdleSession` loops 32 times.
 - Tests for each; each fails with its fix reverted.

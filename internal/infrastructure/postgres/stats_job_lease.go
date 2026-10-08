@@ -339,10 +339,18 @@ func (l *StatsJobLease) Close(ctx context.Context) {
 		closeCtx, cancel = context.WithTimeout(ctx, lockReleaseTimeout)
 		defer cancel()
 	}
+	// Take a FREE slot first, without consulting ctx: a select with both cases ready picks at
+	// random, so an already-expired ctx could otherwise return with the slot free and the
+	// session left open with no holder to close it. Only a slot held by an in-flight Own is
+	// waited for, and only until ctx is done.
 	select {
 	case l.sem <- struct{}{}:
-	case <-closeCtx.Done():
-		return
+	default:
+		select {
+		case l.sem <- struct{}{}:
+		case <-closeCtx.Done():
+			return
+		}
 	}
 	l.closeSession(ctx, closeCtx)
 	<-l.sem

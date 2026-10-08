@@ -164,3 +164,18 @@ func TestLiveStatsJobLease_CollidingKeysShareOneLock(t *testing.T) {
 		t.Errorf("Own(a) after Own(b): %v", err)
 	}
 }
+
+// Close with an already-expired context and nothing in flight must still close the session: the
+// slot is free, so there is no other holder to close it on its way out. Looped because a select
+// with both a free slot and a done context ready picks between them at random.
+func TestStatsJobLease_ExpiredCloseStillClosesAnIdleSession(t *testing.T) {
+	for i := 0; i < 32; i++ {
+		lease, _, closes := stubbedLease(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		lease.Close(ctx)
+		if closes.Load() != 1 || lease.conn != nil {
+			t.Fatalf("run %d: closes = %d, conn nil = %v; want the idle session closed once", i, closes.Load(), lease.conn == nil)
+		}
+	}
+}
