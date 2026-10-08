@@ -120,6 +120,15 @@ func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projec
 		slog.WarnContext(ctx, "audience insights blocked: a campaign in scope has a malformed platform id",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.ConflictError{Code: "409", Message: domain.ErrAudienceScopeInvalid.Error()}
+	case errors.Is(err, domain.ErrStatsJobLeaseNotHeld):
+		// The X audience read on a pod that does not own the account's stats-job lease (another
+		// pod does, or the database could not be asked). Transient — a retry may reach the owner —
+		// so 503, with the sentinel's fixed text rather than the generic upstream wording, so an
+		// operator can tell it from an X failure. The detail (which may name the database error)
+		// is logged only.
+		slog.WarnContext(ctx, "audience insights refused: this instance does not own the x stats-job lease",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConnServiceUnavailableError{Code: "503", Message: domain.ErrStatsJobLeaseNotHeld.Error()}
 	case errors.Is(err, domain.ErrAccountTimezoneUnsupported):
 		// The X audience read: the account's timezone cannot be queried on its own days (see the
 		// sentinel). Permanent for the account, not a fault of the connection or the request, so

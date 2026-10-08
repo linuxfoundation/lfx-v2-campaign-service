@@ -1421,17 +1421,19 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 	return 0
 }
 
-// pace reserves the next write slot on this client, blocking until at least
+// pace reserves the next write slot on this client's pacer, blocking until at least
 // writeDelay has elapsed since the previously reserved write, and honoring
 // context cancellation. A non-positive writeDelay disables pacing entirely
 // (used by tests).
 //
-// The bound is on the CLIENT, not on the call site: every write issued through
-// this instance -- from any goroutine -- passes through here, so N concurrent
-// callers sharing one client are spaced writeDelay apart in aggregate rather than
-// each sleeping in parallel and then firing together. That is what lets the
-// dispatch client cache hand one instance to concurrent dispatches for the same
-// account without exceeding X's documented 1 write/sec.
+// The bound is on the PACER, not on the call site, and the pacer is the AD
+// ACCOUNT's when the client was built WithAccountPacers (the dispatcher always
+// does): every write issued through ANY client for that account in this process --
+// whichever project's connection built it, from any goroutine -- passes through the
+// same pacer.mu, so N concurrent callers are spaced writeDelay apart in aggregate
+// rather than each sleeping in parallel and then firing together. That is what keeps
+// concurrent dispatches for one account within X's documented 1 write/sec. A client
+// built without a registry paces privately.
 //
 // pacer.mu is held ACROSS the wait, which serializes writers. That is intentional
 // and not merely an implementation shortcut: releasing the lock while waiting
@@ -1467,8 +1469,9 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // that account, whose lifetime is independent of the client cache. A client built
 // without a registry paces privately (tests, and nothing else).
 //
-// Separate REPLICAS still pace independently. The chart refuses to render more than one
-// replica while TWITTER_METRICS_ENABLED (the stats-job features) is on; for ordinary
+// Separate REPLICAS still pace independently. For the stats-job features, only the pod
+// holding the per-account stats-job lease (domain.StatsJobLease) creates jobs, and the
+// chart refuses more than one replica while TWITTER_METRICS_ENABLED is on; for ordinary
 // writes the residue is left to the 429 exponential-backoff retry in doRequestAbs,
 // which remains the backstop. Cross-replica coordination is tracked by LFXV2-2665
 // (durable dispatch).

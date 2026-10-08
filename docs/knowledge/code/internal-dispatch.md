@@ -2095,8 +2095,15 @@ asking X first only when over budget. A create that failed AMBIGUOUSLY is report
 for reconciliation (it has no id), it only expires with the hold, and reconciling the named jobs
 beside it keeps it. `NewTwitterDispatcher` appends `twitter.WithAccountPacers` with ONE
 registry to every client it builds, so every connection to one ad account in the process shares
-that account's write pacer and stats-job reservations. All of this is per process; the chart
-refuses more than one replica while `TWITTER_METRICS_ENABLED` is on. The scope in the key means a cached result
+that account's write pacer and stats-job reservations. All of this is per process, so ACROSS
+pods the dispatcher asks its `domain.StatsJobLease` (`SetStatsJobLease`, bound by the container
+to `postgres.StatsJobLease`) before anything that creates stats jobs — the audience read, before
+contacting X, and `SubmitAccountReport`, before submitting: a pod that does not own the
+account's lease returns `domain.ErrStatsJobLeaseNotHeld` (audience read: 503 with that fixed
+text; monitor: the orchestrator's transient submission failure — logged, the saved report still
+served). A nil lease (no database; the direct-construction tests) admits everything. The chart's
+render-time replica refusal is a first line of defence only (it cannot see an out-of-band scale
+or an external HPA). Test: `TestTwitter_StatsJobLease_NonOwnerRefusesWithoutContactingX`. The scope in the key means a cached result
 is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
 (N callers → one set of jobs, a second account read refused while the first runs, cache hit
 creates no jobs and expires by TTL and by account-local day, failures not cached) and

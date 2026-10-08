@@ -167,3 +167,7 @@ store leaves the handler's explorer unset — and `ExplorerIsSet` is what turns 
 contract's typed `503` and an honest `capabilities` answer, instead of a nil dereference on the
 first request. The model client stays optional on purpose: it recovers a brand token and nothing
 an operator acts on depends on it.
+
+`bindStatsJobLease` (both wiring paths) builds one `postgres.StatsJobLease` on the pool, binds it
+into the X dispatcher (`SetStatsJobLease`) and records it; `Close` releases it before closing the
+pool. See [internal/infrastructure/postgres](internal-infrastructure-postgres.md).

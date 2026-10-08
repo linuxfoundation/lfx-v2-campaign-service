@@ -1872,3 +1872,20 @@ rows dispatched in one transaction share. The caller passes cap+1 and reads the 
 it does NOT carry the live predicate. A non-positive limit is refused, not read as unbounded. Pinned by
 `TestListRecentProjectPlatformCampaigns_IsScopedBoundedAndOrdered` (SQL text, incl. the
 soft-delete table) and `TestListRecentProjectPlatformCampaigns_Live` (`TEST_DATABASE_URL`).
+
+## `StatsJobLease` — one pod owns X stats jobs per ad account (LFXV2-2665)
+
+`stats_job_lease.go` implements `domain.StatsJobLease` with a SESSION advisory lock per X ad
+account, `pg_try_advisory_lock(statsJobLeaseClass, fnv32a(account))` — the two-int form, a key
+space separate from `ClaimCampaignVersion`'s one-bigint locks — held on a DEDICATED pooled
+connection for as long as the process owns the account. No migration. `Own` re-verifies a held
+lease by pinging its connection on every call; a failed ping means the session (and lock) may be
+gone, so the connection is destroyed and the lock tried afresh — typically lost to the pod that
+took it, so new submissions stop at the first call after a loss (admission control, not fencing:
+a submission already admitted is not recalled). Try, never wait. A failed lock query destroys the
+connection (the lock may have been granted server-side). `Close` unlocks and returns every held
+connection and is called by `Container.Close` BEFORE `pool.Close`, which would otherwise block on
+them. Cost: one pooled connection per owned account. `StatsJobLeaseLockKeys` exposes the keys as
+they appear in `pg_locks` (`objsubid` 2). Live tests: `dbtest/stats_job_lease_live_test.go` (two
+leases cannot both own one account; Close hands it over; a terminated owner session lets another
+take it and the former owner refuses).

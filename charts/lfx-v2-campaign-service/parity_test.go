@@ -1155,6 +1155,13 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 		{"flag from a secret, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=null", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
 		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true},
 		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
+		// The EFFECTIVE value: extraEnv renders after app.environment and Kubernetes keeps the
+		// last occurrence of a name, so a later "false" switches the flag off and a later "true"
+		// switches it on, whatever app.environment says.
+		{"environment on, extraEnv off, two replicas", []string{on, "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=false", "replicaCount=2"}, false},
+		{"environment off, extraEnv on, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
+		{"extraEnv on then off, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true,app.extraEnv[1].name=TWITTER_METRICS_ENABLED,app.extraEnv[1].value=false", "replicaCount=2"}, false},
+		{"environment on, extraEnv from a secret last, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].valueFrom.secretKeyRef.name=s,app.extraEnv[0].valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}

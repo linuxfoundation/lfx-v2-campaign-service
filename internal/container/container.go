@@ -277,6 +277,10 @@ type Container struct {
 	mu   sync.Mutex
 	pool *postgres.Pool
 	orch *service.Orchestrator
+	// statsJobLease is the cross-pod X stats-job lease bound into the X dispatcher
+	// (bindStatsJobLease). Guarded by mu; Close releases it before closing the pool, because
+	// every lease it holds pins a checked-out connection pgxpool.Close would wait for.
+	statsJobLease *postgres.StatsJobLease
 
 	// audienceBuilder performs the platform side of an audience build (Snowflake lookups +
 	// HubSpot list creation). Nil when neither is configured, in which case the build endpoint
@@ -540,6 +544,21 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
 		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
 	}
+}
+
+// bindStatsJobLease gives the X dispatcher the cross-pod stats-job lease on pool (see
+// domain.StatsJobLease) and records it for Close. Both wiring paths call it with the same pool
+// they built the dispatchers on.
+func (c *Container) bindStatsJobLease(dispatchers map[model.Provider]service.PlatformDispatcher, pool *postgres.Pool) {
+	td, ok := dispatchers[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher)
+	if !ok || pool == nil {
+		return
+	}
+	lease := postgres.NewStatsJobLease(pool)
+	td.SetStatsJobLease(lease)
+	c.mu.Lock()
+	c.statsJobLease = lease
+	c.mu.Unlock()
 }
 
 // dispatchableProviders is the full set of providers a brief can select (per the
@@ -921,6 +940,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// Must precede newAudienceService below, which reads c.audienceBuilder.
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
+	c.bindStatsJobLease(dispatchers, pool)
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
@@ -999,6 +1019,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
+			c.bindStatsJobLease(dispatchers, pool)
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
@@ -1284,7 +1305,10 @@ func (c *Container) Close(ctx context.Context) error {
 	postgres.StopCooldownsForShutdown(cooldownStopTimeout)
 	c.mu.Lock()
 	pool := c.pool
+	lease := c.statsJobLease
 	c.mu.Unlock()
+	// Before pool.Close: each held X stats-job lease pins a checked-out connection.
+	lease.Close(ctx)
 	if pool != nil {
 		pool.Close()
 	}
