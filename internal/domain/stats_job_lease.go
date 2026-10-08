@@ -8,9 +8,10 @@ import (
 	"errors"
 )
 
-// ErrStatsJobLeaseNotHeld indicates this service instance does not own the X stats-job lease for
-// the ad account, so it refuses to create stats jobs there: another pod (or nothing reachable,
-// when the database cannot be asked) owns them. Transient from the caller's side — retrying may
+// ErrStatsJobLeaseNotHeld indicates PostgreSQL reported the X stats-job lease for the ad account
+// as held by another session, so this instance refuses to create stats jobs there: another pod
+// owns them. It is returned only on that definite answer — a database that could not be asked is
+// ErrStatsJobLeaseUnavailable. Transient from the caller's side — retrying may
 // reach the owning pod, or this one once it acquires the lease. The message is fixed,
 // client-safe text: it reaches the HTTP body.
 var ErrStatsJobLeaseNotHeld = errors.New("another instance owns X stats jobs; retry")
