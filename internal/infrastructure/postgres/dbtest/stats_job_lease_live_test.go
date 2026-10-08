@@ -80,12 +80,15 @@ func TestLiveStatsJobLease_SessionLossStopsTheFormerOwner(t *testing.T) {
 	b := postgres.NewStatsJobLease(&postgres.Pool{Pool: pool})
 	t.Cleanup(func() { a.Close(ctx); b.Close(ctx) })
 
-	if err := a.Own(ctx, account); err != nil {
-		t.Fatalf("a.Own: %v", err)
+	second := dbtest.UniqueID(t, "xlost2")
+	for _, acc := range []string{account, second} {
+		if err := a.Own(ctx, acc); err != nil {
+			t.Fatalf("a.Own(%s): %v", acc, err)
+		}
 	}
 	pid := leaseHolderPID(ctx, t, pool, account)
-	if pid == 0 {
-		t.Fatal("no backend holds the lease")
+	if pid == 0 || leaseHolderPID(ctx, t, pool, second) != pid {
+		t.Fatal("a's two leases are not on one backend")
 	}
 	// The timeout form waits until the backend has actually exited (and so dropped its locks).
 	var ok bool
@@ -97,6 +100,14 @@ func TestLiveStatsJobLease_SessionLossStopsTheFormerOwner(t *testing.T) {
 	}
 	if err := a.Own(ctx, account); !errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
 		t.Errorf("a.Own after losing its session: err = %v, want ErrStatsJobLeaseNotHeld", err)
+	}
+	// Every lease on the lost session was lost, and each is RE-ACQUIRED on its own check: the
+	// second account (taken by nobody meanwhile) comes back on a's new session.
+	if err := a.Own(ctx, second); err != nil {
+		t.Errorf("a.Own(second) after the loss: %v; it must re-acquire, not refuse", err)
+	}
+	if got := leaseHolderPID(ctx, t, pool, second); got == 0 || got == pid {
+		t.Errorf("second's holder %d: want a's NEW session, not the terminated %d", got, pid)
 	}
 }
 
@@ -141,5 +152,49 @@ func TestLiveStatsJobLease_NoDatabaseIsUnavailable(t *testing.T) {
 	err := l.Own(context.Background(), "acc")
 	if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) || errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
 		t.Errorf("err = %v, want only ErrStatsJobLeaseUnavailable", err)
+	}
+}
+
+// The lease must not pin business-pool connections: with a pool of ONE connection, leases for
+// several accounts are held and an ordinary Acquire still succeeds at once. All the locks sit on
+// one session outside the pool.
+func TestLiveStatsJobLease_DoesNotPinBusinessPoolConnections(t *testing.T) {
+	ctx := context.Background()
+	_ = dbtest.Pool(t) // migrates, or skips when no database is configured
+	cfg, err := pgxpool.ParseConfig(dbtest.DSN())
+	if err != nil {
+		t.Fatalf("parse DSN: %s", dbtest.SafeDSNErr(err))
+	}
+	cfg.MaxConns = 1
+	small, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open a one-connection pool: %s", dbtest.SafeDSNErr(err))
+	}
+	t.Cleanup(small.Close)
+	lease := postgres.NewStatsJobLease(&postgres.Pool{Pool: small})
+	t.Cleanup(func() { lease.Close(ctx) })
+
+	accounts := []string{dbtest.UniqueID(t, "xp1"), dbtest.UniqueID(t, "xp2"), dbtest.UniqueID(t, "xp3")}
+	for _, acc := range accounts {
+		ownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := lease.Own(ownCtx, acc)
+		cancel()
+		if err != nil {
+			t.Fatalf("Own(%s) on a one-connection pool: %v", acc, err)
+		}
+	}
+	acqCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	conn, err := small.Acquire(acqCtx)
+	if err != nil {
+		t.Fatalf("an ordinary Acquire on the business pool failed while leases are held: %v", err)
+	}
+	conn.Release()
+	var pids []int32
+	for _, acc := range accounts {
+		pids = append(pids, leaseHolderPID(ctx, t, small, acc))
+	}
+	if pids[0] == 0 || pids[0] != pids[1] || pids[1] != pids[2] {
+		t.Errorf("lease holders %v: want every account's lock on ONE session", pids)
 	}
 }

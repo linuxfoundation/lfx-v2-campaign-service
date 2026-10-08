@@ -1877,22 +1877,28 @@ soft-delete table) and `TestListRecentProjectPlatformCampaigns_Live` (`TEST_DATA
 
 `stats_job_lease.go` implements `domain.StatsJobLease` with a SESSION advisory lock per X ad
 account, `pg_try_advisory_lock(statsJobLeaseClass, fnv32a(account))` — the two-int form, a key
-space separate from `ClaimCampaignVersion`'s one-bigint locks — held on a DEDICATED pooled
-connection for as long as the process owns the account. No migration. `Own` re-verifies a held
-lease by pinging its connection on every call, on a DETACHED context with its own 2s timeout so a
+space separate from `ClaimCampaignVersion`'s one-bigint locks — ALL held on ONE dedicated session
+opened with `pgx.ConnectConfig` from the business pool's own config (same DSN, credentials, TLS),
+NOT checked out of the pool: a lease kept for the life of the process must not pin business-pool
+connections (with `pool_max_conns=1` a single owned account would starve every request and the
+readiness probe). **The service holds one Postgres connection beyond its pool while it owns any X
+account.** No migration. Access is serialised by a mutex (a `pgx.Conn` is not concurrency-safe).
+`Own` pings the session on every call, on a DETACHED context with its own 2s timeout so a
 cancelled or expired request cannot make a healthy session look dead; a failed ping on a request
-that has already ended keeps the lease and refuses only that request
-(`ErrStatsJobLeaseUnavailable`). A failed ping with a live caller means the session (and lock) may
-be gone, so the connection is destroyed and the lock tried afresh — typically lost to the pod that
-took it, so new submissions stop at the first call after a loss (admission control, not fencing:
-a submission already admitted is not recalled). Try, never wait. A failed lock query destroys the
-connection (the lock may have been granted server-side). Only a lock Postgres reports as held
-elsewhere is `ErrStatsJobLeaseNotHeld`; no database, a failed acquire or lock query, an ended
-request or a closed lease are `ErrStatsJobLeaseUnavailable` (same 503, its own fixed text, so
-an operator is not told another pod owns the jobs). `Close` unlocks and returns every held
-connection and is called by `Container.Close` BEFORE `pool.Close`, which would otherwise block on
-them. Cost: one pooled connection per owned account. `StatsJobLeaseLockKeys` exposes the keys as
-they appear in `pg_locks` (`objsubid` 2). Live tests: `dbtest/stats_job_lease_live_test.go` (two
-leases cannot both own one account; Close hands it over; a terminated owner session lets another
-take it and the former owner refuses; a cancelled or expired check keeps the lock in `pg_locks`
-and the next live check still owns it; no database is Unavailable).
+that has already ended keeps every lease and refuses only that request
+(`ErrStatsJobLeaseUnavailable`). A failed ping with a live caller means the session — and EVERY
+lock on it — may be gone: the session is closed, every account marked not held, and the session
+reopened lazily and each account re-acquired with try-lock on its own next check, never assumed
+(admission control, not fencing: a submission already admitted is not recalled). The lock query
+also runs detached; if it errors the session's state is unknown, so the session (and every lease)
+is dropped. Only a lock Postgres reports as held elsewhere is `ErrStatsJobLeaseNotHeld`; no
+database, a connect failure, a failed lock query, an ended request or a closed lease are
+`ErrStatsJobLeaseUnavailable` (same 503, its own fixed text, so an operator is not told another
+pod owns the jobs). `Close` releases everything by closing the session. `StatsJobLeaseLockKeys`
+exposes the keys as they appear in `pg_locks` (`objsubid` 2). Live tests:
+`dbtest/stats_job_lease_live_test.go` (two leases cannot both own one account; Close hands it
+over; a terminated owner session loses every lease, another pod takes one and the former owner
+refuses it but re-acquires the other on a new session; a cancelled or expired check keeps the
+lock in `pg_locks` and the next live check still owns it; no database is Unavailable; with a
+ONE-connection business pool, three accounts' leases sit on one session and an ordinary
+`Acquire` still succeeds at once).

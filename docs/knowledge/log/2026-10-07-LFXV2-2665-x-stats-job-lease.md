@@ -34,4 +34,13 @@
   of X stats jobs is unavailable; retry"), mapped to the same 503 with its own fixed text
   and logged at warn; only a lock Postgres reports as held elsewhere is
   `ErrStatsJobLeaseNotHeld`.
+- **#298 review: leases on one session outside the pool; v2-vs-v3 spec check.** Each owned
+  account pinned a connection from the SHARED business pool for the life of the process, so a
+  small pool (`pool_max_conns=1` is a real configuration) or a few X accounts could starve
+  ordinary requests and readiness. All of a pod's leases now sit on ONE dedicated session opened
+  with `pgx.ConnectConfig` from the pool's config — one connection beyond the pool — serialised by
+  a mutex; a lost session drops every lease, and each account re-acquires on its own next check.
+  A connect failure is `ErrStatsJobLeaseUnavailable`. The spec-agreement test reset its baseline
+  per v2/v3 pair, so a v2-only or v3-only drift passed; it now compares all eight documents
+  against one baseline by operationId, and a test perturbs a v3-only copy to prove it.
 - Tests for each; each fails with its fix reverted.

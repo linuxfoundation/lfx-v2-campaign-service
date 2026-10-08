@@ -168,6 +168,6 @@ contract's typed `503` and an honest `capabilities` answer, instead of a nil der
 first request. The model client stays optional on purpose: it recovers a brand token and nothing
 an operator acts on depends on it.
 
-`bindStatsJobLease` (both wiring paths) builds one `postgres.StatsJobLease` on the pool, binds it
-into the X dispatcher (`SetStatsJobLease`) and records it; `Close` releases it before closing the
-pool. See [internal/infrastructure/postgres](internal-infrastructure-postgres.md).
+`bindStatsJobLease` (both wiring paths) builds one `postgres.StatsJobLease` from the pool's
+config, binds it into the X dispatcher (`SetStatsJobLease`) and records it; `Close` closes its
+dedicated session (one connection outside the pool, opened on first use). See [internal/infrastructure/postgres](internal-infrastructure-postgres.md).

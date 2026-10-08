@@ -278,8 +278,8 @@ type Container struct {
 	pool *postgres.Pool
 	orch *service.Orchestrator
 	// statsJobLease is the cross-pod X stats-job lease bound into the X dispatcher
-	// (bindStatsJobLease). Guarded by mu; Close releases it before closing the pool, because
-	// every lease it holds pins a checked-out connection pgxpool.Close would wait for.
+	// (bindStatsJobLease). Guarded by mu. It holds its leases on ONE dedicated session opened
+	// from the pool's config, outside the pool; Close closes that session.
 	statsJobLease *postgres.StatsJobLease
 
 	// audienceBuilder performs the platform side of an audience build (Snowflake lookups +
@@ -1307,7 +1307,9 @@ func (c *Container) Close(ctx context.Context) error {
 	pool := c.pool
 	lease := c.statsJobLease
 	c.mu.Unlock()
-	// Before pool.Close: each held X stats-job lease pins a checked-out connection.
+	// Close the X stats-job lease's dedicated session (releasing every lease on it). It sits
+	// outside the pool, so the order relative to pool.Close is not load-bearing; done first so
+	// the leases are released while the process is still orderly.
 	lease.Close(ctx)
 	if pool != nil {
 		pool.Close()
