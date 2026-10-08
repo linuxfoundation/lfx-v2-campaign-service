@@ -69,4 +69,7 @@
   left open, because a `select` with both cases ready picks at random. It now takes a free slot
   first and waits (bounded by its context) only for a slot an in-flight `Own` holds;
   `TestStatsJobLease_ExpiredCloseStillClosesAnIdleSession` loops 32 times.
+- Both success paths of `Own` (an already-held key, a newly taken lock) now end in `admit`, which
+  refuses ownership if the request ended during the detached database steps or `Close` began
+  meanwhile. A newly taken lock stays tracked so it is not orphaned.
 - Tests for each; each fails with its fix reverted.

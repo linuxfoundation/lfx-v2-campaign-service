@@ -212,11 +212,7 @@ func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 				"locks", len(l.heldKeys), "error", err)
 			l.dropSession(ctx)
 		case l.heldKeys[key]:
-			if cerr := ctx.Err(); cerr != nil {
-				// Still the owner, but this request is over: it must not go on to create jobs.
-				return unavailable(cerr)
-			}
-			return nil
+			return l.admit(ctx)
 		}
 	}
 	if cerr := ctx.Err(); cerr != nil {
@@ -254,7 +250,25 @@ func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 		// Postgres answered "held elsewhere". The ONLY ErrStatsJobLeaseNotHeld.
 		return domain.ErrStatsJobLeaseNotHeld
 	}
+	// Tracked even if this request is refused below: the lock IS held by this session, and an
+	// untracked one would be orphaned.
 	l.heldKeys[key] = true
+	return l.admit(ctx)
+}
+
+// admit is the last step of every successful Own: ownership is reported only if the request is
+// still live and Close has not begun. The database steps are detached from the request, so it
+// can end during a successful connect, ping or lock query; and Close may mark the lease closed
+// while Own holds the slot, after which releaseSlot closes the session and drops every lock —
+// reporting ownership then would let the caller create jobs after another pod takes the account.
+// Either way the lease state is kept as it is; only this request is refused.
+func (l *StatsJobLease) admit(ctx context.Context) error {
+	if l.closed.Load() {
+		return unavailable(errLeaseClosed)
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		return unavailable(cerr)
+	}
 	return nil
 }
 

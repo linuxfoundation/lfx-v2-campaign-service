@@ -179,3 +179,60 @@ func TestStatsJobLease_ExpiredCloseStillClosesAnIdleSession(t *testing.T) {
 		}
 	}
 }
+
+// Ownership is reported only if the request is still live and Close has not begun when Own is
+// about to succeed: the database steps are detached from the request, so it can end — or Close
+// can start — during a SUCCESSFUL ping. Both are refused; the held key is kept either way.
+func TestStatsJobLease_HeldKeyIsNotAdmittedAfterTheRequestOrLeaseEnds(t *testing.T) {
+	t.Run("request ends during the ping", func(t *testing.T) {
+		lease, _, _ := stubbedLease(t)
+		lease.heldKeys[lease.key("acc")] = true
+		ctx, cancel := context.WithCancel(context.Background())
+		lease.ping = func(context.Context, *pgx.Conn) error { cancel(); return nil }
+		err := lease.Own(ctx, "acc")
+		if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) || !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want Unavailable wrapping context.Canceled", err)
+		}
+		if !lease.heldKeys[lease.key("acc")] {
+			t.Error("the held key was dropped; only the request is refused")
+		}
+		lease.Close(context.Background())
+	})
+	t.Run("close begins during the ping", func(t *testing.T) {
+		lease, _, closes := stubbedLease(t)
+		lease.heldKeys[lease.key("acc")] = true
+		lease.ping = func(context.Context, *pgx.Conn) error { lease.closed.Store(true); return nil }
+		err := lease.Own(context.Background(), "acc")
+		if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) || !errors.Is(err, errLeaseClosed) {
+			t.Fatalf("err = %v, want Unavailable wrapping errLeaseClosed", err)
+		}
+		if closes.Load() != 1 {
+			t.Errorf("closes = %d, want the session closed once on the way out", closes.Load())
+		}
+	})
+}
+
+// The same on the new-lock path: a request that ends while a successful lock query runs is
+// refused, and the lock it took stays tracked (not orphaned) so a later live request owns it
+// without another lock call.
+func TestLiveStatsJobLease_NewLockIsNotAdmittedAfterTheRequestEnds(t *testing.T) {
+	pool := liveLeasePool(t)
+	acc := "xadmit-" + time.Now().Format("150405.000000000")
+	lease := NewStatsJobLease(&Pool{Pool: pool})
+	t.Cleanup(func() { lease.Close(context.Background()) })
+	lease.lockSQL = "SELECT pg_try_advisory_lock($1, $2) FROM pg_sleep(0.3)" // a slow, successful lock
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	err := lease.Own(ctx, acc)
+	if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want Unavailable wrapping context.Canceled", err)
+	}
+	if !lease.heldKeys[lease.key(acc)] || lockHolderPID(context.Background(), t, pool, acc) == 0 {
+		t.Fatal("the lock taken for an ended request must stay held and tracked, not orphaned")
+	}
+	lease.lockSQL = "SELECT NULL::boolean" // any further lock call would now fail to scan
+	if err := lease.Own(context.Background(), acc); err != nil {
+		t.Errorf("Own on a live request: %v, want owned with no lock call", err)
+	}
+}
