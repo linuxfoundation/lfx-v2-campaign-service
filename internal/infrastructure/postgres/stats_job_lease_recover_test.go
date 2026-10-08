@@ -40,7 +40,7 @@ func TestStatsJobLease_CloseHonoursTheCallerDeadline(t *testing.T) {
 	if !gotDeadline.Equal(want) {
 		t.Errorf("session close ran with deadline %v, want the caller's %v", gotDeadline, want)
 	}
-	if lease.conn != nil || !lease.closed {
+	if lease.conn != nil || !lease.closed.Load() {
 		t.Error("Close must forget the session and refuse later calls")
 	}
 }

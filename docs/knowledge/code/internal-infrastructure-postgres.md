@@ -1883,7 +1883,14 @@ under its own `statsJobLeaseConnectTimeout` (5s, since the connect holds the lea
 NOT checked out of the pool: a lease kept for the life of the process must not pin business-pool
 connections (with `pool_max_conns=1` a single owned account would starve every request and the
 readiness probe). **The service holds one Postgres connection beyond its pool while it owns any X
-account.** No migration. Access is serialised by a mutex (a `pgx.Conn` is not concurrency-safe).
+account.** No migration. Access is serialised by a ONE-SLOT CHANNEL SEMAPHORE that every caller —
+`Own` and `Close` — waits on with its own context (a `pgx.Conn` is not concurrency-safe, and a
+mutex would let one caller's connect/ping/lock hold another past its deadline). An already-ended
+request returns Unavailable right after taking the slot, before any ping. Every database step
+derives from a LEASE context that `Close` cancels. Ownership is tracked by lock KEY, not account
+id: two ids whose 32-bit keys collide share one lock and so one owner on every pod, and an account
+whose key is already held is owned with no lock call — so a lock attempt, and the recovery unlock
+after a failed one, only ever runs for a key this session did not hold before.
 `Own` pings the session on every call, on a DETACHED context with its own 2s timeout so a
 cancelled or expired request cannot make a healthy session look dead; a failed ping on a request
 that has already ended keeps every lease and refuses only that request
@@ -1899,9 +1906,12 @@ abort — so no untracked lock remains, and only if that unlock also fails is th
 That account answers Unavailable; every other lease is kept. Only a lock Postgres reports as held elsewhere is `ErrStatsJobLeaseNotHeld`; no
 database, a connect failure, a failed lock query, an ended request or a closed lease are
 `ErrStatsJobLeaseUnavailable` (same 503, its own fixed text, so an operator is not told another
-pod owns the jobs). `Close` releases everything by closing the session, honouring its caller's
-deadline (it runs inside the container's shared shutdown budget, `statsLeaseCloseTimeout`);
-only a context with no deadline gets `lockReleaseTimeout`. The request-path drop stays detached. `StatsJobLeaseLockKeys`
+pod owns the jobs). `Close` marks the lease closed, cancels the lease context (aborting an
+in-flight `Own`'s database step), and closes the session if it gets the slot within its caller's
+deadline (it runs inside the container's shared shutdown budget, `statsLeaseCloseTimeout`; only a
+context with no deadline gets `lockReleaseTimeout`). If it does not, it returns anyway, and the
+`Own` still holding the slot closes the session on its way out — only the slot holder touches the
+session, so it is closed exactly once. The request-path drop stays detached. `StatsJobLeaseLockKeys`
 exposes the keys as they appear in `pg_locks` (`objsubid` 2). Live tests:
 `dbtest/stats_job_lease_live_test.go` (two leases cannot both own one account; Close hands it
 over; a terminated owner session loses every lease, another pod takes one and the former owner
@@ -1910,4 +1920,6 @@ lock in `pg_locks` and the next live check still owns it; no database is Unavail
 ONE-connection business pool, three accounts' leases sit on one session and an ordinary
 `Acquire` still succeeds at once). In-package: `TestLiveStatsJobLease_FailedLockForOneAccountKeepsTheOthers`
 (a failure injected after B's lock is granted leaves A on the same backend and no lock for B) and
-`TestStatsJobLease_CloseHonoursTheCallerDeadline`.
+`TestStatsJobLease_CloseHonoursTheCallerDeadline`, `TestStatsJobLease_EndedRequestSkipsThePing`,
+`TestStatsJobLease_CloseReturnsWhileAnOwnIsStuck`, `TestStatsJobLease_CloseCancelsAnInFlightOwn`
+and `TestLiveStatsJobLease_CollidingKeysShareOneLock`.

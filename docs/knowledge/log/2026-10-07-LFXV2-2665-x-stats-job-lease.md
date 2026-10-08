@@ -56,4 +56,13 @@
   the caller's deadline with a fresh 5s: it now has its own reserved slice of
   `ContainerCloseTimeout` (`statsLeaseCloseTimeout`, 250ms) and `Close` honours the caller's
   deadline.
+- **#298 review: context-aware admission and close; ownership by key.** `Own` held a mutex
+  across connect, ping and lock, so `Close` could wait past its 250ms slice; a cancelled request
+  still ran a 2s ping; and two account ids colliding on one 32-bit key could let a failed lock for
+  the second release the first's lock. The mutex is now a one-slot semaphore both wait on with
+  their own context; an ended request returns right after taking the slot; every database step
+  derives from a lease context `Close` cancels, and if `Close` cannot get the slot in time the
+  in-flight `Own` closes the session on its way out (exactly once). Ownership is tracked by key:
+  colliding ids share one lock and one owner, and the lock attempt and its recovery unlock only
+  run for a key the session did not already hold.
 - Tests for each; each fails with its fix reverted.
