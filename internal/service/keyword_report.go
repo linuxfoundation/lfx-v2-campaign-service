@@ -87,20 +87,26 @@ func (o *Orchestrator) keywordReportStore() domain.KeywordReportRepository {
 //  1. resolve the project's campaign scope from the database; an EMPTY scope answers an empty
 //     result with no upstream call, exactly as ReadKeywordPerformance does;
 //  2. KeywordReportAccount: every trust-boundary refusal, before anything upstream;
-//  3. read the saved snapshot; if a report is pending, check it once (store it, drop it if the
-//     platform failed it, or abandon it past accountReportAbandonAfter);
-//     then drop (in memory) a finished report whose saved dates are not the dates window
-//     resolves to NOW (reader.ReportWindowDates) — a this_month or today report does not
-//     describe the new period after a calendar rollover, however young it is
-//     (discardOtherPeriod);
+//  3. read the saved snapshot; FIRST supersede a report pending for another calendar period
+//     (one requested before a day or month rollover — supersedeOtherPeriodPending: cleared by
+//     compare-and-set, never polled, and the read fails rather than continue if that cannot be
+//     resolved); then, if a report for this period is pending, check it once (store it, drop it
+//     if the platform failed it, or abandon it past accountReportAbandonAfter); then drop (in
+//     memory) a finished report whose saved dates are not the dates window resolves to NOW
+//     (reader.ReportWindowDates) — a this_month or today report does not describe the new
+//     period after a rollover, however young it is (discardOtherPeriod);
 //  4. if nothing is pending and the last finished report is missing, stale
 //     (accountReportFreshFor) or does not cover every campaign the project NOW owns, submit one;
 //  5. serve the last finished report — only if it covers the current scope — confined to the
 //     current scope's campaigns, ranked by impressions and capped.
 //
-// Steps 3–4 are best-effort exactly as in ReadReportedAccountCampaigns (same budget, same
-// detached mark budget, same "log and serve what is saved"), except for a permanent refusal,
-// which fails the read.
+// Collecting a pending report and refreshing (steps 3–4) are best-effort exactly as in
+// ReadReportedAccountCampaigns (same budget, same detached mark budget, same "log and serve what
+// is saved"), except for a permanent refusal, which fails the read. Superseding another period's
+// pending report (the first part of step 3) is NOT best-effort: a store error on its
+// compare-and-set, a failed re-read after losing it, or an exhausted retry bound fails the read,
+// because continuing would poll the obsolete report and claim metrics_pending for a period
+// nothing is building.
 //
 // A finished report that does not cover a campaign the project now owns is NOT served: the
 // response has no partial-coverage field, so serving it would present part of the project as all
@@ -159,7 +165,9 @@ func (o *Orchestrator) ReadReportedKeywordPerformance(ctx context.Context, proje
 		return nil, perr
 	}
 	// A report still BUILDING for another calendar period must not block one for this period.
-	supersedeOtherPeriodPending(callCtx, ctx, driver, snap, wantStart, wantEnd, now)
+	if serr := supersedeOtherPeriodPending(callCtx, ctx, driver, snap, wantStart, wantEnd, now); serr != nil {
+		return nil, serr
+	}
 	collectPendingInsightReport(callCtx, ctx, driver, snap, now)
 	// A finished report for another calendar period (the window rolled over since it was
 	// requested) is neither fresh nor servable: see discardOtherPeriod.
