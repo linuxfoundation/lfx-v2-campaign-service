@@ -88,7 +88,9 @@ func buildHubSpotEmailMonitor(days int, read *model.HubSpotEmailMonitorRead) *co
 	// All three or none: they are set exactly when HubSpot was read. An empty scope never calls
 	// HubSpot, and a window or as-of stated for a read that did not happen would claim one did.
 	if !read.AsOf.IsZero() && !read.SpanStart.IsZero() && !read.SpanEnd.IsZero() {
-		asOf := read.AsOf.UTC().Format(time.RFC3339)
+		// RFC3339Nano, not RFC3339: truncating 14:30:00.900 to 14:30:00 would publish an instant
+		// EARLIER than the last response, breaking the upper-bound guarantee metrics_as_of makes.
+		asOf := read.AsOf.UTC().Format(time.RFC3339Nano)
 		ws := read.SpanStart.UTC().Format(time.DateOnly)
 		we := read.SpanEnd.UTC().Format(time.DateOnly)
 		out.MetricsAsOf, out.MetricsWindowStart, out.MetricsWindowEnd = &asOf, &ws, &we

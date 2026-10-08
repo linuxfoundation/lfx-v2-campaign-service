@@ -49,7 +49,7 @@ func (m *mockEmailMonitorDispatcher) callCount() int {
 // The pinned instants a read "happened" at. The dispatcher owns the clock (the HubSpot client's
 // injected one); these tests pin what it reports.
 var (
-	monAsOf  = time.Date(2026, 10, 8, 14, 30, 0, 0, time.UTC)
+	monAsOf  = time.Date(2026, 10, 8, 14, 30, 0, 900_000_000, time.UTC) // sub-second: must survive
 	monStart = time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	monEnd   = time.Date(2026, 10, 8, 23, 59, 59, int(999*time.Millisecond), time.UTC)
 )
@@ -111,7 +111,7 @@ func TestMonitorHubspotAccount_TotalsAndRatesAreFromTheSums(t *testing.T) {
 	if !b.AbVariant || b.OpenRate != nil || b.ClickRate != nil || b.UnsubscribeRate != nil || b.BounceRate == nil || *b.BounceRate != 1 {
 		t.Errorf("variant row = %+v", b)
 	}
-	if out.MetricsAsOf == nil || *out.MetricsAsOf != "2026-10-08T14:30:00Z" ||
+	if out.MetricsAsOf == nil || *out.MetricsAsOf != "2026-10-08T14:30:00.9Z" ||
 		out.MetricsWindowStart == nil || *out.MetricsWindowStart != "2026-09-09" ||
 		out.MetricsWindowEnd == nil || *out.MetricsWindowEnd != "2026-10-08" {
 		t.Errorf("as-of/window = %v %v %v", out.MetricsAsOf, out.MetricsWindowStart, out.MetricsWindowEnd)
