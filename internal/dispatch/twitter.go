@@ -69,26 +69,55 @@ type TwitterDispatcher struct {
 	//
 	// The benefit here is NOT a saved token exchange: X signs every request with stored
 	// OAuth 1.0a credentials and mints nothing at construction, so unlike Google Ads and
-	// Reddit there is no token round-trip to collapse. Sharing is wired because the client
-	// now owns the WRITE PACER, and that only bounds the rate if callers share it: X
-	// enforces 1 write/sec per ACCOUNT, so two clients for one account each pace themselves
-	// and together issue ~2 writes/sec. Reuse makes the budget enforceable rather than
-	// merely cheaper.
+	// Reddit there is no token round-trip to collapse. The WRITE PACER does not depend on
+	// this cache: X enforces 1 write/sec per ACCOUNT, and every client built here shares its
+	// account's pacer through the dispatcher's twitter.AccountPacers registry (appended to
+	// opts in NewTwitterDispatcher), so two projects' clients for one account, or a client
+	// replaced while a caller still holds its predecessor, still pace together.
 	//
 	// Sharing one instance across concurrent callers is safe for this client specifically:
 	// every field is written once at construction, and the only post-construction state is
-	// the pacer's nextWrite, written under the client's own writeMu (see twitter.Client's
-	// pace). No method stores per-call state on the receiver.
+	// the account pacer's next-write instant, written under that pacer's mutex (see
+	// twitter.Client's pace) and the account timezone cache under tzMu. No method stores
+	// per-call state on the receiver.
 	clients *clientCache
 	opts    []twitter.Option
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// audience bounds the stats jobs the audience read creates per ad account (cache,
+	// singleflight, per-account slot); see twitterAudienceGuard. audienceNow is its clock; nil
+	// means the wall clock. A field only so tests can pin it.
+	audience    *twitterAudienceGuard
+	audienceNow func() time.Time
+	// statsLease makes this pod the single owner of X stats-job creation per ad account
+	// (SetStatsJobLease). nil — no database, and the direct-construction tests — admits every
+	// call: without a database there is nothing to coordinate replicas through.
+	statsLease domain.StatsJobLease
+}
+
+// SetStatsJobLease binds the cross-pod stats-job lease the audience read and the account
+// monitor's report submission must hold before creating X stats jobs. Call once, before serving.
+func (d *TwitterDispatcher) SetStatsJobLease(l domain.StatsJobLease) { d.statsLease = l }
+
+// ownStatsJobs refuses unless this pod holds the stats-job lease for accountID —
+// domain.ErrStatsJobLeaseNotHeld when another pod owns it, domain.ErrStatsJobLeaseUnavailable
+// when ownership could not be established. Called before anything that creates stats jobs, and before any request to X on
+// those paths, so a non-owner pod never contacts X for them.
+func (d *TwitterDispatcher) ownStatsJobs(ctx context.Context, accountID string) error {
+	if d.statsLease == nil {
+		return nil
+	}
+	return d.statsLease.Own(ctx, accountID)
 }
 
 // NewTwitterDispatcher builds the adapter from the connection repo + encryptor.
 func NewTwitterDispatcher(repo connReader, enc domain.Encryptor, opts ...twitter.Option) *TwitterDispatcher {
-	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	// ONE account-keyed pacer registry for every client this dispatcher builds, appended after
+	// the caller's options: two projects whose connections point at one ad account then pace
+	// (and reserve stats-job batches) against the same state. See twitter.AccountPacers.
+	opts = append(opts[:len(opts):len(opts)], twitter.WithAccountPacers(twitter.NewAccountPacers()))
+	return &TwitterDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newTwitterAudienceGuard()}
 }
 
 // cachedTwitterClient returns the client for this connection, building it only when there is

@@ -270,8 +270,41 @@ func upstreamKeywordReader(o *Orchestrator, p model.Provider) KeywordReportReade
 	return r
 }
 
+func upstreamAudienceReader(o *Orchestrator, p model.Provider) AudienceReportReader {
+	r, ok := o.dispatchers[p].(AudienceReportReader)
+	if !ok {
+		panic("upstreamCapableDispatcher must implement AudienceReportReader")
+	}
+	return r
+}
+
+func (d upstreamCapableDispatcher) AudienceReportEnabled(model.MetricsWindow) error { return nil }
+
+func (d upstreamCapableDispatcher) AudienceReportAccount(context.Context, string, model.Provider, model.MetricsWindow, []model.ProjectCampaignScope) (string, error) {
+	return "acct-1", nil
+}
+
+func (d upstreamCapableDispatcher) SubmitAudienceReport(context.Context, string, model.Provider, string, model.MetricsWindow, []model.ProjectCampaignScope) (*model.InsightReportSubmission, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.InsightReportSubmission{ReportID: "a1", CampaignIDs: []string{"555"}}, nil
+}
+
+func (d upstreamCapableDispatcher) CheckAudienceReport(context.Context, string, model.Provider, string, string) (*model.AudienceReportCheck, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.AudienceReportCheck{Status: model.AccountReportPending}, nil
+}
+
 func keywordReportKey(p model.Provider) model.KeywordReportKey {
 	return model.KeywordReportKey{ProjectID: "p1", Platform: p, AccountID: "acct-1", Window: model.MetricsWindowLast30Days}
+}
+
+// ReportWindowDates is local, so it never fails here.
+func (d upstreamCapableDispatcher) ReportWindowDates(model.MetricsWindow, time.Time) (time.Time, time.Time, error) {
+	return time.Time{}, time.Time{}, nil
 }
 
 // KeywordReportEnabled is local, so it never fails here.
@@ -439,6 +472,15 @@ func (d upstreamCapableDispatcher) ListAccountCampaignMetrics(context.Context, s
 	return []model.AccountCampaignMetrics{}, nil
 }
 
+// ReadEmailMonitor implements EmailMonitorReader so this fake drives the HubSpot email monitor's
+// upstream call.
+func (d upstreamCapableDispatcher) ReadEmailMonitor(context.Context, string, model.Provider, []*model.Campaign, int) (*model.HubSpotEmailMonitorRead, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.HubSpotEmailMonitorRead{Emails: []model.HubSpotMonitorEmail{}}, nil
+}
+
 // WriteBudget implements BudgetWriter (an optional dispatcher capability) so this same fake
 // drives the budget-write upstream call the orchestrator instruments. It is a mutation that
 // changes how much money is spent, so its latency and failure count are exactly what an
@@ -451,6 +493,22 @@ func (d upstreamCapableDispatcher) WriteBudget(context.Context, string, model.Pr
 // budget write's reason: it changes what a live campaign pays per click.
 func (d upstreamCapableDispatcher) WriteBid(context.Context, string, model.Provider, *model.Campaign, model.BidChange) error {
 	return d.err
+}
+
+// ReadMetaAdSets / ToggleMetaAdSetStatus implement the two Meta ad-set capabilities so this fake
+// drives their instrumented upstream calls.
+func (d upstreamCapableDispatcher) ReadMetaAdSets(context.Context, string, model.Provider, *model.Campaign, model.MetricsWindow) (*model.MetaAdSets, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.MetaAdSets{}, nil
+}
+
+func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string, model.Provider, *model.Campaign, string, string) (*model.MetaAdSetStatusResult, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.MetaAdSetStatusResult{Outcome: model.MetaAdSetApplied}, nil
 }
 
 func (d upstreamCapableDispatcher) VerifyAccountOrg(context.Context, string, model.Provider) error {
@@ -584,6 +642,24 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			},
 		},
 		{
+			name: "read meta ad sets",
+			op:   opReadMetaAdSets,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaAdSets(ctx, "p1", platform, campaign, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			// A mutation of a live ad set's delivery: its failure rate is what an operator
+			// watches when pauses stop landing.
+			name: "toggle meta ad set status",
+			op:   opToggleMetaAdSetStatus,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused)
+				return err
+			},
+		},
+		{
 			name: "search campaign",
 			op:   opSearchCampaign,
 			call: func(ctx context.Context, o *Orchestrator) error {
@@ -664,6 +740,33 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				return err
 			},
 		},
+		// The report-backed audience read's two upstream calls, likewise.
+		{
+			name: "check audience report",
+			op:   opCheckAudienceReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.checkAudienceReport(ctx, ctx, upstreamAudienceReader(o, platform), keywordReportKey(platform), "a1")
+				return err
+			},
+		},
+		{
+			name: "submit audience report",
+			op:   opSubmitAudienceReport,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.submitAudienceReport(ctx, ctx, upstreamAudienceReader(o, platform), keywordReportKey(platform), []model.ProjectCampaignScope{{PlatformCampaignID: "555"}})
+				return err
+			},
+		},
+		{
+			// The email monitor answers an empty scope without an upstream call, so the fake
+			// repo below carries one recorded campaign.
+			name: "read email monitor",
+			op:   opReadEmailMonitor,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadHubSpotEmailMonitor(ctx, "p1", platform, 30)
+				return err
+			},
+		},
 		{
 			name: "write budget",
 			op:   opWriteBudget,
@@ -740,7 +843,7 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				// WITHOUT an upstream call, so with the default fake they would record
 				// nothing and this instrumentation assertion would fail for the right
 				// reason but the wrong cause.
-				orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"555"}}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
+				orch := NewOrchestrator(&fakeCampaignRepo{scopeIDs: []string{"555"}, recent: []*model.Campaign{{ID: "c1", PlatformCampaignID: "555"}}}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 					platform: upstreamCapableDispatcher{err: arm.platformErr},
 				})
 				orch.SetMetrics(rec)
@@ -998,6 +1101,9 @@ func TestProbeLocalRefusalsCoverTheResolverVocabulary(t *testing.T) {
 		// Probes never resolve through that fallback (they use resolveOwned), and it is not
 		// returned as an error outcome in the first place.
 		"ErrSystemConnectionOrigin": "a provenance marker, not a failure",
+		// Never returned alone: noOwnConnection wraps it ALONGSIDE domain.ErrNotFound, which the
+		// gate lists, so every error carrying it is already classified as a local refusal.
+		"ErrConnectionAbsent": "always wrapped together with ErrNotFound, which the gate lists",
 	}
 
 	src, err := os.ReadFile(filepath.Join("..", "dispatch", "creds.go"))

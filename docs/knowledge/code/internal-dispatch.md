@@ -1460,7 +1460,8 @@ lesson). The 2xx echo is checked like Reddit's: another campaign id or another a
 UNCONFIRMED.
 
 **Not gated.** X campaign writes (create, toggle) are already ungated; the budget PUT uses the same
-client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the account monitor.
+client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the two stats-job
+features (the account monitor and the audience read).
 
 **Unverified against a live X account**: which `budget_optimization` value a campaign this
 service creates actually reads back as, whether the single-campaign GET returns `deleted`
@@ -1965,9 +1966,10 @@ the client will actually use.
 `microsoft_keyword_report.go` makes `MicrosoftDispatcher` a `service.KeywordReportReader` — the
 report-backed stand-in for `KeywordInsightsReader.ReadKeywordPerformance`, as
 `AccountReportReader` stands in for `AccountMetricsReader`. It does NOT implement
-`KeywordInsightsReader`, so the audience read stays `ErrKeywordInsightsUnsupported` (400) for
-Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension, so the
-three-dimension answer would need a second report and could be half-finished.
+`KeywordInsightsReader`, so the Google-shaped audience read stays `ErrKeywordInsightsUnsupported`
+(400) for Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension,
+so the three-dimension answer would need a second report and could be half-finished. Microsoft's
+age/gender-only read is a separate capability (below).
 
 - `KeywordReportAccount` — makes NO upstream call. Gate (`MICROSOFT_METRICS_ENABLED`, off →
   `ErrKeywordInsightsUnsupported`), window (`ErrMetricsWindowUnsupported`), scope ceiling (more
@@ -1993,6 +1995,27 @@ Tests (`microsoft_keyword_report_test.go`): gate off on all three methods, every
 zero upstream calls, the provenance filter, the system-fallback refusal, the submitted scope
 (Campaigns only, no `AccountIds`), and the poll states.
 
+The scope rules, gate and connection resolution are shared helpers parameterised by the read
+(`microsoftReportScopeIDs` / `microsoftReportScope` over `microsoftReportScopeRules`,
+`microsoftInsightsEnabled`, `resolveMicrosoftInsightsClient`); the keyword functions are thin
+wrappers with unchanged behaviour. Each kind's rules carry its own platform id check
+(`validateID`: `ValidateKeywordReportCampaignID` / `ValidateAudienceReportCampaignID`), so a
+refused id's error chain names that kind's scope sentinel.
+
+## Report-backed age/gender audience read (Microsoft, LFXV2-2665)
+
+`microsoft_audience_report.go` makes `MicrosoftDispatcher` a `service.AudienceReportReader`, the
+keyword reader's twin for the `AgeGenderAudienceReportRequest` (no device dimension):
+`AudienceReportEnabled` / `AudienceReportAccount` / `SubmitAudienceReport` /
+`CheckAudienceReport` with the keyword methods' gate, window, own-connection, bound-account,
+de-duplication, 300-ceiling and provenance rules, but the AUDIENCE sentinels
+(`microsoft.ErrAudienceReportScope`, `domain.ErrAudienceScopeInvalid`,
+`domain.ErrAudienceScopeTooLarge`) so a 409 names the read that refused; a 2027 rejection
+(`microsoft.ErrAudienceReportScopeRejected`) is tagged `ErrServiceDefect`. Check maps rows to
+`model.AudienceReportRow` (campaign, age group, gender, counters) and refuses a spend whose micros
+would overflow. Tests (`microsoft_audience_report_test.go`) mirror the keyword ones on the same
+fake Microsoft, plus a check that a malformed report fails rather than returning partial rows.
+
 ## Meta audience read (`meta_audience.go`, LFXV2-2665)
 
 `MetaDispatcher` implements `service.MetaAudienceReader` (`ReadMetaAudienceInsights`), a
@@ -2016,6 +2039,103 @@ only its own campaigns, and no connection at all is `domain.ErrNotFound` (404) �
 returned unclassified (503 at the service). Tests: `meta_audience_test.go` (mapping, every
 refusal with zero upstream calls, partial mismatch, unknown provenance proceeds, 403 stays
 unclassified).
+
+## X audience read (`twitter_audience.go`, LFXV2-2665)
+
+`TwitterDispatcher` implements `service.TwitterAudienceReader` (`ReadTwitterAudienceInsights`),
+a third capability beside `KeywordInsightsReader` and `MetaAudienceReader`: X's AGE, GENDER and
+PLATFORMS segmentations carry ONE value each (so the bucket is `dimension` + `value`, not Meta's
+named fields), and X has no keyword read. Every other dispatcher lacks it → 400 not supported.
+
+Order: `twitterAudienceEnabled()` first — `TWITTER_METRICS_ENABLED` must be exactly `"true"`,
+else `ErrKeywordInsightsUnsupported` (400) before any credential read, because the read runs on
+the same unverified asynchronous stats-jobs contract as the X account monitor (the synchronous
+`ReadMetrics` is not gated); then the window through `twitterMetricsWindow` (yesterday, today,
+last_7_days; anything longer → `ErrMetricsWindowUnsupported`, 400); then
+`creds.resolveExisting(…, "")` — project-then-system, so a fallback project reads only its own
+campaigns and no connection is `ErrNotFound` (404); `validateTwitterConnection` (inactive,
+undecodable, incomplete, no account → `ErrConnectionNotUsable`, 400 own / 500 system fallback);
+`twitter.ValidateMonitorAccountID` on the stored account (`ErrConnectionNotUsable`); then
+`twitterScopeForAccount`: every stored id must pass `twitter.ValidateCampaignID`
+(`ErrAudienceScopeInvalid`, 409) and ANY entry whose `twitterCreationAccountID` differs refuses
+the whole read (`ErrCampaignAccountMismatch`, 409). Only then the CACHED client (shared write
+pacer) calls `twitter.Client.GetAudienceInsights`; `ErrAudienceScopeTooLarge` /
+`ErrAudienceScopeInvalid` / `ErrReportWindowNotWholeHours` are re-tagged with the domain
+sentinels (the last as `ErrAccountTimezoneUnsupported`, 409), every upstream failure is returned
+unclassified (503). Tests: `twitter_audience_test.go` (mapping and account-tz job window, every
+refusal with zero upstream calls, flag values, partial mismatch, own and LF-fallback reads,
+fractional-offset zone creates no job, 403 unclassified).
+
+`AudienceEnabled()` is the same flag check exposed on the capability: the orchestrator calls it
+BEFORE the scope lookup, because `readScopedAudience` answers an empty scope without reaching the
+adapter — checked only inside the read, a disabled read answered 200 `[]` to every project with
+no X campaigns. The client call runs through `twitterAudienceGuard` (`twitter_audience_guard.go`),
+one per dispatcher (so per process), because every read holds stats-job slots on an ad account
+that other foundations and the X account monitor share (X: 100 concurrent jobs per account) and
+a timed-out read's jobs keep running until X expires them. Keyed by account + window + sorted
+de-duplicated scope: identical concurrent reads share one call (singleflight; a joiner whose ctx
+ends first gets its own ctx error; when the LEADER failed only because its own ctx ended — tagged
+`leaderContextError` in the leader's deferred close — a joiner with a live ctx loops and re-leads,
+at most `twitterAudienceMaxReLeads` (2) times, so one disconnecting client no longer 503s every
+concurrent identical read; any other failure is shared, never retried); a SUCCESSFUL result is reused for 5 minutes (at most 256
+entries; failures never cached) while `twitter.AudienceWindowBounds` at the dispatcher clock
+(`audienceNow`) still gives the result's own instants, so "today" is never served across the
+account's midnight; and a per-account slot (`twitterAudienceAccountConcurrency` = 1) runs one read
+at a time, a waiter giving up with its context (503); the slot entry is deleted when nobody holds
+or awaits it, so `slots` does not grow with accounts. A joined SUCCESS whose window no longer
+`windowCurrent` (a "today" joined across the account's midnight) is re-led, like a
+leader-cancelled one. Jobs a failed read leaves running (`twitter.AudienceJobsAbandonedError`)
+are counted per account for `twitterAudienceAbandonedJobHold` (60 minutes — the monitor's
+`accountReportAbandonAfter`, as X documents no job lifetime) or until `RunningStatsJobs` reports
+them finished; `admitJobs`, run by the slot holder, refuses (503) a read whose
+`twitter.AudienceJobCount` would take the account past `twitterAudienceOutstandingJobBudget`
+(12 — two full reads, leaving most of X's 100 concurrent jobs per account to the account monitor),
+asking X first only when over budget. A create that failed AMBIGUOUSLY is reported as
+`AudienceJobsAbandonedError.Unknown` and recorded as an ANONYMOUS entry (id ""): never sent to X
+for reconciliation (it has no id), it only expires with the hold, and reconciling the named jobs
+beside it keeps it. `NewTwitterDispatcher` appends `twitter.WithAccountPacers` with ONE
+registry to every client it builds, so every connection to one ad account in the process shares
+that account's write pacer and stats-job reservations. All of this is per process, so ACROSS
+pods the dispatcher asks its `domain.StatsJobLease` (`SetStatsJobLease`, bound by the container
+to `postgres.StatsJobLease`) before anything that creates stats jobs — the audience read, before
+contacting X, and `SubmitAccountReport`, before submitting: a pod that does not own the
+account's lease returns `domain.ErrStatsJobLeaseNotHeld`, or `ErrStatsJobLeaseUnavailable`
+when ownership could not be established (audience read: 503 with that sentinel's fixed text; monitor: the orchestrator's transient submission failure — logged, the saved report still
+served). A nil lease (no database; the direct-construction tests) admits everything. The chart's
+render-time replica refusal is a first line of defence only (it cannot see an out-of-band scale
+or an external HPA). Test: `TestTwitter_StatsJobLease_NonOwnerRefusesWithoutContactingX`. The scope in the key means a cached result
+is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
+(N callers → one set of jobs, a second account read refused while the first runs, cache hit
+creates no jobs and expires by TTL and by account-local day, failures not cached) and
+`twitter_audience_guard_test.go` (leader cancelled during fetch or slot wait → joiner re-leads;
+joiner's own cancellation is its own error; an upstream failure is shared, fetched once; a joined
+result across midnight re-leads; the abandoned-job budget, X's answer and the hold; slots do not
+grow with accounts; anonymous jobs only expire and survive reconciliation).
+
+## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
+
+`MetaDispatcher` implements `service.MetaAdSetReader` (`ReadMetaAdSets`) and
+`service.MetaAdSetStatusToggler` (`ToggleMetaAdSetStatus`); no other dispatcher does, so the
+orchestrator answers `domain.ErrMetaAdSetsUnsupported` (400) for them. Both run
+`metaAdSetScope` first — the settings readback's provenance: `metaCreationAccountID` empty →
+`ErrCampaignProvenanceUnknown` joined with the mismatch sentinel, before any credential is
+resolved; `requireMetaAccountID`; `meta.ValidateAccountID`; `verifyMetaAccountMatch` — so every
+409 there sends zero requests. The read maps `meta.ErrAdSetAccountMismatch` to
+`ErrCampaignUpstreamIdentityMismatch`, renders budgets with `formatMinorUnits` (absent for an
+unmapped currency), marks `Recorded` from `metaAdSetID`, and stamps `ReadAt` from the
+`settingsNow` clock tests pin. The toggle refuses `ACTIVE` with `ErrCampaignNotProvisioned` when
+the row records no ad set (adopted), and `ErrMetaAdSetNotRecorded` for any ad set but the
+recorded one, before any request; a non-canonical stored campaign id is
+`ErrStoredPlatformIDInvalid` on both paths; then it reads the ad set
+(`GetAdSetState`), refuses another campaign's or account's ad set
+(`ErrMetaAdSetNotInCampaign`) and DELETED/ARCHIVED (`ErrMetaAdSetUnwritable`), answers
+`ALREADY_IN_STATE` with no write, and otherwise sends ONE `UpdateAdSetStatusOnce`, classified by
+`meta.ClassifyAdSetWrite`: unconfirmed → `unconfirmedToggleError`; not-sent and rejected →
+ordinary errors. See [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+Tests: `meta_ad_sets_test.go`.
+
+`noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
+a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
 
 ## Account discovery (optional capability)
 
@@ -4106,3 +4226,27 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
 fetched from HubSpot once per `RunQA` call, not once per reference.
 
+## HubSpot email account monitor (`hubspot_monitor.go`, LFXV2-2665)
+
+`HubSpotDispatcher.ReadEmailMonitor` implements `service.EmailMonitorReader`. Order: `days`
+re-checked (`validateMonitorDays`); the connection via `resolveHubSpotClientWithCreds` — the
+project's own, else the LF system row, exactly as Dispatch and ReadMetrics (the per-email portal
+check, not the resolver, is the boundary; neither row → `ErrNotFound`); `MonitorSpan(days)`; the
+token's portal via `AuthenticatedPortalID` on its own `portalLookupTimeout`; then
+`hubspotMonitorTargets` turns the campaigns the orchestrator passed into emails — each row's own
+email then its recorded `Result.abTestVariant`, deduplicated by email id (first, newest row
+wins, see below) — counting as unattributable any whose row records no `portalId`, another portal, or a
+non-canonical id; those are never sent upstream. A `Result` that fails to decode at all — a
+type error included, which would otherwise leave the fields decoded before it — is treated as
+recording no portal; if it is still a JSON object with a non-null `abTestVariant`, that variant is
+counted unattributable alongside the row's own email rather than vanishing. Soft-deleted rows are read and marked `Deleted`; an email on both a deleted and a live row is
+owned by the live one. One `GetEmailCounters` per email through an
+`errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read).
+A 401/403 on token-info or statistics is tagged `ErrConnectionNotUsable` through
+`res.systemScoped` (400 own token, 500 LF fallback token), as SearchEmails/SearchCampaigns do.
+`AsOf` is the client clock (`hubspot.WithClock`/`Client.Now`) at the LAST upstream response.
+Attribution is decided BEFORE de-duplication and only attributable emails are de-duplicated,
+keyed portal+id: an id is unique only within its portal, so a foreign-portal or malformed row
+with the same number must neither suppress an attributable row nor escape the unattributable
+count. `ErrNoSentEmailInWindow` is counted
+(`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.

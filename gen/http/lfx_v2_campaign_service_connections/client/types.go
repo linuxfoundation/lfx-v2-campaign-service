@@ -848,6 +848,34 @@ type GetMetaAdsAudienceResponseBody struct {
 	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
 }
 
+// GetTwitterAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body.
+type GetTwitterAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as days on the ad ACCOUNT's
+	// calendar (its timezone) — not the UTC days the X campaign metrics read uses
+	// for the same window name
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Every bucket across the three segmentations, discriminated by `dimension`.
+	// Ordered by dimension (age, gender, platform), then impressions descending,
+	// then value.
+	Buckets []*TwitterAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+	// ISO 4217 currency of the ad account that cost_micros is denominated in, as X
+	// reports it on the account. ABSENT when X was not contacted (the project has
+	// no X campaigns of its own) or the account carries no currency.
+	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
+	// True when, for at least one dimension, X returned segment rows whose every
+	// counter was null or absent. The zeros in that dimension are then NOT a
+	// measurement: it is either no delivery in the window or X's reported defect
+	// where segmented stats jobs succeed with all-null metrics, and the two cannot
+	// be told apart.
+	AllCountersNull *bool `form:"all_counters_null,omitempty" json:"all_counters_null,omitempty" xml:"all_counters_null,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -886,6 +914,34 @@ type GetMicrosoftAdsKeywordsResponseBody struct {
 	// incomplete ("Potential Incomplete Data" — the window's last day, usually
 	// today, may still be aggregating): its counters may still rise. False when no
 	// report is served.
+	DataIncomplete *bool `form:"data_incomplete,omitempty" json:"data_incomplete,omitempty" xml:"data_incomplete,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body.
+type GetMicrosoftAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// One bucket per (age_group, gender), summed over the campaigns this project
+	// owns, from the last finished Microsoft age/gender report that covers every
+	// one of them; ordered by impressions descending. Every bucket covers a
+	// disjoint slice of the same traffic, so counters may be totalled across
+	// buckets. Empty while no such report has finished (metrics_as_of absent).
+	Buckets []*MicrosoftAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+	// When the Microsoft report these buckets come from was requested (not when it
+	// was collected). ABSENT when no finished report covers every campaign this
+	// project now owns — the first read, or the first after a campaign was added —
+	// and `buckets` is then empty rather than a partial picture.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer buckets (or the first ones, when metrics_as_of is absent).
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete (the window's last day may still be aggregating): its counters
+	// may still rise. False when no report is served.
 	DataIncomplete *bool `form:"data_incomplete,omitempty" json:"data_incomplete,omitempty" xml:"data_incomplete,omitempty"`
 }
 
@@ -1334,6 +1390,57 @@ type MonitorTwitterAdsAccountResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MonitorHubspotAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body.
+type MonitorHubspotAccountResponseBody struct {
+	// The REQUESTED trailing-days window (today inclusive, UTC), echoed back.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// The project's own HubSpot marketing emails that HubSpot reports as SENT
+	// inside the window, newest-recorded campaign first. The window selects emails
+	// by SEND date; each email's counters are its totals as of when it was read
+	// (no later than metrics_as_of), not only the events inside the window.
+	Emails []*HubspotEmailMonitorEmailResponseBody `form:"emails,omitempty" json:"emails,omitempty" xml:"emails,omitempty"`
+	// Findings across the emails, HIGH first. campaign_id is this service's
+	// campaign UUID (as on the rows), email_id the HubSpot email the finding is
+	// about — join to `emails` on email_id — and campaign_name the email's name.
+	// Every threshold is a deliverability heuristic, not a HubSpot limit.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	// The sum of the emails array, with rates from the summed counters.
+	Totals *HubspotEmailMonitorTotalsResponseBody `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// When the LAST HubSpot response of this read arrived — an upper bound: every
+	// email's counters were read at or before this instant (a read makes many
+	// requests over up to 20s, so earlier emails were read somewhat earlier). With
+	// no email to ask about it is when the token-info answer arrived. ABSENT when
+	// HubSpot was not called because the project has recorded no HubSpot email.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// The FIRST UTC calendar day (inclusive) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// The LAST UTC calendar day (inclusive, today) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// How many of the project's recorded emails HubSpot was asked about: the
+	// emails array plus emails_not_sent_in_window.
+	EmailsChecked *int `form:"emails_checked,omitempty" json:"emails_checked,omitempty" xml:"emails_checked,omitempty"`
+	// How many checked emails HubSpot reported no send of inside the window — sent
+	// outside it, never sent (a staged draft), or no longer existing; HubSpot's
+	// answer does not tell these apart. Never reported as zeros.
+	EmailsNotSentInWindow *int `form:"emails_not_sent_in_window,omitempty" json:"emails_not_sent_in_window,omitempty" xml:"emails_not_sent_in_window,omitempty"`
+	// How many recorded emails were NOT read because they cannot be read safely:
+	// the campaign row does not record which HubSpot portal the email was created
+	// in, records a different portal than the one the project's token reaches now,
+	// or holds a malformed id. An email id means something only inside its own
+	// portal.
+	EmailsUnattributable *int `form:"emails_unattributable,omitempty" json:"emails_unattributable,omitempty" xml:"emails_unattributable,omitempty"`
+	// True whenever the project has recorded more than 50 HubSpot campaigns
+	// (deleted ones included): only the 50 most recently recorded (and their A/B
+	// variants) are checked, and any unchecked email — even one recorded long ago,
+	// since a draft can be sent late — could have been sent inside the window, so
+	// the totals may omit it.
+	EmailsTruncated *bool `form:"emails_truncated,omitempty" json:"emails_truncated,omitempty" xml:"emails_truncated,omitempty"`
 }
 
 // CreateGoogleAdsBadRequestResponseBody is the type of the
@@ -4296,6 +4403,79 @@ type GetMetaAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetTwitterAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetTwitterAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetTwitterAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetTwitterAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetTwitterAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetTwitterAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetTwitterAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetTwitterAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetTwitterAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetTwitterAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4363,6 +4543,79 @@ type GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "Unauthorized" error.
 type GetMicrosoftAdsKeywordsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMicrosoftAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMicrosoftAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMicrosoftAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMicrosoftAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMicrosoftAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMicrosoftAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -5536,6 +5789,66 @@ type MonitorTwitterAdsAccountUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// MonitorHubspotAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorHubspotAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorHubspotAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type MonitorHubspotAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorHubspotAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "InternalServerError" error.
+type MonitorHubspotAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorHubspotAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "NotFound" error.
+type MonitorHubspotAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorHubspotAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type MonitorHubspotAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// MonitorHubspotAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "Unauthorized" error.
+type MonitorHubspotAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
 // body types.
 type GoogleAdsConnectionConfigRequestBody struct {
@@ -5830,6 +6143,50 @@ type MetaAdsAudienceBucketResponseBody struct {
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
+// TwitterAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type TwitterAdsAudienceBucketResponseBody struct {
+	// Which segmentation this bucket belongs to: age (X segmentation_type AGE),
+	// gender (GENDER) or platform (PLATFORMS)
+	Dimension *string `form:"dimension,omitempty" json:"dimension,omitempty" xml:"dimension,omitempty"`
+	// X's segment name for this bucket, verbatim (for example an age range, a
+	// gender or a device platform). A value outside a conservative charset fails
+	// the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Billed charge over the window (X's billed_charge_local_micro) in micro-units
+	// of the ad account's currency (see account_currency). This service performs
+	// no FX conversion.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsAudienceBucketResponseBody struct {
+	// Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34,
+	// 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown
+	// bucket, is passed through rather than dropped).
+	AgeGroup *string `form:"age_group,omitempty" json:"age_group,omitempty" xml:"age_group,omitempty"`
+	// Microsoft's Gender, verbatim (documented as male or female; any other value
+	// Microsoft reports is passed through rather than dropped).
+	Gender *string `form:"gender,omitempty" json:"gender,omitempty" xml:"gender,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window in micro-units of the ad account's own currency
+	// (Microsoft's Spend times 10^6). This service performs no FX conversion and
+	// does not know the currency.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
 // CampaignRefResponseBody is used to define fields on response body types.
 type CampaignRefResponseBody struct {
 	// This service's campaign id, as the mutation routes take it.
@@ -5938,8 +6295,14 @@ type AccountMonitorCampaignResponseBody struct {
 // AccountMonitorActionItemResponseBody is used to define fields on response
 // body types.
 type AccountMonitorActionItemResponseBody struct {
-	// The platform campaign id this item is about. Empty for an account-wide item.
+	// The campaign this item is about: the platform campaign id on the ad-platform
+	// monitors; this service's campaign UUID on monitor-hubspot-account (where
+	// email_id names the email). Empty for an account-wide item.
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// monitor-hubspot-account only: the HubSpot marketing-email id the item is
+	// about — the key that joins a finding to its row in `emails` (an A/B variant
+	// shares its parent's campaign_id). Absent on every ad-platform monitor.
+	EmailID *string `form:"email_id,omitempty" json:"email_id,omitempty" xml:"email_id,omitempty"`
 	// The campaign's platform-side name, carried alongside campaign_id so a
 	// renderer never needs to re-join against the row list.
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
@@ -5967,6 +6330,81 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many campaigns the totals reflect: the length of the campaigns array
 	// these totals sum.
 	CampaignCount *int `form:"campaign_count,omitempty" json:"campaign_count,omitempty" xml:"campaign_count,omitempty"`
+}
+
+// HubspotEmailMonitorEmailResponseBody is used to define fields on response
+// body types.
+type HubspotEmailMonitorEmailResponseBody struct {
+	// This service's campaign UUID the email belongs to.
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The HubSpot marketing-email id.
+	EmailID *string `form:"email_id,omitempty" json:"email_id,omitempty" xml:"email_id,omitempty"`
+	// The email's name as this service recorded it when the email was created.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// True for an A/B test's variant (B) email, which is recorded on its parent
+	// campaign; false for the campaign's own email.
+	AbVariant *bool `form:"ab_variant,omitempty" json:"ab_variant,omitempty" xml:"ab_variant,omitempty"`
+	// True when the campaign was deleted in this service. A local delete neither
+	// stops nor deletes the HubSpot email, so its sends still count as the
+	// project's and it is still monitored.
+	Deleted *bool `form:"deleted,omitempty" json:"deleted,omitempty" xml:"deleted,omitempty"`
+	// HubSpot's `sent` counter for the email, to date.
+	Sent *int64 `form:"sent,omitempty" json:"sent,omitempty" xml:"sent,omitempty"`
+	// HubSpot's `delivered` counter, to date.
+	Delivered *int64 `form:"delivered,omitempty" json:"delivered,omitempty" xml:"delivered,omitempty"`
+	// HubSpot's `open` counter, to date. Inflated by mail clients that pre-fetch
+	// images (e.g. Apple Mail Privacy Protection).
+	Opens *int64 `form:"opens,omitempty" json:"opens,omitempty" xml:"opens,omitempty"`
+	// HubSpot's `click` counter, to date.
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// HubSpot's `bounce` counter, to date.
+	Bounces *int64 `form:"bounces,omitempty" json:"bounces,omitempty" xml:"bounces,omitempty"`
+	// HubSpot's `unsubscribed` counter, to date.
+	Unsubscribes *int64 `form:"unsubscribes,omitempty" json:"unsubscribes,omitempty" xml:"unsubscribes,omitempty"`
+	// HubSpot's `spamreport` counter, to date.
+	SpamReports *int64 `form:"spam_reports,omitempty" json:"spam_reports,omitempty" xml:"spam_reports,omitempty"`
+	// opens / delivered, as a fraction (0.3 = 30%). ABSENT when delivered is 0 — a
+	// rate over nothing is unknown, not 0.
+	OpenRate *float64 `form:"open_rate,omitempty" json:"open_rate,omitempty" xml:"open_rate,omitempty"`
+	// clicks / delivered, as a fraction. ABSENT when delivered is 0.
+	ClickRate *float64 `form:"click_rate,omitempty" json:"click_rate,omitempty" xml:"click_rate,omitempty"`
+	// bounces / sent, as a fraction. ABSENT when sent is 0.
+	BounceRate *float64 `form:"bounce_rate,omitempty" json:"bounce_rate,omitempty" xml:"bounce_rate,omitempty"`
+	// unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.
+	UnsubscribeRate *float64 `form:"unsubscribe_rate,omitempty" json:"unsubscribe_rate,omitempty" xml:"unsubscribe_rate,omitempty"`
+	// spam_reports / delivered, as a fraction. ABSENT when delivered is 0.
+	SpamRate *float64 `form:"spam_rate,omitempty" json:"spam_rate,omitempty" xml:"spam_rate,omitempty"`
+}
+
+// HubspotEmailMonitorTotalsResponseBody is used to define fields on response
+// body types.
+type HubspotEmailMonitorTotalsResponseBody struct {
+	// How many emails the totals sum: the length of the emails array.
+	EmailCount *int `form:"email_count,omitempty" json:"email_count,omitempty" xml:"email_count,omitempty"`
+	// Sum of the emails' sent counters.
+	Sent *int64 `form:"sent,omitempty" json:"sent,omitempty" xml:"sent,omitempty"`
+	// Sum of the emails' delivered counters.
+	Delivered *int64 `form:"delivered,omitempty" json:"delivered,omitempty" xml:"delivered,omitempty"`
+	// Sum of the emails' opens.
+	Opens *int64 `form:"opens,omitempty" json:"opens,omitempty" xml:"opens,omitempty"`
+	// Sum of the emails' clicks.
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Sum of the emails' bounces.
+	Bounces *int64 `form:"bounces,omitempty" json:"bounces,omitempty" xml:"bounces,omitempty"`
+	// Sum of the emails' unsubscribes.
+	Unsubscribes *int64 `form:"unsubscribes,omitempty" json:"unsubscribes,omitempty" xml:"unsubscribes,omitempty"`
+	// Sum of the emails' spam reports.
+	SpamReports *int64 `form:"spam_reports,omitempty" json:"spam_reports,omitempty" xml:"spam_reports,omitempty"`
+	// Summed opens / summed delivered. ABSENT when that denominator is 0.
+	OpenRate *float64 `form:"open_rate,omitempty" json:"open_rate,omitempty" xml:"open_rate,omitempty"`
+	// Summed clicks / summed delivered. ABSENT when that denominator is 0.
+	ClickRate *float64 `form:"click_rate,omitempty" json:"click_rate,omitempty" xml:"click_rate,omitempty"`
+	// Summed bounces / summed sent. ABSENT when that denominator is 0.
+	BounceRate *float64 `form:"bounce_rate,omitempty" json:"bounce_rate,omitempty" xml:"bounce_rate,omitempty"`
+	// Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.
+	UnsubscribeRate *float64 `form:"unsubscribe_rate,omitempty" json:"unsubscribe_rate,omitempty" xml:"unsubscribe_rate,omitempty"`
+	// Summed spam_reports / summed delivered. ABSENT when that denominator is 0.
+	SpamRate *float64 `form:"spam_rate,omitempty" json:"spam_rate,omitempty" xml:"spam_rate,omitempty"`
 }
 
 // NewCreateGoogleAdsRequestBody builds the HTTP request body from the payload
@@ -10255,6 +10693,114 @@ func NewGetMetaAdsAudienceUnauthorized(body *GetMetaAdsAudienceUnauthorizedRespo
 	return v
 }
 
+// NewGetTwitterAdsAudienceTwitterAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetTwitterAdsAudienceTwitterAdsAudienceOK(body *GetTwitterAdsAudienceResponseBody) *lfxv2campaignserviceconnections.TwitterAdsAudience {
+	v := &lfxv2campaignserviceconnections.TwitterAdsAudience{
+		Window:          *body.Window,
+		BucketCount:     *body.BucketCount,
+		AccountCurrency: body.AccountCurrency,
+		AllCountersNull: *body.AllCountersNull,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.TwitterAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalTwitterAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsTwitterAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint BadRequest error.
+func NewGetTwitterAdsAudienceBadRequest(body *GetTwitterAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceConflict builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint Conflict error.
+func NewGetTwitterAdsAudienceConflict(body *GetTwitterAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint ServiceUnavailable error.
+func NewGetTwitterAdsAudienceServiceUnavailable(body *GetTwitterAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint InternalServerError error.
+func NewGetTwitterAdsAudienceInternalServerError(body *GetTwitterAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceNotFound builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint NotFound error.
+func NewGetTwitterAdsAudienceNotFound(body *GetTwitterAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint PayloadTooLarge error.
+func NewGetTwitterAdsAudiencePayloadTooLarge(body *GetTwitterAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetTwitterAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience
+// endpoint Unauthorized error.
+func NewGetTwitterAdsAudienceUnauthorized(body *GetTwitterAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK builds a
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint result from a HTTP "OK" response.
@@ -10357,6 +10903,115 @@ func NewGetMicrosoftAdsKeywordsPayloadTooLarge(body *GetMicrosoftAdsKeywordsPayl
 // lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
 // endpoint Unauthorized error.
 func NewGetMicrosoftAdsKeywordsUnauthorized(body *GetMicrosoftAdsKeywordsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceMicrosoftAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetMicrosoftAdsAudienceMicrosoftAdsAudienceOK(body *GetMicrosoftAdsAudienceResponseBody) *lfxv2campaignserviceconnections.MicrosoftAdsAudience {
+	v := &lfxv2campaignserviceconnections.MicrosoftAdsAudience{
+		Window:         *body.Window,
+		BucketCount:    *body.BucketCount,
+		MetricsAsOf:    body.MetricsAsOf,
+		MetricsPending: *body.MetricsPending,
+		DataIncomplete: *body.DataIncomplete,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.MicrosoftAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalMicrosoftAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsMicrosoftAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint BadRequest error.
+func NewGetMicrosoftAdsAudienceBadRequest(body *GetMicrosoftAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceConflict builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint Conflict error.
+func NewGetMicrosoftAdsAudienceConflict(body *GetMicrosoftAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint ServiceUnavailable error.
+func NewGetMicrosoftAdsAudienceServiceUnavailable(body *GetMicrosoftAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint InternalServerError error.
+func NewGetMicrosoftAdsAudienceInternalServerError(body *GetMicrosoftAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceNotFound builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint NotFound error.
+func NewGetMicrosoftAdsAudienceNotFound(body *GetMicrosoftAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint PayloadTooLarge error.
+func NewGetMicrosoftAdsAudiencePayloadTooLarge(body *GetMicrosoftAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint Unauthorized error.
+func NewGetMicrosoftAdsAudienceUnauthorized(body *GetMicrosoftAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
 	v := &lfxv2campaignserviceconnections.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -12195,6 +12850,114 @@ func NewMonitorTwitterAdsAccountUnauthorized(body *MonitorTwitterAdsAccountUnaut
 	return v
 }
 
+// NewMonitorHubspotAccountHubspotEmailMonitorOK builds a
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint result from a HTTP "OK" response.
+func NewMonitorHubspotAccountHubspotEmailMonitorOK(body *MonitorHubspotAccountResponseBody) *lfxv2campaignserviceconnections.HubspotEmailMonitor {
+	v := &lfxv2campaignserviceconnections.HubspotEmailMonitor{
+		Days:                  *body.Days,
+		MetricsAsOf:           body.MetricsAsOf,
+		MetricsWindowStart:    body.MetricsWindowStart,
+		MetricsWindowEnd:      body.MetricsWindowEnd,
+		EmailsChecked:         *body.EmailsChecked,
+		EmailsNotSentInWindow: *body.EmailsNotSentInWindow,
+		EmailsUnattributable:  *body.EmailsUnattributable,
+		EmailsTruncated:       *body.EmailsTruncated,
+	}
+	v.Emails = make([]*lfxv2campaignserviceconnections.HubspotEmailMonitorEmail, len(body.Emails))
+	for i, val := range body.Emails {
+		if val == nil {
+			v.Emails[i] = nil
+			continue
+		}
+		v.Emails[i] = unmarshalHubspotEmailMonitorEmailResponseBodyToLfxv2campaignserviceconnectionsHubspotEmailMonitorEmail(val)
+	}
+	v.ActionItems = make([]*lfxv2campaignserviceconnections.AccountMonitorActionItem, len(body.ActionItems))
+	for i, val := range body.ActionItems {
+		if val == nil {
+			v.ActionItems[i] = nil
+			continue
+		}
+		v.ActionItems[i] = unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorActionItem(val)
+	}
+	v.Totals = unmarshalHubspotEmailMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsHubspotEmailMonitorTotals(body.Totals)
+
+	return v
+}
+
+// NewMonitorHubspotAccountBadRequest builds a
+// lfx-v2-campaign-service-connections service monitor-hubspot-account endpoint
+// BadRequest error.
+func NewMonitorHubspotAccountBadRequest(body *MonitorHubspotAccountBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorHubspotAccountServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service monitor-hubspot-account endpoint
+// ServiceUnavailable error.
+func NewMonitorHubspotAccountServiceUnavailable(body *MonitorHubspotAccountServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorHubspotAccountInternalServerError builds a
+// lfx-v2-campaign-service-connections service monitor-hubspot-account endpoint
+// InternalServerError error.
+func NewMonitorHubspotAccountInternalServerError(body *MonitorHubspotAccountInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorHubspotAccountNotFound builds a
+// lfx-v2-campaign-service-connections service monitor-hubspot-account endpoint
+// NotFound error.
+func NewMonitorHubspotAccountNotFound(body *MonitorHubspotAccountNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorHubspotAccountPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service monitor-hubspot-account endpoint
+// PayloadTooLarge error.
+func NewMonitorHubspotAccountPayloadTooLarge(body *MonitorHubspotAccountPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewMonitorHubspotAccountUnauthorized builds a
+// lfx-v2-campaign-service-connections service monitor-hubspot-account endpoint
+// Unauthorized error.
+func NewMonitorHubspotAccountUnauthorized(body *MonitorHubspotAccountUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // ValidateCreateGoogleAdsResponseBody runs the validations defined on
 // Create-Google-AdsResponseBody
 func ValidateCreateGoogleAdsResponseBody(body *CreateGoogleAdsResponseBody) (err error) {
@@ -12970,6 +13733,39 @@ func ValidateGetMetaAdsAudienceResponseBody(body *GetMetaAdsAudienceResponseBody
 	return
 }
 
+// ValidateGetTwitterAdsAudienceResponseBody runs the validations defined on
+// Get-Twitter-Ads-AudienceResponseBody
+func ValidateGetTwitterAdsAudienceResponseBody(body *GetTwitterAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.AllCountersNull == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("all_counters_null", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := ValidateTwitterAdsAudienceBucketResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.AccountCurrency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_currency", *body.AccountCurrency, "^[A-Z]{3}$"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsResponseBody runs the validations defined on
 // Get-Microsoft-Ads-KeywordsResponseBody
 func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsResponseBody) (err error) {
@@ -13002,6 +13798,42 @@ func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsRe
 	for _, e := range body.Rows {
 		if e != nil {
 			if err2 := ValidateGoogleAdsKeywordResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceResponseBody runs the validations defined on
+// Get-Microsoft-Ads-AudienceResponseBody
+func ValidateGetMicrosoftAdsAudienceResponseBody(body *GetMicrosoftAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.MetricsPending == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("metrics_pending", "body"))
+	}
+	if body.DataIncomplete == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("data_incomplete", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := ValidateMicrosoftAdsAudienceBucketResponseBody(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -13528,6 +14360,64 @@ func ValidateMonitorTwitterAdsAccountResponseBody(body *MonitorTwitterAdsAccount
 	}
 	if body.Totals != nil {
 		if err2 := ValidateAccountMonitorTotalsResponseBody(body.Totals); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// ValidateMonitorHubspotAccountResponseBody runs the validations defined on
+// Monitor-Hubspot-AccountResponseBody
+func ValidateMonitorHubspotAccountResponseBody(body *MonitorHubspotAccountResponseBody) (err error) {
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Emails == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("emails", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	if body.EmailsChecked == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("emails_checked", "body"))
+	}
+	if body.EmailsNotSentInWindow == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("emails_not_sent_in_window", "body"))
+	}
+	if body.EmailsUnattributable == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("emails_unattributable", "body"))
+	}
+	if body.EmailsTruncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("emails_truncated", "body"))
+	}
+	for _, e := range body.Emails {
+		if e != nil {
+			if err2 := ValidateHubspotEmailMonitorEmailResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := ValidateAccountMonitorActionItemResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := ValidateHubspotEmailMonitorTotalsResponseBody(body.Totals); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -17137,6 +18027,97 @@ func ValidateGetMetaAdsAudienceUnauthorizedResponseBody(body *GetMetaAdsAudience
 	return
 }
 
+// ValidateGetTwitterAdsAudienceBadRequestResponseBody runs the validations
+// defined on get-twitter-ads-audience_BadRequest_response_body
+func ValidateGetTwitterAdsAudienceBadRequestResponseBody(body *GetTwitterAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceConflictResponseBody runs the validations
+// defined on get-twitter-ads-audience_Conflict_response_body
+func ValidateGetTwitterAdsAudienceConflictResponseBody(body *GetTwitterAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on
+// get-twitter-ads-audience_ServiceUnavailable_response_body
+func ValidateGetTwitterAdsAudienceServiceUnavailableResponseBody(body *GetTwitterAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on
+// get-twitter-ads-audience_InternalServerError_response_body
+func ValidateGetTwitterAdsAudienceInternalServerErrorResponseBody(body *GetTwitterAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceNotFoundResponseBody runs the validations
+// defined on get-twitter-ads-audience_NotFound_response_body
+func ValidateGetTwitterAdsAudienceNotFoundResponseBody(body *GetTwitterAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudiencePayloadTooLargeResponseBody runs the
+// validations defined on get-twitter-ads-audience_PayloadTooLarge_response_body
+func ValidateGetTwitterAdsAudiencePayloadTooLargeResponseBody(body *GetTwitterAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetTwitterAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on get-twitter-ads-audience_Unauthorized_response_body
+func ValidateGetTwitterAdsAudienceUnauthorizedResponseBody(body *GetTwitterAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody runs the validations
 // defined on get-microsoft-ads-keywords_BadRequest_response_body
 func ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) (err error) {
@@ -17220,6 +18201,98 @@ func ValidateGetMicrosoftAdsKeywordsPayloadTooLargeResponseBody(body *GetMicroso
 // ValidateGetMicrosoftAdsKeywordsUnauthorizedResponseBody runs the validations
 // defined on get-microsoft-ads-keywords_Unauthorized_response_body
 func ValidateGetMicrosoftAdsKeywordsUnauthorizedResponseBody(body *GetMicrosoftAdsKeywordsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceBadRequestResponseBody runs the validations
+// defined on get-microsoft-ads-audience_BadRequest_response_body
+func ValidateGetMicrosoftAdsAudienceBadRequestResponseBody(body *GetMicrosoftAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceConflictResponseBody runs the validations
+// defined on get-microsoft-ads-audience_Conflict_response_body
+func ValidateGetMicrosoftAdsAudienceConflictResponseBody(body *GetMicrosoftAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on
+// get-microsoft-ads-audience_ServiceUnavailable_response_body
+func ValidateGetMicrosoftAdsAudienceServiceUnavailableResponseBody(body *GetMicrosoftAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on
+// get-microsoft-ads-audience_InternalServerError_response_body
+func ValidateGetMicrosoftAdsAudienceInternalServerErrorResponseBody(body *GetMicrosoftAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceNotFoundResponseBody runs the validations
+// defined on get-microsoft-ads-audience_NotFound_response_body
+func ValidateGetMicrosoftAdsAudienceNotFoundResponseBody(body *GetMicrosoftAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudiencePayloadTooLargeResponseBody runs the
+// validations defined on
+// get-microsoft-ads-audience_PayloadTooLarge_response_body
+func ValidateGetMicrosoftAdsAudiencePayloadTooLargeResponseBody(body *GetMicrosoftAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on get-microsoft-ads-audience_Unauthorized_response_body
+func ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody(body *GetMicrosoftAdsAudienceUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -18671,6 +19744,80 @@ func ValidateMonitorTwitterAdsAccountUnauthorizedResponseBody(body *MonitorTwitt
 	return
 }
 
+// ValidateMonitorHubspotAccountBadRequestResponseBody runs the validations
+// defined on monitor-hubspot-account_BadRequest_response_body
+func ValidateMonitorHubspotAccountBadRequestResponseBody(body *MonitorHubspotAccountBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorHubspotAccountServiceUnavailableResponseBody runs the
+// validations defined on
+// monitor-hubspot-account_ServiceUnavailable_response_body
+func ValidateMonitorHubspotAccountServiceUnavailableResponseBody(body *MonitorHubspotAccountServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorHubspotAccountInternalServerErrorResponseBody runs the
+// validations defined on
+// monitor-hubspot-account_InternalServerError_response_body
+func ValidateMonitorHubspotAccountInternalServerErrorResponseBody(body *MonitorHubspotAccountInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorHubspotAccountNotFoundResponseBody runs the validations
+// defined on monitor-hubspot-account_NotFound_response_body
+func ValidateMonitorHubspotAccountNotFoundResponseBody(body *MonitorHubspotAccountNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorHubspotAccountPayloadTooLargeResponseBody runs the
+// validations defined on monitor-hubspot-account_PayloadTooLarge_response_body
+func ValidateMonitorHubspotAccountPayloadTooLargeResponseBody(body *MonitorHubspotAccountPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateMonitorHubspotAccountUnauthorizedResponseBody runs the validations
+// defined on monitor-hubspot-account_Unauthorized_response_body
+func ValidateMonitorHubspotAccountUnauthorizedResponseBody(body *MonitorHubspotAccountUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGoogleAdsConnectionConfigRequestBody runs the validations defined on
 // google-ads-connection-configRequestBody
 func ValidateGoogleAdsConnectionConfigRequestBody(body *GoogleAdsConnectionConfigRequestBody) (err error) {
@@ -18911,6 +20058,62 @@ func ValidateMetaAdsAudienceBucketResponseBody(body *MetaAdsAudienceBucketRespon
 	return
 }
 
+// ValidateTwitterAdsAudienceBucketResponseBody runs the validations defined on
+// twitter-ads-audience-bucketResponseBody
+func ValidateTwitterAdsAudienceBucketResponseBody(body *TwitterAdsAudienceBucketResponseBody) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", "body"))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "age" || *body.Dimension == "gender" || *body.Dimension == "platform") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"age", "gender", "platform"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9](?:[A-Za-z0-9 _+.\\-]{0,62}[A-Za-z0-9+])?$"))
+	}
+	return
+}
+
+// ValidateMicrosoftAdsAudienceBucketResponseBody runs the validations defined
+// on microsoft-ads-audience-bucketResponseBody
+func ValidateMicrosoftAdsAudienceBucketResponseBody(body *MicrosoftAdsAudienceBucketResponseBody) (err error) {
+	if body.AgeGroup == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("age_group", "body"))
+	}
+	if body.Gender == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("gender", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	return
+}
+
 // ValidateCampaignRefResponseBody runs the validations defined on
 // campaign-refResponseBody
 func ValidateCampaignRefResponseBody(body *CampaignRefResponseBody) (err error) {
@@ -19043,6 +20246,81 @@ func ValidateAccountMonitorTotalsResponseBody(body *AccountMonitorTotalsResponse
 	}
 	if body.CampaignCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_count", "body"))
+	}
+	return
+}
+
+// ValidateHubspotEmailMonitorEmailResponseBody runs the validations defined on
+// hubspot-email-monitor-emailResponseBody
+func ValidateHubspotEmailMonitorEmailResponseBody(body *HubspotEmailMonitorEmailResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.EmailID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("email_id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.AbVariant == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ab_variant", "body"))
+	}
+	if body.Deleted == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("deleted", "body"))
+	}
+	if body.Sent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sent", "body"))
+	}
+	if body.Delivered == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivered", "body"))
+	}
+	if body.Opens == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("opens", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.Bounces == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bounces", "body"))
+	}
+	if body.Unsubscribes == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unsubscribes", "body"))
+	}
+	if body.SpamReports == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("spam_reports", "body"))
+	}
+	if body.CampaignID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.campaign_id", *body.CampaignID, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateHubspotEmailMonitorTotalsResponseBody runs the validations defined
+// on hubspot-email-monitor-totalsResponseBody
+func ValidateHubspotEmailMonitorTotalsResponseBody(body *HubspotEmailMonitorTotalsResponseBody) (err error) {
+	if body.EmailCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("email_count", "body"))
+	}
+	if body.Sent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sent", "body"))
+	}
+	if body.Delivered == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delivered", "body"))
+	}
+	if body.Opens == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("opens", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.Bounces == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bounces", "body"))
+	}
+	if body.Unsubscribes == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unsubscribes", "body"))
+	}
+	if body.SpamReports == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("spam_reports", "body"))
 	}
 	return
 }

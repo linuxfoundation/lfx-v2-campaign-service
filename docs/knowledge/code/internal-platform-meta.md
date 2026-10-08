@@ -552,21 +552,35 @@ request: `ValidateAccountID`, a non-empty scope of canonical ids (`ErrAudienceSc
 de-duplicated, at most `MaxAudienceCampaigns` (250, a local URL bound — not a documented Meta
 limit; `ErrAudienceScopeTooLarge`). Paging follows `paging.cursors.after` (never the `next` URL),
 at most `audienceMaxPages` (20) pages per breakdown; a `next` on the last page, a missing or
-repeated cursor all fail the read. Every row is checked: no duplicate top-level JSON keys
-(`rejectDuplicateKeys`), `campaign_id` in the requested scope, `account_currency` a consistent
+repeated cursor all fail the read. Each page is fetched RAW and passed through
+`identityjson.Check` before it is decoded: one linear, map-based pass that refuses a key repeated
+at ANY level under the decoder's own folding (case, KELVIN SIGN → `k`, LONG S → `s`), plus
+malformed UTF-8 and unpaired surrogates — so `{"data":[…],"data":[]}` or `"Data":[]` cannot read as
+Meta's authoritative empty answer, and a repeated `paging` cannot end the walk early. Every row is
+then checked: `campaign_id` in the requested scope, `account_currency` a consistent
 ISO 4217 code, each breakdown value present and matching `^[A-Za-z0-9][A-Za-z0-9_+\-]{0,63}$`
 (kept verbatim, else the read fails — values never echoed), no repeated (campaign, segment),
 counters via `parseMetricInt`/`parseSpendMicros` (spend → micros, the helper the metrics read
-now shares). Rows are summed per segment across campaigns with an overflow check; CTR is computed
-after aggregation; order is impressions descending then values. Any failure — including either
-breakdown's — returns no rows. No conversions: Meta has no scalar conversions metric.
+now shares). The counters are decoded RAW: an ABSENT `impressions`/`clicks`/`spend` is a measured
+0, as in the metrics read (Meta omits zero counters), but an explicit JSON `null` or a non-string
+value fails the read rather than publishing an authoritative zero. Rows are summed per segment
+across campaigns with an overflow check; CTR is computed after aggregation; order is impressions
+descending then values. Any failure — including either breakdown's — returns no rows. No
+conversions: Meta has no scalar conversions metric.
 
 The whole call runs under the orchestrator's `metricsCallTimeout` (20s) — both breakdowns, up to
 2×20 sequential pages and any 429 backoff — the same budget as the Google audience read, so a very
-large project can 503 consistently on timeout. Row keys are compared for duplicates with
-`strings.EqualFold`, because encoding/json matches keys to struct fields case-insensitively
-(KELVIN SIGN → `k`, LONG S → `s` included) and keeps the last match: `{"Campaign_ID":…,"campaign_id":…}`
-is as ambiguous as an exact repeat.
+large project can 503 consistently on timeout. The earlier row-only `rejectDuplicateKeys`
+(a pairwise `strings.EqualFold` scan, quadratic in keys and blind to the page envelope) was
+replaced by the page-level `identityjson.Check` above (#283 review). Two tests guard it, and
+neither uses an absolute wall-clock bound (#285).
+
+- **Correctness:** a 50,000-key row is accepted. The same row is refused when a case-folded
+  `Campaign_ID` naming the in-scope campaign is appended last over a foreign `campaign_id`. Both
+  run under a 60s hang guard.
+- **Ratio:** each size takes the fastest of five runs, each after a forced `runtime.GC()`, and 4x
+  the keys must cost under 10x the time. Linear measures about 3-4x; the old pairwise scan measured
+  about 16x.
 
 ## Credential scrubbing on error bodies
 
@@ -788,3 +802,24 @@ Unlike adoption, DELETED/ARCHIVED is returned with its status, not as absent.
 `AccountCurrencyOffset` is the read half of `ResolveBudgetMinorUnits`: the account currency's
 minor-unit offset, `known=false` for a currency outside the supported map (never a guessed 100),
 and an error when the preflight fails.
+
+## Ad sets (`ad_sets.go`, LFXV2-2665)
+
+`ListCampaignAdSets(ctx, campaignID, accountID, window)` reads a campaign's ad sets
+(`GET /{campaign}/adsets`, ≤10 pages of 100), the account currency (`GET /act_{id}?fields=currency`)
+and their delivery (`GET /act_{id}/insights?level=adset` filtered `campaign.id EQUAL`, ≤20 pages of
+500). Every page goes through `getChecked` — `identityjson.Check` on the raw bytes BEFORE decoding
+— and paging follows only the opaque `after` cursor. Rows must name the campaign, canonical ids
+appear once, the account currency must agree, an absent counter is 0 and an explicit `null` is
+refused (`rawCounter`). A listed ad set under another account is `ErrAdSetAccountMismatch`; an
+Insights row for an unlisted ad set is returned with `Listed: false`. `GetAdSetState` reads
+`id,campaign_id,account_id,status` for the toggle. `UpdateAdSetStatusOnce` POSTs `{"status": …}`
+through `do(..., retryThrottle=false)` — exactly one request, a throttle never repeated — and
+requires `{"success":true}` from a body that passes `identityjson.Check`; `ClassifyAdSetWrite` maps its error to APPLIED / NOT_SENT / REJECTED /
+UNCONFIRMED using `IsOutcomeUnconfirmed`; REJECTED is opt-in — only a parsed Graph envelope
+(`APIError.EnvelopeParsed`, set by `copyEnvelope` only when `do()` decoded the error body without
+a `json.Unmarshal` error AND the raw body passes `identityjson.Check`; the partially decoded
+fields are still copied for throttle detection and logging) with a non-zero code, that is not `is_transient` (`APIError.IsTransient`),
+not code 1/2, not a 408 and not a throttle; every other `*APIError` is UNCONFIRMED. `ValidateAdSetID` is `ValidateCampaignID`'s rule and
+returns the existing `ErrInvalidAdSetID`. Tests: `ad_sets_test.go`.
+

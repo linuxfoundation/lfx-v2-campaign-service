@@ -176,6 +176,32 @@ type Service interface {
 	// counter: Meta reports conversions only as per-action-type entries, not as
 	// one scalar.
 	GetMetaAdsAudience(context.Context, *GetMetaAdsAudiencePayload) (res *MetaAdsAudience, err error)
+	// Read X (Twitter) Ads audience insights — age, gender and device platform —
+	// for this project's own campaigns, live from the X Ads API on the connected
+	// ad account. Scoped to the campaigns this service holds for the project, NOT
+	// to the ad account: the stats requests name those campaign ids and every
+	// returned row is checked against them, because the account is shared across
+	// foundations. X serves segmented stats ONLY through its asynchronous
+	// stats-jobs API, so one read creates one job per segmentation per 20
+	// campaigns (at most 40 campaigns), waits for them inside the request and
+	// downloads the results; nothing is persisted. A project with no X campaigns
+	// of its own receives an empty `buckets` array and X is not contacted. The
+	// window NAMES are the X metrics read's — today, yesterday or the last 7 days
+	// including today — but the days are taken on the ad ACCOUNT's calendar (its
+	// timezone), whereas the metrics read uses UTC days, so on a non-UTC account
+	// the two cover different instants and their totals are not directly
+	// comparable; longer windows are refused (400). Identical reads are shared and
+	// successful results reused for a few minutes, and at most one read per ad
+	// account runs at a time, because each read holds stats-job slots on an
+	// account shared across foundations; these limits are per service process, so
+	// only the instance holding a per-account database lease runs X stats jobs and
+	// any other instance answers 503 (retry). `all_counters_null` flags segment
+	// rows that carried no measurement. All three segmentations must load or the
+	// request fails (503). Billed charge is in the account's own currency
+	// (`account_currency`); no FX conversion is performed. There is no conversions
+	// counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is
+	// "true", like the X account monitor that shares the stats-jobs contract.
+	GetTwitterAdsAudience(context.Context, *GetTwitterAdsAudiencePayload) (res *TwitterAdsAudience, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
 	// campaigns this service holds for the project, NOT to the connected ad
@@ -186,9 +212,24 @@ type Service interface {
 	// next one builds; the first read returns no rows with metrics_pending=true. A
 	// report is served only while it covers every campaign the project owns. Saved
 	// reports are cached platform data. Off (400, not supported) unless
-	// MICROSOFT_METRICS_ENABLED is true. Audience demographics are not offered for
-	// Microsoft.
+	// MICROSOFT_METRICS_ENABLED is true. Age/gender audience demographics are
+	// served by get-microsoft-ads-audience.
 	GetMicrosoftAdsKeywords(context.Context, *GetMicrosoftAdsKeywordsPayload) (res *MicrosoftAdsKeywords, err error)
+	// Read Microsoft Advertising audience demographics — one bucket per (age
+	// group, gender) — for this project's own campaigns. Scoped to the campaigns
+	// this service holds for the project, NOT to the connected ad account, and
+	// read from the project's OWN connection only (never the LF system account).
+	// Microsoft serves demographics only through its asynchronous Reporting
+	// service (AgeGenderAudienceReportRequest), so buckets come from the last
+	// finished report — see metrics_as_of and metrics_pending — while the next one
+	// builds; the first read returns no buckets with metrics_pending=true. A
+	// report is served only while it covers every campaign the project owns. A
+	// project with no Microsoft campaigns of its own receives an empty `buckets`
+	// array and Microsoft is not contacted. There is NO device breakdown:
+	// Microsoft's age/gender report has no device dimension. Spend is in the
+	// account's own currency; no FX conversion is performed. Off (400, not
+	// supported) unless MICROSOFT_METRICS_ENABLED is true.
+	GetMicrosoftAdsAudience(context.Context, *GetMicrosoftAdsAudiencePayload) (res *MicrosoftAdsAudience, err error)
 	// Resolve one Google Ads campaign id to this service's own campaign and brief.
 	// A caller holding a keyword row has the PLATFORM's numeric campaign id; every
 	// mutation route here is keyed by this service's campaign UUID under its
@@ -476,6 +517,27 @@ type Service interface {
 	// crosses a DST fall-back covers the trailing 89 whole local days, because 90
 	// such days are 90 days and an hour, over X's 90-day limit.
 	MonitorTwitterAdsAccount(context.Context, *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error)
+	// Read the statistics of the HubSpot marketing emails THIS SERVICE created for
+	// the project and sent within the trailing `days` (today inclusive, UTC), with
+	// findings from this service's email rules (high bounce, spam-complaint or
+	// unsubscribe rate, low open or click rate, sent but nothing delivered). The
+	// HubSpot sibling of the monitor-*-ads-account reads, with one deliberate
+	// difference: it is PROJECT-scoped, not account-scoped. A HubSpot portal is
+	// shared across projects and has no per-project account, so there is no
+	// account_id; the scope is the email ids this service recorded for the
+	// project, each read by itself from HubSpot's marketing-email statistics
+	// endpoint — never a portal-wide read. Resolved like the per-campaign metrics
+	// read (the project's own connection, else the LF system one; 404 with
+	// neither), with every email checked against the portal it was created in. A
+	// project that has recorded no HubSpot email gets an empty 200 without HubSpot
+	// being called. Any upstream failure — a 429 still refused after retries (a
+	// throttled portal, e.g. under shared-app contention), or a malformed or
+	// untrustworthy response — is a 503 with no partial result; a 401/403 (revoked
+	// token, missing scope) is a connection that cannot be used as configured —
+	// 400 for the project's own token, 500 for the LF system one — also with no
+	// partial result. There are no cost fields: HubSpot bills nothing per send. A
+	// pure read: nothing is persisted.
+	MonitorHubspotAccount(context.Context, *MonitorHubspotAccountPayload) (res *HubspotEmailMonitor, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -498,7 +560,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [66]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-microsoft-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account"}
+var MethodNames = [69]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-twitter-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -562,8 +624,14 @@ type AccountMonitor struct {
 }
 
 type AccountMonitorActionItem struct {
-	// The platform campaign id this item is about. Empty for an account-wide item.
+	// The campaign this item is about: the platform campaign id on the ad-platform
+	// monitors; this service's campaign UUID on monitor-hubspot-account (where
+	// email_id names the email). Empty for an account-wide item.
 	CampaignID *string
+	// monitor-hubspot-account only: the HubSpot marketing-email id the item is
+	// about — the key that joins a finding to its row in `emails` (an A/B variant
+	// shares its parent's campaign_id). Absent on every ad-platform monitor.
+	EmailID *string
 	// The campaign's platform-side name, carried alongside campaign_id so a
 	// renderer never needs to re-join against the row list.
 	CampaignName *string
@@ -894,6 +962,19 @@ type GetMetaAdsPayload struct {
 	ProjectID string
 }
 
+// GetMicrosoftAdsAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// method.
+type GetMicrosoftAdsAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Reporting window; defaults to last_30_days when omitted. yesterday and
+	// last_14_days are not available on Microsoft.
+	Window *string
+}
+
 // GetMicrosoftAdsKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
 // method.
@@ -923,6 +1004,18 @@ type GetRedditAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// GetTwitterAdsAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience method.
+type GetTwitterAdsAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Reporting window; defaults to last_7_days when omitted. X windows only:
+	// longer ones are refused.
+	Window *string
 }
 
 // GetTwitterAdsPayload is the payload type of the
@@ -1149,6 +1242,127 @@ type HubspotConnectionConfig struct {
 type HubspotCredentials struct {
 	// HubSpot private app token
 	PrivateAppToken string
+}
+
+// HubspotEmailMonitor is the result type of the
+// lfx-v2-campaign-service-connections service monitor-hubspot-account method.
+type HubspotEmailMonitor struct {
+	// The REQUESTED trailing-days window (today inclusive, UTC), echoed back.
+	Days int
+	// The project's own HubSpot marketing emails that HubSpot reports as SENT
+	// inside the window, newest-recorded campaign first. The window selects emails
+	// by SEND date; each email's counters are its totals as of when it was read
+	// (no later than metrics_as_of), not only the events inside the window.
+	Emails []*HubspotEmailMonitorEmail
+	// Findings across the emails, HIGH first. campaign_id is this service's
+	// campaign UUID (as on the rows), email_id the HubSpot email the finding is
+	// about — join to `emails` on email_id — and campaign_name the email's name.
+	// Every threshold is a deliverability heuristic, not a HubSpot limit.
+	ActionItems []*AccountMonitorActionItem
+	// The sum of the emails array, with rates from the summed counters.
+	Totals *HubspotEmailMonitorTotals
+	// When the LAST HubSpot response of this read arrived — an upper bound: every
+	// email's counters were read at or before this instant (a read makes many
+	// requests over up to 20s, so earlier emails were read somewhat earlier). With
+	// no email to ask about it is when the token-info answer arrived. ABSENT when
+	// HubSpot was not called because the project has recorded no HubSpot email.
+	MetricsAsOf *string
+	// The FIRST UTC calendar day (inclusive) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowStart *string
+	// The LAST UTC calendar day (inclusive, today) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowEnd *string
+	// How many of the project's recorded emails HubSpot was asked about: the
+	// emails array plus emails_not_sent_in_window.
+	EmailsChecked int
+	// How many checked emails HubSpot reported no send of inside the window — sent
+	// outside it, never sent (a staged draft), or no longer existing; HubSpot's
+	// answer does not tell these apart. Never reported as zeros.
+	EmailsNotSentInWindow int
+	// How many recorded emails were NOT read because they cannot be read safely:
+	// the campaign row does not record which HubSpot portal the email was created
+	// in, records a different portal than the one the project's token reaches now,
+	// or holds a malformed id. An email id means something only inside its own
+	// portal.
+	EmailsUnattributable int
+	// True whenever the project has recorded more than 50 HubSpot campaigns
+	// (deleted ones included): only the 50 most recently recorded (and their A/B
+	// variants) are checked, and any unchecked email — even one recorded long ago,
+	// since a draft can be sent late — could have been sent inside the window, so
+	// the totals may omit it.
+	EmailsTruncated bool
+}
+
+type HubspotEmailMonitorEmail struct {
+	// This service's campaign UUID the email belongs to.
+	CampaignID string
+	// The HubSpot marketing-email id.
+	EmailID string
+	// The email's name as this service recorded it when the email was created.
+	Name string
+	// True for an A/B test's variant (B) email, which is recorded on its parent
+	// campaign; false for the campaign's own email.
+	AbVariant bool
+	// True when the campaign was deleted in this service. A local delete neither
+	// stops nor deletes the HubSpot email, so its sends still count as the
+	// project's and it is still monitored.
+	Deleted bool
+	// HubSpot's `sent` counter for the email, to date.
+	Sent int64
+	// HubSpot's `delivered` counter, to date.
+	Delivered int64
+	// HubSpot's `open` counter, to date. Inflated by mail clients that pre-fetch
+	// images (e.g. Apple Mail Privacy Protection).
+	Opens int64
+	// HubSpot's `click` counter, to date.
+	Clicks int64
+	// HubSpot's `bounce` counter, to date.
+	Bounces int64
+	// HubSpot's `unsubscribed` counter, to date.
+	Unsubscribes int64
+	// HubSpot's `spamreport` counter, to date.
+	SpamReports int64
+	// opens / delivered, as a fraction (0.3 = 30%). ABSENT when delivered is 0 — a
+	// rate over nothing is unknown, not 0.
+	OpenRate *float64
+	// clicks / delivered, as a fraction. ABSENT when delivered is 0.
+	ClickRate *float64
+	// bounces / sent, as a fraction. ABSENT when sent is 0.
+	BounceRate *float64
+	// unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.
+	UnsubscribeRate *float64
+	// spam_reports / delivered, as a fraction. ABSENT when delivered is 0.
+	SpamRate *float64
+}
+
+type HubspotEmailMonitorTotals struct {
+	// How many emails the totals sum: the length of the emails array.
+	EmailCount int
+	// Sum of the emails' sent counters.
+	Sent int64
+	// Sum of the emails' delivered counters.
+	Delivered int64
+	// Sum of the emails' opens.
+	Opens int64
+	// Sum of the emails' clicks.
+	Clicks int64
+	// Sum of the emails' bounces.
+	Bounces int64
+	// Sum of the emails' unsubscribes.
+	Unsubscribes int64
+	// Sum of the emails' spam reports.
+	SpamReports int64
+	// Summed opens / summed delivered. ABSENT when that denominator is 0.
+	OpenRate *float64
+	// Summed clicks / summed delivered. ABSENT when that denominator is 0.
+	ClickRate *float64
+	// Summed bounces / summed sent. ABSENT when that denominator is 0.
+	BounceRate *float64
+	// Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.
+	UnsubscribeRate *float64
+	// Summed spam_reports / summed delivered. ABSENT when that denominator is 0.
+	SpamRate *float64
 }
 
 // LinkedinAdsConnection is the result type of the
@@ -1424,6 +1638,54 @@ type MetaAdsCredentials struct {
 	AppSecret string
 }
 
+// MicrosoftAdsAudience is the result type of the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// method.
+type MicrosoftAdsAudience struct {
+	// The reporting window these counters cover
+	Window string
+	// One bucket per (age_group, gender), summed over the campaigns this project
+	// owns, from the last finished Microsoft age/gender report that covers every
+	// one of them; ordered by impressions descending. Every bucket covers a
+	// disjoint slice of the same traffic, so counters may be totalled across
+	// buckets. Empty while no such report has finished (metrics_as_of absent).
+	Buckets []*MicrosoftAdsAudienceBucket
+	// How many buckets are in `buckets`.
+	BucketCount int
+	// When the Microsoft report these buckets come from was requested (not when it
+	// was collected). ABSENT when no finished report covers every campaign this
+	// project now owns — the first read, or the first after a campaign was added —
+	// and `buckets` is then empty rather than a partial picture.
+	MetricsAsOf *string
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer buckets (or the first ones, when metrics_as_of is absent).
+	MetricsPending bool
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete (the window's last day may still be aggregating): its counters
+	// may still rise. False when no report is served.
+	DataIncomplete bool
+}
+
+type MicrosoftAdsAudienceBucket struct {
+	// Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34,
+	// 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown
+	// bucket, is passed through rather than dropped).
+	AgeGroup string
+	// Microsoft's Gender, verbatim (documented as male or female; any other value
+	// Microsoft reports is passed through rather than dropped).
+	Gender string
+	// Impressions over the window
+	Impressions int64
+	// Clicks over the window
+	Clicks int64
+	// Spend over the window in micro-units of the ad account's own currency
+	// (Microsoft's Spend times 10^6). This service performs no FX conversion and
+	// does not know the currency.
+	CostMicros int64
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr float64
+}
+
 // MicrosoftAdsConnection is the result type of the
 // lfx-v2-campaign-service-connections service create-microsoft-ads method.
 type MicrosoftAdsConnection struct {
@@ -1521,6 +1783,17 @@ type MonitorGoogleAdsAccountPayload struct {
 	// The Google Ads account to read.
 	AccountID string
 	// Trailing days to read metrics over.
+	Days int
+}
+
+// MonitorHubspotAccountPayload is the payload type of the
+// lfx-v2-campaign-service-connections service monitor-hubspot-account method.
+type MonitorHubspotAccountPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Trailing days (UTC, today inclusive) whose sends to read.
 	Days int
 }
 
@@ -1882,6 +2155,53 @@ type TestTwitterAdsPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// TwitterAdsAudience is the result type of the
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience method.
+type TwitterAdsAudience struct {
+	// The reporting window these counters cover, as days on the ad ACCOUNT's
+	// calendar (its timezone) — not the UTC days the X campaign metrics read uses
+	// for the same window name
+	Window string
+	// Every bucket across the three segmentations, discriminated by `dimension`.
+	// Ordered by dimension (age, gender, platform), then impressions descending,
+	// then value.
+	Buckets []*TwitterAdsAudienceBucket
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount int
+	// ISO 4217 currency of the ad account that cost_micros is denominated in, as X
+	// reports it on the account. ABSENT when X was not contacted (the project has
+	// no X campaigns of its own) or the account carries no currency.
+	AccountCurrency *string
+	// True when, for at least one dimension, X returned segment rows whose every
+	// counter was null or absent. The zeros in that dimension are then NOT a
+	// measurement: it is either no delivery in the window or X's reported defect
+	// where segmented stats jobs succeed with all-null metrics, and the two cannot
+	// be told apart.
+	AllCountersNull bool
+}
+
+type TwitterAdsAudienceBucket struct {
+	// Which segmentation this bucket belongs to: age (X segmentation_type AGE),
+	// gender (GENDER) or platform (PLATFORMS)
+	Dimension string
+	// X's segment name for this bucket, verbatim (for example an age range, a
+	// gender or a device platform). A value outside a conservative charset fails
+	// the read rather than being returned.
+	Value string
+	// Impressions over the window
+	Impressions int64
+	// Clicks over the window
+	Clicks int64
+	// Billed charge over the window (X's billed_charge_local_micro) in micro-units
+	// of the ad account's currency (see account_currency). This service performs
+	// no FX conversion.
+	CostMicros int64
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr float64
 }
 
 // TwitterAdsConnection is the result type of the

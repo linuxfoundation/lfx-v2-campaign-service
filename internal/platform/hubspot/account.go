@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // tokenInfoPath is the only endpoint that answers "which portal is THIS token for?" for a
@@ -51,6 +53,12 @@ func (c *Client) AuthenticatedPortalID(ctx context.Context) (string, error) {
 		map[string]string{"tokenKey": c.creds.PrivateAppToken}, true)
 	if err != nil {
 		return "", fmt.Errorf("read hubspot account details: %w", err)
+	}
+	// Raw bytes checked before decoding (LFXV2-2665): this answer is IDENTITY evidence — every
+	// caller compares it against a recorded portal — and `{"hubId":1,"hubId":2}` decodes to the
+	// last value without error. identityjson's refusal carries no byte of the response.
+	if cerr := identityjson.Check(raw); cerr != nil {
+		return "", fmt.Errorf("read hubspot account details: %w", cerr)
 	}
 	var body struct {
 		HubID json.Number `json:"hubId"`

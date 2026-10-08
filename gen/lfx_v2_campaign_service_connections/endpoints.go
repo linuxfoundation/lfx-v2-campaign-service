@@ -62,7 +62,9 @@ type Endpoints struct {
 	GetGoogleAdsKeywords        goa.Endpoint
 	GetGoogleAdsAudience        goa.Endpoint
 	GetMetaAdsAudience          goa.Endpoint
+	GetTwitterAdsAudience       goa.Endpoint
 	GetMicrosoftAdsKeywords     goa.Endpoint
+	GetMicrosoftAdsAudience     goa.Endpoint
 	ResolveGoogleAdsCampaign    goa.Endpoint
 	ResolveMicrosoftAdsCampaign goa.Endpoint
 	ResolveMetaAdsCampaign      goa.Endpoint
@@ -82,6 +84,7 @@ type Endpoints struct {
 	MonitorRedditAdsAccount     goa.Endpoint
 	MonitorMicrosoftAdsAccount  goa.Endpoint
 	MonitorTwitterAdsAccount    goa.Endpoint
+	MonitorHubspotAccount       goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "lfx-v2-campaign-service-connections"
@@ -136,7 +139,9 @@ func NewEndpoints(s Service) *Endpoints {
 		GetGoogleAdsKeywords:        NewGetGoogleAdsKeywordsEndpoint(s, a.JWTAuth),
 		GetGoogleAdsAudience:        NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:          NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
+		GetTwitterAdsAudience:       NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsEndpoint(s, a.JWTAuth),
+		GetMicrosoftAdsAudience:     NewGetMicrosoftAdsAudienceEndpoint(s, a.JWTAuth),
 		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignEndpoint(s, a.JWTAuth),
 		ResolveMicrosoftAdsCampaign: NewResolveMicrosoftAdsCampaignEndpoint(s, a.JWTAuth),
 		ResolveMetaAdsCampaign:      NewResolveMetaAdsCampaignEndpoint(s, a.JWTAuth),
@@ -156,6 +161,7 @@ func NewEndpoints(s Service) *Endpoints {
 		MonitorRedditAdsAccount:     NewMonitorRedditAdsAccountEndpoint(s, a.JWTAuth),
 		MonitorMicrosoftAdsAccount:  NewMonitorMicrosoftAdsAccountEndpoint(s, a.JWTAuth),
 		MonitorTwitterAdsAccount:    NewMonitorTwitterAdsAccountEndpoint(s, a.JWTAuth),
+		MonitorHubspotAccount:       NewMonitorHubspotAccountEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -208,7 +214,9 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetGoogleAdsKeywords = m(e.GetGoogleAdsKeywords)
 	e.GetGoogleAdsAudience = m(e.GetGoogleAdsAudience)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
+	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
 	e.GetMicrosoftAdsKeywords = m(e.GetMicrosoftAdsKeywords)
+	e.GetMicrosoftAdsAudience = m(e.GetMicrosoftAdsAudience)
 	e.ResolveGoogleAdsCampaign = m(e.ResolveGoogleAdsCampaign)
 	e.ResolveMicrosoftAdsCampaign = m(e.ResolveMicrosoftAdsCampaign)
 	e.ResolveMetaAdsCampaign = m(e.ResolveMetaAdsCampaign)
@@ -228,6 +236,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.MonitorRedditAdsAccount = m(e.MonitorRedditAdsAccount)
 	e.MonitorMicrosoftAdsAccount = m(e.MonitorMicrosoftAdsAccount)
 	e.MonitorTwitterAdsAccount = m(e.MonitorTwitterAdsAccount)
+	e.MonitorHubspotAccount = m(e.MonitorHubspotAccount)
 }
 
 // NewCreateGoogleAdsEndpoint returns an endpoint function that calls the
@@ -1305,6 +1314,30 @@ func NewGetMetaAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) go
 	}
 }
 
+// NewGetTwitterAdsAudienceEndpoint returns an endpoint function that calls the
+// method "get-twitter-ads-audience" of service
+// "lfx-v2-campaign-service-connections".
+func NewGetTwitterAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetTwitterAdsAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetTwitterAdsAudience(ctx, p)
+	}
+}
+
 // NewGetMicrosoftAdsKeywordsEndpoint returns an endpoint function that calls
 // the method "get-microsoft-ads-keywords" of service
 // "lfx-v2-campaign-service-connections".
@@ -1326,6 +1359,30 @@ func NewGetMicrosoftAdsKeywordsEndpoint(s Service, authJWTFn security.AuthJWTFun
 			return nil, err
 		}
 		return s.GetMicrosoftAdsKeywords(ctx, p)
+	}
+}
+
+// NewGetMicrosoftAdsAudienceEndpoint returns an endpoint function that calls
+// the method "get-microsoft-ads-audience" of service
+// "lfx-v2-campaign-service-connections".
+func NewGetMicrosoftAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetMicrosoftAdsAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetMicrosoftAdsAudience(ctx, p)
 	}
 }
 
@@ -1782,5 +1839,29 @@ func NewMonitorTwitterAdsAccountEndpoint(s Service, authJWTFn security.AuthJWTFu
 			return nil, err
 		}
 		return s.MonitorTwitterAdsAccount(ctx, p)
+	}
+}
+
+// NewMonitorHubspotAccountEndpoint returns an endpoint function that calls the
+// method "monitor-hubspot-account" of service
+// "lfx-v2-campaign-service-connections".
+func NewMonitorHubspotAccountEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*MonitorHubspotAccountPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.MonitorHubspotAccount(ctx, p)
 	}
 }

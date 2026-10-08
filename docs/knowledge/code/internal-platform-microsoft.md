@@ -1029,6 +1029,23 @@ Contract verified against learn.microsoft.com on 2026-10-05 (KeywordPerformanceR
 KeywordPerformanceReportColumn, AccountThroughAdGroupReportScope, KeywordStatusReportFilter);
 NOT exercised against a live account.
 
+## Age/gender audience report (report-backed, default-OFF, LFXV2-2665)
+
+`audience_report.go`: `SubmitAgeGenderReport(window, campaignIDs)` — an
+`AgeGenderAudienceReportRequest` with columns `CampaignId, AgeGroup, Gender, Impressions, Clicks,
+Spend` (no `TimePeriod`: not allowed with Summary; there is NO device column in this report), sent
+through `submitCampaignScopedReport`, the keyword report's request tail extracted so both share
+the `Campaigns`-only scope, `Summary`, `ReturnOnlyCompleteData=false`, no `Filter`/`MaxRows` and
+`reportTime`; scope refusals wrap `ErrAudienceReportScope`, a 2027 rejection
+`ErrAudienceReportScopeRejected`. `CheckAgeGenderReport(reportID)` — one Poll, then
+`foldAgeGenderReportRows`: one row per (campaign, age group, gender), repeats summed, every column
+required by name (a repeated header refused), and the whole read refused for a non-id campaign, a
+blank / invalid-UTF-8 / control- or format-character (Cc/Cf, e.g. a bidi override — checked on the RAW cell before ordinary spaces are trimmed, so `\tMale` or `Male\r` is refused, not read as `Male`) / over-64-byte label (identityjson's raw-bytes
+discipline in CSV form: the JSON encoder would otherwise silently substitute U+FFFD), a negative
+or non-finite counter, an overflow, or more than `MaxAgeGenderBuckets` (64) distinct pairs.
+Verified against learn.microsoft.com on 2026-10-07 (AgeGenderAudienceReportRequest,
+AgeGenderAudienceReportColumn); NOT exercised against a live account.
+
 ## Metrics read (asynchronous, default-OFF)
 
 `GetCampaignMetrics(ctx, campaignID, window)` answers the same question as every other client

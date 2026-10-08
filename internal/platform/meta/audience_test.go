@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -390,27 +392,153 @@ func TestGetAudienceInsights_MalformedRowsFailTheWholeRead(t *testing.T) {
 	}
 }
 
-// The duplicate-key guard is what stops `{"campaign_id":"<ours>",…,"campaign_id":"<theirs>"}`
-// from passing the scope check on whichever value encoding/json happens to keep.
-func TestRejectDuplicateKeys(t *testing.T) {
-	for raw, wantErr := range map[string]bool{
-		`{"a":"1","b":{"a":"nested ok"}}`: false,
-		`{"a":"1","a":"2"}`:               true,
-		`["a"]`:                           true,
-		`{"a":`:                           true,
-		// encoding/json matches keys case-insensitively and keeps the last, so a case-variant
-		// repeat is as ambiguous as an exact one.
-		`{"Campaign_ID":"999","campaign_id":"111"}`: true,
-		`{"Spend":"9","spend":"1"}`:                 true,
-		// KELVIN SIGN and LONG S fold onto k and s in the decoder, written raw and \u-escaped.
-		"{\"\u212a\":\"1\",\"k\":\"2\"}":         true,
-		"{\"\\u212a\":\"1\",\"k\":\"2\"}":        true,
-		"{\"\u017fpend\":\"1\",\"spend\":\"2\"}": true,
+// A repeated key ANYWHERE in the page — exact or under the decoder's case folding (including
+// KELVIN SIGN → k and LONG S → s) — makes the page ambiguous, because encoding/json silently keeps
+// the later value. At the top level that turns a populated audience into Meta's authoritative
+// empty answer; inside a row it lets a foreign campaign id pass the scope check.
+func TestGetAudienceInsights_DuplicateKeysAnywhereFailTheRead(t *testing.T) {
+	row := ageRow("111", "25-34", "male", 10, 1, "1")
+	for name, page := range map[string]string{
+		"data twice, later empty": `{"data":[` + row + `],"data":[]}`,
+		"data and Data":           `{"data":[` + row + `],"Data":[]}`,
+		"paging twice":            `{"data":[` + row + `],"paging":{"cursors":{"after":"c1"},"next":"https://graph.facebook.com/x"},"paging":{}}`,
+		"cursor key case variant": `{"data":[` + row + `],"paging":{"cursors":{"after":"c1","After":"c2"},"next":"https://graph.facebook.com/x"}}`,
+		"row Campaign_ID variant": `{"data":[{"Campaign_ID":"999","campaign_id":"111","age":"25-34","gender":"male","impressions":"1","clicks":"0","spend":"","account_currency":"EUR"}]}`,
+		"row Spend variant":       `{"data":[{"campaign_id":"111","age":"25-34","gender":"male","impressions":"1","clicks":"0","Spend":"9","spend":"1","account_currency":"EUR"}]}`,
+		"row KELVIN SIGN raw":     "{\"data\":[{\"campaign_id\":\"111\",\"age\":\"25-34\",\"gender\":\"male\",\"impressions\":\"1\",\"clicks\":\"0\",\"spend\":\"\",\"account_currency\":\"EUR\",\"\u212a\":\"1\",\"k\":\"2\"}]}",
+		"row KELVIN SIGN escaped": `{"data":[{"campaign_id":"111","age":"25-34","gender":"male","impressions":"1","clicks":"0","spend":"","account_currency":"EUR","\u212a":"1","k":"2"}]}`,
+		"row LONG S spend":        "{\"data\":[{\"campaign_id\":\"111\",\"age\":\"25-34\",\"gender\":\"male\",\"impressions\":\"1\",\"clicks\":\"0\",\"\u017fpend\":\"9\",\"spend\":\"1\",\"account_currency\":\"EUR\"}]}",
 	} {
-		if err := rejectDuplicateKeys(json.RawMessage(raw)); (err != nil) != wantErr {
-			t.Errorf("%s: err = %v, wantErr %v", raw, err, wantErr)
-		}
+		t.Run(name, func(t *testing.T) {
+			srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, page, audiencePage("")))
+			ai, err := newAudienceClient(srv).GetAudienceInsights(context.Background(), "act_777", WindowLast30Days, []string{"111"})
+			if err == nil {
+				t.Fatalf("expected an ambiguous page to fail the read, got %+v", ai)
+			}
+			if ai != nil {
+				t.Errorf("a failed read must return no rows, got %+v", ai)
+			}
+		})
 	}
+	t.Run("the same key at different levels is not a duplicate", func(t *testing.T) {
+		nested := strings.Replace(row, `"date_start"`, `"extra":{"campaign_id":"x","data":[]},"date_start"`, 1)
+		srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, audiencePage("", nested)))
+		if _, err := newAudienceClient(srv).GetAudienceInsights(context.Background(), "act_777", WindowLast30Days, []string{"111"}); err != nil {
+			t.Fatalf("GetAudienceInsights: %v", err)
+		}
+	})
+}
+
+// wideRow is an age_gender row carrying n extra distinct keys. With dupKey empty it is campaign
+// 111's row. With dupKey set, the row's campaign_id is a FOREIGN "999" and dupKey (a case-folded
+// spelling of campaign_id) is appended as the LAST key with the in-scope "111" — exactly the row
+// encoding/json would silently accept as 111's, and one a duplicate check must walk every key to
+// catch.
+func wideRow(n int, dupKey string) string {
+	var extra strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&extra, `"x%d":"",`, i)
+	}
+	campaign := "111"
+	if dupKey != "" {
+		campaign = "999"
+	}
+	row := strings.Replace(ageRow(campaign, "25-34", "male", 10, 1, "1"), `{"campaign_id"`, `{`+extra.String()+`"campaign_id"`, 1)
+	if dupKey != "" {
+		row = strings.TrimSuffix(row, "}") + `,"` + dupKey + `":"111"}`
+	}
+	return row
+}
+
+// readWide runs one audience read over a single wide row under a generous HANG guard (not a
+// performance bound): a regression that loops or stalls fails here instead of hanging the suite.
+func readWide(t *testing.T, row string) (*AudienceInsights, error) {
+	t.Helper()
+	srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, audiencePage("", row)))
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	return newAudienceClient(srv).GetAudienceInsights(ctx, "act_777", WindowLast30Days, []string{"111"})
+}
+
+// Correctness on a large row: 50,000 distinct keys are ACCEPTED, and the same row with a
+// case-folded duplicate of campaign_id as its very last key is REFUSED. No wall-clock bound.
+func TestGetAudienceInsights_WideRowsAreJudgedCorrectly(t *testing.T) {
+	if _, err := readWide(t, wideRow(50_000, "")); err != nil {
+		t.Fatalf("50,000 distinct keys must be accepted: %v", err)
+	}
+	if ai, err := readWide(t, wideRow(50_000, "Campaign_ID")); err == nil {
+		t.Fatalf("a case-folded duplicate after 50,000 keys must be refused, got %+v", ai)
+	}
+}
+
+// The duplicate-key check must scale LINEARLY with the number of keys. Measured as a RATIO, not
+// an absolute time, so a slow or loaded CI machine slows both sides alike: each size is timed as
+// the fastest of five runs, each after a forced GC, and quadrupling the keys must cost well
+// under the 16x a pairwise scan (n²/2 comparisons) costs — linear is ~4x, the bound is 10x. If
+// the pairwise EqualFold scan came back, 20,000 → 80,000 keys goes from ~2e8 to ~3.2e9
+// comparisons and this fails on the ratio (it did: the scan this replaced measured ~16x), while
+// correctness alone would still pass.
+func TestGetAudienceInsights_DuplicateKeyCheckScalesLinearly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing ratio test")
+	}
+	fastest := func(n int) time.Duration {
+		row := wideRow(n, "")
+		best := time.Duration(1<<63 - 1)
+		// Best of five, each after a forced GC, so a collection or a throttled moment during one
+		// run cannot inflate the ratio on a loaded CI worker; the bound (10x vs ~4x measured)
+		// keeps further headroom.
+		for i := 0; i < 5; i++ {
+			runtime.GC()
+			start := time.Now()
+			if _, err := readWide(t, row); err != nil {
+				t.Fatalf("%d keys: %v", n, err)
+			}
+			if d := time.Since(start); d < best {
+				best = d
+			}
+		}
+		return best
+	}
+	small, large := fastest(20_000), fastest(80_000)
+	ratio := float64(large) / float64(small)
+	t.Logf("20,000 keys %s, 80,000 keys %s: %.1fx", small, large, ratio)
+	if ratio > 10 {
+		t.Errorf("4x the keys took %.1fx the time (%s vs %s); the duplicate-key check is not linear", ratio, large, small)
+	}
+}
+
+// An ABSENT counter is a measured zero (Meta omits zero-valued counters, as the metrics read
+// assumes); an explicit null is not a measurement and fails the read. Nulls in the identity and
+// value fields were already refused and stay so.
+func TestGetAudienceInsights_ExplicitNullIsNotZero(t *testing.T) {
+	base := `{"campaign_id":"111","age":"25-34","gender":"male","impressions":"10","clicks":"1","spend":"1","account_currency":"EUR"}`
+	for _, field := range []string{"impressions", "clicks", "spend", "campaign_id", "account_currency", "age"} {
+		t.Run(field+" null", func(t *testing.T) {
+			row := regexp.MustCompile(`"`+field+`":"[^"]*"`).ReplaceAllString(base, `"`+field+`":null`)
+			srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, audiencePage("", row)))
+			ai, err := newAudienceClient(srv).GetAudienceInsights(context.Background(), "act_777", WindowLast30Days, []string{"111"})
+			if err == nil {
+				t.Fatalf("an explicit null %s must fail the read, got %+v", field, ai)
+			}
+		})
+	}
+	for _, field := range []string{"impressions", "clicks", "spend"} {
+		t.Run(field+" absent is zero", func(t *testing.T) {
+			row := regexp.MustCompile(`"`+field+`":"[^"]*",?`).ReplaceAllString(base, ``)
+			srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, audiencePage("", row)))
+			if _, err := newAudienceClient(srv).GetAudienceInsights(context.Background(), "act_777", WindowLast30Days, []string{"111"}); err != nil {
+				t.Fatalf("an omitted %s is a measured zero, got %v", field, err)
+			}
+		})
+	}
+	t.Run("non-string counter", func(t *testing.T) {
+		row := strings.Replace(base, `"impressions":"10"`, `"impressions":10`, 1)
+		srv, _ := audienceServer(t, withPages(emptyPlacement(), ageGenderKey, audiencePage("", row)))
+		if _, err := newAudienceClient(srv).GetAudienceInsights(context.Background(), "act_777", WindowLast30Days, []string{"111"}); err == nil {
+			t.Fatal("a bare-number counter must fail the read")
+		}
+	})
 }
 
 // One failing breakdown fails the read: age+gender without placement is a partial picture.

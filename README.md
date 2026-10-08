@@ -247,15 +247,22 @@ openssl rand -base64 32
   account.
 
 - `TWITTER_METRICS_ENABLED` (default unset, i.e. OFF) — opts a
-  deployment IN to the X (Twitter) Ads account monitor
-  (`GET /projects/{project_id}/connection-twitter-ads/account-monitor`).
-  Only the exact value `true` enables it; unset or any other value
-  fails closed and the endpoint answers 400 "not supported". Off by
-  default because the monitor's asynchronous stats-jobs contract
-  (active_entities, job create, job status, a downloaded gzip results
-  file) was implemented from X's published documentation and has NOT
-  been exercised against a live X Ads account. It gates only the
-  monitor — X's per-campaign metrics read is unaffected. The chart sets
+  deployment IN to BOTH X (Twitter) Ads features built on X's
+  asynchronous stats-jobs API: the account monitor
+  (`GET /projects/{project_id}/connection-twitter-ads/account-monitor`)
+  and the audience read (`GET /projects/{project_id}/twitter-ads/audience`).
+  Only the exact value `true` enables them; unset or any other value
+  fails closed and both endpoints answer 400 "not supported". Off by
+  default because the stats-jobs contract (active_entities, job create,
+  job status, a downloaded gzip results file, segmentation) was
+  implemented from X's published documentation and has NOT been
+  exercised against a live X Ads account. X's per-campaign metrics read
+  (a synchronous endpoint) is unaffected. Their per-account limits are
+  per process, so at runtime only the pod holding a per-account
+  Postgres advisory lease runs X stats jobs — any other pod answers the
+  audience read 503 and skips monitor report submissions — and, as a
+  first line of defence, the chart refuses to render the flag with more
+  than one replica. The chart sets
   it to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip
   it only after the contract is verified against a live X ad account.
 

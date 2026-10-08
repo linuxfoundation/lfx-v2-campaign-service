@@ -1163,10 +1163,13 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   `days`. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
-  pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the
-  context deadline's remaining time (wall-clock `time.Until`) with `jobs × writeDelay +
-  statsJobSubmitMargin` (2s) and returns `ErrStatsJobBudget` — no job created — when it cannot
-  fit, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
+  pacer and never retried on a 429. Before the first POST, `reserveStatsJobSlots` reserves the
+  whole batch's consecutive pacer slots atomically under `writeMu` (so no concurrent writer can
+  interleave and push the batch past its deadline; the context is re-checked under the lock, so a
+  caller cancelled while queued reserves nothing), refusing — nothing reserved, no job created —
+  with `ErrStatsJobBudget` when the last slot (after any backlog already queued) plus
+  `statsJobSubmitMargin` (2s) does not fit the context deadline's remaining time (wall-clock
+  `time.Until`); each POST then waits for its own slot, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
   (the dispatcher wraps it as `domain.ErrAccountReportBudgetTooShort`). Returns ONE composite id — the jobs' `id_str`s
   comma-joined — or `NoActiveCampaignsReportID` (`"none"`) when nothing was active, which
   Check answers as a finished empty report without a request. More than
@@ -1303,3 +1306,65 @@ returned for the dispatcher to compare.
 the RAW body and a strict id echo. A 404 or deleted campaign is `(nil, nil)`; a 404 or deleted
 line item only leaves `LineItem` nil; a line item of another campaign is
 `ErrLineItemNotInCampaign`; an amount that is not a non-negative integer is an error.
+
+## Audience insights read (`audience.go`, LFXV2-2665)
+
+`GetAudienceInsights(ctx, window, campaignIDs)` reads AGE, GENDER and PLATFORMS segmentations
+over the project's own campaigns. X serves segmentation only through the ASYNCHRONOUS stats-jobs
+API (the synchronous `stats/accounts/:account_id` takes no `segmentation_type`), so one call:
+`GET accounts/:account_id` (timezone required; `currency` optional, ISO 4217 when present; id
+must echo the account; `identityjson.Check` on the raw body) → `reserveStatsJobSlots` → one slotted
+`POST stats/jobs/accounts/:account_id` per segmentation per batch of ≤20 ids (`postStatsJob`,
+shared with the monitor's `createStatsJob`: `entity=CAMPAIGN`, `granularity=TOTAL`,
+`placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`, plus `segmentation_type`) → one
+`GET stats/jobs/…?job_ids=<all>` per poll (first immediate, then every
+`audiencePollInterval`, at most `audienceMaxPolls`) → each results file through
+`downloadStatsFile`. The read WAITS inside the caller's deadline instead of persisting a report
+id: unfinished jobs are `ErrAudienceJobsUnfinished` (503) and are left to expire on X.
+Scope: non-empty, every id `ValidateCampaignID` (`ErrAudienceScopeInvalid`), de-duplicated, at
+most `MaxAudienceCampaigns` (40 — a local bound: two batches, six jobs; `ErrAudienceScopeTooLarge`).
+Window (`AudienceWindowBounds`, exported so the dispatcher's cache can tell whether a result's
+window still names the same instants): the metrics read's window NAMES (today; yesterday; today
+and the six before) but on the ACCOUNT's calendar via `localDayStart`, `[start, end)` — the
+metrics read (`dateRangeForWindow`) uses UTC days, so on a non-UTC account the instants differ; non-whole-hour bounds are
+`ErrReportWindowNotWholeHours`; other windows `ErrUnsupportedWindow`. Trust: `identityjson.Check`
+on every job, status and file body; a status answer naming an unasked or repeated job, a
+FAILED/CANCELLED job or a SUCCESS without url fails; every file entity must be in THAT job's
+batch, once; `segment.segment_name` is required and must match `audienceValueRE` (returned
+verbatim, never echoed); a repeated (campaign, segment) fails; counters are absent/null → 0 (X's
+"no activity"), else exactly one non-negative integer bucket, summed with an int64 overflow
+guard; CTR after summing. Ordered by dimension, impressions desc, value. Tests:
+`audience_test.go` (stateful stub; segmentation params, batching and bound, account-tz windows
+incl. DST and a UTC/local day split, polling bound and deadline, duplicate/case-folded keys at
+every level, null counters, malformed files, 401/403/429/5xx, job defects, budget check).
+`AllCountersNull` is set when a whole dimension (all batches) returned rows with no measured
+counter (`audienceCounter` reports `measured`; a literal 0 counts): X's forum reports segmented
+jobs that succeed with every metric null, and that is indistinguishable from an idle campaign set
+(this package reads X's null as "no activity" — `statsFold`, `firstOrZero` — and X does not
+document idle entities as omitted), so failing closed would 503 every idle project; the flag
+keeps the zeros from passing as a measurement instead. Job POSTs use `reserveStatsJobSlots`
+(shared with the monitor; see above), so a read never starts a batch it cannot finish in its
+budget and no concurrent writer can split the batch. A failure that leaves jobs running on X —
+any failure while creating or awaiting them — is `*AudienceJobsAbandonedError` carrying the job
+ids X confirmed (Unwrap keeps the sentinels); `RunningStatsJobs(ctx, ids)` answers which of them
+X still lists as not finished (one status read, `identityjson`-checked; an answer naming an
+unrequested job or one job twice is an error, so a malformed answer never releases a job; queued,
+processing, unlisted and unrecognised all count as running), and `AudienceJobCount(ids)` is how many jobs a
+read would create — both for the dispatcher's per-account job budget. UNVERIFIED against a live account: the segmented file shape and
+`segment_name` vocabulary.
+
+## Account-keyed write pacer (`pacer.go`, LFXV2-2665)
+
+`AccountPacers` hands out one `writePacer` (mutex + next-write instant) per X ad account (keyed by
+base URL + account id); a client built `WithAccountPacers(reg)` paces and reserves stats-job
+batches (`pace`, `reserveStatsJobSlots`) against its account's pacer, so two projects'
+connections to the shared LF account — or a cache replacement — cannot interleave writes or
+split a batch. A client without a registry, or without an account id (discovery), paces
+privately. The dispatcher owns the registry, so the scope is the PROCESS; replicas do not share
+it, which is why only the pod holding the per-account stats-job lease (`postgres.StatsJobLease`)
+creates stats jobs, with the chart's replica refusal as a first line of defence.
+`createAudienceJob` reports `maybeCreated` for a failed create that may have committed
+(`createOutcomeAmbiguous`, or any unusable 2xx), and `GetAudienceInsights` counts those as
+`AudienceJobsAbandonedError.Unknown` — also when no job was created before — so the dispatcher
+can charge them. Tests: `TestAccountPacers_ClientsForOneAccountShareReservations`,
+`TestGetAudienceInsights_AmbiguousCreatesAreCharged`.

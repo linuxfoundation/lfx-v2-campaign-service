@@ -1,11 +1,13 @@
 ---
 type: "Architecture Doc"
 title: "Microsoft Keyword Insights"
-description: "The Microsoft Advertising keyword read behind the Optimize tab: Google's keyword row shape, scoped to the project's own campaigns on its own connection, served from a saved asynchronous keyword report with metrics_as_of and metrics_pending; audience demographics are not offered for Microsoft."
+description: "The Microsoft Advertising keyword and age/gender audience reads behind the Optimize tab: Google's keyword row shape and (age group, gender) buckets with no device dimension, both scoped to the project's own campaigns on its own connection and served from saved asynchronous reports (one store holding two report kinds) with metrics_as_of and metrics_pending."
 resource: "internal/service/keyword_report.go"
 ---
 
 # Microsoft Keyword Insights
+
+Also the Microsoft age/gender audience read — see [Audience](#audience-age-and-gender-no-device).
 
 `GET /projects/{project_id}/microsoft-ads/keywords?window=` (`get-microsoft-ads-keywords`,
 `campaign_manager`, LFXV2-2665) — the Microsoft counterpart of
@@ -45,10 +47,35 @@ is off). Neither carries another discriminator, so
 `TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages` pins both strings; rewording either
 needs the matcher there changed in step.
 
-**Audience demographics are not offered.** Microsoft's `AgeGenderAudienceReportRequest` carries
-age and gender but no device dimension, so the age/gender/device answer would need a second
-report per key and could be half-finished; `Orchestrator.ReadAudienceInsights` answers 400 "not
-supported for this platform" for Microsoft, and no `/microsoft-ads/audience` route exists.
+## Audience: age and gender, no device
+
+`GET /projects/{project_id}/microsoft-ads/audience?window=` (`get-microsoft-ads-audience`,
+`campaign_manager`, LFXV2-2665) — Microsoft's `AgeGenderAudienceReportRequest`, served by the
+same saved-report machinery, gate, window enum, scope rules and error classification as the
+keyword read (`Orchestrator.ReadReportedAudience`, `service.AudienceReportReader`,
+`internal/dispatch/microsoft_audience_report.go`, `internal/platform/microsoft/audience_report.go`).
+
+- **No device dimension.** `AgeGenderAudienceReportColumn` carries `AgeGroup` and `Gender` but no
+  device column, so this is NOT the Google audience read's age/gender/device shape:
+  `Orchestrator.ReadAudienceInsights` still answers 400 "not supported" for Microsoft, and a device
+  breakdown would need a second report (a second pending half per key, half-finished answers) —
+  out of scope.
+- **Request:** `Type: AgeGenderAudienceReportRequest`, `Format: Csv`, `Aggregation: Summary`, no
+  `TimePeriod` (not allowed with Summary), `ReturnOnlyCompleteData: false`, no `Filter`/`MaxRows`,
+  `Columns: CampaignId, AgeGroup, Gender, Impressions, Clicks, Spend`, `Scope.Campaigns` only, the
+  shared UTC `reportTime` — `submitCampaignScopedReport`, shared with the keyword report so neither
+  can drift onto a wider scope.
+- **Fold:** one row per (campaign, age group, gender), columns by header name (all six required, a
+  repeated header refused), a repeated key SUMMED as the keyword fold sums; a non-id campaign, a
+  blank/invalid-UTF-8/control-or-format-character (checked on the raw cell, so a leading tab or trailing CR/LF is refused rather than trimmed away)/over-64-byte label, a negative or non-finite counter, an
+  overflow or more than 64 distinct (age, gender) pairs fails the WHOLE read (no partial rows).
+- **Response** (`MicrosoftAdsAudience`): `buckets` of `{age_group, gender, impressions, clicks,
+  cost_micros, ctr}` summed over the campaigns the project owns NOW, impressions-descending;
+  `bucket_count`; `metrics_as_of`, `metrics_pending`, `data_incomplete` as on the keyword read.
+  No `account_currency` (the report has no currency column) and no conversions.
+- **Errors:** the keyword read's, with the audience scope sentinels
+  (`ErrAudienceScopeTooLarge`/`ErrAudienceScopeInvalid`, shared with the Meta audience read) so a
+  409 names the read that refused; the gated-off 400 is the keyword read's exact text.
 
 ## Why a saved report
 
@@ -58,6 +85,27 @@ the account monitor's pattern: serve the last finished report, check a pending o
 request, submit the next when none is building and the last is missing, older than 30 minutes, or
 does not cover every campaign the project now owns. The first read returns no rows with
 `metrics_pending: true`.
+
+A finished report is served ONLY for its own calendar period. Its saved `ready_window_start` /
+`ready_window_end` must equal the dates the requested window resolves to NOW (the reader's
+`ReportWindowDates`, the same UTC-day rule its Submit sends); otherwise it is treated as absent —
+a replacement is submitted and the read answers as when no report has finished (no rows/buckets,
+`metrics_as_of` absent, `metrics_pending` true). Without this a `this_month` report requested at
+23:50 on 31 October was fresh by age at 00:10 on 1 November and labelled October's data as
+November's (likewise `today` across midnight). The dates were already stored (000038/000041), so
+no migration was needed; the check is shared by both kinds (`discardOtherPeriod`).
+
+The same rule applies to a report still BUILDING across the boundary (#292 review). The pending
+half stores its requested dates (`pending_window_start` / `pending_window_end`), so a pending
+report for another period is superseded before anything is polled
+(`supersedeOtherPeriodPending`): it is cleared through the store's existing compare-and-set on
+the pending id (recorded as the key's last failure, "superseded: …") and a report for the current
+dates is submitted on the same read, which answers `metrics_pending: true`. A request that loses
+that compare-and-set re-reads the pending half and adopts the winner's replacement rather than
+submitting another; a late collection of the old report cannot complete (its id is no longer
+pending), and a copy served from memory is still dropped by `discardOtherPeriod`. Without this the
+old report blocked any submission for the new period until it finished or was abandoned (up to an
+hour).
 
 A finished report is served ONLY while it covers the project's current campaign scope. A
 campaign dispatched after the report was built makes the next read return no rows (and submit a
@@ -69,6 +117,17 @@ The store is a sibling table, `keyword_insight_reports` (migration `000038`), no
 column on `account_monitor_reports`: its key is a reporting window rather than a day count (and
 `days` is in 000035's primary key), each half records its campaign scope, and its rows are a
 different type. See [internal/infrastructure/postgres](../code/internal-infrastructure-postgres.md).
+
+**One store, two report kinds** (`model.InsightReportKind`: `keywords`, `age_gender`). Migration
+`000041` adds an `age_gender_`-prefixed READY/PENDING/last-failure column set to the same row
+rather than a `report_kind` discriminator: a discriminator would have to join the primary key,
+and the N-1 binary's `ON CONFLICT (project_id, platform, account_id, report_window)` needs a
+unique index on exactly those four columns, so that would not be expand-only. Each kind's four
+statements name only its own columns (`KeywordReportRepo` implements both
+`domain.KeywordReportRepository` and `domain.AudienceReportRepository`), so a keyword report can
+never be read, completed, failed or served as an audience report, and one kind building never
+blocks the other's mark. The orchestrator's collect/refresh steps are one generic implementation
+over both kinds (`insightReportDriver`, `internal/service/insight_report.go`).
 
 ## Trust boundary
 
@@ -129,6 +188,11 @@ Verified 2026-10-05 against learn.microsoft.com (Reporting v13):
 [KeywordPerformanceReportColumn](https://learn.microsoft.com/en-us/advertising/reporting-service/keywordperformancereportcolumn?view=bingads-13),
 [AccountThroughAdGroupReportScope](https://learn.microsoft.com/en-us/advertising/reporting-service/accountthroughadgroupreportscope?view=bingads-13),
 [KeywordStatusReportFilter](https://learn.microsoft.com/en-us/advertising/reporting-service/keywordstatusreportfilter?view=bingads-13),
-[AgeGenderAudienceReportColumn](https://learn.microsoft.com/en-us/advertising/reporting-service/agegenderaudiencereportcolumn?view=bingads-13).
+[AgeGenderAudienceReportColumn](https://learn.microsoft.com/en-us/advertising/reporting-service/agegenderaudiencereportcolumn?view=bingads-13);
+and 2026-10-07:
+[AgeGenderAudienceReportRequest](https://learn.microsoft.com/en-us/advertising/reporting-service/agegenderaudiencereportrequest?view=bingads-13),
+AgeGenderAudienceReportColumn again (required columns AgeGroup, Gender, TimePeriod — TimePeriod
+"expected for all aggregation types except Summary").
 UNVERIFIED LIVE: the CSV column spellings in a real download, whether a campaign-only scope draws
-error 2027, and how `QualityScore`/`KeywordStatus` render in practice.
+error 2027, how `QualityScore`/`KeywordStatus` render in practice, and the literal `AgeGroup`/
+`Gender` values (capitalisation, and whether an unknown bucket appears) — passed through verbatim.

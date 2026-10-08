@@ -409,11 +409,11 @@ func isComparable(v any) bool {
 // identity is the property that holds across every one of those shapes; a count would pin only
 // the fixture's shape and would read zero for a bearer-only connection with or without a cache.
 //
-// X's bound is per CLIENT INSTANCE, which is narrower than per ACCOUNT: this cache is keyed by
-// project + connection row, so two projects pointing at the same X ad account get separate
-// pacers, as do separate replicas and a client replaced by rotation/TTL/LRU while a caller still
-// holds its predecessor. It removes the common case and leaves the residue to the 429 backoff.
-// See twitter.Client.pace for the full scope note, and LFXV2-2665 for the durable fix.
+// X's pacer no longer depends on this cache: it is per AD ACCOUNT within the process
+// (twitter.AccountPacers, shared by every client the dispatcher builds), so two projects pointing
+// at the same X ad account, and a client replaced by rotation/TTL/LRU while a caller still holds
+// its predecessor, pace together. Separate replicas do not; see twitter.Client.pace, and the
+// stats-job lease that keeps X's stats jobs to one pod.
 // Other comments point AT this list rather than restating it, so wiring the next provider is a
 // one-site edit.
 //

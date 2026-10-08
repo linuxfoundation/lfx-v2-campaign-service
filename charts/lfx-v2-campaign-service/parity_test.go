@@ -371,9 +371,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// Account-scoped monitor reads (LFX One BFF /api/campaigns/*/monitor port):
 		// ruled for exactly the six providers with a monitor dispatcher —
 		// google-ads, linkedin-ads, meta-ads and reddit-ads (AccountMetricsReader) and
-		// microsoft-ads and twitter-ads (AccountReportReader, report-backed). The hubspot
-		// rejected row further down pins that the
-		// alternation was not widened to every connection provider by accident.
+		// microsoft-ads and twitter-ads (AccountReportReader, report-backed) — plus hubspot's
+		// email monitor on its own branch (below). The hubspot /accounts rejected row further
+		// down pins that the discovery alternation was not widened to every connection
+		// provider by accident.
 		{"/projects/p1/connection-google-ads/account-monitor", true},
 		{"/projects/p1/connection-linkedin-ads/account-monitor", true},
 		{"/projects/p1/connection-meta-ads/account-monitor", true},
@@ -382,6 +383,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// X joined with its report-backed monitor (LFXV2-2665): stats jobs, served from a
 		// saved copy. This row is what fails if only one chart side is edited.
 		{"/projects/p1/connection-twitter-ads/account-monitor", true},
+		// HubSpot's email monitor (LFXV2-2665) is on the hubspot branch, not the ad-provider
+		// discovery branch: project-scoped to the emails this service recorded, no account_id.
+		{"/projects/p1/connection-hubspot/account-monitor", true},
 		{"/projects/abc-123/connection-linkedin-ads", true},
 		{"/projects/p1/connection-meta-ads/test", true},
 		{"/projects/p1/connection-reddit-ads/set-credential", true},
@@ -434,6 +438,13 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// rows fail if a narrowing drops either.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting", true},
 		{"/projects/p1/briefs/b-42/campaigns/c-9/keyword-targeting/removals", true},
+		// The Meta ad-set read and the per-ad-set pause/resume (LFXV2-2665): list-meta-ad-sets one
+		// segment below the campaign, toggle-meta-ad-set-status three (the ad set id, then
+		// /status). The toggle changes a live ad set's delivery. Both inherit the briefs match and
+		// the campaign_manager rule rather than adding their own; these rows fail if a narrowing
+		// drops either.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets", true},
+		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets/120210000000000888/status", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
@@ -452,15 +463,17 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/keywords", true},
-		{"/projects/p1/microsoft-ads/audience", false},
+		{"/projects/p1/microsoft-ads/audience", true},
+		{"/projects/p1/microsoft-ads/audience/x", false},
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
-		// The Meta audience read (LFXV2-2665); the other non-Google providers have none.
+		// The Meta and X audience reads (LFXV2-2665); Reddit and LinkedIn have none.
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},
+		{"/projects/p1/twitter-ads/audience", true},
+		{"/projects/p1/twitter-ads/audience/x", false},
 		{"/projects/p1/reddit-ads/audience", false},
-		{"/projects/p1/twitter-ads/audience", false},
 		{"/projects/p1/linkedin-ads/audience", false},
 		// The Meta, Reddit and X twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},
@@ -502,10 +515,8 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// what fails if the discovery branch is widened to every connection-* provider.
 		{"/projects/p1/connection-hubspot/accounts", false},
 		{"/projects/p1/connection-google-ads/emails", false},
-		// hubspot has no ad account and no monitor dispatcher — account-monitor must not
-		// be admitted for it now that the monitor branch spans every ad provider with
-		// discovery.
-		{"/projects/p1/connection-hubspot/account-monitor", false},
+		// hubspot's account-monitor is accepted (above); its discovery-shaped siblings are not.
+		{"/projects/p1/connection-hubspot/account-monitor/x", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},
@@ -1120,4 +1131,52 @@ func TestScrapePortCannotDriftFromServicePort(t *testing.T) {
 			t.Errorf("prometheus.io/scrape rendered %d times, want 1: %v", len(got), got)
 		}
 	})
+}
+
+// TestDeploymentRefusesXStatsJobsOnMultipleReplicas pins the single-replica guard: the X
+// stats-job features' limits (audience job budget, account pacer) are per process, so the chart
+// refuses TWITTER_METRICS_ENABLED with more than one replica — set through either env input, or
+// sourced where the template cannot see it — and still renders every other combination.
+func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	const on = "app.environment.TWITTER_METRICS_ENABLED.value=true"
+	for _, tc := range []struct {
+		name   string
+		set    []string
+		refuse bool
+	}{
+		{"default (flag off, one replica)", nil, false},
+		{"flag on, one replica", []string{on}, false},
+		{"flag off, three replicas", []string{"replicaCount=3"}, false},
+		{"flag on, two replicas", []string{on, "replicaCount=2"}, true},
+		{"flag on via extraEnv, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
+		{"flag from a secret, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=null", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.TWITTER_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
+		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true},
+		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
+		// The EFFECTIVE value: extraEnv renders after app.environment and Kubernetes keeps the
+		// last occurrence of a name, so a later "false" switches the flag off and a later "true"
+		// switches it on, whatever app.environment says.
+		{"environment on, extraEnv off, two replicas", []string{on, "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=false", "replicaCount=2"}, false},
+		{"environment off, extraEnv on, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
+		{"extraEnv on then off, two replicas", []string{"app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].value=true,app.extraEnv[1].name=TWITTER_METRICS_ENABLED,app.extraEnv[1].value=false", "replicaCount=2"}, false},
+		{"environment on, extraEnv from a secret last, two replicas", []string{"app.environment.TWITTER_METRICS_ENABLED.value=false", "app.extraEnv[0].name=TWITTER_METRICS_ENABLED,app.extraEnv[0].valueFrom.secretKeyRef.name=s,app.extraEnv[0].valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}
+			for _, s := range tc.set {
+				args = append(args, "--set", s)
+			}
+			out, err := exec.Command("helm", args...).CombinedOutput()
+			switch {
+			case tc.refuse && err == nil:
+				t.Fatalf("rendered with %v; want the single-replica refusal", tc.set)
+			case tc.refuse && !strings.Contains(string(out), "Run one replica while the flag is on"):
+				t.Errorf("failed, but not on the guard:\n%s", out)
+			case !tc.refuse && err != nil:
+				t.Fatalf("refused %v: %v\n%s", tc.set, err, out)
+			}
+		})
+	}
 }

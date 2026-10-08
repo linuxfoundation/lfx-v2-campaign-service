@@ -658,7 +658,24 @@ var MetaAdsAudienceBucket = Type("meta-ads-audience-bucket", func() {
 	Attribute("cost_micros", Int64, "Spend over the window in micro-units of the ad account's native currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
 	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.0578) })
 	Required("dimension", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples, one per dimension. Without them Goa composes the object from the
+	// attribute examples above and publishes an impossible bucket carrying age, gender AND
+	// placement values at once; each real bucket carries only its own dimension's fields.
+	Example("age_gender bucket", metaAudienceAgeGenderExample)
+	Example("placement bucket", metaAudiencePlacementExample)
 })
+
+// metaAudienceAgeGenderExample / metaAudiencePlacementExample are the two bucket shapes, shared by
+// the bucket type's examples and the envelope's so the two cannot disagree.
+var metaAudienceAgeGenderExample = map[string]any{
+	"dimension": "age_gender", "age": "25-34", "gender": "female",
+	"impressions": 12840, "clicks": 742, "cost_micros": 3120000, "ctr": 0.0578,
+}
+
+var metaAudiencePlacementExample = map[string]any{
+	"dimension": "placement", "publisher_platform": "instagram", "platform_position": "feed",
+	"impressions": 9100, "clicks": 182, "cost_micros": 1450000, "ctr": 0.02,
+}
 
 // MetaAdsAudience is the project-scoped Meta demographic/placement read. Its envelope fields are
 // the Google audience read's (window, buckets, bucket_count) plus account_currency, which Meta
@@ -671,13 +688,106 @@ var MetaAdsAudienceBucket = Type("meta-ads-audience-bucket", func() {
 // than reporting a misleading 0.
 var MetaAdsAudience = Type("meta-ads-audience", func() {
 	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
-	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.")
+	// The PROPERTY needs its own example too: left to Goa, the array example repeats the bucket
+	// type's single example (three identical placement buckets), which no response can contain —
+	// rows are merged per segment, and age_gender buckets precede placement ones.
+	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.", func() {
+		Example([]map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample})
+	})
 	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across both dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions double-counts it — total within one dimension only.", func() { Example(24) })
 	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as Meta reports it. ABSENT when no bucket was returned.", func() {
 		Pattern("^[A-Z]{3}$")
 		Example("USD")
 	})
 	Required("window", "buckets", "bucket_count")
+	// Type-level so bucket_count equals len(buckets) — attribute examples alone published a
+	// two-item array beside bucket_count 24.
+	Example(map[string]any{
+		"window":           "last_30_days",
+		"buckets":          []map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample},
+		"bucket_count":     2,
+		"account_currency": "USD",
+	})
+})
+
+// twitterAudienceWindowEnum is the subset of metricsWindowEnum the X audience read serves: the
+// three window NAMES the X campaign metrics read serves (twitterMetricsWindow). The names match;
+// the instants do not on a non-UTC account — the audience read takes the days on the account's
+// calendar, the metrics read as UTC days. Longer windows are refused by the decoder here rather
+// than reaching a runtime 400 the design did not declare.
+func twitterAudienceWindowEnum() {
+	Enum("today", "yesterday", "last_7_days")
+}
+
+// TwitterAdsAudienceBucket is one X Ads stats segment's counters, summed across the project's
+// own campaigns.
+//
+// An X-named type rather than GoogleAdsAudienceBucket: X's dimensions (AGE, GENDER, PLATFORMS
+// segmentations) are not Google's, its values are X's own segment names rather than Google enum
+// literals, and X reports no scalar conversions metric. Unlike Meta, each X segmentation carries
+// ONE value, so a single `value` fits without inventing a joined vocabulary.
+var TwitterAdsAudienceBucket = Type("twitter-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which segmentation this bucket belongs to: age (X segmentation_type AGE), gender (GENDER) or platform (PLATFORMS)", func() { Enum("age", "gender", "platform") })
+	Attribute("value", String, "X's segment name for this bucket, verbatim (for example an age range, a gender or a device platform). A value outside a conservative charset fails the read rather than being returned.", func() {
+		Pattern(`^[A-Za-z0-9](?:[A-Za-z0-9 _+.\-]{0,62}[A-Za-z0-9+])?$`)
+		Example("iOS")
+	})
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Billed charge over the window (X's billed_charge_local_micro) in micro-units of the ad account's currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions after summing across campaigns, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "value", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples so the published bucket is one a response can contain: the attribute
+	// examples alone compose a platform value under whatever dimension Goa picks.
+	Example("age bucket", twitterAudienceAgeExample)
+	Example("platform bucket", twitterAudiencePlatformExample)
+})
+
+// twitterAudienceAgeExample / twitterAudienceGenderExample / twitterAudiencePlatformExample are
+// possible bucket shapes (ctr = clicks/impressions), shared by the bucket type's examples and the
+// envelope's so the two cannot disagree. Each dimension totals the same traffic: 9000 impressions
+// and 270 clicks in every one.
+var (
+	twitterAudienceAgeExample = map[string]any{
+		"dimension": "age", "value": "25-34",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	twitterAudienceGenderExample = map[string]any{
+		"dimension": "gender", "value": "Female",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	twitterAudiencePlatformExample = map[string]any{
+		"dimension": "platform", "value": "iOS",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+)
+
+// TwitterAdsAudience is the project-scoped X demographic/platform read: the Google audience
+// read's envelope (window, buckets, bucket_count) plus account_currency, read from the ad
+// account itself because X's stats carry no currency.
+//
+// There is deliberately NO conversions field: X splits conversions across per-event-type metric
+// objects under metric groups this read does not request (see TwitterDispatcher.ReadMetrics).
+var TwitterAdsAudience = Type("twitter-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover, as days on the ad ACCOUNT's calendar (its timezone) — not the UTC days the X campaign metrics read uses for the same window name", twitterAudienceWindowEnum)
+	Attribute("buckets", ArrayOf(TwitterAdsAudienceBucket), "Every bucket across the three segmentations, discriminated by `dimension`. Ordered by dimension (age, gender, platform), then impressions descending, then value.", func() {
+		Example([]map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample})
+	})
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.", func() { Example(3) })
+	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as X reports it on the account. ABSENT when X was not contacted (the project has no X campaigns of its own) or the account carries no currency.", func() {
+		Pattern("^[A-Z]{3}$")
+		Example("USD")
+	})
+	Attribute("all_counters_null", Boolean, "True when, for at least one dimension, X returned segment rows whose every counter was null or absent. The zeros in that dimension are then NOT a measurement: it is either no delivery in the window or X's reported defect where segmented stats jobs succeed with all-null metrics, and the two cannot be told apart.", func() { Example(false) })
+	Required("window", "buckets", "bucket_count", "all_counters_null")
+	// Type-level so bucket_count equals len(buckets) and the dimensions appear in order.
+	Example(map[string]any{
+		"window":            "last_7_days",
+		"all_counters_null": false,
+		"buckets":           []map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample},
+		"bucket_count":      3,
+		"account_currency":  "USD",
+	})
 })
 
 // HubSpotCampaign is one LF HubSpot marketing campaign.
@@ -1009,6 +1119,72 @@ var KeywordTargetingRemovals = Type("keyword-targeting-removals", func() {
 		},
 		"applied_count": 2,
 	})
+})
+
+// MetaAdSet is one ad set under a Meta campaign, read live (LFXV2-2665). Never persisted.
+var MetaAdSet = Type("meta-ad-set", func() {
+	Attribute("id", String, "The Meta ad set id", func() { Example("120210000000000888") })
+	Attribute("listed", Boolean, "false for an ad set that DELIVERED in the window but that Meta's ad-set listing did not return (typically deleted or archived since): its counters are this campaign's spend, so they are reported, but every descriptive field is absent.", func() { Example(true) })
+	Attribute("name", String, "The ad set's name as Meta holds it. Absent when not reported.", func() { Example("KubeCon NA — Leads — US") })
+	Attribute("status", String, "The ad set's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED, ARCHIVED). Absent when not reported.", func() { Example("PAUSED") })
+	Attribute("effective_status", String, "The ad set's EFFECTIVE status as Meta reports it (e.g. CAMPAIGN_PAUSED when the ad set is ACTIVE but its campaign is not). Reported verbatim; Meta grows this set without notice. Absent when not reported.", func() { Example("CAMPAIGN_PAUSED") })
+	Attribute("bid_strategy", String, "The ad set's bid_strategy as Meta reports it. Absent when not reported.", func() { Example("LOWEST_COST_WITHOUT_CAP") })
+	Attribute("budget_type", String, "Which budget the ad set holds. ABSENT when it holds none of its own — Campaign Budget Optimization keeps the budget on the campaign, shared across its ad sets.", func() {
+		Enum("daily", "lifetime")
+		Example("daily")
+	})
+	Attribute("budget_amount", String, "The ad set's budget in WHOLE units of `currency`, two decimals, converted from the minor units Meta reports with the account currency's own offset (100 for most currencies, 1 for zero-decimal ones such as JPY). ABSENT when there is no ad-set budget, or when the currency's minor-unit scale is not one this service knows — never rendered at a guessed scale.", func() { Example("50.00") })
+	Attribute("impressions", Int64, "Impressions over the window. 0 when Meta reported no delivery for this ad set.", func() { Example(1840) })
+	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(42) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of `currency`.", func() { Example(12340000) })
+	Attribute("ctr", Float64, "clicks/impressions, 0 when impressions is 0.", func() { Example(0.0228) })
+	Attribute("recorded", Boolean, "true for the ONE ad set this service created for the campaign (the id the campaign row recorded at dispatch). Always false on an adopted campaign, which records no ad set.", func() { Example(true) })
+	Required("id", "listed", "impressions", "clicks", "cost_micros", "ctr", "recorded")
+})
+
+// MetaAdSets is the live ad-set read for one Meta campaign.
+var MetaAdSets = Type("meta-ad-sets", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform_campaign_id", String, "The Meta campaign id the ad sets were read under.", func() { Example("120210000000000555") })
+	Attribute("window", String, "The reporting window the counters cover.", metricsWindowEnum)
+	Attribute("currency", String, "The ad account's ISO 4217 currency; `budget_amount` and `cost_micros` are denominated in it.", func() { Example("USD") })
+	Attribute("read_at", String, "When Meta was read (RFC3339, UTC).", func() { Format(FormatDateTime) })
+	Attribute("ad_sets", ArrayOf(MetaAdSet), "Every ad set the listing returned, in Meta's order, then any unlisted ad set that delivered in the window, by id. Empty when the campaign has none.")
+	Attribute("ad_set_count", Int, "len(ad_sets).", func() { Example(1) })
+	Required("campaign_id", "platform_campaign_id", "window", "currency", "read_at", "ad_sets", "ad_set_count")
+	Example(map[string]any{
+		"campaign_id":          "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"platform_campaign_id": "120210000000000555",
+		"window":               "last_30_days",
+		"currency":             "USD",
+		"read_at":              "2026-10-08T09:30:00Z",
+		"ad_sets": []map[string]any{
+			{
+				"id": "120210000000000888", "listed": true, "name": "KubeCon NA — Leads — US",
+				"status": "ACTIVE", "effective_status": "ACTIVE", "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+				"budget_type": "daily", "budget_amount": "50.00",
+				"impressions": 1840, "clicks": 42, "cost_micros": 12340000, "ctr": 0.0228, "recorded": true,
+			},
+		},
+		"ad_set_count": 1,
+	})
+})
+
+// MetaAdSetStatusChange is the outcome of toggle-meta-ad-set-status.
+var MetaAdSetStatusChange = Type("meta-ad-set-status-change", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("ad_set_id", String, "The ad set whose status was addressed", func() { Example("120210000000000888") })
+	Attribute("requested_status", String, "The status requested", func() {
+		Enum("ACTIVE", "PAUSED")
+		Example("PAUSED")
+	})
+	Attribute("previous_status", String, "The configured status the pre-write read observed.", func() { Example("ACTIVE") })
+	Attribute("outcome", String, "APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad set already at the requested status, so NOTHING WAS SENT. (A write whose outcome is unknown is never a 200: it is a 503 saying the change is unconfirmed.)", func() {
+		Enum("APPLIED", "ALREADY_IN_STATE")
+		Example("APPLIED")
+	})
+	Attribute("etag", String, "ETag header value: the campaign row's version, UNCHANGED — an ad set's status is not stored on the campaign row, so this write does not bump it.")
+	Required("campaign_id", "ad_set_id", "requested_status", "outcome")
 })
 
 // EmailCopySection is one ordered block of AI-generated email copy. Replaces a single flat
@@ -2131,6 +2307,67 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()
+		})
+	})
+
+	Method("list-meta-ad-sets", func() {
+		Description("Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name, configured and effective status, bid strategy and own budget, with its impressions, clicks, spend and CTR over the window. A pure read — the platform is only read and nothing is persisted. " +
+			"Upstream: GET /{campaign_id}/adsets (bounded cursor paging), GET /act_{id}?fields=currency, and ONE level=adset Insights read on the ad account filtered to this campaign (bounded cursor paging). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad set must report THIS campaign and the connection's ad account, every Insights row must name this campaign and the account's currency, and an explicit null counter is refused while an absent one is 0. `recorded` marks the ad set this service created. " +
+			"Before anything is read the campaign must record which ad account it was created under and that account must be the connection's (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400. " +
+			"**404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta's 100/33 on the campaign (\"does not exist, cannot be loaded due to missing permissions, or does not support this operation\") cannot tell a deleted campaign from one this token cannot load, so it is a 503 like every other unverifiable upstream answer — all or nothing, never a partial list.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		Result(MetaAdSets)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets")
+			Header("bearer_token:Authorization")
+			Param("window")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("toggle-meta-ad-set-status", func() {
+		Description("Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row's ETag (428 when missing, 412 when stale) and the campaign's write lock is held for the call. " +
+			"`ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection's (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set's targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign's ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. " +
+			"When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. " +
+			"Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign's write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set's status WAS changed on Meta. " +
+			"The ad set's status is NOT stored on the campaign row, so the returned ETag is the row's UNCHANGED version (as when a created_degraded campaign is paused). NOTE: toggle-campaign-status cascades an ACTIVATE to the recorded ad set, so a campaign ACTIVATE re-activates the recorded ad set; a deliberate ad-set pause does not survive a campaign pause/resume. Any platform but Meta is 400.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// Interpolated into the Graph path, so the Pattern is the transport's half of the
+			// path-injection guard meta.ValidateAdSetID repeats (TestMetaAdSetIDPattern_MatchesPlatformValidator).
+			Attribute("ad_set_id", String, "The Meta ad set id: digits, no leading zero, at most 32.", func() {
+				Pattern(`^[1-9][0-9]*$`)
+				MaxLength(32)
+				Example("120210000000000888")
+			})
+			ifMatchAttr()
+			Attribute("status", String, "Desired ad-set status, in Meta's vocabulary", func() { Enum("ACTIVE", "PAUSED") })
+			Required("project_id", "brief_id", "campaign_id", "ad_set_id", "status")
+		})
+		Result(MetaAdSetStatusChange)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
 	})
 

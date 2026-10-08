@@ -806,6 +806,10 @@ func (r *campaignEditRepo) ListProjectPlatformCampaignIDs(context.Context, strin
 	return nil, nil
 }
 
+func (r *campaignEditRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
+	return nil, nil
+}
+
 // ResolvePlatformCampaign is unused by this fake's tests — they exercise brief editing, which
 // never resolves an upstream id. Returns no matches rather than a canned ref so a test that
 // starts using it fails loudly instead of quietly acting on a fabricated campaign.

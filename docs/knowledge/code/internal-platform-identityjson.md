@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/identityjson"
-description: "Refuses a JSON response that encoding/json would decode WITHOUT error into something other than what its bytes say — malformed UTF-8, an unpaired surrogate escape, or a key declared twice — for the campaign-adoption reads whose answer binds a paid campaign to a brief."
+description: "Refuses a JSON response that encoding/json would decode WITHOUT error into something other than what its bytes say — malformed UTF-8, an unpaired surrogate escape, or a key declared twice — for the campaign-adoption reads whose answer binds a paid campaign to a brief, and for HubSpot's email-statistics and token-info reads."
 resource: "internal/platform/identityjson"
 tags:
   - platform-client
@@ -17,6 +17,13 @@ timestamp: "2026-10-07T00:00:00Z"
 Reddit and X clients' `GetCampaign` run it over the raw answer before decoding, because an adoption
 binds a brief to an arbitrary upstream campaign on the strength of one read, and the id and name it
 returns are what an operator confirms the binding against.
+
+The HubSpot client uses it too (LFXV2-2665, the email account monitor). Statistics responses are
+mostly open maps that encoding/json keys EXACTLY, so `readEmailCounters` uses `CheckExactKeys`
+(exact duplicates only) plus `FoldedKeyCollision` on the struct-decoded levels; the token-info
+answer (`AuthenticatedPortalID`) gets the full `Check`, whose portal id every
+caller compares against a recorded one. `"sent":1000,"sent":0` or a doubled `hubId` describes two
+answers, and the decoder would pick one silently.
 
 encoding/json has three silent behaviours that turn a malformed answer into a plausible one, and
 `Check` refuses each:

@@ -31,6 +31,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -892,6 +894,10 @@ func (e *APIError) copyEnvelope(g *graphError) {
 	e.FBTraceID = g.FBTraceID
 	e.ErrorSubcode = g.ErrorSubcode
 	e.blameFields = g.blameFieldSpecs()
+	e.IsTransient = g.IsTransient
+	// Only an envelope the identity check accepted counts as read (see do()); the /adimages
+	// upload path never sets trusted, and nothing there consults this field.
+	e.EnvelopeParsed = g.trusted
 }
 
 // graphErrorEnvelope models the Graph API error body: {"error": {...}}.
@@ -909,6 +915,11 @@ type graphError struct {
 	// ErrorData carries error_data, whose blame_field_specs names the request field(s) at
 	// fault. Kept raw and read only through blameFieldSpecs, which bounds it.
 	ErrorData json.RawMessage `json:"error_data"`
+	// IsTransient is Graph's own "retrying may succeed" flag. Read only to CLASSIFY a write.
+	IsTransient bool `json:"is_transient"`
+	// trusted records that the raw body this envelope was decoded from passed
+	// identityjson.Check. Set by do(), never decoded.
+	trusted bool
 }
 
 // Bounds on what blameFieldSpecs retains from an untrusted body: a real spec names one or two
@@ -987,6 +998,12 @@ type APIError struct {
 	FBTraceID string
 	// ErrorSubcode is the envelope's error_subcode, 0 when absent.
 	ErrorSubcode int
+	// IsTransient is the envelope's is_transient flag. EnvelopeParsed records that a Graph error
+	// envelope was actually read onto this error (copyEnvelope), so a classifier can tell "Meta
+	// said X" from "we never read what Meta said". Both are read only to classify a write
+	// (ClassifyAdSetWrite); every other caller ignores them.
+	IsTransient    bool
+	EnvelopeParsed bool
 	// blameFields is error_data.blame_field_specs, bounded (see blameFieldSpecs). Unexported and
 	// never rendered by Error(): it is read only to CLASSIFY a refusal — which request field
 	// Meta blamed — never to describe one.
@@ -1671,7 +1688,22 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 		// below), so only unmarshal it then — a 2xx success body never populates it.
 		var env graphErrorEnvelope
 		if status < 200 || status >= 300 {
-			_ = json.Unmarshal(raw, &env)
+			decodeErr := json.Unmarshal(raw, &env)
+			if env.Error != nil {
+				// Whether the decoded envelope can be TRUSTED as what Meta said. Two conditions,
+				// both required:
+				//   - the schema decode SUCCEEDED. encoding/json keeps decoding past a type
+				//     mismatch and leaves the mismatched field at its zero value, so
+				//     {"code":100,"is_transient":"true"} yields Code=100, IsTransient=false and an
+				//     error — a half-read envelope that would otherwise read as a definite refusal;
+				//   - the identity check accepts the raw body: the decoder keeps the last of a
+				//     duplicated (or case-folded) key and substitutes U+FFFD silently, so a body
+				//     carrying two codes decodes to one of them.
+				// Only a trusted envelope may mark the APIError EnvelopeParsed — the gate a definite
+				// "nothing was changed" (ClassifyAdSetWrite) requires. The partially decoded fields
+				// are still copied exactly as before, so throttle detection and logging are unchanged.
+				env.Error.trusted = decodeErr == nil && identityjson.Check(raw) == nil
+			}
 		}
 		// isThrottle is the CLASSIFICATION — "Meta shed this request" — and is deliberately
 		// kept separate from throttled, which is the narrower "and we are going to retry it".

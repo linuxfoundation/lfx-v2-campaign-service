@@ -190,6 +190,10 @@ var AudienceListBrief = Type("audience-list-brief", func() {
 	Attribute("resolved_from_legacy_id", String, "Legacy list id this row was translated from")
 	Attribute("hubspot_url", String, "Deep link to the list in the HubSpot UI; absent when it no longer resolves")
 	Required("list_id", "name", "missing")
+	// TYPE-LEVEL so the published example is a possible one: Goa's synthesised example drew
+	// each attribute independently and showed `missing: true` beside a populated name and
+	// hubspot_url, which the descriptions above rule out. A resolved list is the common shape.
+	Example(audienceIncludedListsExample[0])
 })
 
 // AudienceLastSentEmail is one previous marketing email, with the audience it targeted.
@@ -198,8 +202,12 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 	Attribute("email_name", String, "Email name")
 	Attribute("sent_at", String, "When the email was published/sent, RFC 3339")
 	Attribute("hubspot_url", String, "Deep link to the email in the HubSpot UI")
-	Attribute("included_lists", ArrayOf(AudienceListBrief), "Lists the send included")
-	Attribute("suppression_lists", ArrayOf(AudienceListBrief), "Lists the send suppressed")
+	Attribute("included_lists", ArrayOf(AudienceListBrief), "Lists the send included", func() {
+		Example(audienceIncludedListsExample)
+	})
+	Attribute("suppression_lists", ArrayOf(AudienceListBrief), "Lists the send suppressed", func() {
+		Example(audienceSuppressionListsExample)
+	})
 	// Without this, a failed selection read and a send that genuinely targeted nothing have the
 	// IDENTICAL wire shape — two empty arrays — so a HubSpot 5xx renders as false precedent.
 	// The email's name and link are still worth showing, so the row is kept and marked rather
@@ -208,7 +216,30 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 		"True when this email's list selection could not be read. The two list arrays are then "+
 			"empty because they are UNKNOWN, not because the send targeted nothing.")
 	Required("email_id", "email_name", "hubspot_url", "included_lists", "suppression_lists")
+	// TYPE-LEVEL so the published example is a possible one. Composed from the attribute
+	// examples, Goa published populated list arrays beside lists_unavailable=true, which this
+	// type defines as "the arrays are empty because they are unknown". A readable selection
+	// (lists_unavailable false) with populated lists is the ordinary row.
+	Example(map[string]any{
+		"email_id":          "184312345678",
+		"email_name":        "KubeCon NA 2026 - Early Bird",
+		"sent_at":           "2026-09-15T16:00:00Z",
+		"hubspot_url":       "https://app.hubspot.com/email/8675309/details/184312345678",
+		"included_lists":    audienceIncludedListsExample,
+		"suppression_lists": audienceSuppressionListsExample,
+		"lists_unavailable": false,
+	})
 })
+
+// audienceIncludedListsExample / audienceSuppressionListsExample are resolved list rows (missing
+// false, so name and hubspot_url are present), shared by the attribute and type examples above.
+var audienceIncludedListsExample = []map[string]any{
+	{"list_id": "4821", "name": "KubeCon NA 2025 attendees", "size": 18250, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/4821"},
+}
+
+var audienceSuppressionListsExample = []map[string]any{
+	{"list_id": "1022", "name": "Global unsubscribes", "size": 3120, "missing": false, "hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/1022"},
+}
 
 // AudienceMasterListBrief is one previously composed master list for this event family.
 var AudienceMasterListBrief = Type("audience-master-list-brief", func() {
@@ -244,6 +275,10 @@ var AudiencePreviewCount = Type("audience-preview-count", func() {
 	Attribute("estimate", Int64, "Upper bound on the union size (the sum of list sizes) when exact is false; 0 when no reliable total exists")
 	Attribute("reason", String, "Why the count is exact or bounded")
 	Required("exact", "count", "estimate", "reason")
+	// TYPE-LEVEL for the same reason: the synthesised example paired `exact: false` with a count
+	// that neither mirrored estimate nor was 0. This is ExactPreviewCount's shape — a counted
+	// union, at most the sum of the list sizes, with no reason to give.
+	Example(map[string]any{"exact": true, "count": 19870, "estimate": 21370, "reason": ""})
 })
 
 // AudienceComposedList is a list this service created, echoed back with its deep link so

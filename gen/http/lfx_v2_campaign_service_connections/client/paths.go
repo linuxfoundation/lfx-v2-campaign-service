@@ -241,9 +241,19 @@ func GetMetaAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) str
 	return fmt.Sprintf("/projects/%v/meta-ads/audience", projectID)
 }
 
+// GetTwitterAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-twitter-ads-audience HTTP endpoint.
+func GetTwitterAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/twitter-ads/audience", projectID)
+}
+
 // GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-microsoft-ads-keywords HTTP endpoint.
 func GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/microsoft-ads/keywords", projectID)
+}
+
+// GetMicrosoftAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-microsoft-ads-audience HTTP endpoint.
+func GetMicrosoftAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/microsoft-ads/audience", projectID)
 }
 
 // ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-google-ads-campaign HTTP endpoint.
@@ -339,4 +349,9 @@ func MonitorMicrosoftAdsAccountLfxV2CampaignServiceConnectionsPath(projectID str
 // MonitorTwitterAdsAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-twitter-ads-account HTTP endpoint.
 func MonitorTwitterAdsAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-twitter-ads/account-monitor", projectID)
+}
+
+// MonitorHubspotAccountLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service monitor-hubspot-account HTTP endpoint.
+func MonitorHubspotAccountLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/connection-hubspot/account-monitor", projectID)
 }
