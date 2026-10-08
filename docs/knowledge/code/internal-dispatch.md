@@ -2090,14 +2090,27 @@ are counted per account for `twitterAudienceAbandonedJobHold` (60 minutes — th
 them finished; `admitJobs`, run by the slot holder, refuses (503) a read whose
 `twitter.AudienceJobCount` would take the account past `twitterAudienceOutstandingJobBudget`
 (12 — two full reads, leaving most of X's 100 concurrent jobs per account to the account monitor),
-asking X first only when over budget. The scope in the key means a cached result
+asking X first only when over budget. A create that failed AMBIGUOUSLY is reported as
+`AudienceJobsAbandonedError.Unknown` and recorded as an ANONYMOUS entry (id ""): never sent to X
+for reconciliation (it has no id), it only expires with the hold, and reconciling the named jobs
+beside it keeps it. `NewTwitterDispatcher` appends `twitter.WithAccountPacers` with ONE
+registry to every client it builds, so every connection to one ad account in the process shares
+that account's write pacer and stats-job reservations. All of this is per process, so ACROSS
+pods the dispatcher asks its `domain.StatsJobLease` (`SetStatsJobLease`, bound by the container
+to `postgres.StatsJobLease`) before anything that creates stats jobs — the audience read, before
+contacting X, and `SubmitAccountReport`, before submitting: a pod that does not own the
+account's lease returns `domain.ErrStatsJobLeaseNotHeld`, or `ErrStatsJobLeaseUnavailable`
+when ownership could not be established (audience read: 503 with that sentinel's fixed text; monitor: the orchestrator's transient submission failure — logged, the saved report still
+served). A nil lease (no database; the direct-construction tests) admits everything. The chart's
+render-time replica refusal is a first line of defence only (it cannot see an out-of-band scale
+or an external HPA). Test: `TestTwitter_StatsJobLease_NonOwnerRefusesWithoutContactingX`. The scope in the key means a cached result
 is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
 (N callers → one set of jobs, a second account read refused while the first runs, cache hit
 creates no jobs and expires by TTL and by account-local day, failures not cached) and
 `twitter_audience_guard_test.go` (leader cancelled during fetch or slot wait → joiner re-leads;
 joiner's own cancellation is its own error; an upstream failure is shared, fetched once; a joined
 result across midnight re-leads; the abandoned-job budget, X's answer and the hold; slots do not
-grow with accounts).
+grow with accounts; anonymous jobs only expire and survive reconciliation).
 
 ## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
 
@@ -4213,3 +4226,27 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
 fetched from HubSpot once per `RunQA` call, not once per reference.
 
+## HubSpot email account monitor (`hubspot_monitor.go`, LFXV2-2665)
+
+`HubSpotDispatcher.ReadEmailMonitor` implements `service.EmailMonitorReader`. Order: `days`
+re-checked (`validateMonitorDays`); the connection via `resolveHubSpotClientWithCreds` — the
+project's own, else the LF system row, exactly as Dispatch and ReadMetrics (the per-email portal
+check, not the resolver, is the boundary; neither row → `ErrNotFound`); `MonitorSpan(days)`; the
+token's portal via `AuthenticatedPortalID` on its own `portalLookupTimeout`; then
+`hubspotMonitorTargets` turns the campaigns the orchestrator passed into emails — each row's own
+email then its recorded `Result.abTestVariant`, deduplicated by email id (first, newest row
+wins, see below) — counting as unattributable any whose row records no `portalId`, another portal, or a
+non-canonical id; those are never sent upstream. A `Result` that fails to decode at all — a
+type error included, which would otherwise leave the fields decoded before it — is treated as
+recording no portal; if it is still a JSON object with a non-null `abTestVariant`, that variant is
+counted unattributable alongside the row's own email rather than vanishing. Soft-deleted rows are read and marked `Deleted`; an email on both a deleted and a live row is
+owned by the live one. One `GetEmailCounters` per email through an
+`errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read).
+A 401/403 on token-info or statistics is tagged `ErrConnectionNotUsable` through
+`res.systemScoped` (400 own token, 500 LF fallback token), as SearchEmails/SearchCampaigns do.
+`AsOf` is the client clock (`hubspot.WithClock`/`Client.Now`) at the LAST upstream response.
+Attribution is decided BEFORE de-duplication and only attributable emails are de-duplicated,
+keyed portal+id: an id is unique only within its portal, so a foreign-portal or malformed row
+with the same number must neither suppress an attributable row nor escape the unattributable
+count. `ErrNoSentEmailInWindow` is counted
+(`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.

@@ -293,6 +293,10 @@ app:
     # other than "true" is treated as off, so a typo fails closed.
     # Flip to "true" only after the contract is verified against a live X ad
     # account; at that point the gate is removed and this key goes away.
+    # Those features' limits are per process: at runtime only the pod holding a
+    # per-account Postgres advisory lease creates X stats jobs (others answer
+    # 503), and templates/deployment.yaml also refuses to render the flag with
+    # replicaCount > 1 (or autoscaling past one).
     TWITTER_METRICS_ENABLED:
       value: "false"
 

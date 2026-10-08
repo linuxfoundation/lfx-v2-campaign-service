@@ -248,3 +248,25 @@ func TestGetTwitterAdsAudience_DisabledIs400EvenWithEmptyScope(t *testing.T) {
 		})
 	}
 }
+
+// A pod that does not own the X stats-job lease answers 503 with the lease's fixed text.
+func TestGetTwitterAdsAudience_LeaseNotHeldIs503FixedText(t *testing.T) {
+	err := errors.Join(domain.ErrStatsJobLeaseNotHeld, errors.New("acquire a connection: dial tcp CANARY"))
+	_, got := twitterAudienceService(t, &twitterAudienceDispatcher{err: err}, "c555").
+		GetTwitterAdsAudience(context.Background(), &conn.GetTwitterAdsAudiencePayload{ProjectID: "cncf"})
+	su, ok := got.(*conn.ConnServiceUnavailableError)
+	if !ok || su.Message != domain.ErrStatsJobLeaseNotHeld.Error() {
+		t.Fatalf("error = %T (%v), want the lease's fixed 503", got, got)
+	}
+}
+
+// A lease that could not be checked answers 503 with ITS fixed text, not "another instance owns".
+func TestGetTwitterAdsAudience_LeaseUnavailableIs503OwnText(t *testing.T) {
+	err := errors.Join(domain.ErrStatsJobLeaseUnavailable, errors.New("acquire a connection: dial tcp CANARY"))
+	_, got := twitterAudienceService(t, &twitterAudienceDispatcher{err: err}, "c555").
+		GetTwitterAdsAudience(context.Background(), &conn.GetTwitterAdsAudiencePayload{ProjectID: "cncf"})
+	su, ok := got.(*conn.ConnServiceUnavailableError)
+	if !ok || su.Message != domain.ErrStatsJobLeaseUnavailable.Error() {
+		t.Fatalf("error = %T (%v), want the unavailable lease's fixed 503", got, got)
+	}
+}

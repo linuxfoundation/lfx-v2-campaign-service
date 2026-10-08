@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/hubspot"
-description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted."
+description: "HubSpot API client (email channel): bearer auth, request layer with 429 retry, marketing-email + CRM-list + event-def + marketing-campaign operations, and marketing-email statistics reads — a UTC calendar range selects which emails are in scope BY SEND DATE and the counters returned are that email's totals to date, behind fail-closed guards for untrustworthy bytes (identityjson), a dishonoured filter, an unrecognized or partially renamed counter vocabulary, a negative or explicitly null counter, and an empty match set (no SENT email with that id in the span — a send outside it, a draft, and a nonexistent id are indistinguishable). Also reads list MEMBERSHIPS (paged, with truncation reported rather than swallowed), the legacy v1 NAME of a list v3 can no longer see, and the lists a prior marketing email actually targeted. The same statistics read also serves the email account monitor over an explicit send-date span."
 resource: "internal/platform/hubspot"
 tags:
   - platform-client
@@ -380,6 +380,36 @@ that reports zero. Saying so there is part of the endpoint work in part 2, where
 window reaches the API surface; recorded here so the gap is a known one rather than an
 oversight.
 
+### The email account monitor's read (LFXV2-2665)
+
+`GetEmailCounters(ctx, emailID, start, end)` serves `monitor-hubspot-account`: the same request
+and the same guards as `GetEmailMetrics` — both now go through one `readEmailCounters` — over an
+explicit `[start, end]` from `MonitorSpan(days)` (trailing `days` UTC days including today, from
+the injected clock, end at the last millisecond) rather than a
+`MetricsWindow`. It returns `EmailCounters`, the six mapped counters plus `spamreport`
+(`SpamReports`). `ValidateEmailID` exports the canonical-positive-integer rule so the dispatcher
+can set a malformed stored id aside before contacting HubSpot. `MonitorSpan` returns no as-of:
+the dispatcher reads `Client.Now()` after each upstream response and publishes the latest, so
+`metrics_as_of` is an upper bound on when every counter was read, not a single snapshot instant.
+
+Two guards were added to `readEmailCounters`, so they apply to the per-campaign read too:
+
+- **Raw-bytes check.** `checkStatisticsBytes` runs before decoding: `identityjson.CheckExactKeys`
+  over the whole document (exact duplicate keys, malformed UTF-8, unpaired surrogates), then
+  `identityjson.FoldedKeyCollision` on the two levels decoded into STRUCTS (the envelope and
+  `aggregate`). The open maps (`counters`, `ratios`, `deviceBreakdown`, `qualifierStats`,
+  `campaignAggregations`) are keyed exactly by encoding/json, so a case-distinct pair there is
+  two entries and is accepted.
+- **Explicit null.** `counters` decodes into `map[string]*int64`; a `null` value is
+  `ErrNullCounter` (the key named only when it is in the static vocabulary). An ABSENT key keeps
+  its omitted-zero meaning. The check runs BEFORE the empty-`emails` answer, so a body that lists
+  no email and carries a null counter is refused rather than read as `ErrNoSentEmailInWindow`.
+
+`renamedCounter` now takes the list of counters the CALLER reads: `GetEmailMetrics` passes the
+six it maps, `GetEmailCounters` the seven including `spamreport`, so a response that drops
+`spamreport` while carrying an unrecognised key is a rename to the monitor and not to the
+per-campaign read, which never looks it up.
+
 ## Authenticated portal resolution (LFXV2-3058)
 
 `AuthenticatedPortalID` resolves the HubSpot hub (portal) id that the private-app
@@ -426,6 +456,10 @@ steady stream of it is a real signal.
 
 Malformed responses (non-JSON or missing/non-numeric `hubId`) do not leak upstream
 data into logs; the error message is fixed text + response length.
+
+Since LFXV2-2665 `AuthenticatedPortalID` also runs `identityjson.Check` on the raw token-info
+answer before decoding: it is identity evidence, and `{"hubId":1,"hubId":2}` would otherwise
+decode to the last value.
 
 ## Marketing campaigns and the utm token (LFXV2-2641)
 

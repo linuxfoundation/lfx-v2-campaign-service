@@ -141,7 +141,7 @@ type AccountConfig struct {
 //
 // Sharing is not merely permitted, it is what makes the pacing correct. The X Ads
 // API enforces a 1 write-request-per-second limit PER ACCOUNT, and this client
-// honors it by serializing its own write requests behind writeMu and spacing them
+// honors it by serializing its own write requests behind pacer.mu and spacing them
 // writeDelay apart (see pace). That budget is a property of the ACCOUNT, so it can
 // only be enforced by the object every caller for that account shares: two clients
 // built for one account each pace themselves independently and together issue ~2
@@ -151,10 +151,10 @@ type AccountConfig struct {
 // windows, which the shared 429 backoff in doRequestAbs handles for GETs exactly as
 // it does for writes.
 //
-// The pacing bound is per CLIENT INSTANCE, which is NOT the same as per process or
-// per account: one process can hold several clients for one ad account (two projects
-// pointing at it, or a cache replacement mid-flight), and replicas add more. See the
-// scope note at pace for what that does and does not cover.
+// The pacing bound is per AD ACCOUNT within the process when the client is built
+// WithAccountPacers (the dispatcher always does): every client for one account, whichever
+// project's connection built it, shares that account's pacer. A client built without a
+// registry paces privately. Replicas do not share pacers; see the scope note at pace.
 type Client struct {
 	creds   Credentials
 	account AccountConfig
@@ -175,10 +175,9 @@ type Client struct {
 	// const. Written once at construction and only read afterwards.
 	writeDelay time.Duration
 
-	// writeMu and nextWrite implement the shared write pacer. nextWrite is the
-	// earliest instant at which the next write may be issued; pace holds writeMu
-	// across its wait so that concurrent writers queue rather than all observing
-	// the same deadline and waking together.
+	// pacer implements the write pacer: pacer.next is the earliest instant at which the next
+	// write may be issued; pace holds pacer.mu across its wait so that concurrent writers queue
+	// rather than all observing the same deadline and waking together.
 	//
 	// The state is what makes the delay a RATE bound instead of a per-call-site
 	// sleep. The previous implementation slept writeDelay unconditionally before
@@ -186,14 +185,16 @@ type Client struct {
 	// for the whole flow: N concurrent dispatches sharing a client each slept in
 	// parallel and then issued their writes at the same instant, so the observed
 	// rate was N/sec while every individual call still "paced". Tracking the next
-	// permitted instant on the client makes the bound hold for any number of
-	// concurrent callers, which is the precondition for sharing one client through
-	// the dispatch client cache.
-	writeMu   sync.Mutex
-	nextWrite time.Time
+	// permitted instant makes the bound hold for any number of concurrent callers.
+	//
+	// It is the ACCOUNT's pacer when the client was built WithAccountPacers (the dispatcher
+	// always does), shared by every client for that ad account in the process; otherwise a
+	// private one. Set once in NewClient.
+	pacer  *writePacer
+	pacers *AccountPacers
 
 	// onAdmit, when set, is called by pace with the admitting caller's context and the
-	// instant it was cleared to write, while writeMu is still held. Test-only
+	// instant it was cleared to write, while pacer.mu is still held. Test-only
 	// observation hook, and it takes the ctx for the same reason it exists at all:
 	// anything sampled AFTER pace returns cannot distinguish a caller admitted while
 	// live whose context died a moment later from one admitted with a context already
@@ -203,7 +204,7 @@ type Client struct {
 
 	// onPaceWait, when set, is called by pace immediately BEFORE it sleeps out a
 	// reservation, with the waiting caller's context and the remaining wait, while
-	// writeMu is still held. onAdmit's sibling and its complement: onAdmit fires once
+	// pacer.mu is still held. onAdmit's sibling and its complement: onAdmit fires once
 	// the wait is over, so it cannot be used to act DURING the window a caller is
 	// parked in.
 	//
@@ -315,6 +316,11 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	}
 	for _, o := range opts {
 		o(c)
+	}
+	if c.pacers != nil && c.account.AccountID != "" {
+		c.pacer = c.pacers.forAccount(c.baseURL + "\x00" + c.account.AccountID)
+	} else {
+		c.pacer = &writePacer{}
 	}
 	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
 	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient. Following a
@@ -1415,21 +1421,23 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 	return 0
 }
 
-// pace reserves the next write slot on this client, blocking until at least
+// pace reserves the next write slot on this client's pacer, blocking until at least
 // writeDelay has elapsed since the previously reserved write, and honoring
 // context cancellation. A non-positive writeDelay disables pacing entirely
 // (used by tests).
 //
-// The bound is on the CLIENT, not on the call site: every write issued through
-// this instance -- from any goroutine -- passes through here, so N concurrent
-// callers sharing one client are spaced writeDelay apart in aggregate rather than
-// each sleeping in parallel and then firing together. That is what lets the
-// dispatch client cache hand one instance to concurrent dispatches for the same
-// account without exceeding X's documented 1 write/sec.
+// The bound is on the PACER, not on the call site, and the pacer is the AD
+// ACCOUNT's when the client was built WithAccountPacers (the dispatcher always
+// does): every write issued through ANY client for that account in this process --
+// whichever project's connection built it, from any goroutine -- passes through the
+// same pacer.mu, so N concurrent callers are spaced writeDelay apart in aggregate
+// rather than each sleeping in parallel and then firing together. That is what keeps
+// concurrent dispatches for one account within X's documented 1 write/sec. A client
+// built without a registry paces privately.
 //
-// writeMu is held ACROSS the wait, which serializes writers. That is intentional
+// pacer.mu is held ACROSS the wait, which serializes writers. That is intentional
 // and not merely an implementation shortcut: releasing the lock while waiting
-// would let every queued caller read the same nextWrite, wait to the same
+// would let every queued caller read the same pacer.next, wait to the same
 // instant, and issue simultaneously -- the exact failure being fixed. Waiting
 // under the lock makes each caller reserve a distinct slot. Only WRITES take this
 // path; reads (request/doRequest via the GET/list helpers) never call pace and
@@ -1447,29 +1455,28 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // cancellation OBSERVED BEFORE ADMISSION reserves no slot and issues no write, so
 // such a caller cannot push a live writer back. Not the stronger "a dead caller
 // never reserves": cancellation can still land between that final check and the
-// nextWrite update, and TestPaceCancelAtWaitExpiryReservesNothing documents and
+// pacer.next update, and TestPaceCancelAtWaitExpiryReservesNothing documents and
 // tolerates that residual window -- measured near 0.5%, against roughly 98% before
 // the check existed. The cost is bounded by the writes already queued ahead of it,
 // each one writeDelay long. If that queueing latency ever becomes the binding constraint,
 // the semaphore is the upgrade, and it belongs with the account-scoped limiter in
 // LFXV2-2665 rather than bolted onto a per-instance pacer.
 //
-// SCOPE -- one CLIENT INSTANCE, which is narrower than "the account". Two clients
-// for the same X account pace independently, and three ordinary things produce
-// them: separate replicas; two PROJECTS whose connections point at the same ad
-// account (the client cache is keyed by project + connection row, and the schema
-// only makes a connection unique WITHIN a project, so it cannot collapse them);
-// and cache replacement -- a rotation, the TTL, or LRU eviction can build a
-// successor while an in-flight caller still holds its predecessor.
+// SCOPE -- the AD ACCOUNT within this PROCESS, when the client was built
+// WithAccountPacers (pacer.go; the dispatcher always does). Two PROJECTS whose
+// connections point at the same ad account, and a cache replacement built while an
+// in-flight caller still holds its predecessor, all pace against the one pacer for
+// that account, whose lifetime is independent of the client cache. A client built
+// without a registry paces privately (tests, and nothing else).
 //
-// So this narrows the window rather than closing it: it removes the common case
-// (a burst of concurrent dispatches for one project) and leaves the residue to
-// the 429 exponential-backoff retry in doRequestAbs, which remains the backstop.
-// Closing it needs a limiter keyed by X ACCOUNT whose lifetime is independent of
-// the client cache, plus cross-replica coordination -- tracked by LFXV2-2665
+// Separate REPLICAS still pace independently. For the stats-job features, only the pod
+// holding the per-account stats-job lease (domain.StatsJobLease) creates jobs, and the
+// chart refuses more than one replica while TWITTER_METRICS_ENABLED is on; for ordinary
+// writes the residue is left to the 429 exponential-backoff retry in doRequestAbs,
+// which remains the backstop. Cross-replica coordination is tracked by LFXV2-2665
 // (durable dispatch).
 //
-// LIMIT -- this spaces ADMISSIONS, not sends. writeMu is released when pace returns,
+// LIMIT -- this spaces ADMISSIONS, not sends. pacer.mu is released when pace returns,
 // before httpClient.Do runs, so a caller delayed in transport setup (DNS, TCP, TLS)
 // can have its request reach X later than its slot, and a subsequent caller admitted
 // writeDelay afterwards that connects instantly can overtake it. Admissions are
@@ -1485,7 +1492,7 @@ func (c *Client) resetHeaderDelay(v string) time.Duration {
 // in LFXV2-2665, which has to solve the same problem across replicas anyway.
 //
 // The injected clock (c.timeFn) governs the RESERVATION arithmetic only -- the
-// instants compared and stored in nextWrite. The wait itself is a real
+// instants compared and stored in pacer.next. The wait itself is a real
 // time.NewTimer inside sleepCtx, so a test cannot skip wall-clock time by advancing
 // timeFn; what it gets is deterministic reservation SPACING, not a virtual sleep.
 func (c *Client) pace(ctx context.Context) error {
@@ -1493,8 +1500,8 @@ func (c *Client) pace(ctx context.Context) error {
 		return nil
 	}
 
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+	c.pacer.mu.Lock()
+	defer c.pacer.mu.Unlock()
 
 	// Check cancellation BEFORE reserving anything, and check it HERE rather than before the
 	// Lock so it also covers time spent queued: sync.Mutex.Lock is not context-aware, so a
@@ -1515,8 +1522,8 @@ func (c *Client) pace(ctx context.Context) error {
 	now := c.timeFn()
 	// The zero value means no write has been issued yet: the first write on a fresh
 	// client goes immediately rather than paying a delay for a slot nobody used.
-	if !c.nextWrite.IsZero() {
-		if wait := c.nextWrite.Sub(now); wait > 0 {
+	if !c.pacer.next.IsZero() {
+		if wait := c.pacer.next.Sub(now); wait > 0 {
 			if c.onPaceWait != nil {
 				c.onPaceWait(ctx, wait)
 			}
@@ -1542,14 +1549,14 @@ func (c *Client) pace(ctx context.Context) error {
 	// reservation, so a burst that arrives while the pacer is idle cannot collapse
 	// into the same instant.
 	admitted := now
-	if c.nextWrite.After(now) {
-		admitted = c.nextWrite
-		c.nextWrite = c.nextWrite.Add(c.writeDelay)
+	if c.pacer.next.After(now) {
+		admitted = c.pacer.next
+		c.pacer.next = c.pacer.next.Add(c.writeDelay)
 	} else {
-		c.nextWrite = now.Add(c.writeDelay)
+		c.pacer.next = now.Add(c.writeDelay)
 	}
 	// onAdmit reports this caller's context and the instant it was CLEARED to write,
-	// while writeMu is still held. Tests use it because sampling after pace returns can
+	// while pacer.mu is still held. Tests use it because sampling after pace returns can
 	// establish neither order (a goroutine preempted between the return and its own
 	// read can record after a later caller) nor liveness (a context can die in that
 	// same gap). nil in production.
@@ -1566,13 +1573,13 @@ func isWriteMethod(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead
 }
 
-// nextWriteAt returns the currently reserved next-write instant under writeMu.
-// Test-facing: reading c.nextWrite directly would touch mutex-guarded state
+// nextWriteAt returns the currently reserved next-write instant under pacer.mu.
+// Test-facing: reading c.pacer.next directly would touch mutex-guarded state
 // without the mutex, which is the pattern this accessor exists to avoid.
 func (c *Client) nextWriteAt() time.Time {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	return c.nextWrite
+	c.pacer.mu.Lock()
+	defer c.pacer.mu.Unlock()
+	return c.pacer.next
 }
 
 // sleepCtx waits for d, honoring context cancellation.

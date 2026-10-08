@@ -187,6 +187,21 @@ func TestListProjectPlatformCampaignIDs_IsScopedInSQL(t *testing.T) {
 			"creation-customer check that ReadMetrics already enforces")
 }
 
+// The HubSpot email monitor reads per recorded email, so its scope query is the tenant boundary
+// (a HubSpot portal is shared across projects) and the bound on how many emails one read asks
+// about. Both live in the SQL.
+func TestListRecentProjectPlatformCampaigns_IsScopedBoundedAndOrdered(t *testing.T) {
+	q := normalizeWS(listRecentProjectPlatformCampaignsQuery)
+	require.Contains(t, q, "project_id=$1", "the project scope must be applied in SQL")
+	require.Contains(t, q, "platform=$2", "the platform must be part of the scope")
+	require.Contains(t, q, "platform_campaign_id <> ''", "a row with no upstream id has no email to read")
+	require.Contains(t, q, "ORDER BY created_at DESC, id DESC",
+		"newest first, with id breaking created_at ties (one transaction shares now()), so the cap keeps the same rows on every read")
+	require.Contains(t, q, "LIMIT $3", "the bound must be a bound parameter applied in SQL")
+	require.NotContains(t, q, livePredicate,
+		"soft-deleted rows must be KEPT: a local delete does not stop the HubSpot email, so its sends are still the project's")
+}
+
 // The resolver answers "which of MY campaigns is this upstream id", and the tenant scope has
 // to live in the SQL for the same reason it does above: the Google Ads customer is shared
 // across foundations, so an unscoped lookup would confirm whether ANOTHER project owns a given

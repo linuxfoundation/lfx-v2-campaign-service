@@ -257,7 +257,12 @@ openssl rand -base64 32
   job status, a downloaded gzip results file, segmentation) was
   implemented from X's published documentation and has NOT been
   exercised against a live X Ads account. X's per-campaign metrics read
-  (a synchronous endpoint) is unaffected. The chart sets
+  (a synchronous endpoint) is unaffected. Their per-account limits are
+  per process, so at runtime only the pod holding a per-account
+  Postgres advisory lease runs X stats jobs — any other pod answers the
+  audience read 503 and skips monitor report submissions — and, as a
+  first line of defence, the chart refuses to render the flag with more
+  than one replica. The chart sets
   it to `"false"` (`charts/lfx-v2-campaign-service/values.yaml`); flip
   it only after the contract is verified against a live X ad account.
 

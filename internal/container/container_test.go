@@ -62,10 +62,11 @@ func shrinkDBTimers(t *testing.T) {
 func TestShutdownBudgetComposes(t *testing.T) {
 	// The container-close phase reserves EVERY term Close actually spends: the sweeper-stop
 	// wait, the index relay's stop wait, the dispatch drain, the post-cancel grace, the
-	// index publisher's connection drain, AND the UNCONFIRMED lock cooldown stop wait.
+	// index publisher's connection drain, the UNCONFIRMED lock cooldown stop wait, AND the X
+	// stats-job lease's session close.
 	// Omitting any one of these understates the phase and lets the two phases sum past
 	// DefaultShutdownTimeout — the SIGKILL-mid-drain this budget exists to prevent.
-	assert.Equal(t, sweeperStopTimeout+relayStopTimeout+dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+cooldownStopTimeout, ContainerCloseTimeout)
+	assert.Equal(t, sweeperStopTimeout+relayStopTimeout+dispatchDrainTimeout+service.CancelGracePeriod+indexer.DrainTimeout+cooldownStopTimeout+statsLeaseCloseTimeout, ContainerCloseTimeout)
 	// The HTTP phase gets a positive share of the remaining budget.
 	assert.Positive(t, HTTPShutdownTimeout, "HTTP shutdown phase must have a positive budget")
 	// The two phases together stay within the overall budget.
@@ -177,6 +178,10 @@ func (stubCampaignRepo) ListCampaignsForBrief(context.Context, string, string) (
 	return nil, nil
 }
 func (stubCampaignRepo) ListProjectPlatformCampaignIDs(context.Context, string, model.Provider) ([]model.ProjectCampaignScope, error) {
+	return nil, nil
+}
+
+func (stubCampaignRepo) ListRecentProjectPlatformCampaigns(context.Context, string, model.Provider, int) ([]*model.Campaign, error) {
 	return nil, nil
 }
 

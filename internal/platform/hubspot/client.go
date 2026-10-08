@@ -209,6 +209,17 @@ func withRequestTimeout(d time.Duration) Option {
 	return func(c *Client) { c.requestTimeout = d }
 }
 
+// WithClock overrides the client's clock. Exported for callers outside this package that time a
+// read on it — the email monitor dispatcher's metrics_as_of — so their tests can pin it; nil is
+// ignored.
+func WithClock(now func() time.Time) Option {
+	return func(c *Client) {
+		if now != nil {
+			c.now = now
+		}
+	}
+}
+
 // withClock overrides the clock so tests can compute an HTTP-date Retry-After delay
 // deterministically.
 func withClock(now func() time.Time) Option {
