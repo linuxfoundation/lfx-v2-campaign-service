@@ -1361,7 +1361,8 @@ batches (`pace`, `reserveStatsJobSlots`) against its account's pacer, so two pro
 connections to the shared LF account — or a cache replacement — cannot interleave writes or
 split a batch. A client without a registry, or without an account id (discovery), paces
 privately. The dispatcher owns the registry, so the scope is the PROCESS; replicas do not share
-it, which is why the chart refuses more than one replica while `TWITTER_METRICS_ENABLED` is on.
+it, which is why only the pod holding the per-account stats-job lease (`postgres.StatsJobLease`)
+creates stats jobs, with the chart's replica refusal as a first line of defence.
 `createAudienceJob` reports `maybeCreated` for a failed create that may have committed
 (`createOutcomeAmbiguous`, or any unusable 2xx), and `GetAudienceInsights` counts those as
 `AudienceJobsAbandonedError.Unknown` — also when no job was created before — so the dispatcher

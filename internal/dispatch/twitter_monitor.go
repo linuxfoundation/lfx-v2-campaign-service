@@ -140,6 +140,12 @@ func (d *TwitterDispatcher) SubmitAccountReport(ctx context.Context, projectID s
 	if err != nil {
 		return nil, err
 	}
+	// Only the pod owning the account's stats-job lease submits (creates jobs); another pod's
+	// submission fails in the orchestrator's transient class — logged, the saved report still
+	// served, retried on a later read — before contacting X.
+	if lerr := d.ownStatsJobs(ctx, accountID); lerr != nil {
+		return nil, fmt.Errorf("submit x ads account report: %w", lerr)
+	}
 	reportID, start, end, err := client.SubmitAccountCampaignReport(ctx, days)
 	if errors.Is(err, twitter.ErrStatsJobBudget) {
 		// Declined before any job was created; the orchestrator logs it as a skip.

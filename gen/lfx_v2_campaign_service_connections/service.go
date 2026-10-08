@@ -193,14 +193,14 @@ type Service interface {
 	// comparable; longer windows are refused (400). Identical reads are shared and
 	// successful results reused for a few minutes, and at most one read per ad
 	// account runs at a time, because each read holds stats-job slots on an
-	// account shared across foundations; these limits are per service process, and
-	// the deployment runs one replica while the flag is on. `all_counters_null`
-	// flags segment rows that carried no measurement. All three segmentations must
-	// load or the request fails (503). Billed charge is in the account's own
-	// currency (`account_currency`); no FX conversion is performed. There is no
-	// conversions counter. Disabled (400 not supported) unless
-	// TWITTER_METRICS_ENABLED is "true", like the X account monitor that shares
-	// the stats-jobs contract.
+	// account shared across foundations; these limits are per service process, so
+	// only the instance holding a per-account database lease runs X stats jobs and
+	// any other instance answers 503 (retry). `all_counters_null` flags segment
+	// rows that carried no measurement. All three segmentations must load or the
+	// request fails (503). Billed charge is in the account's own currency
+	// (`account_currency`); no FX conversion is performed. There is no conversions
+	// counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is
+	// "true", like the X account monitor that shares the stats-jobs contract.
 	GetTwitterAdsAudience(context.Context, *GetTwitterAdsAudiencePayload) (res *TwitterAdsAudience, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the

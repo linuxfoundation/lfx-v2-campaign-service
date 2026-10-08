@@ -87,6 +87,11 @@ func (d *TwitterDispatcher) ReadTwitterAudienceInsights(ctx context.Context, pro
 	if err != nil {
 		return nil, err
 	}
+	// Only the pod owning the account's stats-job lease runs stats jobs; any other answers 503
+	// before contacting X. See domain.StatsJobLease.
+	if lerr := d.ownStatsJobs(ctx, accountID); lerr != nil {
+		return nil, fmt.Errorf("read x audience insights: %w", lerr)
+	}
 	client := d.cachedTwitterClient(projectID, platform, res, creds, accountID,
 		strings.TrimSpace(res.providerConfig["funding_instrument_id"]))
 	now := d.audienceNow

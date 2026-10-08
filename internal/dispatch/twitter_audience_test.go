@@ -472,3 +472,81 @@ func TestTwitter_AudienceGuard_FailuresAreNotCached(t *testing.T) {
 		t.Errorf("%d upstream calls; a failure was served from the cache", calls.Load())
 	}
 }
+
+// fakeStatsLease owns only the accounts in owned, and records every account asked about.
+type fakeStatsLease struct {
+	mu    sync.Mutex
+	owned map[string]bool
+	asked []string
+	// refuse, when set, is returned for an account not owned (default ErrStatsJobLeaseNotHeld).
+	refuse error
+}
+
+func (f *fakeStatsLease) Own(_ context.Context, accountID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, accountID)
+	if f.owned[accountID] {
+		return nil
+	}
+	if f.refuse != nil {
+		return f.refuse
+	}
+	return domain.ErrStatsJobLeaseNotHeld
+}
+
+// A pod that does not own the account's stats-job lease refuses the audience read and the monitor's
+// report submission WITHOUT contacting X; the owning pod runs both.
+func TestTwitter_StatsJobLease_NonOwnerRefusesWithoutContactingX(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	opts, calls, _ := twitterMonitorServer(t, twitterMonitorRoutes)
+	lease := &fakeStatsLease{owned: map[string]bool{}}
+	reader := &scopedConnReader{rows: map[string]*model.Connection{"cncf": activeTwitterConn(goodTwitterCreds)}}
+	d := NewTwitterDispatcher(reader, identityEncryptor{}, opts...)
+	d.SetStatsJobLease(lease)
+
+	if _, err := d.ReadTwitterAudienceInsights(context.Background(), "cncf", model.ProviderTwitterAds, model.MetricsWindowToday, twitterScope("c1")); !errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
+		t.Errorf("audience read: err = %v, want ErrStatsJobLeaseNotHeld", err)
+	}
+	if _, err := d.SubmitAccountReport(context.Background(), "cncf", model.ProviderTwitterAds, "acc1", 7); !errors.Is(err, domain.ErrStatsJobLeaseNotHeld) {
+		t.Errorf("monitor submit: err = %v, want ErrStatsJobLeaseNotHeld", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("a non-owner made %d request(s) to X", n)
+	}
+	lease.mu.Lock()
+	asked := strings.Join(lease.asked, ",")
+	lease.mu.Unlock()
+	if asked != "acc1,acc1" {
+		t.Errorf("lease asked about %q, want the connection's account twice", asked)
+	}
+
+	// The owner submits (the stub creates a job).
+	lease.mu.Lock()
+	lease.owned["acc1"] = true
+	lease.mu.Unlock()
+	if _, err := d.SubmitAccountReport(context.Background(), "cncf", model.ProviderTwitterAds, "acc1", 7); err != nil {
+		t.Errorf("owner submit: %v", err)
+	}
+	if calls.Load() == 0 {
+		t.Error("the owner did not reach X")
+	}
+}
+
+// A lease that cannot be checked refuses exactly like one held elsewhere: nothing reaches X.
+func TestTwitter_StatsJobLease_UnavailableRefusesWithoutContactingX(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	opts, calls, _ := twitterMonitorServer(t, twitterMonitorRoutes)
+	reader := &scopedConnReader{rows: map[string]*model.Connection{"cncf": activeTwitterConn(goodTwitterCreds)}}
+	d := NewTwitterDispatcher(reader, identityEncryptor{}, opts...)
+	d.SetStatsJobLease(&fakeStatsLease{owned: map[string]bool{}, refuse: domain.ErrStatsJobLeaseUnavailable})
+	if _, err := d.ReadTwitterAudienceInsights(context.Background(), "cncf", model.ProviderTwitterAds, model.MetricsWindowToday, twitterScope("c1")); !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) {
+		t.Errorf("audience read: err = %v, want ErrStatsJobLeaseUnavailable", err)
+	}
+	if _, err := d.SubmitAccountReport(context.Background(), "cncf", model.ProviderTwitterAds, "acc1", 7); !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) {
+		t.Errorf("monitor submit: err = %v, want ErrStatsJobLeaseUnavailable", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("%d request(s) reached X", n)
+	}
+}

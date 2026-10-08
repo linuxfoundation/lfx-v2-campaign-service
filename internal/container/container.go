@@ -210,18 +210,24 @@ const dispatchDrainTimeout = 4 * time.Second
 // the difference OUTSIDE ContainerCloseTimeout.
 const cooldownStopTimeout = 250 * time.Millisecond
 
+// statsLeaseCloseTimeout bounds closing the X stats-job lease's dedicated session at shutdown
+// (postgres.StatsJobLease.Close honours the deadline it is given). Small: the close is one
+// Terminate message and a socket close, and a close cut short still drops the session's advisory
+// locks once Postgres notices it is gone.
+const statsLeaseCloseTimeout = 250 * time.Millisecond
+
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the sweeper-stop
 // wait (sweeperStopTimeout), the index relay's stop wait (relayStopTimeout), the
 // orchestrator drain (dispatchDrainTimeout), its post-cancel grace
 // (service.CancelGracePeriod), the index publisher's connection drain
-// (indexer.DrainTimeout), AND the UNCONFIRMED lock cooldown stop wait
-// (cooldownStopTimeout). None of these terms are optional bookkeeping — Close really
+// (indexer.DrainTimeout), the UNCONFIRMED lock cooldown stop wait (cooldownStopTimeout),
+// AND the X stats-job lease's session close (statsLeaseCloseTimeout). None of these terms are optional bookkeeping — Close really
 // does wait on all of them in sequence, so omitting any one understates the phase and
 // lets the two phases sum PAST DefaultShutdownTimeout, which is exactly the
 // SIGKILL-mid-drain this budget exists to prevent. The server budgets the HTTP-shutdown
 // phase and this container-close phase separately (see HTTPShutdownTimeout), so the
 // total graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
-const ContainerCloseTimeout = sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + cooldownStopTimeout
+const ContainerCloseTimeout = sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + cooldownStopTimeout + statsLeaseCloseTimeout
 
 // HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
 // handlers before the container is closed. It is whatever remains of the overall
@@ -244,7 +250,7 @@ func init() {
 	// Every term Close actually spends must be inside the budget — including the index
 	// publisher's connection drain, which Close performs after the pool closes.
 	if ContainerCloseTimeout > constants.DefaultShutdownTimeout {
-		panic("ContainerCloseTimeout (sweeper stop + relay stop + dispatch drain + cancel grace + index drain + cooldown stop) exceeds DefaultShutdownTimeout")
+		panic("ContainerCloseTimeout (sweeper stop + relay stop + dispatch drain + cancel grace + index drain + cooldown stop + stats lease close) exceeds DefaultShutdownTimeout")
 	}
 	// The HTTP phase must have a positive budget once the container-close phase
 	// is reserved; otherwise HTTP handlers would get no drain window at all.
@@ -277,6 +283,10 @@ type Container struct {
 	mu   sync.Mutex
 	pool *postgres.Pool
 	orch *service.Orchestrator
+	// statsJobLease is the cross-pod X stats-job lease bound into the X dispatcher
+	// (bindStatsJobLease). Guarded by mu. It holds its leases on ONE dedicated session opened
+	// from the pool's config, outside the pool; Close closes that session.
+	statsJobLease *postgres.StatsJobLease
 
 	// audienceBuilder performs the platform side of an audience build (Snowflake lookups +
 	// HubSpot list creation). Nil when neither is configured, in which case the build endpoint
@@ -540,6 +550,21 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
 		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
 	}
+}
+
+// bindStatsJobLease gives the X dispatcher the cross-pod stats-job lease on pool (see
+// domain.StatsJobLease) and records it for Close. Both wiring paths call it with the same pool
+// they built the dispatchers on.
+func (c *Container) bindStatsJobLease(dispatchers map[model.Provider]service.PlatformDispatcher, pool *postgres.Pool) {
+	td, ok := dispatchers[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher)
+	if !ok || pool == nil {
+		return
+	}
+	lease := postgres.NewStatsJobLease(pool)
+	td.SetStatsJobLease(lease)
+	c.mu.Lock()
+	c.statsJobLease = lease
+	c.mu.Unlock()
 }
 
 // dispatchableProviders is the full set of providers a brief can select (per the
@@ -921,6 +946,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	// Must precede newAudienceService below, which reads c.audienceBuilder.
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
+	c.bindStatsJobLease(dispatchers, pool)
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
@@ -999,6 +1025,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			audienceRepo := postgres.NewAudienceRepo(pool)
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
+			c.bindStatsJobLease(dispatchers, pool)
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.
@@ -1284,7 +1311,15 @@ func (c *Container) Close(ctx context.Context) error {
 	postgres.StopCooldownsForShutdown(cooldownStopTimeout)
 	c.mu.Lock()
 	pool := c.pool
+	lease := c.statsJobLease
 	c.mu.Unlock()
+	// Close the X stats-job lease's dedicated session (releasing every lease on it). It sits
+	// outside the pool, so the order relative to pool.Close is not load-bearing; done first so
+	// the leases are released while the process is still orderly. Its own reserved slice of the
+	// shared budget (statsLeaseCloseTimeout), and never longer than the caller's deadline.
+	leaseCtx, leaseCancel := context.WithTimeout(ctx, statsLeaseCloseTimeout)
+	lease.Close(leaseCtx)
+	leaseCancel()
 	if pool != nil {
 		pool.Close()
 	}

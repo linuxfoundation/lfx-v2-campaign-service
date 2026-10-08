@@ -25,8 +25,9 @@ type writePacer struct {
 // another's stats-job batch.
 //
 // The dispatcher owns one registry for the life of the process (TwitterDispatcher), so the scope
-// is the PROCESS: replicas do not share it, which is why the chart refuses more than one replica
-// while the stats-job features are on (templates/deployment.yaml). Entries are never evicted:
+// is the PROCESS: replicas do not share it, which is why only the pod holding the per-account
+// stats-job lease (domain.StatsJobLease) creates stats jobs, and the chart also refuses more than
+// one replica while the stats-job features are on (templates/deployment.yaml). Entries are never evicted:
 // there is one per ad account this process has written to, a small fixed set, and evicting one
 // while a client still holds it would split the account's pacing again.
 type AccountPacers struct {
