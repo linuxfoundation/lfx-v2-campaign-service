@@ -1878,7 +1878,8 @@ soft-delete table) and `TestListRecentProjectPlatformCampaigns_Live` (`TEST_DATA
 `stats_job_lease.go` implements `domain.StatsJobLease` with a SESSION advisory lock per X ad
 account, `pg_try_advisory_lock(statsJobLeaseClass, fnv32a(account))` — the two-int form, a key
 space separate from `ClaimCampaignVersion`'s one-bigint locks — ALL held on ONE dedicated session
-opened with `pgx.ConnectConfig` from the business pool's own config (same DSN, credentials, TLS),
+opened with `pgx.ConnectConfig` from the business pool's own config (same DSN, credentials, TLS)
+under its own `statsJobLeaseConnectTimeout` (5s, since the connect holds the lease mutex),
 NOT checked out of the pool: a lease kept for the life of the process must not pin business-pool
 connections (with `pool_max_conns=1` a single owned account would starve every request and the
 readiness probe). **The service holds one Postgres connection beyond its pool while it owns any X

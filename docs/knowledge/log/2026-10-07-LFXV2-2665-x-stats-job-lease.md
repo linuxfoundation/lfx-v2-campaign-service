@@ -43,4 +43,8 @@
   A connect failure is `ErrStatsJobLeaseUnavailable`. The spec-agreement test reset its baseline
   per v2/v3 pair, so a v2-only or v3-only drift passed; it now compares all eight documents
   against one baseline by operationId, and a test perturbs a v3-only copy to prove it.
+- Opening the lease session ran under the lease mutex, bounded only by the caller's context and
+  the DSN's `connect_timeout`, so a black-holed database could stall every admission check and
+  `Close`. It is now bounded by `statsJobLeaseConnectTimeout` (5s);
+  `TestStatsJobLease_SessionConnectIsBounded` points the lease at a listener that never answers.
 - Tests for each; each fails with its fix reverted.

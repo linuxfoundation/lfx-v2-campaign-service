@@ -25,6 +25,11 @@ const statsJobLeaseClass int32 = 0x5853544A
 // statsJobLeasePingTimeout bounds the liveness check of a held lease's connection.
 const statsJobLeasePingTimeout = 2 * time.Second
 
+// statsJobLeaseConnectTimeout bounds opening the lease session. The connect runs under mu, so an
+// unbounded one (a black-holed database host, a DSN with no connect_timeout, a caller context with
+// no deadline) would stall every X stats-job admission check, and Close, until the OS TCP timeout.
+const statsJobLeaseConnectTimeout = 5 * time.Second
+
 // StatsJobLease implements domain.StatsJobLease with SESSION advisory locks, one per X ad account,
 // all held on ONE dedicated Postgres session for as long as this process owns the accounts.
 //
@@ -62,12 +67,15 @@ type StatsJobLease struct {
 	conn   *pgx.Conn
 	held   map[string]bool
 	closed bool
+
+	// connectTimeout bounds opening conn (statsJobLeaseConnectTimeout; shortened by tests).
+	connectTimeout time.Duration
 }
 
 // NewStatsJobLease returns a lease that opens its session from pool's connection config. It
 // holds nothing, and opens nothing, until Own is called.
 func NewStatsJobLease(pool *Pool) *StatsJobLease {
-	return &StatsJobLease{pool: pool, held: map[string]bool{}}
+	return &StatsJobLease{pool: pool, held: map[string]bool{}, connectTimeout: statsJobLeaseConnectTimeout}
 }
 
 var _ domain.StatsJobLease = (*StatsJobLease)(nil)
@@ -117,7 +125,9 @@ func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 		return fmt.Errorf("%w: %w", domain.ErrStatsJobLeaseUnavailable, cerr)
 	}
 	if l.conn == nil {
-		conn, err := pgx.ConnectConfig(ctx, l.pool.Config().ConnConfig.Copy())
+		connCtx, cancel := context.WithTimeout(ctx, l.connectTimeout)
+		conn, err := pgx.ConnectConfig(connCtx, l.pool.Config().ConnConfig.Copy())
+		cancel()
 		if err != nil {
 			// pgx's connect error can name the host; it is logged by the caller's classifier
 			// through safeErrSummary, never sent to a client.
