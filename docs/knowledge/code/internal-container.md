@@ -170,4 +170,6 @@ an operator acts on depends on it.
 
 `bindStatsJobLease` (both wiring paths) builds one `postgres.StatsJobLease` from the pool's
 config, binds it into the X dispatcher (`SetStatsJobLease`) and records it; `Close` closes its
-dedicated session (one connection outside the pool, opened on first use). See [internal/infrastructure/postgres](internal-infrastructure-postgres.md).
+dedicated session (one connection outside the pool, opened on first use) under its own reserved
+slice of the shutdown budget, `statsLeaseCloseTimeout` (250ms), which `ContainerCloseTimeout`
+includes (`TestShutdownBudgetComposes`). See [internal/infrastructure/postgres](internal-infrastructure-postgres.md).

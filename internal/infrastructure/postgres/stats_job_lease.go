@@ -25,6 +25,12 @@ const statsJobLeaseClass int32 = 0x5853544A
 // statsJobLeasePingTimeout bounds the liveness check of a held lease's connection.
 const statsJobLeasePingTimeout = 2 * time.Second
 
+// statsJobLeaseLockSQL tries one account's lock. statsJobLeaseUnlockSQL releases it.
+const (
+	statsJobLeaseLockSQL   = "SELECT pg_try_advisory_lock($1, $2)"
+	statsJobLeaseUnlockSQL = "SELECT pg_advisory_unlock($1, $2)"
+)
+
 // statsJobLeaseConnectTimeout bounds opening the lease session. The connect runs under mu, so an
 // unbounded one (a black-holed database host, a DSN with no connect_timeout, a caller context with
 // no deadline) would stall every X stats-job admission check, and Close, until the OS TCP timeout.
@@ -70,12 +76,22 @@ type StatsJobLease struct {
 
 	// connectTimeout bounds opening conn (statsJobLeaseConnectTimeout; shortened by tests).
 	connectTimeout time.Duration
+	// lockSQL is the try-lock statement (statsJobLeaseLockSQL). A field only so an in-package
+	// test can make it fail AFTER the lock is granted.
+	lockSQL string
+	// closeConn closes the session (pgx.Conn.Close). A field only so an in-package test can make
+	// it slow and prove Close honours its caller's deadline.
+	closeConn func(context.Context, *pgx.Conn) error
 }
 
 // NewStatsJobLease returns a lease that opens its session from pool's connection config. It
 // holds nothing, and opens nothing, until Own is called.
 func NewStatsJobLease(pool *Pool) *StatsJobLease {
-	return &StatsJobLease{pool: pool, held: map[string]bool{}, connectTimeout: statsJobLeaseConnectTimeout}
+	return &StatsJobLease{
+		pool: pool, held: map[string]bool{}, connectTimeout: statsJobLeaseConnectTimeout,
+		lockSQL:   statsJobLeaseLockSQL,
+		closeConn: func(ctx context.Context, c *pgx.Conn) error { return c.Close(ctx) },
+	}
 }
 
 var _ domain.StatsJobLease = (*StatsJobLease)(nil)
@@ -137,13 +153,10 @@ func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 	}
 	lockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statsJobLeasePingTimeout)
 	var acquired bool
-	err := l.conn.QueryRow(lockCtx, "SELECT pg_try_advisory_lock($1, $2)", statsJobLeaseClass, statsJobLeaseKey(accountID)).Scan(&acquired)
+	err := l.conn.QueryRow(lockCtx, l.lockSQL, statsJobLeaseClass, statsJobLeaseKey(accountID)).Scan(&acquired)
 	cancel()
 	if err != nil {
-		// The session's state is unknown (the lock may even have been granted): drop it, and
-		// with it every lease, rather than guess. Each account re-acquires on its next check.
-		l.dropSession(ctx)
-		return fmt.Errorf("%w: try the lock: %w", domain.ErrStatsJobLeaseUnavailable, err)
+		return l.recoverFailedLock(ctx, accountID, err)
 	}
 	if !acquired {
 		// Postgres answered "held elsewhere". The ONLY ErrStatsJobLeaseNotHeld.
@@ -153,21 +166,71 @@ func (l *StatsJobLease) Own(ctx context.Context, accountID string) error {
 	return nil
 }
 
+// recoverFailedLock handles a try-lock for an account this pod does NOT hold that failed. The
+// session is shared by every other account this pod owns, so it is dropped only if it is
+// actually dead: dropping a live one would release unrelated leases while their admitted jobs are
+// in flight, and let another pod take those accounts.
+//
+//   - Ping (detached, bounded). A failed ping is a genuine loss: drop the session, every lease
+//     with it.
+//   - Otherwise the session is alive but the statement failed after an unknown point — the lock
+//     may have been GRANTED before the error (a timeout mid-statement, an error raised after the
+//     lock function ran; a session lock survives the statement's abort). Release it with
+//     pg_advisory_unlock for this key, which is a harmless false when it was not granted, so no
+//     untracked lock remains. If even that fails, the session's state is unknown and it is
+//     dropped after all.
+//
+// Either way this account answers Unavailable. Caller holds mu.
+func (l *StatsJobLease) recoverFailedLock(ctx context.Context, accountID string, lockErr error) error {
+	pingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statsJobLeasePingTimeout)
+	pingErr := l.conn.Ping(pingCtx)
+	cancel()
+	if pingErr != nil {
+		slog.WarnContext(ctx, "x stats-job lease session died during a lock attempt; every lease on it is treated as lost",
+			"accounts", len(l.held), "error", pingErr)
+		l.dropSession(ctx)
+		return fmt.Errorf("%w: try the lock: %w", domain.ErrStatsJobLeaseUnavailable, lockErr)
+	}
+	unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statsJobLeasePingTimeout)
+	_, unlockErr := l.conn.Exec(unlockCtx, statsJobLeaseUnlockSQL, statsJobLeaseClass, statsJobLeaseKey(accountID))
+	cancel()
+	if unlockErr != nil {
+		slog.WarnContext(ctx, "x stats-job lease could not clear a possibly-granted lock after a failed attempt; dropping the session",
+			"accounts", len(l.held), "error", unlockErr)
+		l.dropSession(ctx)
+	}
+	return fmt.Errorf("%w: try the lock: %w", domain.ErrStatsJobLeaseUnavailable, lockErr)
+}
+
 // dropSession closes the lease session (Postgres drops every advisory lock on it) and forgets
 // every held account. Caller holds mu.
+//
+// On the request path the close runs detached, bounded by lockReleaseTimeout: a request ending
+// must not leave a dead session half-closed.
 func (l *StatsJobLease) dropSession(ctx context.Context) {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lockReleaseTimeout)
+	defer cancel()
+	l.closeSession(ctx, closeCtx)
+}
+
+// closeSession closes conn under closeCtx and forgets every held account. Caller holds mu.
+func (l *StatsJobLease) closeSession(logCtx, closeCtx context.Context) {
 	if l.conn != nil {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lockReleaseTimeout)
-		if err := l.conn.Close(closeCtx); err != nil && !errors.Is(err, context.Canceled) {
-			slog.WarnContext(ctx, "failed to close x stats-job lease session", "error", err)
+		if err := l.closeConn(closeCtx, l.conn); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			slog.WarnContext(logCtx, "failed to close x stats-job lease session", "error", err)
 		}
-		cancel()
 		l.conn = nil
 	}
 	l.held = map[string]bool{}
 }
 
 // Close releases every lease by closing the session, and makes later Own calls refuse.
+//
+// It honours ctx's deadline rather than stripping it: Container.Close calls it inside the shared
+// shutdown budget (statsLeaseCloseTimeout in internal/container), and a close that ran past it
+// would push the process past DefaultShutdownTimeout and into a SIGKILL mid-drain. Without a
+// deadline it is bounded by lockReleaseTimeout. If the close is cut short, the socket is still
+// closed, and Postgres drops the session's advisory locks when it notices the session is gone.
 func (l *StatsJobLease) Close(ctx context.Context) {
 	if l == nil {
 		return
@@ -175,7 +238,13 @@ func (l *StatsJobLease) Close(ctx context.Context) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.closed = true
-	l.dropSession(ctx)
+	closeCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		closeCtx, cancel = context.WithTimeout(ctx, lockReleaseTimeout)
+		defer cancel()
+	}
+	l.closeSession(ctx, closeCtx)
 }
 
 // StatsJobLeaseLockKeys returns the two advisory-lock keys the lease takes for accountID, as they

@@ -210,18 +210,24 @@ const dispatchDrainTimeout = 4 * time.Second
 // the difference OUTSIDE ContainerCloseTimeout.
 const cooldownStopTimeout = 250 * time.Millisecond
 
+// statsLeaseCloseTimeout bounds closing the X stats-job lease's dedicated session at shutdown
+// (postgres.StatsJobLease.Close honours the deadline it is given). Small: the close is one
+// Terminate message and a socket close, and a close cut short still drops the session's advisory
+// locks once Postgres notices it is gone.
+const statsLeaseCloseTimeout = 250 * time.Millisecond
+
 // ContainerCloseTimeout is the wall-clock budget for Container.Close: the sweeper-stop
 // wait (sweeperStopTimeout), the index relay's stop wait (relayStopTimeout), the
 // orchestrator drain (dispatchDrainTimeout), its post-cancel grace
 // (service.CancelGracePeriod), the index publisher's connection drain
-// (indexer.DrainTimeout), AND the UNCONFIRMED lock cooldown stop wait
-// (cooldownStopTimeout). None of these terms are optional bookkeeping — Close really
+// (indexer.DrainTimeout), the UNCONFIRMED lock cooldown stop wait (cooldownStopTimeout),
+// AND the X stats-job lease's session close (statsLeaseCloseTimeout). None of these terms are optional bookkeeping — Close really
 // does wait on all of them in sequence, so omitting any one understates the phase and
 // lets the two phases sum PAST DefaultShutdownTimeout, which is exactly the
 // SIGKILL-mid-drain this budget exists to prevent. The server budgets the HTTP-shutdown
 // phase and this container-close phase separately (see HTTPShutdownTimeout), so the
 // total graceful shutdown is a true sum bounded by constants.DefaultShutdownTimeout.
-const ContainerCloseTimeout = sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + cooldownStopTimeout
+const ContainerCloseTimeout = sweeperStopTimeout + relayStopTimeout + dispatchDrainTimeout + service.CancelGracePeriod + indexer.DrainTimeout + cooldownStopTimeout + statsLeaseCloseTimeout
 
 // HTTPShutdownTimeout is the wall-clock budget for draining in-flight HTTP
 // handlers before the container is closed. It is whatever remains of the overall
@@ -244,7 +250,7 @@ func init() {
 	// Every term Close actually spends must be inside the budget — including the index
 	// publisher's connection drain, which Close performs after the pool closes.
 	if ContainerCloseTimeout > constants.DefaultShutdownTimeout {
-		panic("ContainerCloseTimeout (sweeper stop + relay stop + dispatch drain + cancel grace + index drain + cooldown stop) exceeds DefaultShutdownTimeout")
+		panic("ContainerCloseTimeout (sweeper stop + relay stop + dispatch drain + cancel grace + index drain + cooldown stop + stats lease close) exceeds DefaultShutdownTimeout")
 	}
 	// The HTTP phase must have a positive budget once the container-close phase
 	// is reserved; otherwise HTTP handlers would get no drain window at all.
@@ -1309,8 +1315,11 @@ func (c *Container) Close(ctx context.Context) error {
 	c.mu.Unlock()
 	// Close the X stats-job lease's dedicated session (releasing every lease on it). It sits
 	// outside the pool, so the order relative to pool.Close is not load-bearing; done first so
-	// the leases are released while the process is still orderly.
-	lease.Close(ctx)
+	// the leases are released while the process is still orderly. Its own reserved slice of the
+	// shared budget (statsLeaseCloseTimeout), and never longer than the caller's deadline.
+	leaseCtx, leaseCancel := context.WithTimeout(ctx, statsLeaseCloseTimeout)
+	lease.Close(leaseCtx)
+	leaseCancel()
 	if pool != nil {
 		pool.Close()
 	}

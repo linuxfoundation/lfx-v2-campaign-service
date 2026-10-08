@@ -1891,15 +1891,23 @@ that has already ended keeps every lease and refuses only that request
 lock on it — may be gone: the session is closed, every account marked not held, and the session
 reopened lazily and each account re-acquired with try-lock on its own next check, never assumed
 (admission control, not fencing: a submission already admitted is not recalled). The lock query
-also runs detached; if it errors the session's state is unknown, so the session (and every lease)
-is dropped. Only a lock Postgres reports as held elsewhere is `ErrStatsJobLeaseNotHeld`; no
+also runs detached. If it errors for an account this pod does NOT hold, the shared session is NOT
+dropped unless it is actually dead (`recoverFailedLock`): it is pinged, and only a failed ping
+drops it (and every lease); a live session gets `pg_advisory_unlock` for that key — the
+statement may have failed AFTER the lock was granted, and a session lock survives the statement's
+abort — so no untracked lock remains, and only if that unlock also fails is the session dropped.
+That account answers Unavailable; every other lease is kept. Only a lock Postgres reports as held elsewhere is `ErrStatsJobLeaseNotHeld`; no
 database, a connect failure, a failed lock query, an ended request or a closed lease are
 `ErrStatsJobLeaseUnavailable` (same 503, its own fixed text, so an operator is not told another
-pod owns the jobs). `Close` releases everything by closing the session. `StatsJobLeaseLockKeys`
+pod owns the jobs). `Close` releases everything by closing the session, honouring its caller's
+deadline (it runs inside the container's shared shutdown budget, `statsLeaseCloseTimeout`);
+only a context with no deadline gets `lockReleaseTimeout`. The request-path drop stays detached. `StatsJobLeaseLockKeys`
 exposes the keys as they appear in `pg_locks` (`objsubid` 2). Live tests:
 `dbtest/stats_job_lease_live_test.go` (two leases cannot both own one account; Close hands it
 over; a terminated owner session loses every lease, another pod takes one and the former owner
 refuses it but re-acquires the other on a new session; a cancelled or expired check keeps the
 lock in `pg_locks` and the next live check still owns it; no database is Unavailable; with a
 ONE-connection business pool, three accounts' leases sit on one session and an ordinary
-`Acquire` still succeeds at once).
+`Acquire` still succeeds at once). In-package: `TestLiveStatsJobLease_FailedLockForOneAccountKeepsTheOthers`
+(a failure injected after B's lock is granted leaves A on the same backend and no lock for B) and
+`TestStatsJobLease_CloseHonoursTheCallerDeadline`.

@@ -47,4 +47,13 @@
   the DSN's `connect_timeout`, so a black-holed database could stall every admission check and
   `Close`. It is now bounded by `statsJobLeaseConnectTimeout` (5s);
   `TestStatsJobLease_SessionConnectIsBounded` points the lease at a listener that never answers.
+- **#298 review: one account's failure keeps the other leases; a bounded shutdown close.** A
+  failed lock query for an account the pod did not yet hold dropped the shared session and with
+  it every other account's lease, letting another pod take unrelated accounts with jobs in
+  flight. Now the session is dropped only if a ping shows it dead; otherwise that key is
+  `pg_advisory_unlock`ed (the failure may have come after the lock was granted) and only that
+  account answers Unavailable. The lease close at shutdown was an unbudgeted phase that replaced
+  the caller's deadline with a fresh 5s: it now has its own reserved slice of
+  `ContainerCloseTimeout` (`statsLeaseCloseTimeout`, 250ms) and `Close` honours the caller's
+  deadline.
 - Tests for each; each fails with its fix reverted.
