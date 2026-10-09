@@ -166,7 +166,9 @@ func systemScopedHubSpot(err error, fromSystem bool) error {
 // failure — this endpoint exists to drive a degraded UI, so failing it would leave
 // the caller unable to render even the explanation.
 func (x *AudienceExplorer) Capabilities(ctx context.Context, projectID string) audience.ExploreCapabilities {
-	if _, _, err := x.builder.client(ctx, projectID); err != nil {
+	// resolveClient, not client: this answers without an authenticated call (see above), so it
+	// must not pay for the link-portal lookup either.
+	if _, _, err := x.builder.resolveClient(ctx, projectID); err != nil {
 		// The underlying error is logged, not returned: it can name the connection
 		// store and its failure modes, and this string is rendered to an operator.
 		slog.WarnContext(ctx, "audience builder unavailable for project",
