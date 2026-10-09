@@ -461,6 +461,27 @@ Since LFXV2-2665 `AuthenticatedPortalID` also runs `identityjson.Check` on the r
 answer before decoding: it is identity evidence, and `{"hubId":1,"hubId":2}` would otherwise
 decode to the last value.
 
+## App-link portal fallback
+
+`Client.WithLinkPortalFallback(ctx)` (`link_portal.go`) gives a client whose connection stores no
+`portal_id` the portal its token authenticates into, so `ListURL`, `EmailDetailsURL` and the
+email edit link are built instead of coming back `""`. `portal_id` is optional and nothing that
+checks a connection reads it — the connection test answers OK with it blank, and every API call
+authenticates on the token alone — so a row installed without it looks healthy while every app
+link is blank. The LFX BFF refuses a composed or attached master list with no link, which is how
+prod's LF system row produced `500`s on compose and attach-existing on 2026-10-09 while list
+search and UTM lookups worked.
+
+- **A stored `portal_id` wins** and is not even looked up; the connection test still reports a
+  configured value that disagrees with the token.
+- **Best-effort.** A failed lookup returns the client unchanged (blank links, the old behaviour)
+  and logs a warning; it never fails the request.
+- **Cached process-wide** by a SHA-256 digest of base URL + token (the token itself is never a
+  key): an hour on success, a minute on failure, because the dispatcher and the audience builder
+  build a fresh client per request. The receiver is never mutated — the portal goes on a copy.
+- **Wired** in `AudienceBuilder.client` and `HubSpotDispatcher.resolveHubSpotClientVia`. The
+  email-reference resolver does not opt in: it renders no links.
+
 ## Marketing campaigns and the utm token (LFXV2-2641)
 
 `campaign.go` adds the two operations that read back an existing campaign's `hs_utm`, and they

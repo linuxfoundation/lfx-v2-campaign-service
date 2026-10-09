@@ -295,11 +295,13 @@ func (d *HubSpotDispatcher) resolveHubSpotClientVia(ctx context.Context, project
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 
+	// WithLinkPortalFallback builds app links from the token's portal when the row stores
+	// none. ProbeConnection is unaffected: it compares res.providerConfig, not the client.
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: token},
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		d.opts...,
-	), res, nil
+	).WithLinkPortalFallback(ctx), res, nil
 }
 
 // ProbeConnection verifies the project's own HubSpot connection against HubSpot, for the

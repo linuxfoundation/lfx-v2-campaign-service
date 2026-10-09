@@ -260,11 +260,13 @@ func (b *AudienceBuilder) client(ctx context.Context, projectID string) (client 
 		return nil, false, fmt.Errorf("%w: %w: hubspot credentials are incomplete (need privateAppToken)",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
+	// WithLinkPortalFallback: a row with no portal_id would otherwise build a blank master-list
+	// link, which the BFF refuses — the compose/attach-existing 500 on prod's LF row.
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: creds.PrivateAppToken},
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		b.opts...,
-	), fromSystem, nil
+	).WithLinkPortalFallback(ctx), fromSystem, nil
 }
 
 // yearIn extracts a 4-digit year (19xx/20xx) from an event name, so a brief whose details omit
