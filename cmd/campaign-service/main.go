@@ -27,7 +27,7 @@ var (
 const gracefulShutdownSeconds = 25
 
 func init() {
-	log.InitStructureLogConfig()
+	log.InitStructureLogConfig(
 }
 
 func main() {
