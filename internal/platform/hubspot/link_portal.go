@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // Link-portal fallback TTLs. A token's portal never changes (a private-app token is minted
@@ -24,12 +26,21 @@ const (
 	linkPortalTTL        = time.Hour
 	linkPortalFailureTTL = time.Minute
 	linkPortalTimeout    = 5 * time.Second
+	// linkPortalMaxEntries bounds the map: keys are per stored token, so a few exist in
+	// practice, but every rotation adds one and an entry is otherwise only ever overwritten.
+	linkPortalMaxEntries = 256
 )
 
 // linkPortals is process-wide because clients are not: the dispatcher and the audience builder
 // each build a fresh *Client per request, so a per-client memo would re-ask HubSpot on every
 // one of them. (The email-reference resolver does not opt in: it renders no links.)
 var linkPortals = &linkPortalCache{entries: map[string]linkPortalEntry{}}
+
+// linkPortalLookups coalesces concurrent cold misses for one token into a single token-info
+// call. Without it a restart or TTL expiry fans out one lookup per in-flight request — every
+// project resolving the shared LF token at once — which can draw 429s, and a transient failure
+// is deliberately not cached, so the stampede would repeat.
+var linkPortalLookups singleflight.Group
 
 type linkPortalEntry struct {
 	portalID string // "" records a failed lookup
@@ -53,15 +64,34 @@ func (l *linkPortalCache) get(key string, now time.Time) (linkPortalEntry, bool)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e, ok := l.entries[key]
-	if !ok || !now.Before(e.expires) {
+	if !ok {
+		return linkPortalEntry{}, false
+	}
+	if !now.Before(e.expires) {
+		delete(l.entries, key)
 		return linkPortalEntry{}, false
 	}
 	return e, true
 }
 
-func (l *linkPortalCache) put(key string, e linkPortalEntry) {
+// put stores e, first sweeping expired entries when the map is full and, if it is still
+// full, dropping one live entry: a dropped entry costs one re-lookup, never a wrong answer.
+func (l *linkPortalCache) put(key string, e linkPortalEntry, now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if _, exists := l.entries[key]; !exists && len(l.entries) >= linkPortalMaxEntries {
+		for k, v := range l.entries {
+			if !now.Before(v.expires) {
+				delete(l.entries, k)
+			}
+		}
+		for k := range l.entries {
+			if len(l.entries) < linkPortalMaxEntries {
+				break
+			}
+			delete(l.entries, k)
+		}
+	}
 	l.entries[key] = e
 }
 
@@ -98,22 +128,38 @@ func (c *Client) WithLinkPortalFallback(ctx context.Context) *Client {
 	// Detached from the caller's cancellation: the answer is shared by every caller of this
 	// token, so one request that is cancelled or nearly out of budget must not decide it for
 	// the others. The lookup keeps its own bound.
-	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), linkPortalTimeout)
-	defer cancel()
-	portalID, err := c.AuthenticatedPortalID(lookupCtx)
-	portalID = strings.TrimSpace(portalID)
-	if err != nil || portalID == "" {
-		if cacheableLinkPortalFailure(err) {
-			linkPortals.put(key, linkPortalEntry{expires: c.now().Add(linkPortalFailureTTL)})
+	v, err, _ := linkPortalLookups.Do(key, func() (any, error) {
+		lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), linkPortalTimeout)
+		defer cancel()
+		id, lerr := c.AuthenticatedPortalID(lookupCtx)
+		id = strings.TrimSpace(id)
+		switch {
+		case lerr == nil && id != "":
+			linkPortals.put(key, linkPortalEntry{portalID: id, expires: c.now().Add(linkPortalTTL)}, c.now())
+		case cacheableLinkPortalFailure(lerr):
+			linkPortals.put(key, linkPortalEntry{expires: c.now().Add(linkPortalFailureTTL)}, c.now())
 		}
+		return id, lerr
+	})
+	portalID, _ := v.(string)
+	if err != nil || portalID == "" {
 		// The error is typed and renders method and path only (see tokenInfoPath), so it is
 		// safe to log; it carries no byte of the token or the response.
 		slog.WarnContext(ctx, "hubspot connection has no portal_id and the token's portal could not be read; app links will be blank until one is configured",
 			"error", err)
 		return c
 	}
-	linkPortals.put(key, linkPortalEntry{portalID: portalID, expires: c.now().Add(linkPortalTTL)})
 	return c.withPortal(portalID)
+}
+
+// WithLinkPortal returns a client that builds links into portalID, for a caller that has
+// already VERIFIED the token's portal (Dispatch's assertAudiencePortal) and must not pay for a
+// second lookup. A stored portal_id still wins, and "" returns the receiver unchanged.
+func (c *Client) WithLinkPortal(portalID string) *Client {
+	if c == nil || c.account.PortalID != "" {
+		return c
+	}
+	return c.withPortal(strings.TrimSpace(portalID))
 }
 
 // cacheableLinkPortalFailure reports whether a failed lookup is a verdict worth remembering.

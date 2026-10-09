@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -176,5 +177,83 @@ func TestLinkPortalKey_HoldsNoCredential(t *testing.T) {
 		if strings.Contains(k, frag) {
 			t.Errorf("key %q contains %q", k, frag)
 		}
+	}
+}
+
+// Concurrent cold misses for one token must share ONE token-info call: every project resolving
+// the shared LF token at once after a restart would otherwise fan out and draw 429s.
+func TestWithLinkPortalFallback_CoalescesConcurrentColdMisses(t *testing.T) {
+	var calls atomic.Int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"hubId": "8112310"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	const n = 10
+	var started, done sync.WaitGroup
+	started.Add(n)
+	done.Add(n)
+	links := make([]string, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer done.Done()
+			started.Done()
+			links[i] = linkPortalClient(srv, "").WithLinkPortalFallback(context.Background()).ListURL("1")
+		}(i)
+	}
+	started.Wait()
+	time.Sleep(50 * time.Millisecond) // let every goroutine reach the lookup before it answers
+	close(release)
+	done.Wait()
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("token-info called %d times for %d concurrent callers, want 1", got, n)
+	}
+	for i, l := range links {
+		if l == "" {
+			t.Errorf("caller %d got a blank link", i)
+		}
+	}
+}
+
+// An expired entry is removed on read, and a full map makes room rather than growing.
+func TestLinkPortalCache_EvictsExpiredAndStaysBounded(t *testing.T) {
+	now := time.Now()
+	l := &linkPortalCache{entries: map[string]linkPortalEntry{}}
+
+	l.put("old", linkPortalEntry{portalID: "1", expires: now.Add(-time.Second)}, now)
+	if _, ok := l.get("old", now); ok {
+		t.Fatal("an expired entry was served")
+	}
+	if _, kept := l.entries["old"]; kept {
+		t.Error("an expired entry was not removed on read")
+	}
+
+	for i := 0; i < linkPortalMaxEntries+10; i++ {
+		l.put(fmt.Sprintf("k%d", i), linkPortalEntry{portalID: "1", expires: now.Add(time.Hour)}, now)
+	}
+	if got := len(l.entries); got > linkPortalMaxEntries {
+		t.Errorf("cache holds %d entries, want at most %d", got, linkPortalMaxEntries)
+	}
+	if _, ok := l.get(fmt.Sprintf("k%d", linkPortalMaxEntries+9), now); !ok {
+		t.Error("the newest entry was not stored")
+	}
+}
+
+// WithLinkPortal takes a portal a caller already verified; a stored portal_id still wins.
+func TestWithLinkPortal_StoredPortalWins(t *testing.T) {
+	srv, _ := linkPortalServer(t, "8112310")
+	if got := linkPortalClient(srv, "777").WithLinkPortal("8112310").ListURL("1"); got != AppBaseURL+"/contacts/777/objectLists/1/filters" {
+		t.Errorf("a stored portal was overridden: %q", got)
+	}
+	if got := linkPortalClient(srv, "").WithLinkPortal("8112310").ListURL("1"); got != AppBaseURL+"/contacts/8112310/objectLists/1/filters" {
+		t.Errorf("a verified portal was not applied: %q", got)
+	}
+	if got := linkPortalClient(srv, "").WithLinkPortal("").ListURL("1"); got != "" {
+		t.Errorf("an empty portal built %q", got)
 	}
 }

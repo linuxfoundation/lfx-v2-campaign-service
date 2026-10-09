@@ -13,11 +13,13 @@ and UTM lookups worked.
 - The answer is cached process-wide by a SHA-256 digest of base URL + token, since clients are
   built per request: an hour on success, a minute on a definitive failure (4xx, no `hubId`),
   never on a transient one (transport, 429, 5xx, timeout). The lookup ignores the caller's
-  cancellation, so one cancelled request cannot decide the shared answer.
+  cancellation, concurrent cold misses share one call, and the map evicts expired entries and is
+  capped at 256.
 - Wired only where links are built: the audience builder (all but `Capabilities`) and the
-  dispatcher's `Dispatch`, `SearchEmails` and `ResolveEmailClient*`. `ReadMetrics`,
-  `PreflightCreate`, `ProbeConnection`, the monitor and the email-reference resolver build no
-  links and make no lookup.
+  dispatcher's `ResolveEmailClient*`. `Dispatch` reuses the portal `assertAudiencePortal` verified
+  (`Client.WithLinkPortal`), so it still makes one token-info call. `ReadMetrics`,
+  `PreflightCreate`, `ProbeConnection`, the monitor, `SearchEmails` and the email-reference
+  resolver build no links and make no lookup.
 - Operators can still set `portal_id` explicitly (`bootstrap-system-account -config portal_id=…`);
   this change only stops its absence from breaking link-dependent callers.
 

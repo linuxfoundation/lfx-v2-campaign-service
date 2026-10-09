@@ -501,9 +501,6 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// so that one is passed through unwrapped; everything resolveHubSpotClient adds on top is
 	// pre-create too and gets wrapped here.
 	client, res, err := d.resolveHubSpotClientWithCreds(ctx, brief.ProjectID, platform)
-	if err == nil {
-		client = client.WithLinkPortalFallback(ctx) // the campaign carries the email's edit link
-	}
 	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
 	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
 	// See stampProvenance for why this is a defer on the named return, not a per-return call.
@@ -566,6 +563,10 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if perr != nil {
 		return nil, notCreated(perr)
 	}
+	// The campaign carries the cloned email's edit link. A row with no portal_id would build it
+	// blank; the guard has just verified the token's portal, so links reuse that value rather than
+	// a second token-info lookup (TestHubSpot_DispatchReadsThePortalOnce).
+	client = client.WithLinkPortal(portalID)
 
 	// The portal is already known: assertAudiencePortal above confirmed the audience's lists live
 	// in the portal this token authenticates against, and returns the value it verified. The
@@ -1074,8 +1075,6 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 	if err != nil {
 		return nil, err
 	}
-	client = client.WithLinkPortalFallback(ctx) // each hit carries its edit link
-
 	emails, err := client.SearchEmails(ctx, query)
 	if err != nil {
 		// A 401/403 is tagged HERE, where the status is still visible -- the same treatment

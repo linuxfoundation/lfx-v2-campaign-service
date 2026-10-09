@@ -481,12 +481,16 @@ search and UTM lookups worked.
   hour on success, a minute on a DEFINITIVE failure (a 4xx, or no usable `hubId`). A transient
   failure — transport error, 429, 5xx, timeout — is never cached, since a cached blip would be a
   minute of blank-link 500s. The lookup is detached from the caller's cancellation, so one
-  cancelled request cannot decide the shared answer. The receiver is never mutated.
+  cancelled request cannot decide the shared answer; concurrent cold misses for one token share a
+  single call (`singleflight`); expired entries are removed on read and the map is capped at 256.
+  The receiver is never mutated.
 - **Wired only where links are built:** `AudienceBuilder.client` (every audience-builder
-  response except `Capabilities`, which uses `resolveClient`), and on the dispatcher `Dispatch`,
-  `SearchEmails`, `ResolveEmailClient` and `ResolveEmailClientWithOrigin`. The shared
-  `resolveHubSpotClientVia` does not opt in, so `ReadMetrics`, `PreflightCreate`,
-  `ProbeConnection` and the monitor spend no budget on it; nor does the email-reference
+  response except `Capabilities`, which uses `resolveClient`) and the dispatcher's
+  `ResolveEmailClient` / `ResolveEmailClientWithOrigin`. `Dispatch` does not look up at all: it
+  applies the portal `assertAudiencePortal` just verified via `Client.WithLinkPortal`, keeping
+  dispatch at one token-info call. The shared `resolveHubSpotClientVia` does not opt in, so
+  `ReadMetrics`, `PreflightCreate`, `ProbeConnection`, the monitor and `SearchEmails`
+  (`model.MarketingEmail` carries no URL) spend no budget on it; nor does the email-reference
   resolver, which renders no links.
 
 ## Marketing campaigns and the utm token (LFXV2-2641)

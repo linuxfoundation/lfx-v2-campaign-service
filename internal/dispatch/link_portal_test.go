@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,4 +91,30 @@ func TestHubSpotDispatcherSharedResolver_MakesNoTokenInfoCall(t *testing.T) {
 	_, err := d.resolveHubSpotClient(context.Background(), "tlf", model.ProviderHubSpot)
 	require.NoError(t, err)
 	require.Zero(t, calls.Load(), "the shared resolver made a token-info call")
+}
+
+// Dispatch returns the cloned email's edit link on the campaign. On a portal-less row it must
+// build that link from the portal assertAudiencePortal just verified, and must not ask again.
+func TestHubSpotDispatch_PortalLessRowLinksFromTheVerifiedPortalInOneLookup(t *testing.T) {
+	srv, rec := hubspotServer(t)
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: portalLessHubSpotConn()},
+		identityEncryptor{},
+		fakeAudienceReader{auds: builtHubSpotAudienceInPortal("26724", nil, "8112310")},
+		hubspot.WithBaseURL(srv.URL))
+
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot,
+		json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555"}}`))
+	require.NoError(t, err)
+	require.NotNil(t, camp)
+
+	var result struct {
+		HubspotURL string `json:"hubspotUrl"`
+	}
+	require.NoError(t, json.Unmarshal(camp.Result, &result))
+	require.Equal(t, hubspot.AppBaseURL+"/email/8112310/edit/999/settings", result.HubspotURL)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	require.Equal(t, 1, rec.tokenInfoCalls, "the link must reuse the guard's verified portal, not look it up again")
 }
