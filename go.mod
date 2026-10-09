@@ -1,6 +1,3 @@
-// Copyright The Linux Foundation and each contributor to LFX.
-// SPDX-License-Identifier: MIT
-
 module github.com/linuxfoundation/lfx-v2-campaign-service
 
 go 1.25.0
