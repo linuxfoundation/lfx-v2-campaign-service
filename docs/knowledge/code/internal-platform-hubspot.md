@@ -477,10 +477,17 @@ search and UTM lookups worked.
 - **Best-effort.** A failed lookup returns the client unchanged (blank links, the old behaviour)
   and logs a warning; it never fails the request.
 - **Cached process-wide** by a SHA-256 digest of base URL + token (the token itself is never a
-  key): an hour on success, a minute on failure, because the dispatcher and the audience builder
-  build a fresh client per request. The receiver is never mutated — the portal goes on a copy.
-- **Wired** in `AudienceBuilder.client` and `HubSpotDispatcher.resolveHubSpotClientVia`. The
-  email-reference resolver does not opt in: it renders no links.
+  key), because the dispatcher and the audience builder build a fresh client per request: an
+  hour on success, a minute on a DEFINITIVE failure (a 4xx, or no usable `hubId`). A transient
+  failure — transport error, 429, 5xx, timeout — is never cached, since a cached blip would be a
+  minute of blank-link 500s. The lookup is detached from the caller's cancellation, so one
+  cancelled request cannot decide the shared answer. The receiver is never mutated.
+- **Wired only where links are built:** `AudienceBuilder.client` (every audience-builder
+  response except `Capabilities`, which uses `resolveClient`), and on the dispatcher `Dispatch`,
+  `SearchEmails`, `ResolveEmailClient` and `ResolveEmailClientWithOrigin`. The shared
+  `resolveHubSpotClientVia` does not opt in, so `ReadMetrics`, `PreflightCreate`,
+  `ProbeConnection` and the monitor spend no budget on it; nor does the email-reference
+  resolver, which renders no links.
 
 ## Marketing campaigns and the utm token (LFXV2-2641)
 

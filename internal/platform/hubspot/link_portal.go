@@ -7,7 +7,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -15,9 +17,9 @@ import (
 
 // Link-portal fallback TTLs. A token's portal never changes (a private-app token is minted
 // inside one portal), so a resolved id could be kept indefinitely; the hour bound only limits
-// how long a REVOKED token's entry outlives it in memory. A failed lookup is remembered for a
-// minute so a HubSpot outage costs one token-info call per minute per token rather than one
-// per request — every list and email response would otherwise re-ask.
+// how long a REVOKED token's entry outlives it in memory. A DEFINITIVE failure (see
+// cacheableLinkPortalFailure) is remembered for a minute so a revoked or under-scoped token
+// costs one token-info call per minute rather than one per request.
 const (
 	linkPortalTTL        = time.Hour
 	linkPortalFailureTTL = time.Minute
@@ -93,12 +95,17 @@ func (c *Client) WithLinkPortalFallback(ctx context.Context) *Client {
 		return c.withPortal(e.portalID)
 	}
 
-	lookupCtx, cancel := context.WithTimeout(ctx, linkPortalTimeout)
+	// Detached from the caller's cancellation: the answer is shared by every caller of this
+	// token, so one request that is cancelled or nearly out of budget must not decide it for
+	// the others. The lookup keeps its own bound.
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), linkPortalTimeout)
 	defer cancel()
 	portalID, err := c.AuthenticatedPortalID(lookupCtx)
 	portalID = strings.TrimSpace(portalID)
 	if err != nil || portalID == "" {
-		linkPortals.put(key, linkPortalEntry{expires: c.now().Add(linkPortalFailureTTL)})
+		if cacheableLinkPortalFailure(err) {
+			linkPortals.put(key, linkPortalEntry{expires: c.now().Add(linkPortalFailureTTL)})
+		}
 		// The error is typed and renders method and path only (see tokenInfoPath), so it is
 		// safe to log; it carries no byte of the token or the response.
 		slog.WarnContext(ctx, "hubspot connection has no portal_id and the token's portal could not be read; app links will be blank until one is configured",
@@ -107,6 +114,32 @@ func (c *Client) WithLinkPortalFallback(ctx context.Context) *Client {
 	}
 	linkPortals.put(key, linkPortalEntry{portalID: portalID, expires: c.now().Add(linkPortalTTL)})
 	return c.withPortal(portalID)
+}
+
+// cacheableLinkPortalFailure reports whether a failed lookup is a verdict worth remembering.
+//
+// Only definitive answers are: a 401/403 or other 4xx (the token cannot read its own portal),
+// or a response that carried no usable hubId. A transient failure — a transport error, a 429,
+// a 5xx, or the lookup's own timeout — is NOT cached, because the BFF refuses a composed or
+// attached master list with a blank link: caching one HubSpot blip would turn it into a
+// minute of the exact 500s this fallback exists to prevent.
+func cacheableLinkPortalFailure(err error) bool {
+	if err == nil {
+		return true // the call answered and named no portal
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var te *transportError
+	if errors.As(err, &te) {
+		return false
+	}
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.StatusCode != http.StatusTooManyRequests && ae.StatusCode < 500
+	}
+	var pe *preSendError
+	return !errors.As(err, &pe)
 }
 
 // withPortal returns a copy of c that builds links into portalID. "" returns c itself.

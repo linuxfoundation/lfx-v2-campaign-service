@@ -14,10 +14,11 @@ import (
 	"time"
 )
 
-// linkPortalServer answers token-info with hubID (or a 500 when hubID is ""), counting calls.
+// linkPortalServer answers token-info with hubID, or with failStatus when hubID is "",
+// counting calls.
 // Each test gets its own server, so its URL — part of the cache key — isolates it from every
 // other test's cached answers without touching the package-level cache.
-func linkPortalServer(t *testing.T, hubID string) (*httptest.Server, *atomic.Int32) {
+func linkPortalServer(t *testing.T, hubID string, failStatus ...int) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +27,11 @@ func linkPortalServer(t *testing.T, hubID string) (*httptest.Server, *atomic.Int
 		}
 		calls.Add(1)
 		if hubID == "" {
-			w.WriteHeader(http.StatusInternalServerError)
+			status := http.StatusForbidden
+			if len(failStatus) > 0 {
+				status = failStatus[0]
+			}
+			w.WriteHeader(status)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -99,11 +104,11 @@ func TestWithLinkPortalFallback_CachesAcrossClients(t *testing.T) {
 	}
 }
 
-// A failed lookup degrades to the pre-fallback behaviour (blank links) without failing, and
-// is remembered briefly so an outage does not cost a lookup per request; once the failure
-// TTL passes it is asked again.
-func TestWithLinkPortalFallback_FailureIsBlankAndBrieflyCached(t *testing.T) {
-	srv, calls := linkPortalServer(t, "")
+// A DEFINITIVE failure (the token cannot read its own portal) degrades to the pre-fallback
+// behaviour (blank links) without failing, and is remembered briefly so a revoked token does
+// not cost a lookup per request; once the failure TTL passes it is asked again.
+func TestWithLinkPortalFallback_DefinitiveFailureIsBlankAndBrieflyCached(t *testing.T) {
+	srv, calls := linkPortalServer(t, "", http.StatusForbidden)
 	now := time.Now()
 	clock := func() time.Time { return now }
 
@@ -111,20 +116,53 @@ func TestWithLinkPortalFallback_FailureIsBlankAndBrieflyCached(t *testing.T) {
 	if got := c.WithLinkPortalFallback(context.Background()); got.ListURL("1") != "" {
 		t.Errorf("a failed lookup built %q, want a blank link", got.ListURL("1"))
 	}
-	first := calls.Load()
-	if first == 0 {
-		t.Fatal("precondition: the lookup was never attempted")
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("a 403 is not retried; token-info called %d times, want 1", n)
 	}
 
 	_ = linkPortalClient(srv, "", withClock(clock)).WithLinkPortalFallback(context.Background())
-	if n := calls.Load(); n != first {
-		t.Errorf("a cached failure was retried within its TTL (%d calls, want %d)", n, first)
+	if n := calls.Load(); n != 1 {
+		t.Errorf("a cached failure was retried within its TTL (%d calls, want 1)", n)
 	}
 
 	now = now.Add(linkPortalFailureTTL + time.Second)
 	_ = linkPortalClient(srv, "", withClock(clock)).WithLinkPortalFallback(context.Background())
-	if n := calls.Load(); n == first {
-		t.Error("an expired failure was not retried")
+	if n := calls.Load(); n != 2 {
+		t.Errorf("an expired failure was not retried (%d calls, want 2)", n)
+	}
+}
+
+// A TRANSIENT failure (5xx, 429, transport) is never cached: the BFF refuses a master list with
+// a blank link, so caching one HubSpot blip would be a minute of the 500s this fixes.
+func TestWithLinkPortalFallback_TransientFailureIsNotCached(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv, calls := linkPortalServer(t, "", status)
+			_ = linkPortalClient(srv, "").WithLinkPortalFallback(context.Background())
+			first := calls.Load()
+			_ = linkPortalClient(srv, "").WithLinkPortalFallback(context.Background())
+			if n := calls.Load(); n == first {
+				t.Errorf("a %d was cached; the next request did not ask again", status)
+			}
+		})
+	}
+}
+
+// The answer is shared by every caller of the token, so ONE caller's cancelled request must not
+// decide it: the lookup runs detached from the caller's cancellation and its answer is cached.
+func TestWithLinkPortalFallback_CallerCancellationDoesNotDecideTheAnswer(t *testing.T) {
+	srv, calls := linkPortalServer(t, "8112310")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := linkPortalClient(srv, "").WithLinkPortalFallback(ctx); got.ListURL("1") == "" {
+		t.Error("a cancelled caller context left the link blank")
+	}
+	if got := linkPortalClient(srv, "").WithLinkPortalFallback(context.Background()); got.ListURL("1") == "" {
+		t.Error("the next caller got a blank link")
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("token-info called %d times, want 1", n)
 	}
 }
 

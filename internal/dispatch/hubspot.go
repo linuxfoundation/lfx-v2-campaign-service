@@ -212,7 +212,12 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 // turns, and a client held from an earlier turn would keep writing with a credential the
 // project has since withdrawn.
 func (d *HubSpotDispatcher) ResolveEmailClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
-	return d.resolveHubSpotClient(ctx, projectID, model.ProviderHubSpot)
+	client, err := d.resolveHubSpotClient(ctx, projectID, model.ProviderHubSpot)
+	if err != nil {
+		return nil, err
+	}
+	// The wizard returns created and cloned emails with their edit links.
+	return client.WithLinkPortalFallback(ctx), nil
 }
 
 // ResolveEmailClientWithOrigin is ResolveEmailClient plus whether the credentials came from the
@@ -227,7 +232,7 @@ func (d *HubSpotDispatcher) ResolveEmailClientWithOrigin(ctx context.Context, pr
 	if err != nil {
 		return nil, false, err
 	}
-	return client, res.isFromSystem(), nil
+	return client.WithLinkPortalFallback(ctx), res.isFromSystem(), nil
 }
 
 // resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built the
@@ -295,13 +300,14 @@ func (d *HubSpotDispatcher) resolveHubSpotClientVia(ctx context.Context, project
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 
-	// WithLinkPortalFallback builds app links from the token's portal when the row stores
-	// none. ProbeConnection is unaffected: it compares res.providerConfig, not the client.
+	// No WithLinkPortalFallback here: this resolver also serves ReadMetrics, PreflightCreate,
+	// ProbeConnection and the monitor, none of which builds a link, and a token-info lookup
+	// would only spend their budgets. The link-building entry points opt in themselves.
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: token},
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		d.opts...,
-	).WithLinkPortalFallback(ctx), res, nil
+	), res, nil
 }
 
 // ProbeConnection verifies the project's own HubSpot connection against HubSpot, for the
@@ -495,6 +501,9 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// so that one is passed through unwrapped; everything resolveHubSpotClient adds on top is
 	// pre-create too and gets wrapped here.
 	client, res, err := d.resolveHubSpotClientWithCreds(ctx, brief.ProjectID, platform)
+	if err == nil {
+		client = client.WithLinkPortalFallback(ctx) // the campaign carries the email's edit link
+	}
 	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
 	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
 	// See stampProvenance for why this is a defer on the named return, not a per-return call.
@@ -1065,6 +1074,7 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 	if err != nil {
 		return nil, err
 	}
+	client = client.WithLinkPortalFallback(ctx) // each hit carries its edit link
 
 	emails, err := client.SearchEmails(ctx, query)
 	if err != nil {

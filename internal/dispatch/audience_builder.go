@@ -229,7 +229,19 @@ func (b *AudienceBuilder) cachedClient(ctx context.Context, projectID string) (*
 // audienceBuildErr carrying none of the sentinels that arm matches, and each of them is told to
 // audit a HubSpot configuration that is correct — exactly the misattribution the arm exists to
 // prevent, on the one path it was added to serve.
-func (b *AudienceBuilder) client(ctx context.Context, projectID string) (client *hubspot.Client, fromSystem bool, err error) {
+func (b *AudienceBuilder) client(ctx context.Context, projectID string) (*hubspot.Client, bool, error) {
+	client, fromSystem, err := b.resolveClient(ctx, projectID)
+	if err != nil {
+		return nil, false, err
+	}
+	// Every audience-builder response but Capabilities builds list links, and a row with no
+	// portal_id would build them blank — which the BFF refuses on a composed or attached master
+	// list: the compose/attach-existing 500 on prod's LF row (2026-10-09).
+	return client.WithLinkPortalFallback(ctx), fromSystem, nil
+}
+
+// resolveClient is client without the link-portal fallback, for a caller that builds no links.
+func (b *AudienceBuilder) resolveClient(ctx context.Context, projectID string) (client *hubspot.Client, fromSystem bool, err error) {
 	if strings.TrimSpace(projectID) == "" {
 		// Fail loudly: without a project there is no connection to resolve, and silently
 		// picking one would build the audience in the wrong portal.
@@ -260,13 +272,11 @@ func (b *AudienceBuilder) client(ctx context.Context, projectID string) (client 
 		return nil, false, fmt.Errorf("%w: %w: hubspot credentials are incomplete (need privateAppToken)",
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
-	// WithLinkPortalFallback: a row with no portal_id would otherwise build a blank master-list
-	// link, which the BFF refuses — the compose/attach-existing 500 on prod's LF row.
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: creds.PrivateAppToken},
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
 		b.opts...,
-	).WithLinkPortalFallback(ctx), fromSystem, nil
+	), fromSystem, nil
 }
 
 // yearIn extracts a 4-digit year (19xx/20xx) from an event name, so a brief whose details omit

@@ -10,10 +10,14 @@ and UTM lookups worked.
 - `hubspot.Client.WithLinkPortalFallback` resolves the token's own portal via the existing
   token-info lookup when the row stores none. A stored `portal_id` still wins and is not looked
   up. A failed lookup leaves links blank, as before, and never fails the request.
-- The answer is cached process-wide by a SHA-256 digest of base URL + token (an hour on success,
-  a minute on failure), since clients are built per request.
-- Wired in `AudienceBuilder.client` and `HubSpotDispatcher.resolveHubSpotClientVia`; not in the
-  email-reference resolver, which renders no links.
+- The answer is cached process-wide by a SHA-256 digest of base URL + token, since clients are
+  built per request: an hour on success, a minute on a definitive failure (4xx, no `hubId`),
+  never on a transient one (transport, 429, 5xx, timeout). The lookup ignores the caller's
+  cancellation, so one cancelled request cannot decide the shared answer.
+- Wired only where links are built: the audience builder (all but `Capabilities`) and the
+  dispatcher's `Dispatch`, `SearchEmails` and `ResolveEmailClient*`. `ReadMetrics`,
+  `PreflightCreate`, `ProbeConnection`, the monitor and the email-reference resolver build no
+  links and make no lookup.
 - Operators can still set `portal_id` explicitly (`bootstrap-system-account -config portal_id=…`);
   this change only stops its absence from breaking link-dependent callers.
 
