@@ -1756,6 +1756,14 @@ func TestCreateSendsQueryParams(t *testing.T) {
 	if campaignQuery.Has("paused") {
 		t.Errorf("campaign create should not send deprecated paused param: %v", campaignQuery)
 	}
+	// budget_optimization is deliberately NOT sent: X's current reference lists LINE_ITEM as its
+	// only POST value, so sending CAMPAIGN is undocumented, and sending LINE_ITEM would contradict
+	// the campaign-level daily budget sent here. The settings readback and budget writer act on
+	// the value X REPORTS for this omission, never on an assumed default; if this changes, they
+	// and their docs must be revisited.
+	if campaignQuery.Has("budget_optimization") {
+		t.Errorf("campaign create must not send budget_optimization: %v", campaignQuery)
+	}
 	// X Ads v12 rejects start_time/end_time on the campaign endpoint; flight
 	// dates belong on the line item, so the campaign create must not send them.
 	if campaignQuery.Has("start_time") {

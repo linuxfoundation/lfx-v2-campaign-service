@@ -231,17 +231,17 @@ its host before the pass responsible for queries ever saw it. The colon requirem
 same one the twitter screen carries, and for the same reason: without it, every email
 address in operator copy is erased from the snapshot.
 
-So is the second discriminator. `sanitizeUserinfoSnapshotRun` leaves a run alone when both
-sides of the colon are ASCII digits, because that makes it a clock (`keynote
-14:00@events.example`), a score or a ratio rather than a credential pair — identical to
-`userinfoRunIsClockShaped` in `internal/platform/twitter/client.go`, and deliberately so:
+So is the second discriminator. `sanitizeUserinfoSnapshotRun` leaves a run alone only when
+`redact.UsernameIsClock` calls the pair a clock (`keynote 14:00@events.example`), a score or
+a ratio: at most two digits a side, or a real clock behind any sub-delim except `+`. The X
+screen's `userinfoRunIsClockShaped` calls the same function, and deliberately so:
 a discriminator living on only one of the two patterns puts the screen and the redactor
 back out of agreement, which is the exact defect this third pass was added to fix. The
 COST direction differs and this side is the milder one — over-redacting loses a line of
 the operator's own copy from a diagnostic snapshot, where over-refusing on the twitter
 side blocks a brief before anything is created. Milder is not free, since the snapshot
-exists to be read by a human, and the digits-both-sides test gives up no credential shape
-to buy it.
+exists to be read by a human, and the clock test gives up only a bounded residual to buy
+it: a pair of at most two digits a side, or a two-digit password <= 59 behind an hour.
 
 A FOURTH pass covers the last shape that reached the snapshot with its path intact: a
 scheme-less link whose secret is in the PATH and which carries no query, fragment or
@@ -288,6 +288,64 @@ URL pasted from a browser brings whatever query that session put in it. The DEEP
 load-bearing half: the config is passed by value but its slice shares a backing array with
 the caller's, so sanitizing in place would redact the URL the create path is about to send to
 Google and break the sitelink — a worse defect than the one being fixed.
+
+**The Demand Gen creative's five image lists are sanitized the same way.**
+`sanitizeSnapshotURLs` applies `sanitizeSnapshotURL` across a list, returning nil for an
+empty one so an absent list stays absent in the row, and `googleAdsSnapshotConfig`
+deep-copies the whole `demandGenCreative` block before reducing all five. Creative URLs
+are the case the signed-URL risk is sharpest: a CDN asset link often carries its
+credential IN the query string, so the unencrypted row would otherwise hold a working
+key to the asset. Each list is asserted individually in
+`TestGoogleAdsSnapshotConfig_SanitizesEveryCreativeURLList` rather than in aggregate —
+a helper applied to four of five lists passes any "no secrets anywhere" check as long as
+the fifth happens to be empty in the fixture, which is exactly how the fifth list gets
+missed. The deep copy matters here more than for sitelinks: the fetch that downloads
+these images runs AFTER the snapshot is taken, so sanitizing in place would leave the
+create path trying to download a URL with its credentials stripped.
+
+**The Performance Max asset group has five URL lists of its own, and they are not the
+same five.** `portraitImages` is shared, `tallPortraitImages` does not exist on an asset
+group and `landscapeLogoImages` does not exist on a Demand Gen ad, so
+`googleAdsSnapshotConfig` sanitizes its own block rather than reusing the Demand Gen
+one, and `TestGoogleAdsSnapshotConfig_SanitizesEveryPerformanceMaxURLList` asserts all
+five individually for the reason the Demand Gen test gives.
+
+**The responsive display ad has FOUR URL lists, and they are neither of those sets.**
+There is no portrait slot on a display ad, and `squareLogoImages` exists on neither
+sibling, so `googleAdsSnapshotConfig` sanitizes a third block of its own and
+`TestGoogleAdsSnapshotConfig_SanitizesEveryDisplayURLList` asserts all four individually,
+one more time for the same reason.
+
+**Promotion and price extensions carry destinations too.** A promotion has one
+`finalUrl`; a price extension has one per OFFERING, which is where its deep copy has to
+reach. `googleAdsPriceConfig` copied at the top level still shares its `Offerings`
+backing array with the caller's config, so sanitizing a row in place would strip the
+path off a URL the create path is about to send — the sitelink trap one level deeper.
+`TestGoogleAdsSnapshotConfig_DoesNotMutateTheCallersPriceOfferings` pins that, and
+`..._SanitizesEveryPriceOfferingURL` asserts every row rather than the first, for the
+reason the creative-list tests give. Call extensions are NOT sanitized and NOT part of
+the early return's condition set: a phone number is not a URL and carries no query to
+strip.
+
+**A lead form carries a URL that is never tagged, and is persisted all the same.** The
+privacy-policy URL is the one caller URL the client validates but deliberately does not
+UTM-tag, because it is a link Google renders inside the form rather than an ad
+destination. That changes nothing here: `config_snapshot` is plaintext either way, so
+`googleAdsSnapshotConfig` reduces it on a copied slice like every other caller URL, and
+`TestGoogleAdsSnapshotConfig_SanitizesTheLeadFormPrivacyPolicyURL` pins both halves —
+the snapshot loses the signing query, and the caller's config keeps the full URL Google
+requires. A shallow slice copy suffices here; only the price extension's nested
+`Offerings` needs the deep one.
+
+The early return that skips the whole copy names SEVEN fields now — sitelinks,
+promotions, prices, lead forms, the Demand Gen creative, the asset group and the Display
+creative, and deliberately NOT `videoCreative`, which carries YouTube video ids and text
+and no URL of any kind, so a config holding only a video creative has nothing to
+sanitize — and `TestGoogleAdsSnapshotConfig_SanitizesTheAssetGroupAlone`,
+`..._SanitizesTheDisplayCreativeAlone`, `..._SanitizesEachNewExtensionAlone` and
+`..._SanitizesTheLeadFormPrivacyPolicyURL` pin the last five, because a config carrying
+only one of them taking that return is precisely the bug each condition was added to
+prevent.
 
 This is not redundant with the X client's `rejectCredentialQueryParams`. That refuses a
 credential-SHAPED parameter because the text is about to be PUBLISHED, and it is a
@@ -572,9 +630,10 @@ this shared file too.
 (*model.CampaignSettingsReadback, error)` — reads a campaign's live configuration and
 compares it against what the campaign row recorded. Discovered by the same type assertion
 `MetricsReader` uses; a dispatcher without it yields
-`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads is the only implementation**
-today; the capability is wired per platform, and a dispatcher without it is a 400 rather
-than a silent empty readback.
+`domain.ErrSettingsReadbackUnsupported` -> 400. **Google Ads, Microsoft Advertising, Meta,
+Reddit and X implement it** (LFXV2-2665 added the last four; see "Settings readback on
+Microsoft, Meta, Reddit and X" below); LinkedIn and HubSpot do not, and a dispatcher without
+it is a 400 rather than a silent empty readback.
 
 **Read-only in two senses, both load-bearing.** It issues no mutating call upstream, and it
 never writes back onto the campaign row. `budget_amount`/`budget_type`/`config_snapshot`
@@ -592,12 +651,22 @@ from an observation that never happened.
 The Google Ads adapter compares `budget_amount`, `budget_type`, `campaign_name`,
 `advertising_channel_type`, `start_date` and `end_date`, and reports four settings
 **upstream-only** — `status`, `budget_delivery_method`, `budget_explicitly_shared` and
-`bidding_strategy_type`. Those four share a verdict but NOT a reason, and collapsing the two
+`bidding_strategy_type`. Those four share a verdict but NOT a reason, and collapsing the
 reasons into one is the mistake to avoid here. Nothing in a Google Ads dispatch config can
-express `budget_delivery_method`, `budget_explicitly_shared` or `bidding_strategy_type`, so
-those three have no recorded side at all; they are reported anyway because a budget that
-reads as expected while being `ACCELERATED` or shared across campaigns is exactly the state
-that explains a spend anomaly the compared fields cannot. **`status` is upstream-only for an
+express `budget_delivery_method` or `budget_explicitly_shared`, so those two have no
+recorded side at all; they are reported anyway because a budget that reads as expected
+while being `ACCELERATED` or shared across campaigns is exactly the state that explains a
+spend anomaly the compared fields cannot. **`bidding_strategy_type` is a third reason
+again:** `googleAdsConfig.BiddingStrategy` now DOES record one, so the recorded side exists
+and the field is nonetheless left uncompared on purpose. Comparing it would require mapping
+this client's caller vocabulary onto Google's OUTPUT_ONLY `BiddingStrategyTypeEnum`, and
+that mapping is unverified exactly where it is ambiguous — `target-cpa` and
+`maximize-conversions` are both sent as `maximize_conversions`, and which enum Google
+reports back for the targeted one has not been observed — while on the adopt path the row
+records a strategy that was never pushed upstream, so the two sides are expected to
+disagree. A guessed mapping would report a false divergence on campaigns set exactly as
+asked; `unknown` under-informs, a false divergence misinforms, and only the second costs the
+operator an investigation. **`status` is upstream-only for an
 entirely different reason: the campaign row HAS a `status` column.** It carries this
 service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`,
 `created_degraded`, `deleted`) and only sometimes a run state set by the status toggle —
@@ -613,7 +682,8 @@ whose recorded side comes from `config_snapshot` rather than from a column.
 on both the create and the adoption path, so the row DOES record which channel was asked for.
 `googleAdsRecordedChannelType` decodes it and expresses it in Google's own vocabulary —
 `search` and an ABSENT channel both map to `SEARCH` (absence has meant Search since before the
-field existed), `demand-gen` maps to `DEMAND_GEN`. A campaign recorded as demand-gen and
+field existed), `demand-gen` maps to `DEMAND_GEN`, `performance-max` to `PERFORMANCE_MAX`, `video` to `VIDEO` and
+`display` to `DISPLAY`. A campaign recorded as demand-gen and
 running upstream as `SEARCH` is a real misconfiguration, and passing `nil` for the recorded
 side made it permanently `unknown` — the finding could not be produced at all. The recorded
 side is still nil, and the verdict still `unknown`, where nothing interpretable was recorded:
@@ -803,6 +873,68 @@ reads as "inherit the campaign-level value", so the distinction is not cosmetic.
 explicit `0` is Google's -100% opt-out: a value-typed hop would make an absent modifier
 indistinguishable from an instruction to stop serving in that interval.
 
+`demandGenCreative` follows the same pattern one level deeper: a `*googleAdsDemandGenCreativeConfig`
+POINTER on the config, so absent and present-but-empty stay distinguishable, mapped by
+`googleAdsDemandGenCreative` which answers the zero `googleads.DemandGenCreative` for nil —
+the value the platform layer reads as "no creative asked for", which is the pre-existing
+no-ad behaviour every Demand Gen campaign created before this feature relies on. Its test
+asserts each of the seven lists lands in its OWN slot rather than counting images: a mapper
+that crossed `portraitImages` with `tallPortraitImages` would satisfy any count-based check
+— both lists non-empty, totals matching — and build the campaign with 4:5 images where
+Google wants 9:16.
+
+`performanceMaxCreative` is the same shape again — a pointer on the config, a mapper that
+validates nothing, the zero value for nil — and its test asserts nine lists into nine
+slots plus four scalars. The trap there is the three TEXT lists rather than the images:
+headlines, longHeadlines and descriptions are three distinct Google asset field types, so
+a mapper that merged any two would still produce a campaign Google creates, with the
+wrong field type on assets it renders differently. `googleads_pmax_wiring_test.go` proves
+the wire config actually reaches the client without exercising the asset-group mutates —
+reaching those needs real image bytes, and the creative fetch's dial guard and TLS roots
+are relaxable only from inside the googleads package, which is the one hole that must not
+be opened for a test. It asserts instead that `channel: "performance-max"` reaches the
+campaign shell (`PERFORMANCE_MAX`, `maximizeConversions`, no ad group and no ad) and that
+a complete asset group gets past every bound and into the fetch, with each list omitted in
+turn producing that list's own refusal.
+
+`videoCreative` is the same shape a fourth time — a pointer, a mapper that validates nothing,
+the zero `googleads.VideoCreative` for nil — but `googleads_video_wiring_test.go` is the one
+file of the five that cannot assert a campaign body, because **the Google Ads API cannot
+create a Video campaign at all** and dispatch refuses the channel before anything is sent
+(see `googleads.CreateVideoCampaign`). It asserts the two things that are still reachable
+and still matter. First, the refusal itself: `channel: "video"` must come back wrapping
+`googleads.ErrVideoCreateUnsupported` with a nil campaign and — the binding assertion —
+`!cap.sawBudget`, because the budget is step 1 and `campaigns:mutate` is step 2, so a
+refusal one step late leaves a real billable budget behind per attempt and a retry composes
+the same budget name and dies at `DUPLICATE_NAME` instead of reconciling it. Second, the
+mapper, proved by WHICH refusal each wire shape produces: omitting any of the four required
+lists gives that list's own validation refusal (the validator runs at
+`ValidateCampaignInputKind`, ahead of the channel refusal), while omitting the optional
+`callToActions` reaches the channel refusal instead — which is what now pins the required
+set, and keeps the validator honest while the create path is closed. The cascade's own
+payload proofs moved down into the googleads package, where `video_test.go` runs them
+against `createVideoCampaignCascade` directly.
+
+The refusal lives in the create switch rather than in `ValidateCampaignInputKind` because
+that validator runs BEFORE the adoption branch, and Video ADOPTION and reporting are
+legitimately supported — only creation is impossible, so refusing earlier would break a
+path Google does serve.
+
+`displayCreative` is the shape a fifth time, and the one that breaks the pattern:
+`longHeadline` is a SCALAR here, not a list, so a mapper copied from Performance Max or
+Video compiles and silently drops the field or keeps only its first element.
+`googleads_display_creative_test.go` pins each of the nine fields to its own slot for that
+reason. `googleads_display_wiring_test.go` goes back to the Performance Max shape rather
+than Video's — Display fetches image bytes, so the ad mutate is out of reach from here
+without opening the dial-guard hole — and asserts that `channel: "display"` reaches the
+shell as `DISPLAY` with **no** `advertisingChannelSubType` (the deliberate contrast with
+Video's pinned `VIDEO_ACTION`), with one ad group and no ad; that a complete creative gets
+past every bound and into the fetch; and that each field omitted in turn produces its own
+refusal. The two marketing arrays are omitted TOGETHER in that table, because the
+requirement is reciprocal — either one alone satisfies it — and a table that omitted just
+one would pass against a mapper that never read that array at all. The logo arrays and the
+call-to-action text are omitted together too, to prove optional means optional.
+
 One thing this layer does decide for itself is the post-create "NO geo targeting" warning,
 which is the operator's only signal that a campaign will spend wherever the ad account
 allows. It counts every POSITIVE shape, so `proximityTargets` silences it exactly as
@@ -848,7 +980,7 @@ It enforces that invariant in TWO arms, and STRICTER than `ReadMetrics`/`ToggleS
 (LFXV2-3067). Absent provenance FAILS CLOSED rather than being waved through: a row recording
 no creating customer is not a row that MATCHES the current connection, it is a row nothing has
 established anything about, and `created != "" && created != current` read that absence as a
-match. Because Google Ads is the ONLY `SettingsReader`, that fallthrough also made the
+match. Because Google Ads was then the ONLY `SettingsReader`, that fallthrough also made the
 handler's documented `ErrCampaignProvenanceUnknown` 409 arm unreachable — a documented error
 nothing could produce. The empty case now returns
 `errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch)`, joined
@@ -862,6 +994,74 @@ The stricter posture is deliberate rather than an inconsistency: this endpoint's
 is to report a comparison, so a confidently wrong report about another account's campaign is
 the precise outcome it exists to prevent, whereas the toggle and metrics paths weigh that risk
 against serving legacy rows at all.
+
+
+## Settings readback on Microsoft, Meta, Reddit and X (LFXV2-2665)
+
+`microsoft_settings.go`, `meta_settings.go`, `reddit_settings.go` and `twitter_settings.go`
+implement `SettingsReader` with the same contract as Google's: strictly read-only (GETs, plus
+Microsoft's `GetCampaignsByIds` POST, which is a read), never written back onto the row, a side
+that was not read is ABSENT and `unknown`. The shared pieces live in `settings_readback.go`
+(`recordedSettings`, `settingsMicrosToUnits`, `parseSettingsTimestamp`, `compareNudgedStart`)
+and reuse Google's renderers (`formatBudgetUnits`, `formatSubCentBudgetUnits`) and field names,
+so all five platforms report in one vocabulary and render amounts one way.
+
+**Each platform reports only what it can answer honestly, in the units its create path
+wrote.** Microsoft: one campaign read; `budget_amount` (DailyBudget, account-currency decimal,
+read only under a daily `BudgetType`), `budget_type`, `campaign_name` compared;
+`status`, `budget_explicitly_shared`, `bidding_strategy_type` upstream-only; no flight dates
+(Microsoft campaigns have none and the create path records none). Meta: campaign + the
+recorded ad set (budget, flight and bid strategy live on the ad set) + the account currency
+when there is an amount; minor units are compared through the account's own offset with the
+recorded side encoded as `round(amount × offset)`, exactly what `budgetToMinorUnits` sent; a
+CBO campaign's ad-set budget is `unknown`, not substituted with the shared campaign budget.
+Reddit: one campaign read (the create path puts goal, flight and bid strategy on the campaign,
+so no ad group is read); the budget is read only when `is_campaign_budget_optimization` is
+true, and that flag is reported upstream-only so an `unknown` budget is explained. X: campaign
+(budget) + the recorded line item (flight, bid strategy); the budget is compared only when X
+REPORTS `budget_optimization` `CAMPAIGN` (a LINE_ITEM campaign's total cap is not the recorded daily
+amount), and `budget_optimization` is reported upstream-only. That gate applies to campaigns this
+service created too: the create path sends no `budget_optimization` (X's current reference lists
+`LINE_ITEM` as the only POST value, so sending `CAMPAIGN` would be undocumented), and which value
+X then reports is unverified (v11 announcement: `CAMPAIGN` default; current reference: `LINE_ITEM`).
+A created campaign reporting it absent or `LINE_ITEM` reads its budget `unknown` rather than
+being assumed `CAMPAIGN`; `TestCreateSendsQueryParams` pins the omission.
+
+**Flight dates compare as UTC calendar dates**, because every create path sends UTC instants
+(Meta's end is `23:59:59+0000`). Meta and Reddit nudge a start whose day has begun to dispatch
+time + a buffer; `compareNudgedStart` reports a LATER upstream day that is the row's
+`CreatedAt` day or the day after (the only days a minutes-long nudge can produce) with both sides and an `unknown` verdict (via `model.UncomparableSettingsField`,
+which can only ever say `unknown`) rather than a false `diverged`. An earlier day, or a later
+one far from dispatch, stays `diverged`.
+
+**Provenance is Google's rule.** No recorded creating account → `ErrCampaignProvenanceUnknown`
+joined with `ErrCampaignAccountMismatch`, BEFORE the connection is resolved (pinned by tests
+whose connection reader fails if consulted). A recorded account that differs → mismatch,
+before the campaign is read. Where the read answers with an account (Meta's `account_id` —
+`GET /{id}` is not account-scoped — Reddit's `ad_account_id`, X's `account_id`) a different
+one, or a recorded ad set / line item that belongs to another campaign upstream
+(`meta.ErrAdSetNotInCampaign`, `twitter.ErrLineItemNotInCampaign`), is NOT the account
+mismatch: the connection already IS the recorded account, so "reconnect the original account"
+would be unactionable. It is `domain.ErrCampaignUpstreamIdentityMismatch` (409, fixed
+re-dispatch message).
+**Adopted rows** read at the campaign level: the child-dependent fields are absent, not errors.
+
+**Definite vs unknown.** A 404 (Reddit, X), `CampaignServiceInvalidCampaignId`
+(Microsoft) or a deleted X campaign is `ErrPlatformCampaignAbsent` → 404. **Meta's readback never
+reports the campaign absent:** Graph 100/33 on the campaign cannot tell a deleted campaign from
+one this token cannot load (and `GET /{id}` is not account-scoped), so it is unverifiable (503)
+on every HTTP status — as on the adoption read — and no account probe is sent to try to settle
+it; a deleted or archived Meta campaign still answers with that status and is reported as one. A missing CHILD (ad
+set / line item) only blanks its fields. Every other failure — transport, 5xx, 401/403, an
+exhausted 429, a body `identityjson.Check` refuses, a wrong id echoed, a non-integer or
+contradictory amount (a Meta ad set carrying both budgets) — is an ordinary error, answered 503
+with no upstream text. Unlike adoption, a DELETED/ARCHIVED Meta or Reddit campaign is reported
+with its status rather than as absent: the readback reports what the platform holds.
+
+**Verified only from docs, not live:** each platform's echo of the fields read here (Meta's
+`start_time`/`end_time` layout, Reddit's `goal_value` as a JSON number, X's line-item
+`start_time` as `...Z`, Microsoft's `BiddingScheme.Type` suffix) is taken from the platform
+references and the shapes the sibling budget/bid/adoption reads already parse.
 
 ## Budget write (optional capability, LFXV2-2665)
 
@@ -1260,7 +1460,8 @@ lesson). The 2xx echo is checked like Reddit's: another campaign id or another a
 UNCONFIRMED.
 
 **Not gated.** X campaign writes (create, toggle) are already ungated; the budget PUT uses the same
-client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the account monitor.
+client, pacer and classification. `TWITTER_METRICS_ENABLED` gates only the two stats-job
+features (the account monitor and the audience read).
 
 **Unverified against a live X account**: which `budget_optimization` value a campaign this
 service creates actually reads back as, whether the single-campaign GET returns `deleted`
@@ -1303,7 +1504,8 @@ classified. Nothing is written until every guard has passed.
   an absent campaign → `ErrPlatformCampaignAbsent`, a campaign reported under another account →
   `ErrCampaignAccountMismatch`. Then reads the ad group and requires: it belongs to this campaign
   (an UNREPORTED `campaign_id` is refused like a different one), `bid_strategy == MANUAL_BIDDING`,
-  `bid_type == CPC`, a legible `bid_value`; else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`** on both the
+  `bid_type == CPC`, a legible `bid_value` (an absent or null one is refused like an
+  unparseable one — a manual-CPC ad group always carries a bid); else `ErrBidUnwritable`. **Every Reddit campaign this service creates is `BIDLESS`** on both the
   campaign and its ad group, so this leg refuses them until an operator switches BOTH the campaign's bid strategy (Campaign Budget Optimization is on for every campaign this service creates, so the ad group must match it) AND the ad group to `MANUAL_BIDDING` in Reddit Ads Manager — the adapter checks the campaign first, then the ad group. A 404 on the ad group is
   `ErrBidUnwritable`, NOT `ErrPlatformCampaignAbsent` — the campaign may still exist. Amount via
   `reddit.BidMicros` (positive, ≤ 1,000,000, ≥ one micro). PATCH outcomes as the budget write's,
@@ -1764,9 +1966,10 @@ the client will actually use.
 `microsoft_keyword_report.go` makes `MicrosoftDispatcher` a `service.KeywordReportReader` — the
 report-backed stand-in for `KeywordInsightsReader.ReadKeywordPerformance`, as
 `AccountReportReader` stands in for `AccountMetricsReader`. It does NOT implement
-`KeywordInsightsReader`, so the audience read stays `ErrKeywordInsightsUnsupported` (400) for
-Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension, so the
-three-dimension answer would need a second report and could be half-finished.
+`KeywordInsightsReader`, so the Google-shaped audience read stays `ErrKeywordInsightsUnsupported`
+(400) for Microsoft: `AgeGenderAudienceReportRequest` has age and gender but no device dimension,
+so the three-dimension answer would need a second report and could be half-finished. Microsoft's
+age/gender-only read is a separate capability (below).
 
 - `KeywordReportAccount` — makes NO upstream call. Gate (`MICROSOFT_METRICS_ENABLED`, off →
   `ErrKeywordInsightsUnsupported`), window (`ErrMetricsWindowUnsupported`), scope ceiling (more
@@ -1792,15 +1995,165 @@ Tests (`microsoft_keyword_report_test.go`): gate off on all three methods, every
 zero upstream calls, the provenance filter, the system-fallback refusal, the submitted scope
 (Campaigns only, no `AccountIds`), and the poll states.
 
+The scope rules, gate and connection resolution are shared helpers parameterised by the read
+(`microsoftReportScopeIDs` / `microsoftReportScope` over `microsoftReportScopeRules`,
+`microsoftInsightsEnabled`, `resolveMicrosoftInsightsClient`); the keyword functions are thin
+wrappers with unchanged behaviour. Each kind's rules carry its own platform id check
+(`validateID`: `ValidateKeywordReportCampaignID` / `ValidateAudienceReportCampaignID`), so a
+refused id's error chain names that kind's scope sentinel.
+
+## Report-backed age/gender audience read (Microsoft, LFXV2-2665)
+
+`microsoft_audience_report.go` makes `MicrosoftDispatcher` a `service.AudienceReportReader`, the
+keyword reader's twin for the `AgeGenderAudienceReportRequest` (no device dimension):
+`AudienceReportEnabled` / `AudienceReportAccount` / `SubmitAudienceReport` /
+`CheckAudienceReport` with the keyword methods' gate, window, own-connection, bound-account,
+de-duplication, 300-ceiling and provenance rules, but the AUDIENCE sentinels
+(`microsoft.ErrAudienceReportScope`, `domain.ErrAudienceScopeInvalid`,
+`domain.ErrAudienceScopeTooLarge`) so a 409 names the read that refused; a 2027 rejection
+(`microsoft.ErrAudienceReportScopeRejected`) is tagged `ErrServiceDefect`. Check maps rows to
+`model.AudienceReportRow` (campaign, age group, gender, counters) and refuses a spend whose micros
+would overflow. Tests (`microsoft_audience_report_test.go`) mirror the keyword ones on the same
+fake Microsoft, plus a check that a malformed report fails rather than returning partial rows.
+
+## Meta audience read (`meta_audience.go`, LFXV2-2665)
+
+`MetaDispatcher` implements `service.MetaAudienceReader` (`ReadMetaAudienceInsights`), a
+capability SEPARATE from `KeywordInsightsReader`: Meta has no keyword read, and its audience
+shape (a combined age+gender breakdown, a two-valued placement) does not fit `AudienceBucket`.
+Every other dispatcher — Google, LinkedIn, Microsoft, Reddit, X — lacks it, so the orchestrator
+answers `ErrKeywordInsightsUnsupported` (400) for them.
+
+Order mirrors `GoogleAdsDispatcher.ReadAudienceInsights`: window first (`metaMetricsWindow` →
+`ErrMetricsWindowUnsupported`), then `resolveMetaCredentials` through
+`existingResolver("")` — ordinary project-then-system resolution, so a fallback project reads
+only its own campaigns, and no connection at all is `domain.ErrNotFound` (404) — then
+`requireMetaAccountID` (`ErrConnectionNotUsable` + `ErrAccountNotSelected`) and
+`meta.ValidateAccountID` on the stored id (`act_<digits>`, else `ErrConnectionNotUsable`), then
+`metaScopeForAccount`: every stored id must be a canonical Meta campaign id
+(`domain.ErrAudienceScopeInvalid`, 409) and ANY entry whose recorded creation account
+(`metaCreationAccountID`) differs from the connection's refuses the whole read with
+`ErrCampaignAccountMismatch` (409), `googleAdsScopeForCustomer`'s rule. Only then is
+`meta.Client.GetAudienceInsights` called; `meta.ErrAudienceScopeTooLarge` /
+`ErrAudienceScopeInvalid` are re-tagged with the domain sentinels, every upstream failure is
+returned unclassified (503 at the service). Tests: `meta_audience_test.go` (mapping, every
+refusal with zero upstream calls, partial mismatch, unknown provenance proceeds, 403 stays
+unclassified).
+
+## X audience read (`twitter_audience.go`, LFXV2-2665)
+
+`TwitterDispatcher` implements `service.TwitterAudienceReader` (`ReadTwitterAudienceInsights`),
+a third capability beside `KeywordInsightsReader` and `MetaAudienceReader`: X's AGE, GENDER and
+PLATFORMS segmentations carry ONE value each (so the bucket is `dimension` + `value`, not Meta's
+named fields), and X has no keyword read. Every other dispatcher lacks it → 400 not supported.
+
+Order: `twitterAudienceEnabled()` first — `TWITTER_METRICS_ENABLED` must be exactly `"true"`,
+else `ErrKeywordInsightsUnsupported` (400) before any credential read, because the read runs on
+the same unverified asynchronous stats-jobs contract as the X account monitor (the synchronous
+`ReadMetrics` is not gated); then the window through `twitterMetricsWindow` (yesterday, today,
+last_7_days; anything longer → `ErrMetricsWindowUnsupported`, 400); then
+`creds.resolveExisting(…, "")` — project-then-system, so a fallback project reads only its own
+campaigns and no connection is `ErrNotFound` (404); `validateTwitterConnection` (inactive,
+undecodable, incomplete, no account → `ErrConnectionNotUsable`, 400 own / 500 system fallback);
+`twitter.ValidateMonitorAccountID` on the stored account (`ErrConnectionNotUsable`); then
+`twitterScopeForAccount`: every stored id must pass `twitter.ValidateCampaignID`
+(`ErrAudienceScopeInvalid`, 409) and ANY entry whose `twitterCreationAccountID` differs refuses
+the whole read (`ErrCampaignAccountMismatch`, 409). Only then the CACHED client (shared write
+pacer) calls `twitter.Client.GetAudienceInsights`; `ErrAudienceScopeTooLarge` /
+`ErrAudienceScopeInvalid` / `ErrReportWindowNotWholeHours` are re-tagged with the domain
+sentinels (the last as `ErrAccountTimezoneUnsupported`, 409), every upstream failure is returned
+unclassified (503). Tests: `twitter_audience_test.go` (mapping and account-tz job window, every
+refusal with zero upstream calls, flag values, partial mismatch, own and LF-fallback reads,
+fractional-offset zone creates no job, 403 unclassified).
+
+`AudienceEnabled()` is the same flag check exposed on the capability: the orchestrator calls it
+BEFORE the scope lookup, because `readScopedAudience` answers an empty scope without reaching the
+adapter — checked only inside the read, a disabled read answered 200 `[]` to every project with
+no X campaigns. The client call runs through `twitterAudienceGuard` (`twitter_audience_guard.go`),
+one per dispatcher (so per process), because every read holds stats-job slots on an ad account
+that other foundations and the X account monitor share (X: 100 concurrent jobs per account) and
+a timed-out read's jobs keep running until X expires them. Keyed by account + window + sorted
+de-duplicated scope: identical concurrent reads share one call (singleflight; a joiner whose ctx
+ends first gets its own ctx error; when the LEADER failed only because its own ctx ended — tagged
+`leaderContextError` in the leader's deferred close — a joiner with a live ctx loops and re-leads,
+at most `twitterAudienceMaxReLeads` (2) times, so one disconnecting client no longer 503s every
+concurrent identical read; any other failure is shared, never retried); a SUCCESSFUL result is reused for 5 minutes (at most 256
+entries; failures never cached) while `twitter.AudienceWindowBounds` at the dispatcher clock
+(`audienceNow`) still gives the result's own instants, so "today" is never served across the
+account's midnight; and a per-account slot (`twitterAudienceAccountConcurrency` = 1) runs one read
+at a time, a waiter giving up with its context (503); the slot entry is deleted when nobody holds
+or awaits it, so `slots` does not grow with accounts. A joined SUCCESS whose window no longer
+`windowCurrent` (a "today" joined across the account's midnight) is re-led, like a
+leader-cancelled one. Jobs a failed read leaves running (`twitter.AudienceJobsAbandonedError`)
+are counted per account for `twitterAudienceAbandonedJobHold` (60 minutes — the monitor's
+`accountReportAbandonAfter`, as X documents no job lifetime) or until `RunningStatsJobs` reports
+them finished; `admitJobs`, run by the slot holder, refuses (503) a read whose
+`twitter.AudienceJobCount` would take the account past `twitterAudienceOutstandingJobBudget`
+(12 — two full reads, leaving most of X's 100 concurrent jobs per account to the account monitor),
+asking X first only when over budget. A create that failed AMBIGUOUSLY is reported as
+`AudienceJobsAbandonedError.Unknown` and recorded as an ANONYMOUS entry (id ""): never sent to X
+for reconciliation (it has no id), it only expires with the hold, and reconciling the named jobs
+beside it keeps it. `NewTwitterDispatcher` appends `twitter.WithAccountPacers` with ONE
+registry to every client it builds, so every connection to one ad account in the process shares
+that account's write pacer and stats-job reservations. All of this is per process, so ACROSS
+pods the dispatcher asks its `domain.StatsJobLease` (`SetStatsJobLease`, bound by the container
+to `postgres.StatsJobLease`) before anything that creates stats jobs — the audience read, before
+contacting X, and `SubmitAccountReport`, before submitting: a pod that does not own the
+account's lease returns `domain.ErrStatsJobLeaseNotHeld`, or `ErrStatsJobLeaseUnavailable`
+when ownership could not be established (audience read: 503 with that sentinel's fixed text; monitor: the orchestrator's transient submission failure — logged, the saved report still
+served). A nil lease (no database; the direct-construction tests) admits everything. The chart's
+render-time replica refusal is a first line of defence only (it cannot see an out-of-band scale
+or an external HPA). Test: `TestTwitter_StatsJobLease_NonOwnerRefusesWithoutContactingX`. The scope in the key means a cached result
+is only ever served for exactly the same campaigns. Tests: `TestTwitter_AudienceGuard_*`
+(N callers → one set of jobs, a second account read refused while the first runs, cache hit
+creates no jobs and expires by TTL and by account-local day, failures not cached) and
+`twitter_audience_guard_test.go` (leader cancelled during fetch or slot wait → joiner re-leads;
+joiner's own cancellation is its own error; an upstream failure is shared, fetched once; a joined
+result across midnight re-leads; the abandoned-job budget, X's answer and the hold; slots do not
+grow with accounts; anonymous jobs only expire and survive reconciliation).
+
+## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
+
+`MetaDispatcher` implements `service.MetaAdSetReader` (`ReadMetaAdSets`) and
+`service.MetaAdSetStatusToggler` (`ToggleMetaAdSetStatus`); no other dispatcher does, so the
+orchestrator answers `domain.ErrMetaAdSetsUnsupported` (400) for them. Both run
+`metaAdSetScope` first — the settings readback's provenance: `metaCreationAccountID` empty →
+`ErrCampaignProvenanceUnknown` joined with the mismatch sentinel, before any credential is
+resolved; `requireMetaAccountID`; `meta.ValidateAccountID`; `verifyMetaAccountMatch` — so every
+409 there sends zero requests. The read maps `meta.ErrAdSetAccountMismatch` to
+`ErrCampaignUpstreamIdentityMismatch`, renders budgets with `formatMinorUnits` (absent for an
+unmapped currency), marks `Recorded` from `metaAdSetID`, and stamps `ReadAt` from the
+`settingsNow` clock tests pin. The toggle refuses `ACTIVE` with `ErrCampaignNotProvisioned` when
+the row records no ad set (adopted), and `ErrMetaAdSetNotRecorded` for any ad set but the
+recorded one, before any request; a non-canonical stored campaign id is
+`ErrStoredPlatformIDInvalid` on both paths; then it reads the ad set
+(`GetAdSetState`), refuses another campaign's or account's ad set
+(`ErrMetaAdSetNotInCampaign`) and DELETED/ARCHIVED (`ErrMetaAdSetUnwritable`), answers
+`ALREADY_IN_STATE` with no write, and otherwise sends ONE `UpdateAdSetStatusOnce`, classified by
+`meta.ClassifyAdSetWrite`: unconfirmed → `unconfirmedToggleError`; not-sent and rejected →
+ordinary errors. See [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+Tests: `meta_ad_sets_test.go`.
+
+`noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
+a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
+
 ## Account discovery (optional capability)
 
 `GoogleAdsDispatcher.ListAccounts(ctx, projectID, platform) ([]model.AccessibleAccount, error)`
 enumerates the ad accounts reachable **upstream at the provider** with the connection's stored
 credential. It exists so an operator configuring a connection can pick the right account instead
 of pasting a customer ID by hand. `MetaDispatcher`, `LinkedInDispatcher`, `MicrosoftDispatcher` and
-`TwitterDispatcher` implement it too — five in total, two added in LFXV2-3064 and X in
-LFXV2-3319. Reddit does not, because its platform client exposes no `ListAdAccounts` for a
-dispatcher method to call.
+`TwitterDispatcher` implement it too, and `RedditDispatcher` since LFXV2-2665 — six in total,
+two added in LFXV2-3064, X in LFXV2-3319 and Reddit in LFXV2-2665.
+
+`RedditDispatcher.ListAccounts` resolves through `d.creds.resolve` (the discovery entry point)
+and applies `validateRedditCredentials` — the active / decodable / complete checks
+`resolveRedditClientWithCredsCache` also runs for `Dispatch` — but not the account-id check, so
+the account-less connection discovery exists for is served while every other refusal keeps its
+sentinel. It builds a fresh, uncached client with a zero `AccountConfig` and caller-scoped token
+refresh, calls `reddit.Client.ListAdAccounts` (businesses, then each business's ad accounts), and
+labels each row `name [currency] (business)` via `redditAccountLabel`, falling back to the id
+for a nameless account.
 
 `TwitterDispatcher.ListAccounts` shares `validateTwitterConnection` with `Dispatch` and
 `ToggleStatus`, tolerating exactly one of its outcomes — `ErrAccountNotSelected`, the state the
@@ -2873,8 +3226,9 @@ answers **400, not 409**: the update endpoints declare `BadRequest` but not `Con
 `CampaignAdopter` is a fourth OPTIONAL dispatcher interface, alongside `StatusToggler`,
 `MetricsReader` and `AccountLister`, declared in `internal/service/orchestrator.go` and
 discovered by the same type assertion. A dispatcher that does not implement it makes the
-platform answer `ErrAdoptionUnsupported` (400) with no network call. **Google Ads is the
-only implementation today.**
+platform answer `ErrAdoptionUnsupported` (400) with no network call. **Google Ads, Microsoft
+Advertising, Meta, Reddit and X implement it** (the last four since LFXV2-2665 — see "Microsoft,
+Meta, Reddit and X adopters" below); LinkedIn and HubSpot do not.
 
 ```go
 LookupCampaign(ctx, projectID, platform, platformCampaignID) (*model.PlatformCampaignRef, error)
@@ -2939,10 +3293,126 @@ type, so the only evidence is what the platform reports: the lookup selects
 `PlatformCampaignRef.Variant`, which the adopt path persists. Before this, every adopted Google
 campaign was stored as `default` whatever it was — so adopting a Demand Gen campaign left the
 `demand-gen` slot free and the next Demand Gen dispatch created a SECOND paid campaign for the
-same brief. The mapping fails CLOSED: only the types this service can create are mappable, and
-`PERFORMANCE_MAX`, `VIDEO`, an unrecognised future value or an absent field are refused rather
-than defaulted, since defaulting is what produces the duplicate. An adapter that returns an empty
+same brief. The mapping fails CLOSED: only the types this service can create OR ADOPT are mappable — `SEARCH`,
+`DEMAND_GEN`, `PERFORMANCE_MAX` and, since the Video and Display paths landed, `VIDEO` and
+`DISPLAY` — while `SHOPPING`,
+`HOTEL`, an unrecognised future value or an absent field are refused rather than defaulted, since
+defaulting is what produces the duplicate. **`VIDEO` is ADOPT-ONLY**, and it is why the invariant
+reads "create or adopt" rather than "create": the Google Ads API cannot create a Video campaign at
+all, so `CreateVideoCampaign` refuses before sending anything — but a Video campaign built in the
+Google Ads UI is a real campaign this service must be able to adopt, and adopting it into the
+`default` slot is the very duplicate this mapping exists to prevent. A type leaves the refused set
+the moment this service can PLACE it, which a create path or an adoption path each establish on
+their own. The mappable set is one of the SIX places the channel list is
+duplicated and has to grow together; see `googleAdsChannelIsSupported`, `AdoptableVariants`,
+`googleAdsRecordedChannelType`, the dispatch create switch and the monitor GAQL's
+`advertising_channel_type IN (...)` list.
+
+Adoption establishes the slot and nothing else. `campaignFromGoogleAdsAdoption` writes
+provenance only — customer id, campaign id and name — and no ad group, ad or asset group ids,
+because the service did not create them and the lookup does not read them. The status toggle
+therefore REFUSES to activate an adopted campaign on every channel: `googleAdsActivationGate`
+asks what the `Result` blob recorded, and for an adopted row that set is empty whichever arm
+the variant selects. That is the correct answer — a cascade can only flip resources it has ids
+for — so each arm's message names adoption explicitly and points the operator at the Google Ads
+UI, rather than describing a provisioning failure in records this service never wrote. PAUSE is
+unaffected: the gate runs only on ACTIVATE, and pausing the campaign resource alone always
+stops delivery. An adapter that returns an empty
 variant is refused by the service layer too, so a contract violation cannot fall back to `default`.
+
+**A Performance Max asset group id is not a serving campaign, and the gate stopped treating it as
+one.** `createPerformanceMaxAssetGroup` returns the group id even when the LINK mutate fails,
+deliberately — a group that exists with no assets attached is the state an operator most needs to
+find, and clearing the id would hide it. But the activation gate used to key on that id alone, so
+exactly the campaign that cannot serve was the one it called provisioned: it un-paused a campaign
+whose asset group was empty and reported success. The gate now reads a second recorded fact,
+`CampaignResult.AssetGroupAssetLinks`, the number of `assetGroupAssets` links Google CONFIRMED,
+which `googleAdsToggleAssetGroup` decodes from the same `Result` blob as the id. Zero links refuses
+with `domain.ErrCampaignNotProvisioned` and sends the operator to the Google Ads UI. The field is a
+`*int` and the distinction is the whole point: **nil is not zero.** Every Performance Max row
+written before the field existed has no such key, and reading absence as zero would refuse
+activation on campaigns that are provisioned correctly — an over-refusal, the one failure mode
+these gates must never have. Nil therefore activates, a recorded zero refuses. An UNCONFIRMED link
+mutate records zero rather than nothing, also deliberately: links may exist, this client cannot say
+they do, and the safe reading of "cannot say" is the UI rather than a claimed launch. PAUSE is
+untouched by all of it — refusing to pause is refusing to stop spend.
+
+### Microsoft, Meta, Reddit and X adopters (LFXV2-2665)
+
+`MicrosoftDispatcher`, `MetaDispatcher`, `RedditDispatcher` and `TwitterDispatcher` implement
+`LookupCampaign` (`microsoft_adopt.go`, `meta_adopt.go`, `reddit_adopt.go`, `twitter_adopt.go`),
+which is all it took to take them off the `ErrAdoptionUnsupported` path — the orchestrator gate is a
+type assertion. `adopt.go` holds what the four share and states the order each follows, because the
+order is the safety argument:
+
+1. **Validate the id as an identity before any connection work** — `microsoft.ValidateCampaignID`
+   (canonical positive int64, no leading zero, no padding), `meta.ValidateCampaignID` (decimal node
+   id, no leading zero, ≤32 digits), `reddit.ValidateCampaignID` (letters/digits/underscore, ≤64)
+   and `twitter.ValidateCampaignID` (alphanumeric, ≤64). A failure is re-tagged
+   `domain.ErrInvalidPlatformCampaignID` (400) with no repository read and no request.
+2. **Resolve the project's own connection only** — `credsSource.resolveOwnedForAdoption`, which is
+   `resolveOwned` with absence translated to `domain.ErrAdoptionRequiresOwnConnection` (409), the
+   same translation `resolveOwnedGoogleAdsClient` applies. It has the `credsResolver` shape, so Meta
+   (`resolveMetaCredentials`) and Reddit (`resolveRedditClient`) take it directly. The connection is
+   then validated by the platform's toggle-path rules; an account id the client cannot address is
+   `ErrConnectionNotUsable` + `ErrProviderConfigInvalid` (409, `adoptionAccountIDUnusable`), never
+   an unverifiable 503.
+3. **One read by id** under that connection: Microsoft `GetCampaignsByIds` (the existing
+   `Campaigns/QueryByIds` read, account-scoped by body and header, asking for EVERY campaign type
+   so a live non-Search campaign is refused DEFINITELY — `domain.ErrAdoptionCampaignTypeUnsupported`,
+   409 — rather than read as absent), Meta
+   `GET /{campaign_id}?fields=id,name,status,effective_status,account_id,objective,daily_budget,lifetime_budget,bid_strategy`,
+   Reddit `GET /ad_accounts/{account}/campaigns/{id}`, X `GET accounts/:account_id/campaigns/:id`.
+   Meta's campaign-only fields (`objective`, the budget fields, `bid_strategy`) are load-bearing:
+   they make Graph refuse an ad set or ad id read through the same `GET /{id}`. Reddit and X run
+   `identityjson.Check` over the RAW response body (`apiResponse.raw`), not the decoded `data`, so a
+   duplicated `data` envelope key is refused rather than resolved last-wins; a campaign 404 is a
+   PROVEN absence only after one confirming read of the connection's own ad account
+   (`confirmAccountReadable`) answers 2xx naming that account — an inaccessible or revoked account
+   404s the same way, so any other answer to the confirming read is unverifiable (503).
+4. **Prove provenance.** Microsoft's read is account-scoped and its Campaign object carries no
+   account id, so — as on Google — the request's scope is the proof and a foreign campaign is
+   answered absent. Meta's node read is NOT account-scoped (one token reaches many accounts), so the
+   answer's `account_id` must equal the connection's account through `normalizeMetaAccountID`, and
+   the client refuses an answer with no readable `account_id` as unverifiable. Reddit and X are
+   path-scoped; an `ad_account_id`/`account_id` in the answer is compared when present (the Reddit
+   budget writer's check-don't-assume rule). A mismatch is `domain.ErrCampaignAccountMismatch`,
+   which `BriefService.AdoptCampaign` answers **409** — not 404 (the campaign exists; "absent"
+   invites a duplicate) and not 503 (the answer is definite).
+5. **Record provenance only.** The `Result` blob is the platform's own `CampaignResult` with the
+   account, id, name and an adoption Steps line — no ad group, ad, ad set, line item or keyword id —
+   so each platform's creation-account reader (`microsoftCreationAccountID`,
+   `metaCreationAccountID`, `redditCreationAccountID`, `twitterCreationAccountID`) holds every later
+   read, toggle and lever on the row to the verified account, and each toggle refuses ACTIVATE
+   (`ErrCampaignNotProvisioned`, now naming adoption in the message as Google's gate does) while
+   PAUSE addresses the campaign alone. The LEVERS follow from the same missing children: the bid
+   writer is refused on all four (`ErrBidUnwritable` — the manual bid lives on the ad group, ad set
+   or line item), and the budget writer is refused on Meta (`ErrCampaignNotProvisioned` — the
+   budget lives on the ad set) but WORKS on Microsoft, Reddit and X, whose budget is the campaign's
+   own, so the write changes the adopted campaign's live budget behind the usual provenance and
+   shared-budget/pacing guards. Every one of those refusals names adoption. So "an adopted row is
+   an ordinary row" holds for the reads, delete and pause — not for activation or the child-level
+   levers. The variant is `VariantDefault`: every platform but Google
+   has one slot per brief (`model.AdoptableVariants`).
+
+Definite vs unverifiable, per client (`GetCampaign` in each `campaign_lookup.go`): **absent
+(nil, nil)** is Microsoft `CampaignServiceInvalidCampaignId` (fault or PartialError) or status
+`Deleted`; Meta status `DELETED`/`ARCHIVED` ONLY (Graph 100/33 is "does not exist OR cannot be
+loaded due to missing permissions", so it is unverifiable on every status); Reddit 404 confirmed by a
+readable ad account, or `configured_status` `DELETED`/`ARCHIVED`; X 404 confirmed by a readable
+account, or `deleted: true`. The rule behind each: 404 only when the platform has PROVEN absence —
+anything that could be an access, auth or account problem is 503, because an ambiguous 404 invites
+a duplicate of a campaign that may be live. A terminal state reads absent for
+the reason Google's `REMOVED` does — it cannot spend, so "absent" licenses no duplicate of anything
+serving. **Everything else is an error** the service answers 503 "could not be verified":
+transport, 5xx, an exhausted or over-cap throttle, 401/403, an id echo that differs, a missing name,
+a status outside the documented set (Microsoft Active/Paused/BudgetPaused/BudgetAndManualPaused/
+Suspended; Meta ACTIVE/PAUSED; Reddit ACTIVE/PAUSED; X ACTIVE/PAUSED/DRAFT), and any body
+`internal/platform/identityjson` refuses — malformed UTF-8, an unpaired surrogate escape, or a key
+declared twice, the three ways encoding/json silently rewrites identity evidence. Matching is on
+codes, statuses and fields only; upstream text never reaches a client. Pinned by
+`internal/dispatch/adopt_test.go` (all four through one table, including through the real
+orchestrator) and each client's `campaign_lookup_test.go`.
 
 The Google dispatcher resolves the CHANNEL before it composes the campaign name, before adoption
 looks anything up, and before any create. Each of those depends on which campaign type is being
@@ -3588,6 +4058,19 @@ here; the operator remedy is to pause the keyword again after activating.
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
 create, toggle, budget — is gated. Both levers follow the writes.
 
+## Reddit and X keyword targeting (LFXV2-2665)
+
+`RedditDispatcher` and `TwitterDispatcher` implement `service.KeywordTargetingReader` and
+`KeywordTargetingRemover` (`reddit_keyword_targeting.go`, `twitter_keyword_targeting.go`). Both
+address only the ONE ad group / line item the row recorded and prove from the platform that it is
+this campaign's before returning or changing anything; the removal fails closed on provenance,
+refuses a removal that would leave no keyword (`ErrKeywordTargetingWouldEmpty`), and reuses
+`unconfirmedKeywordLeverError` for ambiguous outcomes. Reddit's removal is gated by
+`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, compares the caller's `revision` with a fresh read
+(`ErrKeywordTargetingChanged`), writes the whole targeting back, and re-reads to confirm. X's
+deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
+[Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
 ## Also here: the audience EXPLORER (LFXV2-2770)
 
 `AudienceExplorer` (`audience_explorer.go`) is a SEPARATE type from `AudienceBuilder` even though
@@ -3743,3 +4226,27 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
 fetched from HubSpot once per `RunQA` call, not once per reference.
 
+## HubSpot email account monitor (`hubspot_monitor.go`, LFXV2-2665)
+
+`HubSpotDispatcher.ReadEmailMonitor` implements `service.EmailMonitorReader`. Order: `days`
+re-checked (`validateMonitorDays`); the connection via `resolveHubSpotClientWithCreds` — the
+project's own, else the LF system row, exactly as Dispatch and ReadMetrics (the per-email portal
+check, not the resolver, is the boundary; neither row → `ErrNotFound`); `MonitorSpan(days)`; the
+token's portal via `AuthenticatedPortalID` on its own `portalLookupTimeout`; then
+`hubspotMonitorTargets` turns the campaigns the orchestrator passed into emails — each row's own
+email then its recorded `Result.abTestVariant`, deduplicated by email id (first, newest row
+wins, see below) — counting as unattributable any whose row records no `portalId`, another portal, or a
+non-canonical id; those are never sent upstream. A `Result` that fails to decode at all — a
+type error included, which would otherwise leave the fields decoded before it — is treated as
+recording no portal; if it is still a JSON object with a non-null `abTestVariant`, that variant is
+counted unattributable alongside the row's own email rather than vanishing. Soft-deleted rows are read and marked `Deleted`; an email on both a deleted and a live row is
+owned by the live one. One `GetEmailCounters` per email through an
+`errgroup` limited to `hubspotMonitorConcurrency` (2; a throttled portal fails the read).
+A 401/403 on token-info or statistics is tagged `ErrConnectionNotUsable` through
+`res.systemScoped` (400 own token, 500 LF fallback token), as SearchEmails/SearchCampaigns do.
+`AsOf` is the client clock (`hubspot.WithClock`/`Client.Now`) at the LAST upstream response.
+Attribution is decided BEFORE de-duplication and only attributable emails are de-duplicated,
+keyed portal+id: an id is unique only within its portal, so a foreign-portal or malformed row
+with the same number must neither suppress an attributable row nor escape the unattributable
+count. `ErrNoSentEmailInWindow` is counted
+(`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.

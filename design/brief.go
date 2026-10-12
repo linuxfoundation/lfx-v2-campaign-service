@@ -411,7 +411,7 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 // indistinguishable from a campaign that really has none, and the two mean opposite things
 // to an operator deciding whether to intervene.
 var CampaignSettingsField = Type("campaign-settings-field", func() {
-	Attribute("field", String, "The setting's name in this service's own stable vocabulary rather than the platform's field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign's config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict, because nothing this service records expresses them. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config's channel IS persisted in the campaign's config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.", func() { Example("budget_amount") })
+	Attribute("field", String, "The setting's name in this service's own stable vocabulary rather than the platform's field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign's config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service's caller vocabulary onto Google's OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service's own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google's `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config's channel IS persisted in the campaign's config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight dates, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (none of their create paths records a strategy); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.", func() { Example("budget_amount") })
 	Attribute("recorded", String, "What the campaign row records — what this dispatch ASKED FOR. Absent when the row records nothing for this field.", func() { Example("500.00") })
 	Attribute("upstream", String, "What the platform currently holds, read live. Absent when the platform did not return the field — never a zero standing in for one.", func() { Example("750.00") })
 	Attribute("comparison", String, "The verdict. `match` and `diverged` both require BOTH sides to have been read; `unknown` means the comparison could not be made and is deliberately NOT folded into `match`.", settingsComparisonEnum)
@@ -637,6 +637,157 @@ var GoogleAdsAudience = Type("google-ads-audience", func() {
 	// mistake easy to reach.
 	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across all dimensions. Each dimension independently covers the same traffic, so summing impressions across dimensions triple-counts it — total within one dimension only.", func() { Example(18) })
 	Required("window", "buckets", "bucket_count")
+})
+
+// MetaAdsAudienceBucket is one Meta Insights breakdown segment's counters.
+//
+// A Meta-named type rather than GoogleAdsAudienceBucket, because the Google type does not fit
+// unchanged: Meta's age and gender arrive as ONE combined breakdown (each segment carries both
+// values), and placement carries two values (publisher_platform and platform_position). Folding
+// either into Google's single `value` would mean inventing a joined-string vocabulary a caller
+// then has to split. The dimension values are named attributes instead, set only for the
+// dimension that carries them.
+var MetaAdsAudienceBucket = Type("meta-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which breakdown this bucket belongs to: age_gender (Meta's combined age,gender breakdown) or placement (publisher_platform,platform_position)", func() { Enum("age_gender", "placement") })
+	Attribute("age", String, "Meta's age bucket, verbatim (e.g. 25-34, 65+, Unknown). Present only on age_gender buckets.", func() { Example("25-34") })
+	Attribute("gender", String, "Meta's gender bucket, verbatim (male, female, unknown). Present only on age_gender buckets.", func() { Example("female") })
+	Attribute("publisher_platform", String, "Meta's publisher platform, verbatim (e.g. facebook, instagram, audience_network, messenger). Present only on placement buckets.", func() { Example("instagram") })
+	Attribute("platform_position", String, "Meta's placement within the publisher platform, verbatim (e.g. feed, instagram_stories). Present only on placement buckets.", func() { Example("feed") })
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of the ad account's native currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples, one per dimension. Without them Goa composes the object from the
+	// attribute examples above and publishes an impossible bucket carrying age, gender AND
+	// placement values at once; each real bucket carries only its own dimension's fields.
+	Example("age_gender bucket", metaAudienceAgeGenderExample)
+	Example("placement bucket", metaAudiencePlacementExample)
+})
+
+// metaAudienceAgeGenderExample / metaAudiencePlacementExample are the two bucket shapes, shared by
+// the bucket type's examples and the envelope's so the two cannot disagree.
+var metaAudienceAgeGenderExample = map[string]any{
+	"dimension": "age_gender", "age": "25-34", "gender": "female",
+	"impressions": 12840, "clicks": 742, "cost_micros": 3120000, "ctr": 0.0578,
+}
+
+var metaAudiencePlacementExample = map[string]any{
+	"dimension": "placement", "publisher_platform": "instagram", "platform_position": "feed",
+	"impressions": 9100, "clicks": 182, "cost_micros": 1450000, "ctr": 0.02,
+}
+
+// MetaAdsAudience is the project-scoped Meta demographic/placement read. Its envelope fields are
+// the Google audience read's (window, buckets, bucket_count) plus account_currency, which Meta
+// reports on every Insights row and Google's read does not carry.
+//
+// There is deliberately NO conversions field. Meta's Insights edge exposes no scalar
+// conversions metric: conversions arrive inside the `actions` array as {action_type, value}
+// pairs, and reducing that to one number means choosing which action types count for this
+// advertiser — the same reason the Meta campaign metrics read leaves conversions absent rather
+// than reporting a misleading 0.
+var MetaAdsAudience = Type("meta-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover", metricsWindowEnum)
+	// The PROPERTY needs its own example too: left to Goa, the array example repeats the bucket
+	// type's single example (three identical placement buckets), which no response can contain —
+	// rows are merged per segment, and age_gender buckets precede placement ones.
+	Attribute("buckets", ArrayOf(MetaAdsAudienceBucket), "Every bucket across both breakdowns, discriminated by `dimension`. Ordered by dimension (age_gender, then placement) then impressions descending.", func() {
+		Example([]map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample})
+	})
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across both dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions double-counts it — total within one dimension only.", func() { Example(24) })
+	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as Meta reports it. ABSENT when no bucket was returned.", func() {
+		Pattern("^[A-Z]{3}$")
+		Example("USD")
+	})
+	Required("window", "buckets", "bucket_count")
+	// Type-level so bucket_count equals len(buckets) — attribute examples alone published a
+	// two-item array beside bucket_count 24.
+	Example(map[string]any{
+		"window":           "last_30_days",
+		"buckets":          []map[string]any{metaAudienceAgeGenderExample, metaAudiencePlacementExample},
+		"bucket_count":     2,
+		"account_currency": "USD",
+	})
+})
+
+// twitterAudienceWindowEnum is the subset of metricsWindowEnum the X audience read serves: the
+// three window NAMES the X campaign metrics read serves (twitterMetricsWindow). The names match;
+// the instants do not on a non-UTC account — the audience read takes the days on the account's
+// calendar, the metrics read as UTC days. Longer windows are refused by the decoder here rather
+// than reaching a runtime 400 the design did not declare.
+func twitterAudienceWindowEnum() {
+	Enum("today", "yesterday", "last_7_days")
+}
+
+// TwitterAdsAudienceBucket is one X Ads stats segment's counters, summed across the project's
+// own campaigns.
+//
+// An X-named type rather than GoogleAdsAudienceBucket: X's dimensions (AGE, GENDER, PLATFORMS
+// segmentations) are not Google's, its values are X's own segment names rather than Google enum
+// literals, and X reports no scalar conversions metric. Unlike Meta, each X segmentation carries
+// ONE value, so a single `value` fits without inventing a joined vocabulary.
+var TwitterAdsAudienceBucket = Type("twitter-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which segmentation this bucket belongs to: age (X segmentation_type AGE), gender (GENDER) or platform (PLATFORMS)", func() { Enum("age", "gender", "platform") })
+	Attribute("value", String, "X's segment name for this bucket, verbatim (for example an age range, a gender or a device platform). A value outside a conservative charset fails the read rather than being returned.", func() {
+		Pattern(`^[A-Za-z0-9](?:[A-Za-z0-9 _+.\-]{0,62}[A-Za-z0-9+])?$`)
+		Example("iOS")
+	})
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Billed charge over the window (X's billed_charge_local_micro) in micro-units of the ad account's currency (see account_currency). This service performs no FX conversion.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions after summing across campaigns, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "value", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples so the published bucket is one a response can contain: the attribute
+	// examples alone compose a platform value under whatever dimension Goa picks.
+	Example("age bucket", twitterAudienceAgeExample)
+	Example("platform bucket", twitterAudiencePlatformExample)
+})
+
+// twitterAudienceAgeExample / twitterAudienceGenderExample / twitterAudiencePlatformExample are
+// possible bucket shapes (ctr = clicks/impressions), shared by the bucket type's examples and the
+// envelope's so the two cannot disagree. Each dimension totals the same traffic: 9000 impressions
+// and 270 clicks in every one.
+var (
+	twitterAudienceAgeExample = map[string]any{
+		"dimension": "age", "value": "25-34",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	twitterAudienceGenderExample = map[string]any{
+		"dimension": "gender", "value": "Female",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	twitterAudiencePlatformExample = map[string]any{
+		"dimension": "platform", "value": "iOS",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+)
+
+// TwitterAdsAudience is the project-scoped X demographic/platform read: the Google audience
+// read's envelope (window, buckets, bucket_count) plus account_currency, read from the ad
+// account itself because X's stats carry no currency.
+//
+// There is deliberately NO conversions field: X splits conversions across per-event-type metric
+// objects under metric groups this read does not request (see TwitterDispatcher.ReadMetrics).
+var TwitterAdsAudience = Type("twitter-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover, as days on the ad ACCOUNT's calendar (its timezone) — not the UTC days the X campaign metrics read uses for the same window name", twitterAudienceWindowEnum)
+	Attribute("buckets", ArrayOf(TwitterAdsAudienceBucket), "Every bucket across the three segmentations, discriminated by `dimension`. Ordered by dimension (age, gender, platform), then impressions descending, then value.", func() {
+		Example([]map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample})
+	})
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.", func() { Example(3) })
+	Attribute("account_currency", String, "ISO 4217 currency of the ad account that cost_micros is denominated in, as X reports it on the account. ABSENT when X was not contacted (the project has no X campaigns of its own) or the account carries no currency.", func() {
+		Pattern("^[A-Z]{3}$")
+		Example("USD")
+	})
+	Attribute("all_counters_null", Boolean, "True when, for at least one dimension, X returned segment rows whose every counter was null or absent. The zeros in that dimension are then NOT a measurement: it is either no delivery in the window or X's reported defect where segmented stats jobs succeed with all-null metrics, and the two cannot be told apart.", func() { Example(false) })
+	Required("window", "buckets", "bucket_count", "all_counters_null")
+	// Type-level so bucket_count equals len(buckets) and the dimensions appear in order.
+	Example(map[string]any{
+		"window":            "last_7_days",
+		"all_counters_null": false,
+		"buckets":           []map[string]any{twitterAudienceAgeExample, twitterAudienceGenderExample, twitterAudiencePlatformExample},
+		"bucket_count":      3,
+		"account_currency":  "USD",
+	})
 })
 
 // HubSpotCampaign is one LF HubSpot marketing campaign.
@@ -879,6 +1030,161 @@ var NegativeKeywords = Type("negative-keywords", func() {
 	Attribute("results", ArrayOf(NegativeKeywordResult), "Exactly one entry per requested negative keyword, in request order, so results[i] answers negative_keywords[i].")
 	Attribute("applied_count", Int, "How many requested negative keywords are now on the campaign: results whose outcome is APPLIED or ALREADY_PRESENT.", func() { Example(2) })
 	Required("campaign_id", "results", "applied_count")
+	// A type-level example, because Goa otherwise fills `results` and `applied_count`
+	// independently and can publish a count that disagrees with the list beside it. Two
+	// results, both now on the campaign, so applied_count is 2.
+	Example(map[string]any{
+		"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"results": []map[string]any{
+			{"text": "free download", "match_type": "Phrase", "outcome": "APPLIED", "negative_keyword_id": "8475612390"},
+			{"text": "torrent", "match_type": "Exact", "outcome": "ALREADY_PRESENT"},
+		},
+		"applied_count": 2,
+	})
+})
+
+// ─── Keyword TARGETING on Reddit and X (LFXV2-2665) ───
+//
+// On Reddit and X a keyword is not a criterion with its own status, as it is on Google Ads and
+// Microsoft Advertising: it is one entry in the TARGETING of the ad group (Reddit) or line item
+// (X). It cannot be paused, only taken out of the targeting. So these are their own methods
+// rather than new kinds on apply-keyword-actions, whose ids are digits-only (X ids are base-36,
+// and a Reddit keyword has no id at all — it is identified by its text) and whose PAUSE has no
+// meaning here. See docs/knowledge/architecture/keyword-targeting-reddit-x.md.
+
+// KeywordTargetingEntry is one keyword the ad group / line item currently targets.
+var KeywordTargetingEntry = Type("keyword-targeting-entry", func() {
+	Attribute("keyword", String, "The keyword as the platform reports it.", func() { Example("kubernetes") })
+	Attribute("criterion_id", String, "X only: the targeting criterion id that holds this keyword — what remove-keyword-targeting takes for X. Absent on Reddit, where a keyword has no id of its own.", func() { Example("2kzxf") })
+	Attribute("match_type", String, "X only: the keyword targeting type X reports (BROAD_KEYWORD, PHRASE_KEYWORD, EXACT_KEYWORD or UNORDERED_KEYWORD). Absent on Reddit.", func() { Example("BROAD_KEYWORD") })
+	Required("keyword")
+})
+
+// KeywordTargeting is the current keyword targeting of a campaign's ONE ad group or line item.
+var KeywordTargeting = Type("keyword-targeting", func() {
+	Attribute("campaign_id", String, "The campaign whose targeting was read", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform", String, "The campaign's platform", func() {
+		Enum("reddit-ads", "twitter-ads")
+		Example("reddit-ads")
+	})
+	Attribute("targeting_entity_id", String, "The ad group (Reddit) or line item (X) this service created for the campaign, whose targeting this is.", func() { Example("t5_ag") })
+	Attribute("keywords", ArrayOf(KeywordTargetingEntry), "The POSITIVE keywords the ad group / line item targets now, in the order the platform reported them. Empty when it targets none (every X campaign this service creates targets none: only an operator can add them, in X Ads Manager). Negative / excluded keywords are not listed.")
+	Attribute("revision", String, "Reddit only: a fingerprint of the ad group's WHOLE targeting as read. remove-keyword-targeting requires it back and refuses (409) when the targeting has changed since, so a removal is never applied to a targeting the caller did not see. Absent on X.", func() { Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c") })
+	Required("campaign_id", "platform", "targeting_entity_id", "keywords")
+})
+
+// KeywordTargetingRemovalInput names one keyword to take out of the targeting. Exactly one field
+// applies per platform; the adapter refuses an item that names the other.
+var KeywordTargetingRemovalInput = Type("keyword-targeting-removal-input", func() {
+	// Never sent upstream: on Reddit the keyword is only COMPARED with the targeting the service
+	// read, and what is written back is that read list minus the matches. So the bound is a
+	// sanity cap, not a platform limit.
+	Attribute("keyword", String, "Reddit: the keyword to remove, exactly as get-keyword-targeting reported it. Compared exactly — case and any surrounding whitespace included, nothing trimmed — and echoed back unchanged; an all-whitespace keyword is refused.", func() {
+		MinLength(1)
+		MaxLength(200)
+		Example("kubernetes")
+	})
+	// Base-36 alphanumerics, the shape of every X entity id: interpolated into the DELETE path,
+	// so the Pattern is the transport's half of the path-injection guard the client repeats.
+	Attribute("criterion_id", String, "X: the targeting criterion id to delete, as get-keyword-targeting reported it.", func() {
+		Pattern(`^[A-Za-z0-9]+$`)
+		MaxLength(32)
+		Example("2kzxf")
+	})
+})
+
+// KeywordTargetingRemovalResult is one removal's outcome.
+var KeywordTargetingRemovalResult = Type("keyword-targeting-removal-result", func() {
+	Attribute("keyword", String, "Reddit: the keyword this result answers, as requested", func() { Example("kubernetes") })
+	Attribute("criterion_id", String, "X: the targeting criterion this result answers, as requested", func() { Example("2kzxf") })
+	Attribute("outcome", String, "APPLIED — the keyword is no longer targeted; FAILED — definitely not removed (see error_code); UNCONFIRMED — may have been removed, read the targeting again before retrying.", keywordItemOutcomeEnum)
+	Attribute("error_code", String, "For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was never sent), NOT_FOUND (X holds no such live criterion any more), WOULD_EMPTY (X only: not sent, because a fresh read just before it showed it is now the last keyword targeted), or REJECTED (the platform refused it). The platform's own text is never returned.", func() { Example("NOT_SENT") })
+	Required("outcome")
+})
+
+// KeywordTargetingRemovals is the outcome of a remove-keyword-targeting request.
+var KeywordTargetingRemovals = Type("keyword-targeting-removals", func() {
+	Attribute("campaign_id", String, "The campaign whose targeting was changed", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("results", ArrayOf(KeywordTargetingRemovalResult), "Exactly one entry per requested removal, in request order, so results[i] answers keywords[i]. Reddit: one write carries every removal, so all entries share one outcome. X: one DELETE per criterion, each with its own outcome; the targeting is re-read before each, and an item that would now remove the last keyword is not sent (WOULD_EMPTY).")
+	Attribute("applied_count", Int, "How many results are APPLIED.", func() { Example(2) })
+	Required("campaign_id", "results", "applied_count")
+	// A type-level example, for the reason NegativeKeywords has one: two APPLIED results, so
+	// applied_count is 2. Reddit-shaped (keyword, no criterion_id), as one request is one
+	// platform's.
+	Example(map[string]any{
+		"campaign_id": "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"results": []map[string]any{
+			{"keyword": "kubernetes", "outcome": "APPLIED"},
+			{"keyword": "service mesh", "outcome": "APPLIED"},
+		},
+		"applied_count": 2,
+	})
+})
+
+// MetaAdSet is one ad set under a Meta campaign, read live (LFXV2-2665). Never persisted.
+var MetaAdSet = Type("meta-ad-set", func() {
+	Attribute("id", String, "The Meta ad set id", func() { Example("120210000000000888") })
+	Attribute("listed", Boolean, "false for an ad set that DELIVERED in the window but that Meta's ad-set listing did not return (typically deleted or archived since): its counters are this campaign's spend, so they are reported, but every descriptive field is absent.", func() { Example(true) })
+	Attribute("name", String, "The ad set's name as Meta holds it. Absent when not reported.", func() { Example("KubeCon NA — Leads — US") })
+	Attribute("status", String, "The ad set's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED, ARCHIVED). Absent when not reported.", func() { Example("PAUSED") })
+	Attribute("effective_status", String, "The ad set's EFFECTIVE status as Meta reports it (e.g. CAMPAIGN_PAUSED when the ad set is ACTIVE but its campaign is not). Reported verbatim; Meta grows this set without notice. Absent when not reported.", func() { Example("CAMPAIGN_PAUSED") })
+	Attribute("bid_strategy", String, "The ad set's bid_strategy as Meta reports it. Absent when not reported.", func() { Example("LOWEST_COST_WITHOUT_CAP") })
+	Attribute("budget_type", String, "Which budget the ad set holds. ABSENT when it holds none of its own — Campaign Budget Optimization keeps the budget on the campaign, shared across its ad sets.", func() {
+		Enum("daily", "lifetime")
+		Example("daily")
+	})
+	Attribute("budget_amount", String, "The ad set's budget in WHOLE units of `currency`, two decimals, converted from the minor units Meta reports with the account currency's own offset (100 for most currencies, 1 for zero-decimal ones such as JPY). ABSENT when there is no ad-set budget, or when the currency's minor-unit scale is not one this service knows — never rendered at a guessed scale.", func() { Example("50.00") })
+	Attribute("impressions", Int64, "Impressions over the window. 0 when Meta reported no delivery for this ad set.", func() { Example(1840) })
+	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(42) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of `currency`.", func() { Example(12340000) })
+	Attribute("ctr", Float64, "clicks/impressions, 0 when impressions is 0.", func() { Example(0.0228) })
+	Attribute("recorded", Boolean, "true for the ONE ad set this service created for the campaign (the id the campaign row recorded at dispatch). Always false on an adopted campaign, which records no ad set.", func() { Example(true) })
+	Required("id", "listed", "impressions", "clicks", "cost_micros", "ctr", "recorded")
+})
+
+// MetaAdSets is the live ad-set read for one Meta campaign.
+var MetaAdSets = Type("meta-ad-sets", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform_campaign_id", String, "The Meta campaign id the ad sets were read under.", func() { Example("120210000000000555") })
+	Attribute("window", String, "The reporting window the counters cover.", metricsWindowEnum)
+	Attribute("currency", String, "The ad account's ISO 4217 currency; `budget_amount` and `cost_micros` are denominated in it.", func() { Example("USD") })
+	Attribute("read_at", String, "When Meta was read (RFC3339, UTC).", func() { Format(FormatDateTime) })
+	Attribute("ad_sets", ArrayOf(MetaAdSet), "Every ad set the listing returned, in Meta's order, then any unlisted ad set that delivered in the window, by id. Empty when the campaign has none.")
+	Attribute("ad_set_count", Int, "len(ad_sets).", func() { Example(1) })
+	Required("campaign_id", "platform_campaign_id", "window", "currency", "read_at", "ad_sets", "ad_set_count")
+	Example(map[string]any{
+		"campaign_id":          "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"platform_campaign_id": "120210000000000555",
+		"window":               "last_30_days",
+		"currency":             "USD",
+		"read_at":              "2026-10-08T09:30:00Z",
+		"ad_sets": []map[string]any{
+			{
+				"id": "120210000000000888", "listed": true, "name": "KubeCon NA — Leads — US",
+				"status": "ACTIVE", "effective_status": "ACTIVE", "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+				"budget_type": "daily", "budget_amount": "50.00",
+				"impressions": 1840, "clicks": 42, "cost_micros": 12340000, "ctr": 0.0228, "recorded": true,
+			},
+		},
+		"ad_set_count": 1,
+	})
+})
+
+// MetaAdSetStatusChange is the outcome of toggle-meta-ad-set-status.
+var MetaAdSetStatusChange = Type("meta-ad-set-status-change", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("ad_set_id", String, "The ad set whose status was addressed", func() { Example("120210000000000888") })
+	Attribute("requested_status", String, "The status requested", func() {
+		Enum("ACTIVE", "PAUSED")
+		Example("PAUSED")
+	})
+	Attribute("previous_status", String, "The configured status the pre-write read observed.", func() { Example("ACTIVE") })
+	Attribute("outcome", String, "APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read showed the ad set already at the requested status, so NOTHING WAS SENT. (A write whose outcome is unknown is never a 200: it is a 503 saying the change is unconfirmed.)", func() {
+		Enum("APPLIED", "ALREADY_IN_STATE")
+		Example("APPLIED")
+	})
+	Attribute("etag", String, "ETag header value: the campaign row's version, UNCHANGED — an ad set's status is not stored on the campaign row, so this write does not bump it.")
+	Required("campaign_id", "ad_set_id", "requested_status", "outcome")
 })
 
 // EmailCopySection is one ordered block of AI-generated email copy. Replaces a single flat
@@ -1351,7 +1657,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("adopt-campaign", func() {
-		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Returns 404 when the platform holds no such campaign, 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired. An adopted campaign behaves like any other campaign row on every per-campaign endpoint - the metrics read, the settings readback, delete and pause all work on it; activation is the one exception, and is refused because adoption does not verify the targeting the activate guard requires.")
+		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit and X only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit and X, where the budget is the campaign's own.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only, matching create-campaigns: project_id is the exact-match key for
@@ -1431,7 +1737,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("get-campaign-settings", func() {
-		Description("Read the campaign's CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means \"what this dispatch asked for\", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign's configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: a campaign whose platform has no settings-readback dispatcher wired returns 400 — Google Ads is the only one today.")
+		Description("Read the campaign's CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means \"what this dispatch asked for\", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign's configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit and X (Twitter) Ads are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft carries no flight dates, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -1911,6 +2217,157 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()
+		})
+	})
+
+	Method("get-keyword-targeting", func() {
+		Description("Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the positive keywords " +
+			"on the ONE ad group (Reddit) or line item (X) this service created for it, read live from the " +
+			"platform and never persisted. On these two platforms a keyword is an entry in the targeting, not " +
+			"a criterion with its own status, so it cannot be paused — only removed (remove-keyword-targeting). " +
+			"Reddit: the keywords in the ad group's targeting, which the create path sets from redditConfig.keywords; " +
+			"the response also carries `revision`, a fingerprint of the ad group's whole targeting, which a removal " +
+			"must send back. X: the line item's keyword targeting criteria (BROAD/PHRASE/EXACT/UNORDERED_KEYWORD, " +
+			"not negated). The X create path sets NO targeting criteria, so a campaign this service created reports " +
+			"an empty list until an operator adds keywords in X Ads Manager. " +
+			"Before the platform is read, the ad group / line item must be one the row records, and the campaign's " +
+			"ad account must match the project's connection; the platform must then report it under THIS campaign. " +
+			"Any other platform is **400**. **409** when the campaign is unprovisioned, records no ad group / line " +
+			"item, belongs to a different ad account, the ad group / line item is gone or reports another campaign, " +
+			"or its targeting could not be read as a keyword list. **503** when the platform could not be read.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		Result(KeywordTargeting)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("remove-keyword-targeting", func() {
+		Description("Remove keywords from the keyword TARGETING of a Reddit or X campaign (LFXV2-2665). A MUTATION " +
+			"on a live paid campaign, guarded like the keyword actions: the batch, the campaign's provisioning, its " +
+			"recorded ad account (a row that records none is refused, never assumed) and the account's match with " +
+			"the project's connection are all checked before the platform is contacted; the ad group / line item is " +
+			"then read and must report THIS campaign, and every named keyword must be in its current targeting, " +
+			"before anything is changed. It persists nothing, so it takes no If-Match. " +
+			"REFUSED (409) WHEN IT WOULD REMOVE EVERY KEYWORD: with no keyword left the ad group / line item stops " +
+			"being keyword-targeted at all and serves to its other targeting alone — a widening, not a reduction. " +
+			"Remove the last keyword in the platform's own UI if that is intended. " +
+			"REDDIT: items name `keyword`. Reddit has no per-keyword write — the ad group's targeting is replaced as " +
+			"a whole — so the service re-reads the targeting, refuses (409) unless its fingerprint still equals the " +
+			"`revision` the caller sends (from get-keyword-targeting), and writes back exactly what it read with the " +
+			"named keywords taken out, then reads it again to confirm. All items share one outcome. Reddit writes are " +
+			"OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED is \"true\" (answered 400 like an unsupported " +
+			"platform), because the write replaces the whole targeting object and has not yet been exercised " +
+			"against a live ad account. " +
+			"X: items name `criterion_id`; each is one DELETE of that targeting criterion, in request order, with its " +
+			"own outcome; `revision` must be absent. The targeting is re-read before EACH delete, and an item whose " +
+			"criterion has meanwhile gone (NOT_FOUND) or that is now the last keyword (WOULD_EMPTY) is not sent — a " +
+			"concurrent removal can no longer combine with this one to empty the line item, though X offers no " +
+			"conditional delete, so the moment between that re-read and the DELETE remains. " +
+			"Removing a keyword cannot be undone here: re-add it in the platform. " +
+			"**400** for a malformed batch (empty or over 20, an item naming the wrong field for the platform, the " +
+			"same keyword twice, a keyword not in the current targeting, a missing Reddit revision) or an " +
+			"unsupported platform. **409** as for the read, plus a changed Reddit targeting and the every-keyword " +
+			"refusal. **503** only when no item was answered. Its MESSAGE separates a DEFINITE failure (nothing was " +
+			"removed — retry) from an UNCONFIRMED one (read the targeting again before retrying).")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// One explicit example, for the reason apply-keyword-actions has one: Goa's fabricated
+			// sample repeats the element example, which this endpoint refuses as a duplicate.
+			Attribute("keywords", ArrayOf(KeywordTargetingRemovalInput), "The keywords to remove: `keyword` items on Reddit, `criterion_id` items on X.", func() {
+				MinLength(1)
+				MaxLength(20)
+				Example([]map[string]any{
+					{"keyword": "kubernetes"},
+				})
+			})
+			Attribute("revision", String, "Reddit: the revision get-keyword-targeting returned. Required on Reddit; must be absent on X.", func() {
+				MaxLength(128)
+				Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c")
+			})
+			Required("project_id", "brief_id", "campaign_id", "keywords")
+		})
+		Result(KeywordTargetingRemovals)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/removals")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("list-meta-ad-sets", func() {
+		Description("Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name, configured and effective status, bid strategy and own budget, with its impressions, clicks, spend and CTR over the window. A pure read — the platform is only read and nothing is persisted. " +
+			"Upstream: GET /{campaign_id}/adsets (bounded cursor paging), GET /act_{id}?fields=currency, and ONE level=adset Insights read on the ad account filtered to this campaign (bounded cursor paging). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad set must report THIS campaign and the connection's ad account, every Insights row must name this campaign and the account's currency, and an explicit null counter is refused while an absent one is 0. `recorded` marks the ad set this service created. " +
+			"Before anything is read the campaign must record which ad account it was created under and that account must be the connection's (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400. " +
+			"**404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta's 100/33 on the campaign (\"does not exist, cannot be loaded due to missing permissions, or does not support this operation\") cannot tell a deleted campaign from one this token cannot load, so it is a 503 like every other unverifiable upstream answer — all or nothing, never a partial list.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id", "brief_id", "campaign_id")
+		})
+		Result(MetaAdSets)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets")
+			Header("bearer_token:Authorization")
+			Param("window")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("toggle-meta-ad-set-status", func() {
+		Description("Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row's ETag (428 when missing, 412 when stale) and the campaign's write lock is held for the call. " +
+			"`ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection's (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set's targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign's ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. " +
+			"When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. " +
+			"Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign's write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set's status WAS changed on Meta. " +
+			"The ad set's status is NOT stored on the campaign row, so the returned ETag is the row's UNCHANGED version (as when a created_degraded campaign is paused). NOTE: toggle-campaign-status cascades an ACTIVATE to the recorded ad set, so a campaign ACTIVATE re-activates the recorded ad set; a deliberate ad-set pause does not survive a campaign pause/resume. Any platform but Meta is 400.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// Interpolated into the Graph path, so the Pattern is the transport's half of the
+			// path-injection guard meta.ValidateAdSetID repeats (TestMetaAdSetIDPattern_MatchesPlatformValidator).
+			Attribute("ad_set_id", String, "The Meta ad set id: digits, no leading zero, at most 32.", func() {
+				Pattern(`^[1-9][0-9]*$`)
+				MaxLength(32)
+				Example("120210000000000888")
+			})
+			ifMatchAttr()
+			Attribute("status", String, "Desired ad-set status, in Meta's vocabulary", func() { Enum("ACTIVE", "PAUSED") })
+			Required("project_id", "brief_id", "campaign_id", "ad_set_id", "status")
+		})
+		Result(MetaAdSetStatusChange)
+		commonBriefErrors()
+		Error("PreconditionFailed", PreconditionFailedError, "ETag mismatch")
+		Error("PreconditionRequired", PreconditionRequiredError, "If-Match header required")
+		HTTP(func() {
+			POST("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status")
+			Header("bearer_token:Authorization")
+			Header("if_match:If-Match")
+			Response(StatusOK, func() { Header("etag:ETag") })
+			briefErrorResponses()
+			Response("PreconditionFailed", StatusPreconditionFailed)
+			Response("PreconditionRequired", StatusPreconditionRequired)
 		})
 	})
 

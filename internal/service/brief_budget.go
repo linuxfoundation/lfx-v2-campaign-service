@@ -170,7 +170,10 @@ func (s *BriefService) UpdateCampaignBudget(ctx context.Context, p *briefs.Updat
 			// never contacted, and no retry adds the capability.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "budget changes are not supported for this campaign's platform"}
 		case errors.Is(werr, ErrCampaignNotProvisioned):
-			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, so there is no upstream budget to change"}
+			// From the ADAPTER, unlike the pre-check above: the row has a platform campaign id, but
+			// not the child entity the platform keeps the budget on — on Meta the ad set, which an
+			// ADOPTED campaign never records. So the message must not claim the id is missing.
+			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — this service has no record of the entity its budget lives on (a Meta ad set), either because it was never provisioned or because the campaign was adopted; change the budget in the ad platform's own UI"}
 		case errors.Is(werr, ErrBudgetShared):
 			// The single most consequential refusal this endpoint has, and the platform was
 			// NOT changed: it is refused from the adapter's read BEFORE the mutate, or (on

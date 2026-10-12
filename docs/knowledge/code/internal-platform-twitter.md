@@ -581,18 +581,28 @@ screened by nothing while the scheme-ful `https://bob:pw@events.example` beside 
 refused. The bytes are published either way; whether X renders the run as a link does not
 change what goes out in the tweet. The COLON is the entire discriminator and cannot be
 dropped — without it the pattern matches `bob@events.example`, an ordinary email address,
-and a screen that refuses those is worse than the hole it closes.
+and a screen that refuses those is worse than the hole it closes. The username before the
+colon is RFC 3986's userinfo alphabet, sub-delims `!$&'()*+,;=` included, kept in step with
+`pkg/redact`'s snapshot pattern: a narrower class let `admin!:pw@events.example` through both.
+Its first character must be unreserved, so `Keynote (14:00@main.stage)` starts at the digit;
+a username made only of sub-delims (`!:pw@host`), or a blank one (`:pw@host`), is a second
+alternative held to a colon right after it. The clock exemption is `redact.UsernameIsClock` — one copy, shared with the snapshot
+redactor — and is exactly: an all-digit pair of at most two digits a side (`14:00`, `3:4`), so
+`2024:1234@ops.example` is refused, OR any sub-delim except `+` (`Mon,9:30`, `Session;9:30`) followed by a real clock
+— hour 1–2 digits ≤ 23, password exactly two digits ≤ 59 (`Mon,9:30@main.stage`). A `+` prefix
+never qualifies, so `alice+9:30@ops.example` and `alice+2024:1234@ops.example` are refused.
 
 The colon is not QUITE the whole discriminator, and the round that shipped believing it
 was put a false REFUSAL into the pre-create path. `keynote 14:00@events.example` and
 `session 9:30@main.stage` are the RFC 3986 userinfo production byte for byte, and an
 events platform writes that sentence every day. `userinfoRunIsClockShaped` skips a run
-whose colon has ASCII digits on BOTH sides — a clock, a score, a ratio. Both sides,
-because the narrower "numeric username" spelling gives up `9:hunter2@events.example` for
-nothing, and because a digits-only password behind a digits-only username is a shape
-nothing here produces and the scheme-ful screen still catches the moment the operator
-writes the `https://`. The negative rows that missed this all happened to put punctuation
-between the clock and the host; hard against the host is the shape real copy has.
+only when `redact.UsernameIsClock` calls its pair a clock (the exact rule is in the paragraph
+above): an all-digit pair of at most two digits a side — a clock, a score, a ratio — or a real
+clock behind any sub-delim except `+`. The password must be digits too, because the
+narrower "numeric username" spelling gives up `9:hunter2@events.example` for nothing; a long
+numeric pair (`2024:1234@…`) is a user ID and PIN and is refused. The negative rows that
+missed this all happened to put punctuation between the clock and the host; hard against the
+host is the shape real copy has.
 
 U+FE0E is the one variation selector `emojiClusterLen` must NOT absorb. It requests TEXT
 presentation — it is the codepoint that says "do not render the one before me as an
@@ -893,7 +903,9 @@ The platform half of `TwitterDispatcher.WriteBudget` (see
   never state on the shared client), and a definite failure AFTER a retried 429 is returned as
   `retriedUnconfirmedError` (Unconfirmed), mirroring the Microsoft client's PR #255 fix — a
   pre-send dial failure on the retry included, since it proves only that the RETRY never left. The 2xx
-  echo is checked: another campaign id or another amount is an UNCONFIRMED `transportError`.
+  echo is checked: another campaign id, another amount, or a PRESENT `null` amount (X reporting no
+  daily budget right after one was written) is an UNCONFIRMED `transportError`; an echo that
+  omits the field is accepted, the 2xx being the confirmation.
 - `BudgetMicros` shares the create path's bound (`maxBudgetUsd`) and rounding
   (`toMicroCurrency`); its refusals wrap `ErrBudgetAmountInvalid` with a client-safe sentence
   (`BudgetAmountReason`). X publishes no per-currency minimum or maximum for these fields — only
@@ -909,7 +921,10 @@ announcement makes `CAMPAIGN` the default and the two models exclusive (under `L
 daily budget must be on the line item and absent from the campaign); the current reference page
 instead lists `LINE_ITEM` as the only value and default. The dispatcher therefore writes only on a
 reported `CAMPAIGN` and refuses a campaign reporting `LINE_ITEM` or omitting the field (409)
-before any write.
+before any write. `CreateCampaign` deliberately keeps omitting `budget_optimization` rather than sending
+`CAMPAIGN`: the current reference lists `LINE_ITEM` as the only POST value, so an explicit
+`CAMPAIGN` is undocumented and could fail every create. `TestCreateSendsQueryParams` pins the
+omission; the settings readback likewise compares the budget only on a REPORTED `CAMPAIGN`.
 
 ## Metrics reads
 
@@ -1148,10 +1163,13 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   `days`. GET `stats/accounts/:id/active_entities?entity=CAMPAIGN`, then one POST
   `stats/jobs/accounts/:id` per ≤20 active campaigns (`entity=CAMPAIGN`, `granularity=TOTAL`,
   `placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`), each through the write
-  pacer and never retried on a 429. Before the first POST, `statsJobsFitBudget` compares the
-  context deadline's remaining time (wall-clock `time.Until`) with `jobs × writeDelay +
-  statsJobSubmitMargin` (2s) and returns `ErrStatsJobBudget` — no job created — when it cannot
-  fit, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
+  pacer and never retried on a 429. Before the first POST, `reserveStatsJobSlots` reserves the
+  whole batch's consecutive pacer slots atomically under `writeMu` (so no concurrent writer can
+  interleave and push the batch past its deadline; the context is re-checked under the lock, so a
+  caller cancelled while queued reserves nothing), refusing — nothing reserved, no job created —
+  with `ErrStatsJobBudget` when the last slot (after any backlog already queued) plus
+  `statsJobSubmitMargin` (2s) does not fit the context deadline's remaining time (wall-clock
+  `time.Until`); each POST then waits for its own slot, so a deadline cannot fire mid-loop and strand created jobs in X's concurrent-job slots
   (the dispatcher wraps it as `domain.ErrAccountReportBudgetTooShort`). Returns ONE composite id — the jobs' `id_str`s
   comma-joined — or `NoActiveCampaignsReportID` (`"none"`) when nothing was active, which
   Check answers as a finished empty report without a request. More than
@@ -1242,3 +1260,111 @@ discovered one), and the dispatcher answers the sentinel as `accountIDNotUsable`
 pre-send verdict, not a credential rejection and not the inconclusive default.
 `TestVerifyAccountRejectsAnUnusableAccountIDBeforeAnyRequest` asserts the CALL COUNT, because a
 test that only checked the error would still pass if the request were made and discarded.
+
+## Line-item keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`ListLineItemTargetingCriteria` lists a line item's targeting criteria
+(`targeting_criteria?line_item_ids=…&with_deleted=false&count=1000`, cursor-walked through
+`cursorVerdict` like `findByName`) and is all-or-error: no result set, a criterion without a
+usable id or under another line item, an unusable cursor on a full page, or the page cap is
+`ErrTargetingUnreadable`. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
+`ErrWriteNotSent`, and so is a request `ProbeNotSent` proves never left the process — a DNS or
+connect-time failure, or a context already done at entry — checked before any API
+classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), sends one DELETE with the 429 never retried, maps 404 to
+`ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
+`deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
+targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
+
+`ValidateCampaignID` is the id rule `resolve-twitter-ads-campaign` applies before any lookup:
+the package's `campaignIDRe` (`^[A-Za-z0-9]+$`) and at most 64 characters, untrimmed. Returns
+`ErrInvalidCampaignID`. It contacts nothing.
+
+## Adoption read (`campaign_lookup.go`, LFXV2-2665)
+
+`GetCampaign` is the read `TwitterDispatcher.LookupCampaign` makes to adopt an existing campaign:
+one `GET accounts/:account_id/campaigns/:campaign_id` — the resource the budget read and the toggle
+address — through `request()`, so a 429 is retried (and a declared reset past the wait cap ends the
+read at once) and an exhausted one is an error. `ValidateCampaignID` (alphanumeric, ≤64, no
+padding) runs first and returns `ErrInvalidCampaignID` with no request. `deleted: true` is `(nil, nil)`,
+and so is a 404 — but only once ONE confirming read of the connection's own account
+(`GET accounts/:account_id`, `confirmAccountReadable`) answers 2xx naming that account; any other
+answer to it (404, 401/403, 5xx, throttle, a body naming another account) is an error. The
+confirming read is made only after a campaign 404; `entity_status` `ACTIVE`, `PAUSED` or `DRAFT` is a ref (a draft campaign exists);
+any other status, a missing name, an id echo that differs, an empty `data`, a 401/403, and a body
+`identityjson.Check` refuses or that does not decode are errors. The read is path-scoped; X's
+campaign object is not documented to carry `account_id`, and when a response does carry one it is
+returned for the dispatcher to compare.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings(ctx, campaignID, lineItemID)` (`campaign_settings.go`) reads the campaign
+(name, `entity_status`, `budget_optimization`, the daily and total `*_local_micro` amounts,
+`account_id`) and, when the row recorded one, the line item (`start_time`, `end_time`,
+`bid_strategy`, `campaign_id`; `with_deleted=true`). Both bodies pass `identityjson.Check` over
+the RAW body and a strict id echo. A 404 or deleted campaign is `(nil, nil)`; a 404 or deleted
+line item only leaves `LineItem` nil; a line item of another campaign is
+`ErrLineItemNotInCampaign`; an amount that is not a non-negative integer is an error.
+
+## Audience insights read (`audience.go`, LFXV2-2665)
+
+`GetAudienceInsights(ctx, window, campaignIDs)` reads AGE, GENDER and PLATFORMS segmentations
+over the project's own campaigns. X serves segmentation only through the ASYNCHRONOUS stats-jobs
+API (the synchronous `stats/accounts/:account_id` takes no `segmentation_type`), so one call:
+`GET accounts/:account_id` (timezone required; `currency` optional, ISO 4217 when present; id
+must echo the account; `identityjson.Check` on the raw body) → `reserveStatsJobSlots` → one slotted
+`POST stats/jobs/accounts/:account_id` per segmentation per batch of ≤20 ids (`postStatsJob`,
+shared with the monitor's `createStatsJob`: `entity=CAMPAIGN`, `granularity=TOTAL`,
+`placement=ALL_ON_TWITTER`, `metric_groups=ENGAGEMENT,BILLING`, plus `segmentation_type`) → one
+`GET stats/jobs/…?job_ids=<all>` per poll (first immediate, then every
+`audiencePollInterval`, at most `audienceMaxPolls`) → each results file through
+`downloadStatsFile`. The read WAITS inside the caller's deadline instead of persisting a report
+id: unfinished jobs are `ErrAudienceJobsUnfinished` (503) and are left to expire on X.
+Scope: non-empty, every id `ValidateCampaignID` (`ErrAudienceScopeInvalid`), de-duplicated, at
+most `MaxAudienceCampaigns` (40 — a local bound: two batches, six jobs; `ErrAudienceScopeTooLarge`).
+Window (`AudienceWindowBounds`, exported so the dispatcher's cache can tell whether a result's
+window still names the same instants): the metrics read's window NAMES (today; yesterday; today
+and the six before) but on the ACCOUNT's calendar via `localDayStart`, `[start, end)` — the
+metrics read (`dateRangeForWindow`) uses UTC days, so on a non-UTC account the instants differ; non-whole-hour bounds are
+`ErrReportWindowNotWholeHours`; other windows `ErrUnsupportedWindow`. Trust: `identityjson.Check`
+on every job, status and file body; a status answer naming an unasked or repeated job, a
+FAILED/CANCELLED job or a SUCCESS without url fails; every file entity must be in THAT job's
+batch, once; `segment.segment_name` is required and must match `audienceValueRE` (returned
+verbatim, never echoed); a repeated (campaign, segment) fails; counters are absent/null → 0 (X's
+"no activity"), else exactly one non-negative integer bucket, summed with an int64 overflow
+guard; CTR after summing. Ordered by dimension, impressions desc, value. Tests:
+`audience_test.go` (stateful stub; segmentation params, batching and bound, account-tz windows
+incl. DST and a UTC/local day split, polling bound and deadline, duplicate/case-folded keys at
+every level, null counters, malformed files, 401/403/429/5xx, job defects, budget check).
+`AllCountersNull` is set when a whole dimension (all batches) returned rows with no measured
+counter (`audienceCounter` reports `measured`; a literal 0 counts): X's forum reports segmented
+jobs that succeed with every metric null, and that is indistinguishable from an idle campaign set
+(this package reads X's null as "no activity" — `statsFold`, `firstOrZero` — and X does not
+document idle entities as omitted), so failing closed would 503 every idle project; the flag
+keeps the zeros from passing as a measurement instead. Job POSTs use `reserveStatsJobSlots`
+(shared with the monitor; see above), so a read never starts a batch it cannot finish in its
+budget and no concurrent writer can split the batch. A failure that leaves jobs running on X —
+any failure while creating or awaiting them — is `*AudienceJobsAbandonedError` carrying the job
+ids X confirmed (Unwrap keeps the sentinels); `RunningStatsJobs(ctx, ids)` answers which of them
+X still lists as not finished (one status read, `identityjson`-checked; an answer naming an
+unrequested job or one job twice is an error, so a malformed answer never releases a job; queued,
+processing, unlisted and unrecognised all count as running), and `AudienceJobCount(ids)` is how many jobs a
+read would create — both for the dispatcher's per-account job budget. UNVERIFIED against a live account: the segmented file shape and
+`segment_name` vocabulary.
+
+## Account-keyed write pacer (`pacer.go`, LFXV2-2665)
+
+`AccountPacers` hands out one `writePacer` (mutex + next-write instant) per X ad account (keyed by
+base URL + account id); a client built `WithAccountPacers(reg)` paces and reserves stats-job
+batches (`pace`, `reserveStatsJobSlots`) against its account's pacer, so two projects'
+connections to the shared LF account — or a cache replacement — cannot interleave writes or
+split a batch. A client without a registry, or without an account id (discovery), paces
+privately. The dispatcher owns the registry, so the scope is the PROCESS; replicas do not share
+it, which is why only the pod holding the per-account stats-job lease (`postgres.StatsJobLease`)
+creates stats jobs, with the chart's replica refusal as a first line of defence.
+`createAudienceJob` reports `maybeCreated` for a failed create that may have committed
+(`createOutcomeAmbiguous`, or any unusable 2xx), and `GetAudienceInsights` counts those as
+`AudienceJobsAbandonedError.Unknown` — also when no job was created before — so the dispatcher
+can charge them. Tests: `TestAccountPacers_ClientsForOneAccountShareReservations`,
+`TestGetAudienceInsights_AmbiguousCreatesAreCharged`.

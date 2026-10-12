@@ -118,6 +118,80 @@ type googleAdsStructuredSnippetConfig struct {
 	Values []string `json:"values"`
 }
 
+// googleAdsCallExtensionConfig is one call extension. countryCode is required
+// because Google interprets the number against it — the same number means
+// different things in different countries, and there is no default to pick.
+type googleAdsCallExtensionConfig struct {
+	CountryCode string `json:"countryCode"`
+	PhoneNumber string `json:"phoneNumber"`
+}
+
+// googleAdsPromotionConfig is one promotion extension.
+//
+// discountPercent and discountAmount are two arms of a Google oneof: exactly one
+// is set, and the client refuses both and neither. promotionCode and
+// ordersOverAmount are the other oneof, where BOTH absent is fine. currencyCode
+// is required whenever either money field is used. occasion is Google's own
+// enum name, checked for shape and not for membership — Google extends that
+// enum without this client's involvement, so a hardcoded list would refuse a
+// create Google would accept, the same reasoning as the snippet header above.
+type googleAdsPromotionConfig struct {
+	PromotionTarget     string  `json:"promotionTarget"`
+	DiscountPercent     float64 `json:"discountPercent"`
+	DiscountAmount      float64 `json:"discountAmount"`
+	OrdersOverAmount    float64 `json:"ordersOverAmount"`
+	CurrencyCode        string  `json:"currencyCode"`
+	PromotionCode       string  `json:"promotionCode"`
+	Occasion            string  `json:"occasion"`
+	LanguageCode        string  `json:"languageCode"`
+	StartDate           string  `json:"startDate"`
+	EndDate             string  `json:"endDate"`
+	RedemptionStartDate string  `json:"redemptionStartDate"`
+	RedemptionEndDate   string  `json:"redemptionEndDate"`
+	FinalURL            string  `json:"finalUrl"`
+}
+
+// googleAdsPriceOfferingConfig is one row of a price extension. Each row carries
+// its OWN destination — Google serves them as separate clickable entries.
+type googleAdsPriceOfferingConfig struct {
+	Header       string  `json:"header"`
+	Description  string  `json:"description"`
+	Amount       float64 `json:"amount"`
+	CurrencyCode string  `json:"currencyCode"`
+	Unit         string  `json:"unit"`
+	FinalURL     string  `json:"finalUrl"`
+}
+
+// googleAdsPriceConfig is one price extension: a typed table of 3-8 offerings.
+// type and priceQualifier are enum names checked for shape, as occasion is.
+type googleAdsPriceConfig struct {
+	Type           string                         `json:"type"`
+	PriceQualifier string                         `json:"priceQualifier"`
+	LanguageCode   string                         `json:"languageCode"`
+	Offerings      []googleAdsPriceOfferingConfig `json:"offerings"`
+}
+
+// googleAdsLeadFormConfig is a lead form shown with the ad. It is the one
+// extension that changes WHERE THE LEAD GOES — the user's details are collected
+// inside Google rather than at the registration URL — so a brief that sets it is
+// changing what a conversion means for the campaign, not just adding a line to
+// the ad. `privacyPolicyUrl` is required by Google, and `fields` names the inputs
+// (FULL_NAME, EMAIL, …). At most one per campaign.
+type googleAdsLeadFormConfig struct {
+	BusinessName               string   `json:"businessName"`
+	Headline                   string   `json:"headline"`
+	Description                string   `json:"description"`
+	CallToActionType           string   `json:"callToActionType"`
+	CallToActionDescription    string   `json:"callToActionDescription"`
+	PrivacyPolicyURL           string   `json:"privacyPolicyUrl"`
+	Fields                     []string `json:"fields"`
+	PostSubmitHeadline         string   `json:"postSubmitHeadline"`
+	PostSubmitDescription      string   `json:"postSubmitDescription"`
+	PostSubmitCallToActionType string   `json:"postSubmitCallToActionType"`
+	DesiredIntent              string   `json:"desiredIntent"`
+	CustomDisclosure           string   `json:"customDisclosure"`
+}
+
 // googleAdsAdConfig is one responsive search ad inside an ad group. Both lists are
 // optional in exactly the way the campaign-level headlines/descriptions are — the
 // client pads missing slots to Google's minimums.
@@ -145,12 +219,18 @@ const (
 	// The accepted `channel` values. Lower-case and hyphenated to match the campaignTypes
 	// vocabulary the UI already uses ("search" / "demand-gen"), so callers do not have to
 	// translate between two spellings of the same idea.
-	googleAdsChannelSearch    = "search"
-	googleAdsChannelDemandGen = "demand-gen"
+	googleAdsChannelSearch         = "search"
+	googleAdsChannelDemandGen      = "demand-gen"
+	googleAdsChannelPerformanceMax = "performance-max"
+	googleAdsChannelVideo          = "video"
+	googleAdsChannelDisplay        = "display"
 	// Google's own advertising_channel_type enum spellings, the vocabulary the settings
 	// readback compares in. googleAdsVariantForChannelType maps these back the other way.
-	googleAdsChannelTypeSearch    = "SEARCH"
-	googleAdsChannelTypeDemandGen = "DEMAND_GEN"
+	googleAdsChannelTypeSearch         = "SEARCH"
+	googleAdsChannelTypeDemandGen      = "DEMAND_GEN"
+	googleAdsChannelTypePerformanceMax = "PERFORMANCE_MAX"
+	googleAdsChannelTypeVideo          = "VIDEO"
+	googleAdsChannelTypeDisplay        = "DISPLAY"
 )
 
 // googleAdsConfig is the per-platform campaign config the caller passes for Google Ads
@@ -159,8 +239,10 @@ const (
 // Which campaign the client creates depends on Channel: the default (absent/"search")
 // is a PAUSED Search campaign with an ad group + a Responsive Search Ad (GA-3b), which
 // can carry keyword/audience targeting (GA-4); "demand-gen" is a PAUSED Demand Gen
-// campaign with an ad group and NO ad or keywords (LFXV2-3257). Several fields below
-// apply to the Search path only, and say so.
+// campaign with an ad group and NO ad or keywords (LFXV2-3257); "performance-max" is a
+// PAUSED Performance Max campaign with NO ad group and NO ad at all — its creative is an
+// ASSET GROUP built from performanceMaxCreative. Several fields below apply to the Search
+// path only, and say so.
 //
 // Budget is in whole units of the ad ACCOUNT's currency (NOT USD — the client does no
 // FX), mirroring the meta client.
@@ -168,8 +250,9 @@ type googleAdsConfig struct {
 	Budget float64 `json:"budget"`
 	// Channel selects which Google Ads campaign type to create: "" or "search" (the
 	// default) creates the Search campaign with an ad group and a Responsive Search Ad;
-	// "demand-gen" creates a Demand Gen campaign, which has no ads and no keywords
-	// because its creatives are image/video assets a human uploads in the Google Ads UI.
+	// "demand-gen" creates a Demand Gen campaign, which has no keywords because its
+	// creatives are image assets; "performance-max" creates a Performance Max campaign,
+	// which has neither ad groups nor ads — its creative is an asset group.
 	//
 	// ABSENT means SEARCH, deliberately. Every caller that predates this field omits it,
 	// and they all mean Search — the value that has been hardcoded since GA-2. Making
@@ -194,20 +277,56 @@ type googleAdsConfig struct {
 	AudienceSegments []string `json:"audienceSegments"`
 	// NegativeKeywords are optional CAMPAIGN-level keyword exclusions — queries the
 	// campaign must never pay for, however broadly Keywords match. SEARCH ONLY, and
-	// REFUSED on Demand Gen rather than ignored — unlike Keywords, which is ignored
-	// there. See googleads.CampaignInput.NegativeKeywords for why the two differ.
+	// REFUSED on every other channel rather than ignored — as Keywords and
+	// AudienceSegments now are too: all four of the Search-only fields here refuse
+	// off Search rather than being dropped. See
+	// googleads.CampaignInput.NegativeKeywords.
 	//
 	// Left empty, no exclusions are created, which is the behaviour of every caller
 	// that predates this field.
 	NegativeKeywords []googleAdsKeywordConfig `json:"negativeKeywords"`
 	// CPCBid is an optional manual CPC bid for the ad group, in whole units of the ad
-	// ACCOUNT's currency (no FX conversion, same as Budget). Search only — Demand Gen
-	// bids with targetSpend and rejects manualCpc outright.
+	// ACCOUNT's currency (no FX conversion, same as Budget). Search only — no other
+	// channel here has a manual bidding strategy, and their ad-group payloads carry no
+	// bid field at all, so the value is REFUSED there rather than silently dropped.
 	//
 	// 0 or absent means no bid is sent and Google's own derivation stands, which is
 	// what every campaign created before this field existed did. See
 	// googleads.validateCPCBid for the accepted range.
 	CPCBid float64 `json:"cpcBid"`
+	// BiddingStrategy names how the campaign bids, in the labels the Google Ads UI
+	// uses: `manual-cpc`, `maximize-clicks`, `maximize-conversions`, `target-cpa`,
+	// `maximize-conversion-value`, `target-roas`.
+	//
+	// Absent or empty means the CHANNEL DEFAULT — manual CPC on Search, maximize
+	// clicks on Demand Gen, maximize conversions on Performance Max — which is what
+	// this adapter has always sent for the channels that predate this field, so an
+	// older config produces a byte-identical campaign payload. Demand Gen accepts ONLY
+	// `maximize-clicks`; see googleads.demandGenBiddingStrategies for the live-API
+	// evidence behind that fence. Performance Max accepts only the four
+	// conversion-oriented strategies and has no manual form at all; see
+	// googleads.performanceMaxBiddingStrategies.
+	BiddingStrategy string `json:"biddingStrategy"`
+	// TargetCPA is the target cost per acquisition in whole units of the ad ACCOUNT's
+	// currency (no FX conversion, same as Budget). Optional under
+	// `maximize-conversions`, required under `target-cpa`, refused under any other
+	// strategy rather than accepted and discarded.
+	TargetCPA float64 `json:"targetCpa"`
+	// TargetROAS is the target return on ad spend as a RATIO, not a percentage: 4.0
+	// means four units of conversion value per unit spent. Optional under
+	// `maximize-conversion-value`, required under `target-roas`, refused elsewhere.
+	TargetROAS float64 `json:"targetRoas"`
+	// ConversionActions are the conversion actions the campaign should optimize
+	// toward, as bare numeric ids or full `customers/<id>/conversionActions/<id>`
+	// resource names. Absent means the campaign inherits the ACCOUNT's conversion
+	// goals, which is what every Google campaign this service has created does.
+	//
+	// Search, Video and Display — campaign.selective_optimization is the create-time
+	// conversion selection field and those three accept it. Demand Gen and Performance
+	// Max select conversions through a campaign-conversion-goal resource this client
+	// does not yet write, so the list is REFUSED there rather than dropped. The ids come
+	// from the client's ListConversionActions read.
+	ConversionActions []string `json:"conversionActions"`
 	// StartDate/EndDate are the campaign's flight window as YYYY-MM-DD, spelled exactly
 	// as the meta and reddit configs spell them. Each is independently optional: an
 	// absent StartDate leaves Google's default (the campaign starts when enabled) and an
@@ -215,7 +334,7 @@ type googleAdsConfig struct {
 	//
 	// Google interprets both in the ad ACCOUNT's timezone, not UTC — which is also why
 	// a past start date is not refused here; see googleads.validateFlightWindow. These
-	// apply to BOTH channels.
+	// apply to EVERY channel.
 	//
 	// They are also what applyCampaignConfig records in the campaigns table's
 	// start_date/end_date columns: before this field existed Google passed "" for both,
@@ -229,8 +348,8 @@ type googleAdsConfig struct {
 	// (LFXV2-3283), spelled exactly as the meta and reddit configs spell them so a
 	// caller does not have to learn a third vocabulary for the same idea. The client
 	// resolves each to a Google numeric geo target constant and attaches location
-	// criteria at the level the channel requires — campaign for Search, ad group for
-	// Demand Gen.
+	// criteria at the level the channel requires — campaign for Search and Performance
+	// Max, ad group for Demand Gen.
 	//
 	// Left empty, NO location criteria are created and the campaign serves wherever the
 	// ad ACCOUNT's defaults allow, which for an event campaign is usually worldwide.
@@ -245,23 +364,26 @@ type googleAdsConfig struct {
 	GeoTargets []string `json:"geoTargets"`
 	// ExcludedGeoTargets are locations the campaign must NEVER serve in, in exactly the
 	// vocabulary GeoTargets uses (country codes and/or raw constant ids). Applies to
-	// BOTH channels.
+	// EVERY channel.
 	//
 	// Left empty, nothing is excluded. A location listed in both lists is REFUSED rather
 	// than resolved: Google lets the exclusion win, so the campaign would silently not
 	// serve where the caller plainly asked it to.
 	ExcludedGeoTargets []string `json:"excludedGeoTargets"`
 	// ProximityTargets are radius targets — serve within N miles/kilometres of a point.
-	// Search only: refused on "demand-gen", which attaches location criteria at the ad
-	// group level where this client has not verified proximity.
+	// Refused on "demand-gen" alone, which attaches location criteria at the ad group
+	// level where this client has not verified proximity; "performance-max" takes
+	// campaign-level geo exactly as Search does, so radius targets are accepted there.
 	//
 	// Left empty, no radius criteria are created and the lists above stand alone.
 	ProximityTargets []googleAdsProximityConfig `json:"proximityTargets"`
 	// Languages are the languages the campaign serves in, as ISO 639-1 codes (EN, DE,
-	// JA) or raw numeric language constant ids. Search only, like every field below it
-	// up to Sitelinks: all FIVE slices — Languages, AdSchedules, DeviceBidModifiers,
-	// ExcludedAgeRanges and ExcludedGenders — are campaign-level criteria one guard
-	// refuses together on "demand-gen" rather than silently dropping.
+	// JA) or raw numeric language constant ids. All FIVE slices below — Languages,
+	// AdSchedules, DeviceBidModifiers, ExcludedAgeRanges and ExcludedGenders — are
+	// campaign-level criteria, and the channels differ: "demand-gen" refuses the whole
+	// set, while "performance-max" takes languages and ad schedules (Google documents
+	// them as PMax campaign criteria) and refuses only DeviceBidModifiers and the two
+	// demographic exclusions. Refused, never silently dropped.
 	//
 	// Left empty the campaign serves in EVERY language, which is Google's default and
 	// rarely what an event campaign wants.
@@ -274,9 +396,12 @@ type googleAdsConfig struct {
 	// exclude a device outright with a modifier of 0. Left empty, every device bids the
 	// campaign's own bid.
 	//
-	// There is no TV-screen entry: Google supports that device only on Display and Video
-	// campaigns, and these criteria are refused outright on Demand Gen, so Search is the
-	// only channel that reaches them. See deviceTypes in the googleads package.
+	// There is no TV-screen entry: CONNECTED_TV is a device Google supports only on
+	// Display and Video campaigns, and `deviceTypes` in the googleads package does not
+	// list it, so a caller cannot ask for it on any channel. Search, Video and Display
+	// all reach these criteria; Demand Gen and Performance Max refuse them outright.
+	// Admitting CONNECTED_TV on the two channels that support it is a known gap, not a
+	// deliberate exclusion. See deviceTypes in the googleads package.
 	//
 	// bidModifier is REQUIRED on every entry — it is a *float64 so that an OMITTED one
 	// is refused rather than decoded as 0, which is the -100% opt-out and would switch
@@ -291,8 +416,8 @@ type googleAdsConfig struct {
 	ExcludedAgeRanges []string `json:"excludedAgeRanges"`
 	ExcludedGenders   []string `json:"excludedGenders"`
 	// Sitelinks, Callouts and StructuredSnippets are the campaign's ad extensions. All
-	// Search only (refused on "demand-gen", which has no text ad to extend), and all
-	// created as account-level assets that are then linked to the campaign.
+	// Search only — refused on every other channel, none of which has a text ad to
+	// extend — and all created as account-level assets then linked to the campaign.
 	//
 	// Left empty the ad serves as a bare headline+description, which costs more per
 	// click than the same bid with extensions attached — but it is the behaviour of
@@ -300,6 +425,17 @@ type googleAdsConfig struct {
 	Sitelinks          []googleAdsSitelinkConfig          `json:"sitelinks"`
 	Callouts           []string                           `json:"callouts"`
 	StructuredSnippets []googleAdsStructuredSnippetConfig `json:"structuredSnippets"`
+	// CallExtensions, Promotions and Prices are the other three extension types,
+	// under exactly the same rules: optional, Search only, account-level assets
+	// linked to the campaign. Image and location extensions are NOT here — see
+	// internal/platform/googleads/assets_extended.go for why each is a gap rather
+	// than an omission.
+	CallExtensions []googleAdsCallExtensionConfig `json:"callExtensions"`
+	Promotions     []googleAdsPromotionConfig     `json:"promotions"`
+	Prices         []googleAdsPriceConfig         `json:"prices"`
+	// LeadForms is the seventh extension type and is also SEARCH ONLY. Unlike the
+	// six above it changes the campaign's destination: see googleAdsLeadFormConfig.
+	LeadForms []googleAdsLeadFormConfig `json:"leadForms"`
 	// AdGroups splits the campaign into one ad group per theme, each with its own
 	// keywords and up to three responsive search ads. Search only.
 	//
@@ -308,6 +444,37 @@ type googleAdsConfig struct {
 	// Keywords/AudienceSegments/CPCBid — so this field is purely additive and changes
 	// nothing for a caller that omits it.
 	AdGroups []googleAdsAdGroupConfig `json:"adGroups"`
+	// DemandGenCreative is the image-and-text creative for the Demand Gen ad. The
+	// mirror image of Sitelinks/Callouts/StructuredSnippets above: DEMAND GEN ONLY,
+	// refused on "search".
+	//
+	// Left empty the Demand Gen campaign is created without an ad, exactly as it was
+	// before this field existed — and that campaign CANNOT SERVE until someone builds
+	// an ad in the Google Ads UI. Absence is accepted rather than refused only because
+	// every caller predating the field omits it; it is not a sensible configuration.
+	DemandGenCreative *googleAdsDemandGenCreativeConfig `json:"demandGenCreative"`
+	// PerformanceMaxCreative is the ASSET GROUP for a Performance Max campaign, the
+	// third member of the same family and PERFORMANCE MAX ONLY.
+	//
+	// Left empty the campaign is created with no asset group — which, unlike a missing
+	// Demand Gen ad, is also what adopting a campaign whose asset group was built by
+	// hand upstream looks like. That campaign cannot serve until a group exists; the
+	// result's closing step says so.
+	PerformanceMaxCreative *googleAdsPerformanceMaxCreativeConfig `json:"performanceMaxCreative"`
+	// VideoCreative is the responsive video ad for a Video (YouTube) campaign, the
+	// fourth member of the same family and VIDEO ONLY.
+	//
+	// Left empty the campaign and its ad group are created with no ad — the same shape
+	// a Demand Gen campaign without a creative has, and it cannot serve until someone
+	// builds an ad in the Google Ads UI. The result's closing step says so.
+	VideoCreative *googleAdsVideoCreativeConfig `json:"videoCreative"`
+	// DisplayCreative is the responsive display ad for a Display campaign, the fifth
+	// member of the same family and DISPLAY ONLY.
+	//
+	// Left empty the campaign and its ad group are created with no ad — the same shape a
+	// Demand Gen or Video campaign without a creative has, and it cannot serve until
+	// someone builds an ad in the Google Ads UI. The result's closing step says so.
+	DisplayCreative *googleAdsDisplayCreativeConfig `json:"displayCreative"`
 	// AdoptExisting opts THIS dispatch in to adopting a campaign that already carries the
 	// composed name instead of creating one. It defaults to FALSE, and the default is the
 	// safety property, not a convenience: ComposeName is deterministic in
@@ -418,24 +585,41 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		GeoTargets:       cfg.GeoTargets,
 		CPCBid:           cfg.CPCBid,
 		StartDate:        cfg.StartDate,
-		EndDate:          cfg.EndDate,
+		// Passed through verbatim for the same reason the targeting inputs below are:
+		// which strategies a channel accepts, which targets a strategy carries, and
+		// whether a conversion action belongs to this account are all decided by the
+		// client's preflight BEFORE its first mutate, so re-stating any of it here
+		// would be a second copy of the rules that could drift from the first.
+		BiddingStrategy:   cfg.BiddingStrategy,
+		TargetCPA:         cfg.TargetCPA,
+		TargetROAS:        cfg.TargetROAS,
+		ConversionActions: cfg.ConversionActions,
+		EndDate:           cfg.EndDate,
 		// The LFXV2-2665 targeting/extension/ad-group inputs. Every one of these is
 		// passed through verbatim: the channel rules (proximity, languages, schedules,
 		// devices, demographics, extensions and ad groups are Search-only) are enforced
 		// by the client's preflight, BEFORE its first mutate, so they are refused in one
 		// place for both the create path and the ValidateCampaignInput call below rather
 		// than re-stated here where the two could drift.
-		ExcludedGeoTargets: cfg.ExcludedGeoTargets,
-		ProximityTargets:   googleAdsProximityTargets(cfg.ProximityTargets),
-		Languages:          cfg.Languages,
-		AdSchedules:        googleAdsAdSchedules(cfg.AdSchedules),
-		DeviceBidModifiers: deviceBidModifiers,
-		ExcludedAgeRanges:  cfg.ExcludedAgeRanges,
-		ExcludedGenders:    cfg.ExcludedGenders,
-		Sitelinks:          googleAdsSitelinks(cfg.Sitelinks),
-		Callouts:           cfg.Callouts,
-		StructuredSnippets: googleAdsStructuredSnippets(cfg.StructuredSnippets),
-		AdGroups:           googleAdsAdGroups(cfg.AdGroups),
+		ExcludedGeoTargets:     cfg.ExcludedGeoTargets,
+		ProximityTargets:       googleAdsProximityTargets(cfg.ProximityTargets),
+		Languages:              cfg.Languages,
+		AdSchedules:            googleAdsAdSchedules(cfg.AdSchedules),
+		DeviceBidModifiers:     deviceBidModifiers,
+		ExcludedAgeRanges:      cfg.ExcludedAgeRanges,
+		ExcludedGenders:        cfg.ExcludedGenders,
+		Sitelinks:              googleAdsSitelinks(cfg.Sitelinks),
+		Callouts:               cfg.Callouts,
+		StructuredSnippets:     googleAdsStructuredSnippets(cfg.StructuredSnippets),
+		CallExtensions:         googleAdsCallExtensions(cfg.CallExtensions),
+		Promotions:             googleAdsPromotions(cfg.Promotions),
+		Prices:                 googleAdsPrices(cfg.Prices),
+		LeadForms:              googleAdsLeadForms(cfg.LeadForms),
+		AdGroups:               googleAdsAdGroups(cfg.AdGroups),
+		DemandGenCreative:      googleAdsDemandGenCreative(cfg.DemandGenCreative),
+		PerformanceMaxCreative: googleAdsPerformanceMaxCreative(cfg.PerformanceMaxCreative),
+		VideoCreative:          googleAdsVideoCreative(cfg.VideoCreative),
+		DisplayCreative:        googleAdsDisplayCreative(cfg.DisplayCreative),
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: the
 		// GA client composes the budget/campaign/ad-group names from these, and a retry
 		// with the same suffix is rejected by whichever family it reaches first —
@@ -483,8 +667,14 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		campaignKind = googleads.CampaignKindSearch
 	case googleAdsChannelDemandGen:
 		campaignKind = googleads.CampaignKindDemandGen
+	case googleAdsChannelPerformanceMax:
+		campaignKind = googleads.CampaignKindPerformanceMax
+	case googleAdsChannelVideo:
+		campaignKind = googleads.CampaignKindVideo
+	case googleAdsChannelDisplay:
+		campaignKind = googleads.CampaignKindDisplay
 	default:
-		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen))
+		return nil, notCreated(fmt.Errorf("google ads: unsupported channel %q (want %q, %q, %q, %q or %q)", cfg.Channel, googleAdsChannelSearch, googleAdsChannelDemandGen, googleAdsChannelPerformanceMax, googleAdsChannelVideo, googleAdsChannelDisplay))
 	}
 	// Validate the input BEFORE adoption, and note this is not merely tidy ordering.
 	// Adoption returns before CreateCampaign runs its preflight, so without this call the
@@ -556,8 +746,14 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		result, cerr = client.CreateCampaign(ctx, in)
 	case googleAdsChannelDemandGen:
 		result, cerr = client.CreateDemandGenCampaign(ctx, in)
+	case googleAdsChannelPerformanceMax:
+		result, cerr = client.CreatePerformanceMaxCampaign(ctx, in)
+	case googleAdsChannelVideo:
+		result, cerr = client.CreateVideoCampaign(ctx, in)
+	case googleAdsChannelDisplay:
+		result, cerr = client.CreateDisplayCampaign(ctx, in)
 	default:
-		// Unreachable: the resolution above admits only these two. Refuse rather than fall
+		// Unreachable: the resolution above admits only these five. Refuse rather than fall
 		// through to a create, so a future channel added there but not here cannot spend one
 		// channel's budget on another.
 		return nil, notCreated(fmt.Errorf("google ads: channel %q resolved but has no create path", channel))
@@ -711,6 +907,147 @@ func googleAdsStructuredSnippets(in []googleAdsStructuredSnippetConfig) []google
 	return out
 }
 
+func googleAdsCallExtensions(in []googleAdsCallExtensionConfig) []googleads.CallExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.CallExtension, len(in))
+	for i, c := range in {
+		out[i] = googleads.CallExtension{CountryCode: c.CountryCode, PhoneNumber: c.PhoneNumber}
+	}
+	return out
+}
+
+func googleAdsPromotions(in []googleAdsPromotionConfig) []googleads.PromotionExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.PromotionExtension, len(in))
+	for i, p := range in {
+		out[i] = googleads.PromotionExtension{
+			PromotionTarget:     p.PromotionTarget,
+			DiscountPercent:     p.DiscountPercent,
+			DiscountAmount:      p.DiscountAmount,
+			OrdersOverAmount:    p.OrdersOverAmount,
+			CurrencyCode:        p.CurrencyCode,
+			PromotionCode:       p.PromotionCode,
+			Occasion:            p.Occasion,
+			LanguageCode:        p.LanguageCode,
+			StartDate:           p.StartDate,
+			EndDate:             p.EndDate,
+			RedemptionStartDate: p.RedemptionStartDate,
+			RedemptionEndDate:   p.RedemptionEndDate,
+			FinalURL:            p.FinalURL,
+		}
+	}
+	return out
+}
+
+func googleAdsPrices(in []googleAdsPriceConfig) []googleads.PriceExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.PriceExtension, len(in))
+	for i, p := range in {
+		price := googleads.PriceExtension{
+			Type:           p.Type,
+			PriceQualifier: p.PriceQualifier,
+			LanguageCode:   p.LanguageCode,
+		}
+		// Built even when empty so the client, not this mapper, decides what an
+		// offering-less price extension means — it refuses it by count, with a
+		// message naming Google's 3-8 range.
+		if len(p.Offerings) > 0 {
+			price.Offerings = make([]googleads.PriceOffering, len(p.Offerings))
+			for j, o := range p.Offerings {
+				price.Offerings[j] = googleads.PriceOffering{
+					Header:       o.Header,
+					Description:  o.Description,
+					Amount:       o.Amount,
+					CurrencyCode: o.CurrencyCode,
+					Unit:         o.Unit,
+					FinalURL:     o.FinalURL,
+				}
+			}
+		}
+		out[i] = price
+	}
+	return out
+}
+
+// googleAdsDemandGenCreativeConfig is the wire shape of the Demand Gen creative.
+//
+// Images are URLs, matching reddit's and meta's imageUrl: a caller already hosts the
+// creative somewhere. Google is the one platform that will not fetch a URL itself —
+// ImageAsset takes raw bytes — so the campaign service downloads each one and uploads
+// the bytes. See internal/platform/googleads/demandgen_creative.go, which also carries
+// the hardening that server-side fetch requires.
+type googleAdsDemandGenCreativeConfig struct {
+	// Each list is one image shape with its own required aspect ratio and minimum
+	// size, enforced by the client's preflight against Google's documented rules.
+	// At least one of marketingImages or squareMarketingImages is required.
+	MarketingImages       []string `json:"marketingImages"`
+	SquareMarketingImages []string `json:"squareMarketingImages"`
+	PortraitImages        []string `json:"portraitImages"`
+	TallPortraitImages    []string `json:"tallPortraitImages"`
+	// LogoImages is required: 1-5 square images.
+	LogoImages []string `json:"logoImages"`
+	// Headlines and Descriptions are 1-5 each. NOT the Search ad's 15/4 — Demand Gen
+	// has its own counts, though the same display-width limits.
+	Headlines    []string `json:"headlines"`
+	Descriptions []string `json:"descriptions"`
+	// BusinessName is required by Google. CallToActionText is optional.
+	BusinessName     string `json:"businessName"`
+	CallToActionText string `json:"callToActionText"`
+}
+
+// googleAdsDemandGenCreative maps the creative config to the client input. A nil
+// pointer maps to the zero value, which the client treats as "no creative asked
+// for" — the pre-existing no-ad behaviour.
+func googleAdsDemandGenCreative(in *googleAdsDemandGenCreativeConfig) googleads.DemandGenCreative {
+	if in == nil {
+		return googleads.DemandGenCreative{}
+	}
+	return googleads.DemandGenCreative{
+		MarketingImages:       in.MarketingImages,
+		SquareMarketingImages: in.SquareMarketingImages,
+		PortraitImages:        in.PortraitImages,
+		TallPortraitImages:    in.TallPortraitImages,
+		LogoImages:            in.LogoImages,
+		Headlines:             in.Headlines,
+		Descriptions:          in.Descriptions,
+		BusinessName:          in.BusinessName,
+		CallToActionText:      in.CallToActionText,
+	}
+}
+
+// googleAdsLeadForms maps the lead form config into the client's shape. Every
+// field is forwarded verbatim; the client owns every refusal, including the
+// one-per-campaign limit and the post-submit all-or-nothing pair.
+func googleAdsLeadForms(in []googleAdsLeadFormConfig) []googleads.LeadFormExtension {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]googleads.LeadFormExtension, len(in))
+	for i, f := range in {
+		out[i] = googleads.LeadFormExtension{
+			BusinessName:               f.BusinessName,
+			Headline:                   f.Headline,
+			Description:                f.Description,
+			CallToActionType:           f.CallToActionType,
+			CallToActionDescription:    f.CallToActionDescription,
+			PrivacyPolicyURL:           f.PrivacyPolicyURL,
+			Fields:                     append([]string(nil), f.Fields...),
+			PostSubmitHeadline:         f.PostSubmitHeadline,
+			PostSubmitDescription:      f.PostSubmitDescription,
+			PostSubmitCallToActionType: f.PostSubmitCallToActionType,
+			DesiredIntent:              f.DesiredIntent,
+			CustomDisclosure:           f.CustomDisclosure,
+		}
+	}
+	return out
+}
+
 // googleAdsAdGroups maps the per-theme ad group list, reusing googleAdsKeywords for
 // each group's keywords so a group's keyword vocabulary cannot drift from the
 // campaign-level one. An empty per-group list stays nil, which is what the client
@@ -744,31 +1081,282 @@ func googleAdsAds(in []googleAdsAdConfig) []googleads.AdSpec {
 	return out
 }
 
+// googleAdsPerformanceMaxCreativeConfig is the wire shape of the Performance Max
+// asset group. Images are URLs for the same reason the Demand Gen creative's are, and
+// are fetched by the same hardened client — see
+// internal/platform/googleads/pmax_creative.go.
+//
+// The counts below are Performance Max's own and are NOT the Demand Gen ones beside
+// them: three headlines where Demand Gen needs one, a separate long-headline field
+// type, and two description minimums with a short-description rule. Stated here as
+// well as in the client because this struct is what a caller reads.
+type googleAdsPerformanceMaxCreativeConfig struct {
+	// marketingImages (1.91:1) and squareMarketingImages (1:1) are BOTH required —
+	// unlike Demand Gen, where either satisfies the other. portraitImages (4:5) is
+	// optional, and the three share a combined cap of 20.
+	MarketingImages       []string `json:"marketingImages"`
+	SquareMarketingImages []string `json:"squareMarketingImages"`
+	PortraitImages        []string `json:"portraitImages"`
+	// LogoImages (1:1) is required, 1-5. LandscapeLogoImages (4:1) is optional.
+	LogoImages          []string `json:"logoImages"`
+	LandscapeLogoImages []string `json:"landscapeLogoImages"`
+	// Headlines 3-15, LongHeadlines 1-5 and Descriptions 2-5 are three DISTINCT asset
+	// field types, not one list bucketed by length. At least one description must fit
+	// the short slot (display width 60 or less).
+	Headlines     []string `json:"headlines"`
+	LongHeadlines []string `json:"longHeadlines"`
+	Descriptions  []string `json:"descriptions"`
+	// BusinessName is required by Google.
+	BusinessName string `json:"businessName"`
+	// YouTubeVideoIDs are bare video ids, never URLs — this client will not guess
+	// which part of a URL is the id.
+	YouTubeVideoIDs []string `json:"youtubeVideoIds"`
+	// AssetGroupName defaults to the event name plus " - Asset Group". Path1/Path2 are
+	// the optional display-path segments rendered after the domain; path2 renders only
+	// after path1.
+	AssetGroupName string `json:"assetGroupName"`
+	Path1          string `json:"path1"`
+	Path2          string `json:"path2"`
+}
+
+// googleAdsPerformanceMaxCreative maps the asset-group config to the client input,
+// validating nothing — every rule lives in the client's preflight, so the two paths
+// cannot drift. A nil pointer maps to the zero value, which the client reads as "no
+// asset group asked for".
+func googleAdsPerformanceMaxCreative(in *googleAdsPerformanceMaxCreativeConfig) googleads.PerformanceMaxCreative {
+	if in == nil {
+		return googleads.PerformanceMaxCreative{}
+	}
+	return googleads.PerformanceMaxCreative{
+		MarketingImages:       in.MarketingImages,
+		SquareMarketingImages: in.SquareMarketingImages,
+		PortraitImages:        in.PortraitImages,
+		LogoImages:            in.LogoImages,
+		LandscapeLogoImages:   in.LandscapeLogoImages,
+		Headlines:             in.Headlines,
+		LongHeadlines:         in.LongHeadlines,
+		Descriptions:          in.Descriptions,
+		BusinessName:          in.BusinessName,
+		YouTubeVideoIDs:       in.YouTubeVideoIDs,
+		AssetGroupName:        in.AssetGroupName,
+		Path1:                 in.Path1,
+		Path2:                 in.Path2,
+	}
+}
+
+// googleAdsVideoCreativeConfig is the responsive video ad for the "video" channel.
+//
+// Unlike its three siblings it carries NO URLs at all. A YouTube video is referenced by
+// its bare id and stays on YouTube, so there is nothing here for googleAdsSnapshotConfig
+// to sanitize — which is why that function's early return does not mention this field.
+// Should an image field ever be added (companion banners are the obvious candidate, and
+// are deliberately out of scope — see video_creative.go), both this comment and that
+// early return have to change together.
+type googleAdsVideoCreativeConfig struct {
+	// YouTubeVideoIDs are BARE video ids, not watch URLs — the client refuses a URL
+	// rather than guessing which part of it is the id. At least one is required for an
+	// ad to be created at all.
+	YouTubeVideoIDs []string `json:"youtubeVideoIds"`
+	// The four text field types a videoResponsiveAd carries. Headlines, long headlines
+	// and descriptions are each required when a creative is supplied; call-to-action
+	// text is optional and Google supplies a default when it is omitted.
+	Headlines     []string `json:"headlines"`
+	LongHeadlines []string `json:"longHeadlines"`
+	Descriptions  []string `json:"descriptions"`
+	CallToActions []string `json:"callToActions"`
+}
+
+// googleAdsVideoCreative maps the video-ad config to the client input, validating
+// nothing — every rule lives in the client's preflight, so the two paths cannot drift.
+// A nil pointer maps to the zero value, which the client reads as "no ad asked for".
+func googleAdsVideoCreative(in *googleAdsVideoCreativeConfig) googleads.VideoCreative {
+	if in == nil {
+		return googleads.VideoCreative{}
+	}
+	return googleads.VideoCreative{
+		YouTubeVideoIDs: in.YouTubeVideoIDs,
+		Headlines:       in.Headlines,
+		LongHeadlines:   in.LongHeadlines,
+		Descriptions:    in.Descriptions,
+		CallToActions:   in.CallToActions,
+	}
+}
+
+// googleAdsDisplayCreativeConfig is the responsive display ad for the "display" channel.
+//
+// Unlike the Video creative beside it, this one DOES carry URLs — four arrays of them —
+// so it is named in googleAdsSnapshotConfig's early return and sanitized there with the
+// Demand Gen and Performance Max creatives.
+type googleAdsDisplayCreativeConfig struct {
+	// The four image arrays a responsiveDisplayAd carries. The two MARKETING arrays are
+	// reciprocally required — Google requires each when the other is absent — and are
+	// capped as a combined total; both LOGO arrays are optional and capped separately.
+	// Their ratios and minimums differ from the same-named Demand Gen and Performance
+	// Max slots, which is why each channel keeps its own slot table.
+	MarketingImages       []string `json:"marketingImages"`
+	SquareMarketingImages []string `json:"squareMarketingImages"`
+	LogoImages            []string `json:"logoImages"`
+	SquareLogoImages      []string `json:"squareLogoImages"`
+	// LongHeadline is a SINGLE string, not a list — the one place this channel's shape
+	// departs from its siblings, where Performance Max and Video both take a list of
+	// long headlines. Spelled as a scalar here so the envelope cannot carry a second one
+	// that Google would reject after the ad group exists.
+	Headlines    []string `json:"headlines"`
+	LongHeadline string   `json:"longHeadline"`
+	Descriptions []string `json:"descriptions"`
+	// BusinessName is required by Google when a creative is supplied; CallToActionText
+	// is optional and Google supplies its own button text when it is omitted.
+	BusinessName     string `json:"businessName"`
+	CallToActionText string `json:"callToActionText"`
+}
+
+// googleAdsDisplayCreative maps the display-ad config to the client input, validating
+// nothing — every rule lives in the client's preflight, so the two paths cannot drift.
+// A nil pointer maps to the zero value, which the client reads as "no ad asked for".
+func googleAdsDisplayCreative(in *googleAdsDisplayCreativeConfig) googleads.DisplayCreative {
+	if in == nil {
+		return googleads.DisplayCreative{}
+	}
+	return googleads.DisplayCreative{
+		MarketingImages:       in.MarketingImages,
+		SquareMarketingImages: in.SquareMarketingImages,
+		LogoImages:            in.LogoImages,
+		SquareLogoImages:      in.SquareLogoImages,
+		Headlines:             in.Headlines,
+		LongHeadline:          in.LongHeadline,
+		Descriptions:          in.Descriptions,
+		BusinessName:          in.BusinessName,
+		CallToActionText:      in.CallToActionText,
+	}
+}
+
 // googleAdsSnapshotConfig returns cfg with every caller-supplied URL reduced to
 // scheme+host, for storage in config_snapshot — which is persisted UNENCRYPTED in
 // Postgres. Same reason and same helper as campaignFromMeta's ImageURL and
 // campaignFromReddit's PostURL: a caller-supplied URL can carry a credential in its
 // path, query or fragment, and the snapshot is the copy that persists.
 //
-// A sitelink's finalUrl is the only URL this config carries. The ad copy beside it —
-// headlines, descriptions, callouts, snippet values, sitelink text — is deliberately
+// The URLs this config carries are the clickable destinations of three extension
+// types — a sitelink's finalUrl, a promotion's finalUrl and the finalUrl of EVERY
+// price offering, each row of a price table carrying its own — and the image URLs of
+// the Demand Gen creative, the Performance Max asset group and the Display creative.
+// The Video creative is the one creative with nothing to sanitize: it references a
+// YouTube video by bare id and carries no URL field at all, which is why it is the
+// only one absent from the early return below. Call extensions carry a phone number
+// and no URL, so they are absent for the same kind of reason.
+// The ad copy beside them — headlines, descriptions, callouts, snippet values,
+// sitelink text — is deliberately
 // NOT run through sanitizeSnapshotText: that helper exists for operator-authored prose
 // that routinely carries a pasted link (X's tweetText), whereas Google keeps the
 // destination in its own finalUrl field and the copy fields are short ad text. If a
 // link-bearing free-text field is ever added here, it needs that helper.
 func googleAdsSnapshotConfig(cfg googleAdsConfig) googleAdsConfig {
-	if len(cfg.Sitelinks) == 0 {
+	if len(cfg.Sitelinks) == 0 && len(cfg.Promotions) == 0 && len(cfg.Prices) == 0 &&
+		len(cfg.LeadForms) == 0 && cfg.DemandGenCreative == nil &&
+		cfg.PerformanceMaxCreative == nil && cfg.DisplayCreative == nil {
 		return cfg
 	}
 	snapshot := cfg
 	// Copy the slice before mutating: cfg is passed by value but Sitelinks shares its
 	// backing array with the caller's config, and the FULL url must still reach Google.
-	snapshot.Sitelinks = make([]googleAdsSitelinkConfig, len(cfg.Sitelinks))
-	copy(snapshot.Sitelinks, cfg.Sitelinks)
-	for i := range snapshot.Sitelinks {
-		snapshot.Sitelinks[i].FinalURL = sanitizeSnapshotURL(snapshot.Sitelinks[i].FinalURL)
+	if len(cfg.Sitelinks) > 0 {
+		snapshot.Sitelinks = make([]googleAdsSitelinkConfig, len(cfg.Sitelinks))
+		copy(snapshot.Sitelinks, cfg.Sitelinks)
+		for i := range snapshot.Sitelinks {
+			snapshot.Sitelinks[i].FinalURL = sanitizeSnapshotURL(snapshot.Sitelinks[i].FinalURL)
+		}
+	}
+	// A promotion's destination is a clickable ad destination exactly as a sitelink's
+	// is, and is copied and reduced the same way.
+	if len(cfg.Promotions) > 0 {
+		snapshot.Promotions = make([]googleAdsPromotionConfig, len(cfg.Promotions))
+		copy(snapshot.Promotions, cfg.Promotions)
+		for i := range snapshot.Promotions {
+			snapshot.Promotions[i].FinalURL = sanitizeSnapshotURL(snapshot.Promotions[i].FinalURL)
+		}
+	}
+	// A price extension needs a DEEP copy: the top-level copy shares the Offerings
+	// backing array with the caller's config, and it is the offerings that carry the
+	// URLs. Reducing them in place would strip the path off the config the client is
+	// about to send, which is the bug this whole function is written around.
+	if len(cfg.Prices) > 0 {
+		snapshot.Prices = make([]googleAdsPriceConfig, len(cfg.Prices))
+		copy(snapshot.Prices, cfg.Prices)
+		for i := range snapshot.Prices {
+			if len(cfg.Prices[i].Offerings) == 0 {
+				continue
+			}
+			offerings := make([]googleAdsPriceOfferingConfig, len(cfg.Prices[i].Offerings))
+			copy(offerings, cfg.Prices[i].Offerings)
+			for j := range offerings {
+				offerings[j].FinalURL = sanitizeSnapshotURL(offerings[j].FinalURL)
+			}
+			snapshot.Prices[i].Offerings = offerings
+		}
+	}
+	// A lead form's privacy-policy URL is caller-supplied and is NOT a destination
+	// this client tags, but it is persisted in exactly the same plaintext column, so
+	// it is reduced on a copied slice like every other caller URL here.
+	if len(cfg.LeadForms) > 0 {
+		snapshot.LeadForms = make([]googleAdsLeadFormConfig, len(cfg.LeadForms))
+		copy(snapshot.LeadForms, cfg.LeadForms)
+		for i := range snapshot.LeadForms {
+			snapshot.LeadForms[i].PrivacyPolicyURL = sanitizeSnapshotURL(snapshot.LeadForms[i].PrivacyPolicyURL)
+		}
+	}
+	// Every creative image URL is sanitized for the same reason the sitelink URL and
+	// reddit's/meta's ImageURL are: config_snapshot is persisted UNENCRYPTED, and a
+	// creative URL can carry a signed query string that is itself the credential for
+	// fetching the asset. The FULL url must still reach the client, which is why this
+	// works on a copy — and the copy has to be deep, because the pointer and both
+	// string slices are shared with the caller's config.
+	if cfg.DemandGenCreative != nil {
+		creative := *cfg.DemandGenCreative
+		creative.MarketingImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.MarketingImages)
+		creative.SquareMarketingImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.SquareMarketingImages)
+		creative.PortraitImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.PortraitImages)
+		creative.TallPortraitImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.TallPortraitImages)
+		creative.LogoImages = sanitizeSnapshotURLs(cfg.DemandGenCreative.LogoImages)
+		snapshot.DemandGenCreative = &creative
+	}
+	// The Performance Max asset group carries image URLs with exactly the same
+	// exposure, so it is sanitized the same way and with the same deep copy. Missing
+	// this would have made the one channel whose creative is newest the one whose
+	// signed URLs persisted in plaintext.
+	if cfg.PerformanceMaxCreative != nil {
+		creative := *cfg.PerformanceMaxCreative
+		creative.MarketingImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.MarketingImages)
+		creative.SquareMarketingImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.SquareMarketingImages)
+		creative.PortraitImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.PortraitImages)
+		creative.LogoImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.LogoImages)
+		creative.LandscapeLogoImages = sanitizeSnapshotURLs(cfg.PerformanceMaxCreative.LandscapeLogoImages)
+		snapshot.PerformanceMaxCreative = &creative
+	}
+	// The Display creative carries image URLs with exactly the same exposure, so it is
+	// sanitized the same way and with the same deep copy. Video is the only creative
+	// absent from this chain, and only because it holds no URL at all.
+	if cfg.DisplayCreative != nil {
+		creative := *cfg.DisplayCreative
+		creative.MarketingImages = sanitizeSnapshotURLs(cfg.DisplayCreative.MarketingImages)
+		creative.SquareMarketingImages = sanitizeSnapshotURLs(cfg.DisplayCreative.SquareMarketingImages)
+		creative.LogoImages = sanitizeSnapshotURLs(cfg.DisplayCreative.LogoImages)
+		creative.SquareLogoImages = sanitizeSnapshotURLs(cfg.DisplayCreative.SquareLogoImages)
+		snapshot.DisplayCreative = &creative
 	}
 	return snapshot
+}
+
+// sanitizeSnapshotURLs is sanitizeSnapshotURL over a list, returning a NEW slice so
+// the caller's backing array is never written through.
+func sanitizeSnapshotURLs(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, u := range in {
+		out[i] = sanitizeSnapshotURL(u)
+	}
+	return out
 }
 
 // campaignFromGoogleAds maps the client result to the persistence model. The
@@ -1480,32 +2068,30 @@ func (d *GoogleAdsDispatcher) ListAccounts(ctx context.Context, projectID string
 // Result blob.
 //
 // ACTIVATE is refused with ErrCampaignNotProvisioned (→409, raised locally without calling
-// Google) unless the Result blob shows the ad group/ad were fully provisioned AND at least one
-// keyword criterion was persisted by GA-4's targeting step. A campaign without targeting cannot
-// deliver, so activating it would report false success — the exact lie ErrCampaignNotProvisioned
-// exists to prevent. When the guard passes, ACTIVATE cascades children-first (children activated
-// before campaign) so a campaign never reports ENABLED before its children do.
+// Google) unless the Result blob shows this CHANNEL's own serving resources were fully
+// provisioned. What those are differs per channel and lives in googleAdsActivationGate — the
+// ad group/ad plus a keyword criterion on Search, the ad group/ad alone on Demand Gen, the
+// asset group on Performance Max, which has neither. A campaign that cannot deliver would
+// report false success, the exact lie ErrCampaignNotProvisioned exists to prevent. When the
+// gate passes, ACTIVATE cascades children-first (children activated before campaign) so a
+// campaign never reports ENABLED before its children do.
 func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, status string) error {
 	gaStatus, err := googleAdsRunStatus(status)
 	if err != nil {
 		return err
 	}
-	// Refuse ACTIVATE if targeting was not successfully provisioned: GA-4 requires at least
-	// one keyword criterion before allowing activation (audience criteria alone are
-	// observation-only and do not qualify for activation, so they don't satisfy this gate).
-	// Checked below via the persisted KeywordCriteriaIDs in the Result blob — empty means
-	// keyword targeting was never attempted or failed before any criterion resource name
-	// could be parsed.
+	// Refuse ACTIVATE if this campaign's own serving resources were not successfully
+	// provisioned. What those ARE is channel-specific and lives in googleAdsActivationGate:
+	// the keyword requirement named here is SEARCH-ONLY, because Demand Gen refuses keywords
+	// at create and Performance Max has neither ad groups nor keywords. Both inputs come from
+	// the persisted Result blob — keywordsProvisioned from KeywordCriteriaIDs (empty means
+	// keyword targeting was never attempted, or failed before any criterion resource name
+	// could be parsed), assetGroupID and its link count from the Performance Max creative.
 	targets, keywordsProvisioned, incompleteGroups := googleAdsToggleTargets(campaign)
+	assetGroupID, assetGroupLinks := googleAdsToggleAssetGroup(campaign)
 	if gaStatus == googleads.StatusEnabled {
-		// Refuse ACTIVATE if no ad group was fully provisioned: a duplicate-name orphan or
-		// unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
-		// enabling just the campaign would report success while nothing can serve.
-		if len(targets) == 0 {
-			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its ad group/ad were not fully provisioned", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
-		}
-		if !keywordsProvisioned {
-			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		if gErr := googleAdsActivationGate(campaign, targets, keywordsProvisioned, assetGroupID, assetGroupLinks); gErr != nil {
+			return gErr
 		}
 	}
 	// A group recorded but not toggleable is reported, never silently skipped. The toggle
@@ -1549,12 +2135,12 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		if uerr := client.UpdateCampaignStatus(ctx, campaign.PlatformCampaignID, gaStatus); uerr != nil {
 			return wrapUnconfirmed(uerr)
 		}
-		// If no ad group/ad ids were recorded (e.g. a campaign shell with no fully-created
+		// If no child ids were recorded (e.g. a campaign shell with no fully-created
 		// children), there is nothing to pause downstream — only the campaign is toggled.
-		if len(targets) == 0 {
+		if !googleAdsHasToggleChildren(targets, assetGroupID) {
 			return nil
 		}
-		if uerr := client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus); uerr != nil {
+		if uerr := googleAdsToggleChildren(ctx, client, targets, assetGroupID, gaStatus); uerr != nil {
 			// After the campaign status succeeds, a child failure (even a definite 4xx) is a
 			// partial cascade: the parent changed but the child's outcome is unknown. Wrap it
 			// as Unconfirmed so the caller knows to verify the state before retry.
@@ -1563,10 +2149,10 @@ func (d *GoogleAdsDispatcher) ToggleStatus(ctx context.Context, projectID string
 		return nil
 	}
 
-	// ACTIVATE: children first (at least one group is confirmed fully provisioned, and
-	// keyword targeting is confirmed provisioned, by the guard above), campaign last — so
-	// the campaign only reports ENABLED once its ad groups/ads already do.
-	if uerr := client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus); uerr != nil {
+	// ACTIVATE: children first (googleAdsActivationGate above has confirmed this channel's
+	// creative is fully provisioned), campaign last — so the campaign only reports ENABLED
+	// once the resources that actually serve already do.
+	if uerr := googleAdsToggleChildren(ctx, client, targets, assetGroupID, gaStatus); uerr != nil {
 		// UpdateAdGroupsAndAdsStatus flips every ad group first, then every ad
 		// (children-first ordering). A definite first-stage failure (4xx from
 		// adGroups:mutate) is NOT a partial cascade (nothing changed). A definite
@@ -1727,10 +2313,25 @@ func (d *GoogleAdsDispatcher) LookupCampaign(ctx context.Context, projectID stri
 // that grows without our involvement, and the mapping is the point at which this service
 // decides whether it can represent a campaign at all.
 //
-// Only the types this service can CREATE are mappable. Anything else — PERFORMANCE_MAX,
-// VIDEO, SHOPPING, a value Google adds next quarter, or an empty string from a response that
-// omitted the field — is refused. Adopting one would file it under some existing slot and
-// leave that campaign type's real slot open for a duplicate.
+// Only the types this service can CREATE are mappable. Anything else — SHOPPING, HOTEL,
+// a value Google adds next quarter, or an empty string from a response that omitted the
+// field — is refused. Adopting one would file it under some existing slot and leave that
+// campaign type's real slot open for a duplicate.
+//
+// This list grows with the create paths, and must: PERFORMANCE_MAX and then VIDEO were each
+// unmappable until this service learned to create them, and a channel left out here is a campaign the
+// adoption path refuses even though create would have produced exactly that type.
+//
+// The slot is keyed on the channel TYPE alone, deliberately. The adopt lookup selects
+// campaign.advertising_channel_type and not advertising_channel_sub_type, so every VIDEO
+// campaign occupies the single `video` slot whether or not it is the VIDEO_ACTION sub-type
+// this service creates — a YouTube reach, bumper or sequence campaign adopted onto a brief
+// takes the slot a later Video-action dispatch would have wanted. That is the model, not an
+// oversight: SEARCH has sub-types too and has always been treated this way, and one slot per
+// advertising_channel_type is what AdoptableVariants enumerates. Narrowing it would mean
+// selecting the sub-type in the lookup and refusing a non-VIDEO_ACTION adoption, which is
+// safe to do (refusing an ADOPT is not the over-refusal of a CREATE) but is a change to the
+// slot model rather than to this function.
 func googleAdsVariantForChannelType(channelType string) (string, error) {
 	switch strings.ToUpper(strings.TrimSpace(channelType)) {
 	case googleAdsChannelTypeSearch:
@@ -1739,6 +2340,12 @@ func googleAdsVariantForChannelType(channelType string) (string, error) {
 		return model.VariantDefault, nil
 	case googleAdsChannelTypeDemandGen:
 		return model.NormalizeVariant(googleAdsChannelDemandGen), nil
+	case googleAdsChannelTypePerformanceMax:
+		return model.NormalizeVariant(googleAdsChannelPerformanceMax), nil
+	case googleAdsChannelTypeVideo:
+		return model.NormalizeVariant(googleAdsChannelVideo), nil
+	case googleAdsChannelTypeDisplay:
+		return model.NormalizeVariant(googleAdsChannelDisplay), nil
 	case "":
 		return "", fmt.Errorf("google ads: the campaign lookup returned no advertising channel type, so which campaign type this is cannot be established; refusing to adopt rather than assume")
 	default:
@@ -1836,6 +2443,12 @@ func googleAdsRecordedChannelType(ctx context.Context, campaign *model.Campaign)
 		return strPtr(googleAdsChannelTypeSearch)
 	case googleAdsChannelDemandGen:
 		return strPtr(googleAdsChannelTypeDemandGen)
+	case googleAdsChannelPerformanceMax:
+		return strPtr(googleAdsChannelTypePerformanceMax)
+	case googleAdsChannelVideo:
+		return strPtr(googleAdsChannelTypeVideo)
+	case googleAdsChannelDisplay:
+		return strPtr(googleAdsChannelTypeDisplay)
 	default:
 		return nil
 	}
@@ -1916,6 +2529,135 @@ func googleAdsCampaignAdGroupIDs(campaign *model.Campaign) map[string]bool {
 		}
 	}
 	return ids
+}
+
+// googleAdsActivationGate refuses an ACTIVATE that would report a launch the campaign
+// cannot deliver. What counts as "fully provisioned" is CHANNEL-SPECIFIC, because the four
+// channels this dispatcher creates do not have the same serving resources:
+//
+//   - Search serves through an ad group + ad, and cannot deliver without at least one
+//     keyword criterion. Both are required, as they always have been.
+//   - Demand Gen serves through an ad group + ad, and its targeting is audience- and
+//     creative-driven. Keywords are REFUSED on this channel (campaign.go's Search-only
+//     fence), so demanding a keyword criterion here would be unsatisfiable by construction —
+//     the gate would instruct the operator to supply the very field the create path rejects.
+//   - Video and Display each serve through an ad group + ad like Demand Gen, and keywords
+//     are refused on both by the same Search-only fence, so they take exactly Demand Gen's
+//     gate — which is why all three share an arm rather than each getting an identical one.
+//   - Performance Max has no ad groups and no ads at all. Its creative is an ASSET GROUP,
+//     and that is the resource whose absence means nothing can serve.
+//
+// Keyed on the campaign's Variant, which is part of its identity rather than its config, so
+// a row cannot drift into the wrong arm through a config edit. A row written before variants
+// existed normalises to VariantDefault and keeps the Search rules it was created under.
+//
+// Every arm names ADOPTION in its refusal, on every channel. campaignFromGoogleAdsAdoption
+// writes provenance and nothing else — no ad group id, no ad id, no asset group id — so an
+// adopted row fails whichever gate its variant selects, permanently, no matter how completely
+// the campaign is provisioned upstream. Without that clause the message sends an operator
+// hunting a provisioning failure in this service's records for a campaign this service never
+// created. The refusal itself is right: a cascade can only act on resources the blob recorded,
+// and for an adopted row that set is empty, so un-pausing happens in Google Ads.
+func googleAdsActivationGate(campaign *model.Campaign, targets []googleads.AdGroupStatusTarget, keywordsProvisioned bool, assetGroupID string, assetGroupLinks *int) error {
+	switch model.NormalizeVariant(campaign.Variant) {
+	case googleAdsChannelPerformanceMax:
+		// Named for what Performance Max actually has. The ad-group wording below would send
+		// an operator looking for a provisioning failure in a resource this channel never
+		// creates.
+		if assetGroupID == "" {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its Performance Max asset group (a Performance Max campaign has no ad groups; the asset group is what serves) — either the creative never completed, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		// A group id is NOT a serving campaign. The group is created before its links, so a
+		// failed or unconfirmed assetGroupAssets:mutate leaves the id recorded with nothing
+		// attached — and an empty asset group looks finished in the Google Ads UI, which is
+		// exactly why the id is kept on the result rather than cleared. Activating on the id
+		// alone would un-pause a campaign that cannot serve and report success.
+		//
+		// nil is NOT zero: a row written before this field was recorded cannot distinguish
+		// "no links" from "not recorded", and refusing those would break activation on
+		// Performance Max campaigns that are provisioned correctly. Only a recorded zero
+		// refuses.
+		if assetGroupLinks != nil && *assetGroupLinks == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because its Performance Max asset group %s has no assets linked to it (the group exists but the asset links failed or could not be confirmed, and an asset group with no assets cannot serve — verify the group in Google Ads and finish it there, or recreate the campaign)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID, assetGroupID)
+		}
+		return nil
+	case googleAdsChannelDemandGen, googleAdsChannelVideo, googleAdsChannelDisplay:
+		if len(targets) == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its ad group/ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		// Deliberately no keyword gate on either channel — see the doc comment above.
+		return nil
+	default:
+		// Refuse ACTIVATE if no ad group was fully provisioned: a duplicate-name orphan or
+		// unconfirmed create (see createAdGroupAndAd) leaves no id to cascade to, so
+		// enabling just the campaign would report success while nothing can serve.
+		if len(targets) == 0 {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because this service has no record of its ad group/ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources at all and leaves un-pausing to the Google Ads UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		if !keywordsProvisioned {
+			return fmt.Errorf("%w: google ads campaign %s cannot be activated because keyword targeting is not yet provisioned (at least one keyword criterion is required)", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		}
+		return nil
+	}
+}
+
+// googleAdsToggleAssetGroup is the persisted Performance Max asset group id, or "" on every
+// other channel and on a Performance Max campaign whose creative never completed, together
+// with the number of asset LINKS the create confirmed. Read from the same Result blob
+// googleAdsToggleTargets reads, and for the same reason: the blob records what was actually
+// CREATED, which is what a cascade can act on.
+//
+// Both values, from one decode, because the gate needs both and they answer different
+// questions: the id says a group exists, the count says it can serve. A nil count is a row
+// written before the field existed — see CampaignResult.AssetGroupAssetLinks for why that
+// must not read as zero.
+func googleAdsToggleAssetGroup(campaign *model.Campaign) (string, *int) {
+	if campaign == nil || len(campaign.Result) == 0 {
+		return "", nil
+	}
+	var result googleads.CampaignResult
+	if err := json.Unmarshal(campaign.Result, &result); err != nil {
+		return "", nil
+	}
+	return strings.TrimSpace(result.AssetGroupID), result.AssetGroupAssetLinks
+}
+
+// googleAdsHasToggleChildren reports whether this campaign has any serving resource beneath
+// the campaign for a status flip to cascade to.
+func googleAdsHasToggleChildren(targets []googleads.AdGroupStatusTarget, assetGroupID string) bool {
+	return assetGroupID != "" || len(targets) > 0
+}
+
+// googleAdsToggleChildren flips whichever serving resources this campaign actually has —
+// ALL of them, not the first kind it finds.
+//
+// The asset group goes first: on ACTIVATE every child must be enabled before the campaign
+// is, and the Performance Max asset group is the one that serves. Today a campaign carries
+// an asset group or ad groups and never both, because a Performance Max campaign has no ad
+// groups and every other channel has no asset group. That is an invariant of what the create
+// paths WRITE, though, and this function reads two values parsed independently out of an
+// operator-visible Result blob — a hand-repaired row, a future channel with both, or a change
+// to what adoption records could present both at once. Returning on the asset group alone
+// would then enable it, silently skip every ad group and ad, and still flip the campaign to
+// ENABLED: the "reports running and mostly is not" failure googleAdsToggleTargets' own cascade
+// exists to prevent. So both are acted on, and the contradiction is logged rather than
+// absorbed. Keying on what the blob RECORDED rather than on the variant keeps this consistent
+// with googleAdsToggleTargets, which has always derived the cascade from what was created
+// rather than from what was asked for.
+func googleAdsToggleChildren(ctx context.Context, client *googleads.Client, targets []googleads.AdGroupStatusTarget, assetGroupID, gaStatus string) error {
+	if assetGroupID != "" {
+		if err := client.UpdateAssetGroupStatus(ctx, assetGroupID, gaStatus); err != nil {
+			return err
+		}
+		if len(targets) > 0 {
+			slog.WarnContext(ctx, "google ads campaign records both an asset group and ad groups; cascading to both",
+				"asset_group_id", assetGroupID, "ad_group_count", len(targets))
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	return client.UpdateAdGroupsAndAdsStatus(ctx, targets, gaStatus)
 }
 
 // googleAdsToggleTargets recovers EVERY ad group of a campaign, with its own ads, from
@@ -2003,9 +2745,10 @@ func googleAdsToggleTargets(campaign *model.Campaign) (targets []googleads.AdGro
 // ten names do happen to coincide with a campaigns column (budget_amount, budget_type,
 // campaign_name, status, start_date, end_date), but advertising_channel_type has no column
 // and is recovered from ConfigSnapshot, and budget_delivery_method,
-// budget_explicitly_shared and bidding_strategy_type have neither a column nor a recorded
-// side. Treating the set as column names would send a reader looking for persistence
-// fields that do not exist.
+// budget_explicitly_shared and bidding_strategy_type have no column (bidding_strategy_type
+// is now expressed in ConfigSnapshot but is still reported with an absent recorded side —
+// see settingsFieldBiddingStrategy below for why). Treating the set as column names would
+// send a reader looking for persistence fields that do not exist.
 // googleAdsDateTimeLayout is the shape Google returns campaign.start_date_time /
 // end_date_time in: 'yyyy-MM-dd HH:mm:ss', in the ad account's timezone. Parsing against it
 // in full is what stops a malformed value being silently truncated into a plausible date.
@@ -2019,8 +2762,27 @@ const (
 	settingsFieldStartDate    = "start_date"
 	settingsFieldEndDate      = "end_date"
 	// Budget delivery method, explicit budget sharing and bidding strategy are OBSERVED but
-	// never compared: nothing in a Google Ads dispatch config expresses them, so each is
-	// reported with an absent recorded side and therefore an `unknown` verdict. Status also
+	// never compared, so each is reported with an absent recorded side and therefore an
+	// `unknown` verdict.
+	//
+	// For the two budget fields the reason is simply that nothing in a Google Ads dispatch
+	// config expresses them. Bidding strategy is the one that now could be compared and
+	// deliberately is not: googleAdsConfig.BiddingStrategy records the caller's choice, but
+	// the comparison would have to map this client's UI vocabulary onto Google's OUTPUT_ONLY
+	// BiddingStrategyTypeEnum, and that mapping is not live-verified at exactly the point it
+	// is ambiguous — `target-cpa` and `maximize-conversions` are both sent as
+	// maximize_conversions (with and without a target), and which enum value Google reports
+	// back for the targeted one has not been observed. A mapping guessed wrong reports a
+	// false divergence, which sends an operator to investigate a campaign that is set
+	// exactly as asked. Reporting `unknown` under-informs; a false divergence misinforms,
+	// and only the second is a cost the operator pays. Comparing this field is a follow-up
+	// gated on a live readback of a targeted campaign, not on more reading of the proto.
+	//
+	// Adoption is a second reason to be careful here: on the adopt path the row records a
+	// BiddingStrategy that was never pushed upstream, so the two sides are EXPECTED to
+	// disagree and a comparison would flag every adopted campaign.
+	//
+	// Status also
 	// has an absent recorded side, but for an unrelated reason — the row records one, it is
 	// just a different axis from Google's delivery status — so do not fold it into this
 	// group's rationale. They are

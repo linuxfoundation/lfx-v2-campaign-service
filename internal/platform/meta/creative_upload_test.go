@@ -657,7 +657,7 @@ func TestUploadImageDoesNotRetryNonThrottleFailures(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		// code 100 is a plain invalid-parameter error, NOT a rate-limit code.
-		_, _ = io.WriteString(w, `{"error":{"message":"invalid image","code":100}}`)
+		_, _ = io.WriteString(w, `{"error":{"message":"invalid image","code":100,"error_subcode":1487242,"error_data":{"blame_field_specs":[["bytes"]]},"fbtrace_id":"T"}}`)
 	}))
 	defer srv.Close()
 
@@ -671,6 +671,10 @@ func TestUploadImageDoesNotRetryNonThrottleFailures(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&attempts); n != 1 {
 		t.Errorf("attempts = %d, want 1 — a non-throttle rejection must not be retried", n)
+	}
+	// The upload path parses through copyEnvelope like do(), so no structured field is lost.
+	if apiErr.ErrorSubcode != 1487242 || apiErr.FBTraceID != "T" || len(apiErr.blameFields) != 1 || apiErr.blameFields[0][0] != "bytes" {
+		t.Errorf("upload error dropped structured fields: subcode=%d trace=%q blame=%v", apiErr.ErrorSubcode, apiErr.FBTraceID, apiErr.blameFields)
 	}
 }
 
@@ -716,13 +720,16 @@ func TestUploadImageAbortsWhenRetryAfterExceedsCap(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Retry-After", "600")
 		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613,"type":"OAuthException"}}`)
+		_, _ = io.WriteString(w, `{"error":{"message":"slow down","code":613,"type":"OAuthException","error_subcode":1504022,"error_data":{"blame_field_specs":[["bytes"]]}}}`)
 	}))
 	defer srv.Close()
 
 	_, err := uploadRetryClient(srv.URL).uploadImage(context.Background(), []byte("PNGBYTES"), "image/png")
 	if err == nil {
 		t.Fatal("an over-cap Retry-After must abort")
+	}
+	if ae := (*APIError)(nil); errors.As(err, &ae) && (ae.ErrorSubcode != 1504022 || len(ae.blameFields) != 1) {
+		t.Errorf("abort dropped structured fields: subcode=%d blame=%v", ae.ErrorSubcode, ae.blameFields)
 	}
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {

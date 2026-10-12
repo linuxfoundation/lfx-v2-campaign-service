@@ -751,7 +751,7 @@ func TestGoogleAds_ReadSettings_UninterpretableChannelIsUnknown(t *testing.T) {
 	for name, snapshot := range map[string]string{
 		"no snapshot at all":                 ``,
 		"not a JSON object":                  `"search"`,
-		"channel this service cannot create": `{"channel":"performance-max"}`,
+		"channel this service cannot create": `{"channel":"shopping"}`,
 		// The three cases the string decode could not tell apart. All three used to
 		// decode to "" and be reported as a recorded SEARCH — a channel nobody wrote.
 		// UpdateCampaign persists arbitrary caller-supplied config JSON, so each is

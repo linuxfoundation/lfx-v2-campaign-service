@@ -1094,6 +1094,19 @@ func TestSanitizeSnapshotText_SchemelessUserinfo(t *testing.T) {
 			"see 9:SECRET@events.example now",
 			"see  now",
 		},
+		// A clock opened by prose punctuation stays a clock even though the username class
+		// admits RFC 3986 sub-delims; a sub-delim username with a password is still dropped.
+		{"a parenthesised clock is left alone", "Keynote (14:00@main.stage)", "Keynote (14:00@main.stage)"},
+		{"a starred clock is left alone", "*9:30@main.stage*", "*9:30@main.stage*"},
+		{"a quoted clock is left alone", "'14:00@main.stage'", "'14:00@main.stage'"},
+		{"a comma-joined clock is left alone", "Mon,9:30@main.stage", "Mon,9:30@main.stage"},
+		{"a sub-delim username is a credential", "x admin!:SECRET@host.example y", "x  y"},
+		{"a sub-delim inside a username is a credential", "x a(b:SECRET@host.example y", "x  y"},
+		{"a sub-delims-only username is a credential", "x !:SECRET@host.example y", "x  y"},
+		{"a blank username is a credential", "x :SECRET@host.example y", "x  y"},
+		{"a plus-suffixed numeric pair is a credential", "x alice+2024:1234@ops.example y", "x  y"},
+		{"a plus clock is not exempt", "x alice+9:30@ops.example y", "x  y"},
+		{"a comma then a non-clock number is a credential", "x a,2024:1234@h.example y", "x  y"},
 	} {
 		if got := sanitizeSnapshotText(tc.in); got != tc.want {
 			t.Errorf("%s: sanitizeSnapshotText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)

@@ -107,6 +107,9 @@ type MetaDispatcher struct {
 	// STRONGER property than the mutex-guarded safety Reddit and Microsoft rely on.
 	clients *clientCache
 	opts    []meta.Option
+	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
+	// tests can pin it.
+	settingsNow func() time.Time
 }
 
 // NewMetaDispatcher builds the adapter from the connection repo + encryptor. The
@@ -848,7 +851,7 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// to a 409 state error (the platform is never contacted), not the default 503 — matching
 	// the reddit path. Pausing needs no child id (pausing the parent stops delivery).
 	if metaStatus == meta.StatusActive && strings.TrimSpace(adSetID) == "" {
-		return fmt.Errorf("%w: meta campaign %s cannot be activated because it has no ad set to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		return fmt.Errorf("%w: meta campaign %s cannot be activated because this service has no record of its ad set — either it was never provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to Meta Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus); uerr != nil {
 		// An activate refused up front because the ad set has zero ads is a local/state error

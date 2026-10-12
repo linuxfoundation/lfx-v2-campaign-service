@@ -915,7 +915,10 @@ request layer, checked against Microsoft's reference on 2026-10-05:
 - **Update/Delete are IDEMPOTENT (429 retried); a refusal after a retry is UNCONFIRMED** — the
   `putUpdate` rule (PR #255): a whole-call refusal becomes `retriedUnconfirmedError`, and a
   per-item `FAILED` becomes `UNCONFIRMED`, because the earlier rate-limited attempt may have
-  applied it. A 200 that omits `PartialErrors` or will not decode is UNCONFIRMED.
+  applied it. A 200 that omits `PartialErrors` or will not decode is UNCONFIRMED, and so is a
+  NON-empty `PartialErrors` naming no rejection (`[null]`, `[{}]`): it is not the `[]`/null that
+  affirms none, and read leniently it would report every item APPLIED — the same fail-closed
+  answer `UpdateCampaignStatus` gives that shape.
 - **The negative add is NOT retried on 429** (`idempotent=false`, the create rule): a 429, 5xx,
   transport failure or unreadable 200 is UNCONFIRMED. Per item: an id → `APPLIED` (with
   `NegativeKeywordID`); an already-exists as the item's ONLY error → `ALREADY_PRESENT` (the
@@ -936,8 +939,9 @@ request layer, checked against Microsoft's reference on 2026-10-05:
   `Exact`/`Phrase` in any casing (Broad is not a negative match type upstream and is refused, not
   mapped); the same (match type, case-folded text) twice is REFUSED, not de-duplicated, because
   de-duplication would shift every later positional result.
-- **`GetAdGroupKeywords` refuses a body without `Keywords`** — Microsoft documents an empty array
-  for an empty ad group, so absence is an unanswered read, not "no keywords". Entries carry `Id`
+- **`GetAdGroupKeywords` refuses a body without `Keywords`, or with `"Keywords": null`** —
+  Microsoft documents an empty array for an empty ad group, so absence (or null) is an
+  unanswered read, not "no keywords"; only `[]` confirms emptiness. Entries carry `Id`
   and `Status`; `IsDeleted()` reads `Status == "Deleted"`.
 
 None of the four has been exercised against a live Microsoft Advertising account; the transport
@@ -1024,6 +1028,23 @@ the saved report (see [Microsoft keyword insights](../architecture/microsoft-key
 Contract verified against learn.microsoft.com on 2026-10-05 (KeywordPerformanceReportRequest,
 KeywordPerformanceReportColumn, AccountThroughAdGroupReportScope, KeywordStatusReportFilter);
 NOT exercised against a live account.
+
+## Age/gender audience report (report-backed, default-OFF, LFXV2-2665)
+
+`audience_report.go`: `SubmitAgeGenderReport(window, campaignIDs)` — an
+`AgeGenderAudienceReportRequest` with columns `CampaignId, AgeGroup, Gender, Impressions, Clicks,
+Spend` (no `TimePeriod`: not allowed with Summary; there is NO device column in this report), sent
+through `submitCampaignScopedReport`, the keyword report's request tail extracted so both share
+the `Campaigns`-only scope, `Summary`, `ReturnOnlyCompleteData=false`, no `Filter`/`MaxRows` and
+`reportTime`; scope refusals wrap `ErrAudienceReportScope`, a 2027 rejection
+`ErrAudienceReportScopeRejected`. `CheckAgeGenderReport(reportID)` — one Poll, then
+`foldAgeGenderReportRows`: one row per (campaign, age group, gender), repeats summed, every column
+required by name (a repeated header refused), and the whole read refused for a non-id campaign, a
+blank / invalid-UTF-8 / control- or format-character (Cc/Cf, e.g. a bidi override — checked on the RAW cell before ordinary spaces are trimmed, so `\tMale` or `Male\r` is refused, not read as `Male`) / over-64-byte label (identityjson's raw-bytes
+discipline in CSV form: the JSON encoder would otherwise silently substitute U+FFFD), a negative
+or non-finite counter, an overflow, or more than `MaxAgeGenderBuckets` (64) distinct pairs.
+Verified against learn.microsoft.com on 2026-10-07 (AgeGenderAudienceReportRequest,
+AgeGenderAudienceReportColumn); NOT exercised against a live account.
 
 ## Metrics read (asynchronous, default-OFF)
 
@@ -1280,3 +1301,40 @@ and an arm calling it would assert a match that can never happen. The classifica
 either way — the default is inconclusive too — only the claim would be false.
 `TestProbeInconclusive_PreSendDialErrorIsNotClaimed` keeps that note executable, and fails if the
 pre-send shape ever changes.
+
+## Adoption read (`campaign_lookup.go`, LFXV2-2665)
+
+`GetCampaign` is the read `MicrosoftDispatcher.LookupCampaign` makes to adopt an existing campaign.
+It rides the budget read's `GetCampaignsByIds` (`queryCampaignByIDGuarded`, `Campaigns/QueryByIds`,
+EVERY documented `CampaignType` — `allCampaignTypes`, the space-delimited eight-value v13 set
+(ObjectiveBased included) SHARED with the account monitor in `monitor.go` — rather than the budget and bid reads' Search, AccountId in the body and `CustomerAccountId` on the request), so it inherits
+every answer rule that read applies, plus `identityjson.Check` over the raw 200 body before it is
+decoded — the budget and bid reads pass no guard and are unchanged. `Name`, `Status` and `CampaignType` were
+added to `msCampaignBudgetRead` as RAW fields so a shape this package does not expect in either can fail
+only the adoption read. `ValidateCampaignID` (canonical positive int64, no padding) runs first and
+returns `ErrNotACampaignID` with no request. `CampaignServiceInvalidCampaignId` (fault or
+PartialError) and status `Deleted` are `(nil, nil)`; Active, Paused, BudgetPaused,
+BudgetAndManualPaused and Suspended are a ref; any other status, a missing or blank Name, and every
+error the shared read raises are errors. The read is account-scoped and the Campaign object carries
+no account id, so the request's scope IS the provenance check — a campaign in another account is
+answered absent, as on Google. Because every type is requested, a live non-Search campaign comes
+back and is refused with `ErrNotSearchCampaign` — a DEFINITE answer the dispatcher maps to
+`domain.ErrAdoptionCampaignTypeUnsupported` (409 "adoption supports Microsoft Search campaigns
+only"), never an absence and never an adoption into the Search slot. Requesting Search alone left
+that answer resting on undocumented behaviour: a null slot (503) or, worse, an
+`InvalidCampaignId` PartialError read as absent (404 → a duplicate of a live campaign). A missing
+`CampaignType` is unverifiable, not assumed Search. The flags list is the monitor's documented spelling; whether Microsoft rejects a type the account is not
+enabled for has not been exercised live.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings` (`campaign_settings.go`) reads ONE campaign for the settings readback
+through the same `queryCampaignByIDGuarded` (`GetCampaignsByIds`) the budget, bid and adoption
+reads use, with `identityjson.Check` over the raw body and EVERY documented `CampaignType`
+requested (a Search-only filter could turn a live non-Search campaign into an apparent absence).
+It returns `Name`, `Status`, `BudgetType`, `DailyBudget` (decoded from a new RAW `DailyBudget`
+field on `msCampaignBudgetRead`, so an unexpected shape fails only this read), `Shared` (the
+same `BudgetId` three-way reading `GetCampaignBudget` makes; nil when unreadable) and
+`BiddingSchemeType`. Absent fields are nil, never zero; a present field of the wrong kind, or a
+negative/non-finite `DailyBudget`, is an error. `(nil, nil)` only on
+`CampaignServiceInvalidCampaignId`.

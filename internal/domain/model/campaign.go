@@ -95,9 +95,14 @@ const VariantInvalid = "_invalid"
 
 // AdoptableVariants lists the slots a platform's adopt endpoint can bind a campaign into.
 //
-// Only Google sub-divides today: its briefs can hold a Search campaign (VariantDefault) and
-// a Demand Gen one simultaneously. Every other provider has exactly one slot, because its
-// `objective`/`channel` configures a single campaign rather than multiplying it.
+// Only Google sub-divides today: its briefs can hold a Search campaign (VariantDefault), a
+// Demand Gen one, a Performance Max one, a Video one and a Display one simultaneously. Every
+// other provider has exactly one slot, because its `objective`/`channel` configures a single
+// campaign rather than multiplying it.
+//
+// This list must gain a slot for every channel the Google create path learns, in the same
+// commit: a channel missing here is one the adopt pre-check reports as having no free slot,
+// so a campaign the service can create is one it refuses to adopt.
 //
 // It exists so the adopt pre-check can answer "is there any slot left?" WITHOUT guessing
 // which one this campaign will occupy — that is only known once the platform reports what
@@ -108,7 +113,7 @@ const VariantInvalid = "_invalid"
 // result as "cannot pre-decide" rather than as "no slots".
 func AdoptableVariants(p Provider) []string {
 	if p == ProviderGoogleAds {
-		return []string{VariantDefault, "demand-gen"}
+		return []string{VariantDefault, "demand-gen", "performance-max", "video", "display"}
 	}
 	return []string{VariantDefault}
 }
@@ -201,7 +206,7 @@ type Campaign struct {
 	Platform  Provider
 	// Variant is the sub-division of Platform this campaign is: which of that
 	// platform's campaign types it represents. Google has several (search,
-	// demand-gen, performance-max next) and its UI offers them as simultaneous
+	// demand-gen, performance-max, video, display) and its UI offers them as simultaneous
 	// checkboxes, so one brief can hold more than one google-ads campaign; every
 	// other provider uses VariantDefault.
 	//
@@ -789,6 +794,21 @@ func CompareSettingsField(field string, recorded, upstream *string) CampaignSett
 		f.Comparison = SettingsDiverged
 	}
 	return f
+}
+
+// UncomparableSettingsField reports a setting whose two sides were BOTH read but cannot be
+// compared like with like, so its verdict is `unknown` with both values still shown.
+//
+// It is the narrow companion to CompareSettingsField, not an alternative rule: it can only ever
+// produce `unknown`, never a `match` or a `diverged`, so it cannot fabricate agreement or a
+// difference. It exists for the case where a platform's create path deliberately wrote
+// something OTHER than the recorded value — a flight start nudged forward to "now + buffer"
+// because the requested day had already begun — so that a difference is explained by the
+// create path itself and reporting it as `diverged` would send an operator to investigate a
+// campaign that is set exactly as this service made it. Hiding the upstream value instead
+// would withhold an observation that was genuinely made.
+func UncomparableSettingsField(field string, recorded, upstream *string) CampaignSettingsField {
+	return CampaignSettingsField{Field: field, Recorded: recorded, Upstream: upstream, Comparison: SettingsUnknown}
 }
 
 // SummariseSettings fills DivergedCount and UnknownCount from Fields, so the counts cannot

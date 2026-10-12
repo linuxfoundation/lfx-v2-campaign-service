@@ -167,3 +167,9 @@ store leaves the handler's explorer unset — and `ExplorerIsSet` is what turns 
 contract's typed `503` and an honest `capabilities` answer, instead of a nil dereference on the
 first request. The model client stays optional on purpose: it recovers a brand token and nothing
 an operator acts on depends on it.
+
+`bindStatsJobLease` (both wiring paths) builds one `postgres.StatsJobLease` from the pool's
+config, binds it into the X dispatcher (`SetStatsJobLease`) and records it; `Close` closes its
+dedicated session (one connection outside the pool, opened on first use) under its own reserved
+slice of the shutdown budget, `statsLeaseCloseTimeout` (250ms), which `ContainerCloseTimeout`
+includes (`TestShutdownBudgetComposes`). See [internal/infrastructure/postgres](internal-infrastructure-postgres.md).

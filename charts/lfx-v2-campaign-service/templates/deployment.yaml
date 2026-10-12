@@ -54,6 +54,47 @@
     {{- fail (printf "app.extraEnv may not set %s to a non-empty value or source it with valueFrom: it disables JWT verification. See the app.environment guard." $bypassKey) }}
   {{- end }}
 {{- end }}
+{{- /*
+  Guard: the X (Twitter) stats-job features run on ONE replica — a first line of defence.
+
+  TWITTER_METRICS_ENABLED turns on the X account monitor and the X audience read, which create
+  asynchronous stats jobs on X ad accounts shared across foundations (X allows 100 concurrent
+  jobs per account). Their limits — the audience read's per-account job budget, singleflight and
+  slot (internal/dispatch/twitter_audience_guard.go) and the account-keyed write pacer
+  (internal/platform/twitter/pacer.go) — are process-local, so the binding guarantee is made at
+  RUNTIME: only the pod holding the per-account Postgres advisory lease
+  (internal/infrastructure/postgres/stats_job_lease.go) runs stats jobs, and every other pod
+  refuses. This render-time check cannot see an out-of-band scale or an external HPA (ArgoCD
+  ignores /spec/replicas), so it is belt-and-braces: it stops the configurations it CAN see from
+  rendering at all.
+
+  It judges the EFFECTIVE value the container gets. The env list renders app.environment first
+  and app.extraEnv after it, and Kubernetes resolves a repeated name to its LAST occurrence, so
+  the last extraEnv entry named TWITTER_METRICS_ENABLED wins over app.environment. An
+  app.environment entry renders `value` when the key is present and `valueFrom` otherwise. A
+  valueFrom on the effective entry cannot be inspected and is treated as on.
+*/}}
+{{- $xStats := false }}
+{{- with (get .Values.app.environment "TWITTER_METRICS_ENABLED") }}
+  {{- if hasKey . "value" }}
+    {{- $xStats = eq (toString .value) "true" }}
+  {{- else if .valueFrom }}
+    {{- $xStats = true }}
+  {{- end }}
+{{- end }}
+{{- range $entry := .Values.app.extraEnv }}
+  {{- if eq (toString (default "" $entry.name)) "TWITTER_METRICS_ENABLED" }}
+    {{- $xStats = or (and $entry.valueFrom true) (eq (toString $entry.value) "true") }}
+  {{- end }}
+{{- end }}
+{{- if $xStats }}
+  {{- $replicas := int (default 1 .Values.replicaCount) }}
+  {{- $autoscaleMax := 1 }}
+  {{- with .Values.autoscaling }}{{- if .enabled }}{{- $autoscaleMax = int (default 2 .maxReplicas) }}{{- end }}{{- end }}
+  {{- if or (gt $replicas 1) (gt $autoscaleMax 1) }}
+    {{- fail "TWITTER_METRICS_ENABLED is on with more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1). The X stats-job features' per-account limits (job budget, write pacer) are per process, so each replica would multiply them against X ad accounts shared across foundations. Run one replica while the flag is on (the runtime lease also refuses non-owner pods)." }}
+  {{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

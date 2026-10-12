@@ -212,7 +212,12 @@ func (d *HubSpotDispatcher) resolveHubSpotClient(ctx context.Context, projectID 
 // turns, and a client held from an earlier turn would keep writing with a credential the
 // project has since withdrawn.
 func (d *HubSpotDispatcher) ResolveEmailClient(ctx context.Context, projectID string) (*hubspot.Client, error) {
-	return d.resolveHubSpotClient(ctx, projectID, model.ProviderHubSpot)
+	client, err := d.resolveHubSpotClient(ctx, projectID, model.ProviderHubSpot)
+	if err != nil {
+		return nil, err
+	}
+	// The wizard returns created and cloned emails with their edit links.
+	return client.WithLinkPortalFallback(ctx), nil
 }
 
 // ResolveEmailClientWithOrigin is ResolveEmailClient plus whether the credentials came from the
@@ -227,7 +232,7 @@ func (d *HubSpotDispatcher) ResolveEmailClientWithOrigin(ctx context.Context, pr
 	if err != nil {
 		return nil, false, err
 	}
-	return client, res.isFromSystem(), nil
+	return client.WithLinkPortalFallback(ctx), res.isFromSystem(), nil
 }
 
 // resolveHubSpotClientWithCreds is resolveHubSpotClient plus the resolved credential it built the
@@ -295,6 +300,9 @@ func (d *HubSpotDispatcher) resolveHubSpotClientVia(ctx context.Context, project
 			domain.ErrConnectionNotUsable, domain.ErrCredentialsIncomplete)
 	}
 
+	// No WithLinkPortalFallback here: this resolver also serves ReadMetrics, PreflightCreate,
+	// ProbeConnection and the monitor, none of which builds a link, and a token-info lookup
+	// would only spend their budgets. The link-building entry points opt in themselves.
 	return hubspot.NewClient(
 		hubspot.Credentials{PrivateAppToken: token},
 		hubspot.AccountConfig{PortalID: res.providerConfig["portal_id"]},
@@ -555,6 +563,10 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if perr != nil {
 		return nil, notCreated(perr)
 	}
+	// The campaign carries the cloned email's edit link. A row with no portal_id would build it
+	// blank; the guard has just verified the token's portal, so links reuse that value rather than
+	// a second token-info lookup (TestHubSpot_DispatchReadsThePortalOnce).
+	client = client.WithLinkPortal(portalID)
 
 	// The portal is already known: assertAudiencePortal above confirmed the audience's lists live
 	// in the portal this token authenticates against, and returns the value it verified. The
@@ -1063,7 +1075,6 @@ func (d *HubSpotDispatcher) SearchEmails(ctx context.Context, projectID string, 
 	if err != nil {
 		return nil, err
 	}
-
 	emails, err := client.SearchEmails(ctx, query)
 	if err != nil {
 		// A 401/403 is tagged HERE, where the status is still visible -- the same treatment

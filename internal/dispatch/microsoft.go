@@ -125,6 +125,9 @@ type MicrosoftDispatcher struct {
 	// must be given the same treatment before it is shared.
 	clients *clientCache
 	opts    []microsoft.Option
+	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
+	// tests can pin it.
+	settingsNow func() time.Time
 }
 
 // NewMicrosoftDispatcher builds the adapter from the connection repo + encryptor.
@@ -834,7 +837,7 @@ func (d *MicrosoftDispatcher) ToggleStatus(ctx context.Context, projectID string
 	adGroupID, adID = strings.TrimSpace(adGroupID), strings.TrimSpace(adID)
 	if msStatus == microsoft.StatusActive {
 		if adGroupID == "" || adID == "" {
-			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because it has no fully-created ad group + ad to serve", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+			return fmt.Errorf("%w: microsoft campaign %s cannot be activated because this service has no record of a fully-created ad group + ad — either they were never fully provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to the Microsoft Advertising UI", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 		}
 		// Refuse ACTIVATE when no keyword was ever provisioned. A Search campaign with no
 		// keywords has nothing to match a query against, so enabling it would report success

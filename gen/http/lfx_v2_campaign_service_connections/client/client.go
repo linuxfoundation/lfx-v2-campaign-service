@@ -198,9 +198,21 @@ type Client struct {
 	// get-google-ads-audience endpoint.
 	GetGoogleAdsAudienceDoer goahttp.Doer
 
+	// GetMetaAdsAudience Doer is the HTTP client used to make requests to the
+	// get-meta-ads-audience endpoint.
+	GetMetaAdsAudienceDoer goahttp.Doer
+
+	// GetTwitterAdsAudience Doer is the HTTP client used to make requests to the
+	// get-twitter-ads-audience endpoint.
+	GetTwitterAdsAudienceDoer goahttp.Doer
+
 	// GetMicrosoftAdsKeywords Doer is the HTTP client used to make requests to the
 	// get-microsoft-ads-keywords endpoint.
 	GetMicrosoftAdsKeywordsDoer goahttp.Doer
+
+	// GetMicrosoftAdsAudience Doer is the HTTP client used to make requests to the
+	// get-microsoft-ads-audience endpoint.
+	GetMicrosoftAdsAudienceDoer goahttp.Doer
 
 	// ResolveGoogleAdsCampaign Doer is the HTTP client used to make requests to
 	// the resolve-google-ads-campaign endpoint.
@@ -209,6 +221,18 @@ type Client struct {
 	// ResolveMicrosoftAdsCampaign Doer is the HTTP client used to make requests to
 	// the resolve-microsoft-ads-campaign endpoint.
 	ResolveMicrosoftAdsCampaignDoer goahttp.Doer
+
+	// ResolveMetaAdsCampaign Doer is the HTTP client used to make requests to the
+	// resolve-meta-ads-campaign endpoint.
+	ResolveMetaAdsCampaignDoer goahttp.Doer
+
+	// ResolveRedditAdsCampaign Doer is the HTTP client used to make requests to
+	// the resolve-reddit-ads-campaign endpoint.
+	ResolveRedditAdsCampaignDoer goahttp.Doer
+
+	// ResolveTwitterAdsCampaign Doer is the HTTP client used to make requests to
+	// the resolve-twitter-ads-campaign endpoint.
+	ResolveTwitterAdsCampaignDoer goahttp.Doer
 
 	// ListMetaAdsAccounts Doer is the HTTP client used to make requests to the
 	// list-meta-ads-accounts endpoint.
@@ -225,6 +249,10 @@ type Client struct {
 	// ListTwitterAdsAccounts Doer is the HTTP client used to make requests to the
 	// list-twitter-ads-accounts endpoint.
 	ListTwitterAdsAccountsDoer goahttp.Doer
+
+	// ListRedditAdsAccounts Doer is the HTTP client used to make requests to the
+	// list-reddit-ads-accounts endpoint.
+	ListRedditAdsAccountsDoer goahttp.Doer
 
 	// ListHubspotEmails Doer is the HTTP client used to make requests to the
 	// list-hubspot-emails endpoint.
@@ -261,6 +289,10 @@ type Client struct {
 	// MonitorTwitterAdsAccount Doer is the HTTP client used to make requests to
 	// the monitor-twitter-ads-account endpoint.
 	MonitorTwitterAdsAccountDoer goahttp.Doer
+
+	// MonitorHubspotAccount Doer is the HTTP client used to make requests to the
+	// monitor-hubspot-account endpoint.
+	MonitorHubspotAccountDoer goahttp.Doer
 
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
@@ -328,13 +360,20 @@ func NewClient(
 		ListGoogleAdsAccountsDoer:       doer,
 		GetGoogleAdsKeywordsDoer:        doer,
 		GetGoogleAdsAudienceDoer:        doer,
+		GetMetaAdsAudienceDoer:          doer,
+		GetTwitterAdsAudienceDoer:       doer,
 		GetMicrosoftAdsKeywordsDoer:     doer,
+		GetMicrosoftAdsAudienceDoer:     doer,
 		ResolveGoogleAdsCampaignDoer:    doer,
 		ResolveMicrosoftAdsCampaignDoer: doer,
+		ResolveMetaAdsCampaignDoer:      doer,
+		ResolveRedditAdsCampaignDoer:    doer,
+		ResolveTwitterAdsCampaignDoer:   doer,
 		ListMetaAdsAccountsDoer:         doer,
 		ListLinkedinAdsAccountsDoer:     doer,
 		ListMicrosoftAdsAccountsDoer:    doer,
 		ListTwitterAdsAccountsDoer:      doer,
+		ListRedditAdsAccountsDoer:       doer,
 		ListHubspotEmailsDoer:           doer,
 		SearchHubspotCampaignsDoer:      doer,
 		CreateHubspotCampaignDoer:       doer,
@@ -344,6 +383,7 @@ func NewClient(
 		MonitorRedditAdsAccountDoer:     doer,
 		MonitorMicrosoftAdsAccountDoer:  doer,
 		MonitorTwitterAdsAccountDoer:    doer,
+		MonitorHubspotAccountDoer:       doer,
 		RestoreResponseBody:             restoreBody,
 		scheme:                          scheme,
 		host:                            host,
@@ -1435,6 +1475,54 @@ func (c *Client) GetGoogleAdsAudience() goa.Endpoint {
 	}
 }
 
+// GetMetaAdsAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-meta-ads-audience server.
+func (c *Client) GetMetaAdsAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetMetaAdsAudienceRequest(c.encoder)
+		decodeResponse = DecodeGetMetaAdsAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetMetaAdsAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetMetaAdsAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-meta-ads-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetTwitterAdsAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-twitter-ads-audience server.
+func (c *Client) GetTwitterAdsAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetTwitterAdsAudienceRequest(c.encoder)
+		decodeResponse = DecodeGetTwitterAdsAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetTwitterAdsAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetTwitterAdsAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
 // GetMicrosoftAdsKeywords returns an endpoint that makes HTTP requests to the
 // lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
 // server.
@@ -1455,6 +1543,31 @@ func (c *Client) GetMicrosoftAdsKeywords() goa.Endpoint {
 		resp, err := c.GetMicrosoftAdsKeywordsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-microsoft-ads-keywords", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetMicrosoftAdsAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// server.
+func (c *Client) GetMicrosoftAdsAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetMicrosoftAdsAudienceRequest(c.encoder)
+		decodeResponse = DecodeGetMicrosoftAdsAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetMicrosoftAdsAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetMicrosoftAdsAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-microsoft-ads-audience", err)
 		}
 		return decodeResponse(resp)
 	}
@@ -1505,6 +1618,80 @@ func (c *Client) ResolveMicrosoftAdsCampaign() goa.Endpoint {
 		resp, err := c.ResolveMicrosoftAdsCampaignDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "resolve-microsoft-ads-campaign", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ResolveMetaAdsCampaign returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign server.
+func (c *Client) ResolveMetaAdsCampaign() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeResolveMetaAdsCampaignRequest(c.encoder)
+		decodeResponse = DecodeResolveMetaAdsCampaignResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildResolveMetaAdsCampaignRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ResolveMetaAdsCampaignDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "resolve-meta-ads-campaign", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ResolveRedditAdsCampaign returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// server.
+func (c *Client) ResolveRedditAdsCampaign() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeResolveRedditAdsCampaignRequest(c.encoder)
+		decodeResponse = DecodeResolveRedditAdsCampaignResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildResolveRedditAdsCampaignRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ResolveRedditAdsCampaignDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "resolve-reddit-ads-campaign", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ResolveTwitterAdsCampaign returns an endpoint that makes HTTP requests to
+// the lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// server.
+func (c *Client) ResolveTwitterAdsCampaign() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeResolveTwitterAdsCampaignRequest(c.encoder)
+		decodeResponse = DecodeResolveTwitterAdsCampaignResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildResolveTwitterAdsCampaignRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ResolveTwitterAdsCampaignDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "resolve-twitter-ads-campaign", err)
 		}
 		return decodeResponse(resp)
 	}
@@ -1603,6 +1790,30 @@ func (c *Client) ListTwitterAdsAccounts() goa.Endpoint {
 		resp, err := c.ListTwitterAdsAccountsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-twitter-ads-accounts", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// ListRedditAdsAccounts returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service list-reddit-ads-accounts server.
+func (c *Client) ListRedditAdsAccounts() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeListRedditAdsAccountsRequest(c.encoder)
+		decodeResponse = DecodeListRedditAdsAccountsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildListRedditAdsAccountsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.ListRedditAdsAccountsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "list-reddit-ads-accounts", err)
 		}
 		return decodeResponse(resp)
 	}
@@ -1824,6 +2035,30 @@ func (c *Client) MonitorTwitterAdsAccount() goa.Endpoint {
 		resp, err := c.MonitorTwitterAdsAccountDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-twitter-ads-account", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// MonitorHubspotAccount returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service monitor-hubspot-account server.
+func (c *Client) MonitorHubspotAccount() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeMonitorHubspotAccountRequest(c.encoder)
+		decodeResponse = DecodeMonitorHubspotAccountResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildMonitorHubspotAccountRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.MonitorHubspotAccountDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "monitor-hubspot-account", err)
 		}
 		return decodeResponse(resp)
 	}

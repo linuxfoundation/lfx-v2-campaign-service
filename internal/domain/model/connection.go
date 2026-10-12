@@ -402,6 +402,82 @@ type AudienceInsights struct {
 	Buckets []AudienceBucket
 }
 
+// Meta audience breakdown dimensions (the Meta audience read's own vocabulary; see
+// MetaAudienceBucket).
+const (
+	MetaAudienceDimensionAgeGender = "age_gender"
+	MetaAudienceDimensionPlacement = "placement"
+)
+
+// MetaAudienceBucket is one Meta Insights breakdown segment's counters, summed across the
+// calling project's own campaigns.
+//
+// Not AudienceBucket: Meta's age and gender arrive as ONE combined breakdown and placement
+// carries two values, so a single Dimension/Value pair cannot hold a segment without inventing a
+// joined-string vocabulary. Only the value fields of the bucket's own Dimension are set.
+//
+// There is no Conversions field, deliberately: Meta exposes conversions only inside the
+// per-action-type `actions` array, and choosing which action types count is a configuration
+// input this service does not have (see MetaDispatcher.ReadMetrics).
+type MetaAudienceBucket struct {
+	Dimension         string
+	Age               string
+	Gender            string
+	PublisherPlatform string
+	PlatformPosition  string
+	Impressions       int64
+	Clicks            int64
+	// CostMicros is in micros of MetaAudienceInsights.Currency; no FX conversion.
+	CostMicros int64
+	Ctr        float64
+}
+
+// MetaAudienceInsights is the Meta audience read over the CALLING PROJECT'S OWN CAMPAIGNS — not
+// the connected ad account, which is shared across foundations. Each dimension independently
+// covers the same traffic, so counters total within a dimension, never across them.
+type MetaAudienceInsights struct {
+	Window MetricsWindow
+	// Currency is the ad account's ISO 4217 code as Meta reported it; "" when no bucket came
+	// back.
+	Currency string
+	Buckets  []MetaAudienceBucket
+}
+
+// X audience segmentation dimensions (the X audience read's own vocabulary; see
+// TwitterAudienceBucket).
+const (
+	TwitterAudienceDimensionAge      = "age"
+	TwitterAudienceDimensionGender   = "gender"
+	TwitterAudienceDimensionPlatform = "platform"
+)
+
+// TwitterAudienceBucket is one X stats segment's counters (AGE, GENDER or PLATFORMS
+// segmentation), summed across the calling project's own campaigns. Value is X's segment name,
+// verbatim. No Conversions field, for the reason TwitterDispatcher.ReadMetrics leaves them nil.
+type TwitterAudienceBucket struct {
+	Dimension   string
+	Value       string
+	Impressions int64
+	Clicks      int64
+	// CostMicros is billed charge in micros of TwitterAudienceInsights.Currency; no FX.
+	CostMicros int64
+	Ctr        float64
+}
+
+// TwitterAudienceInsights is the X audience read over the CALLING PROJECT'S OWN CAMPAIGNS — not
+// the connected ad account, which is shared across foundations. Each dimension independently
+// covers the same traffic, so counters total within a dimension, never across them.
+type TwitterAudienceInsights struct {
+	Window MetricsWindow
+	// Currency is the ad account's ISO 4217 code as X reports it on the account; "" when X was
+	// not contacted or the account carries none.
+	Currency string
+	// AllCountersNull: at least one dimension returned rows with no measured counter (see
+	// twitter.AudienceInsights.AllCountersNull) — its zeros are not a measurement.
+	AllCountersNull bool
+	Buckets         []TwitterAudienceBucket
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string
@@ -460,6 +536,52 @@ func KeywordActionApplied(outcome string) bool {
 func NegativeKeywordPresent(outcome string) bool {
 	return outcome == KeywordOutcomeApplied || outcome == KeywordOutcomeAlreadyPresent
 }
+
+// KeywordTargeting is the current POSITIVE keyword targeting of a campaign's one ad group
+// (Reddit) or line item (X), read live (LFXV2-2665).
+type KeywordTargeting struct {
+	// EntityID is the ad group (Reddit) or line item (X) the targeting belongs to.
+	EntityID string
+	// Keywords is never nil on success: an empty slice is "targets no keyword".
+	Keywords []KeywordTargetingEntry
+	// Revision is Reddit's fingerprint of the ad group's whole targeting; "" on X.
+	Revision string
+}
+
+// KeywordTargetingEntry is one targeted keyword. CriterionID and MatchType are X's; both are
+// empty on Reddit, where a keyword has no id.
+type KeywordTargetingEntry struct {
+	Keyword     string
+	CriterionID string
+	MatchType   string
+}
+
+// KeywordTargetingRemoval names one keyword to take out of the targeting: Keyword on Reddit,
+// CriterionID on X.
+type KeywordTargetingRemoval struct {
+	Keyword     string
+	CriterionID string
+}
+
+// KeywordTargetingOutcome is one removal's outcome, positionally aligned with the request.
+// Outcome is always one of APPLIED, FAILED or UNCONFIRMED.
+type KeywordTargetingOutcome struct {
+	Keyword     string
+	CriterionID string
+	Outcome     string
+	ErrorCode   string
+}
+
+// Error codes a keyword-targeting removal may carry. Fixed vocabulary: the platform's own text
+// is never returned.
+const (
+	KeywordTargetingErrNotSent  = "NOT_SENT"
+	KeywordTargetingErrNotFound = "NOT_FOUND"
+	KeywordTargetingErrRejected = "REJECTED"
+	// KeywordTargetingErrWouldEmpty: not sent, because a fresh read showed the item is now the
+	// last keyword targeted (another removal landed meanwhile).
+	KeywordTargetingErrWouldEmpty = "WOULD_EMPTY"
+)
 
 // NegativeKeyword is one requested campaign-level negative keyword. MatchType is the
 // platform-neutral "Exact" or "Phrase".

@@ -59,7 +59,7 @@ func (d *MicrosoftDispatcher) WriteBid(ctx context.Context, projectID string, pl
 	adGroupID, _ := microsoftChildIDs(campaign)
 	adGroupID = strings.TrimSpace(adGroupID)
 	if adGroupID == "" {
-		return fmt.Errorf("write microsoft campaign bid: campaign %s records no ad group created by this service, so there is no ad group whose bid this endpoint may set; change the bid in Microsoft Advertising: %w",
+		return fmt.Errorf("write microsoft campaign bid: campaign %s records no ad group created by this service — either it was never provisioned, or the campaign was ADOPTED, which records none — so there is no ad group whose bid this endpoint may set; change the bid in Microsoft Advertising: %w",
 			campaignID, domain.ErrBidUnwritable)
 	}
 	if !microsoftCampaignIDRE.MatchString(adGroupID) {

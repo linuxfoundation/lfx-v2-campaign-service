@@ -50,16 +50,34 @@ type Service interface {
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
-	// project's connection, and nothing is created upstream. Returns 404 when the
-	// platform holds no such campaign, 409 when this brief already has a live
-	// campaign on that platform / that campaign is already bound to another brief
-	// (in any project, since several foundations share one upstream ad account) /
-	// the brief lost approval during the read / the project has no ad-platform
-	// connection of its own, and 400 when the platform has no adoption capability
-	// wired. An adopted campaign behaves like any other campaign row on every
-	// per-campaign endpoint - the metrics read, the settings readback, delete and
-	// pause all work on it; activation is the one exception, and is refused
-	// because adoption does not verify the targeting the activate guard requires.
+	// project's connection, and nothing is created upstream. Supported platforms:
+	// google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other
+	// platform answers 400. The read is one get-campaign-by-id under the project's
+	// OWN connection (never the shared LF system account), plus, on Reddit and X
+	// only, one read of that connection's ad account after a campaign 404, and the
+	// campaign must belong to that connection's ad account. Returns 404 only when
+	// the platform PROVES it holds no such campaign (a deleted, removed or
+	// archived campaign counts as absent), 503 when the campaign could not be
+	// verified (the platform was unreachable or throttled, answered with something
+	// untrustworthy, or gave a not-found that could equally be an access, auth or
+	// account problem - its existence is unknown), 409 when this brief already has
+	// a live campaign on that platform / that campaign is already bound to another
+	// brief (in any project, since several foundations share one upstream ad
+	// account) / the platform reports the campaign under a different ad account
+	// than the project's connection / the campaign is of a type that platform's
+	// slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost
+	// approval during the read / the project has no ad-platform connection of its
+	// own, and 400 when the platform has no adoption capability wired or
+	// platform_campaign_id is malformed for that platform (checked before any
+	// connection work). An adopted campaign records only the campaign itself (id,
+	// name, account), never its children. The metrics read and the settings
+	// readback (on the platforms that support them), delete and pause work on it;
+	// activation is refused on every platform because adoption does not verify the
+	// targeting the activate guard requires; the bid lever is refused on
+	// Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line
+	// item the row does not record); the budget lever is refused on Meta (its
+	// budget lives on the ad set) and works on Microsoft, Reddit and X, where the
+	// budget is the campaign's own.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
@@ -82,9 +100,15 @@ type Service interface {
 	// This is the read metrics cannot be: impressions, clicks, cost and CTR do not
 	// describe a campaign's configuration. A setting that could not be read on
 	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
-	// zero and never counted as a match. Support is per-platform: a campaign whose
-	// platform has no settings-readback dispatcher wired returns 400 — Google Ads
-	// is the only one today.
+	// zero and never counted as a match. Support is per-platform: Google Ads,
+	// Microsoft Advertising, Meta, Reddit and X (Twitter) Ads are wired, and a
+	// campaign on any other platform returns 400. The field set is per-platform
+	// too — each platform reports only the settings it can answer honestly,
+	// normalised to the units its create path wrote (Microsoft carries no flight
+	// dates, so reports none) — and on every platform the provenance rules are the
+	// same: a campaign that does not record the account it was created under, or
+	// that belongs to a different account than the connection now resolves to, is
+	// refused 409 before anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -312,6 +336,116 @@ type Service interface {
 	// rate limit, an unreadable answer — verify the campaign's negative keywords
 	// before retrying).
 	AddNegativeKeywords(context.Context, *AddNegativeKeywordsPayload) (res *NegativeKeywords, err error)
+	// Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the
+	// positive keywords on the ONE ad group (Reddit) or line item (X) this service
+	// created for it, read live from the platform and never persisted. On these
+	// two platforms a keyword is an entry in the targeting, not a criterion with
+	// its own status, so it cannot be paused — only removed
+	// (remove-keyword-targeting). Reddit: the keywords in the ad group's
+	// targeting, which the create path sets from redditConfig.keywords; the
+	// response also carries `revision`, a fingerprint of the ad group's whole
+	// targeting, which a removal must send back. X: the line item's keyword
+	// targeting criteria (BROAD/PHRASE/EXACT/UNORDERED_KEYWORD, not negated). The
+	// X create path sets NO targeting criteria, so a campaign this service created
+	// reports an empty list until an operator adds keywords in X Ads Manager.
+	// Before the platform is read, the ad group / line item must be one the row
+	// records, and the campaign's ad account must match the project's connection;
+	// the platform must then report it under THIS campaign. Any other platform is
+	// **400**. **409** when the campaign is unprovisioned, records no ad group /
+	// line item, belongs to a different ad account, the ad group / line item is
+	// gone or reports another campaign, or its targeting could not be read as a
+	// keyword list. **503** when the platform could not be read.
+	GetKeywordTargeting(context.Context, *GetKeywordTargetingPayload) (res *KeywordTargeting, err error)
+	// Remove keywords from the keyword TARGETING of a Reddit or X campaign
+	// (LFXV2-2665). A MUTATION on a live paid campaign, guarded like the keyword
+	// actions: the batch, the campaign's provisioning, its recorded ad account (a
+	// row that records none is refused, never assumed) and the account's match
+	// with the project's connection are all checked before the platform is
+	// contacted; the ad group / line item is then read and must report THIS
+	// campaign, and every named keyword must be in its current targeting, before
+	// anything is changed. It persists nothing, so it takes no If-Match. REFUSED
+	// (409) WHEN IT WOULD REMOVE EVERY KEYWORD: with no keyword left the ad group
+	// / line item stops being keyword-targeted at all and serves to its other
+	// targeting alone — a widening, not a reduction. Remove the last keyword in
+	// the platform's own UI if that is intended. REDDIT: items name `keyword`.
+	// Reddit has no per-keyword write — the ad group's targeting is replaced as a
+	// whole — so the service re-reads the targeting, refuses (409) unless its
+	// fingerprint still equals the `revision` the caller sends (from
+	// get-keyword-targeting), and writes back exactly what it read with the named
+	// keywords taken out, then reads it again to confirm. All items share one
+	// outcome. Reddit writes are OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED
+	// is "true" (answered 400 like an unsupported platform), because the write
+	// replaces the whole targeting object and has not yet been exercised against a
+	// live ad account. X: items name `criterion_id`; each is one DELETE of that
+	// targeting criterion, in request order, with its own outcome; `revision` must
+	// be absent. The targeting is re-read before EACH delete, and an item whose
+	// criterion has meanwhile gone (NOT_FOUND) or that is now the last keyword
+	// (WOULD_EMPTY) is not sent — a concurrent removal can no longer combine with
+	// this one to empty the line item, though X offers no conditional delete, so
+	// the moment between that re-read and the DELETE remains. Removing a keyword
+	// cannot be undone here: re-add it in the platform. **400** for a malformed
+	// batch (empty or over 20, an item naming the wrong field for the platform,
+	// the same keyword twice, a keyword not in the current targeting, a missing
+	// Reddit revision) or an unsupported platform. **409** as for the read, plus a
+	// changed Reddit targeting and the every-keyword refusal. **503** only when no
+	// item was answered. Its MESSAGE separates a DEFINITE failure (nothing was
+	// removed — retry) from an UNCONFIRMED one (read the targeting again before
+	// retrying).
+	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
+	// Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name,
+	// configured and effective status, bid strategy and own budget, with its
+	// impressions, clicks, spend and CTR over the window. A pure read — the
+	// platform is only read and nothing is persisted. Upstream: GET
+	// /{campaign_id}/adsets (bounded cursor paging), GET
+	// /act_{id}?fields=currency, and ONE level=adset Insights read on the ad
+	// account filtered to this campaign (bounded cursor paging). Every page is
+	// checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8
+	// or an unpaired surrogate escape refuses the read), every ad set must report
+	// THIS campaign and the connection's ad account, every Insights row must name
+	// this campaign and the account's currency, and an explicit null counter is
+	// refused while an absent one is 0. `recorded` marks the ad set this service
+	// created. Before anything is read the campaign must record which ad account
+	// it was created under and that account must be the connection's (409
+	// otherwise); a campaign with no platform campaign id is 409; any platform but
+	// Meta is 400. **404 when the campaign row does not exist or the project has
+	// no Meta connection** — never because of anything Meta answers: Meta's 100/33
+	// on the campaign ("does not exist, cannot be loaded due to missing
+	// permissions, or does not support this operation") cannot tell a deleted
+	// campaign from one this token cannot load, so it is a 503 like every other
+	// unverifiable upstream answer — all or nothing, never a partial list.
+	ListMetaAdSets(context.Context, *ListMetaAdSetsPayload) (res *MetaAdSets, err error)
+	// Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a
+	// live paid campaign, guarded like toggle-campaign-status: If-Match carries
+	// the campaign row's ETag (428 when missing, 412 when stale) and the
+	// campaign's write lock is held for the call. `ad_set_id` is validated before
+	// any connection work (400). The campaign must record its ad account and that
+	// account must be the connection's (409), and the ad set is then READ (GET
+	// /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS
+	// campaign under THAT account (409 otherwise) — all before anything is
+	// written. ACTIVE is allowed ONLY on the ad set this service created for the
+	// campaign (409 otherwise — a hand-added ad set's targeting was never verified
+	// here), and on an ADOPTED campaign, which records none, it is refused exactly
+	// as the campaign toggle refuses it; PAUSED is allowed on any of the
+	// campaign's ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. When
+	// the read shows the requested status already, NOTHING is sent and the outcome
+	// is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never
+	// retried: 200 APPLIED when Meta confirms it. Failures: a failed pre-write
+	// read, a write never sent, or a write Meta definitely refused is 503 saying
+	// nothing was changed; a write that was sent and whose outcome is unknown (a
+	// throttle, a 5xx, a timeout, a transient or unrecognisable error, an
+	// unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets
+	// before retrying — and the campaign's write lock is held for a cooldown. No
+	// Meta connection is 404; an unusable connection or one with no ad account is
+	// 409; a problem with the LF system connection, stored-credential decryption
+	// or this service itself is 500. If the write was APPLIED but the campaign row
+	// changed or was deleted concurrently, the answer is 409 stating that the ad
+	// set's status WAS changed on Meta. The ad set's status is NOT stored on the
+	// campaign row, so the returned ETag is the row's UNCHANGED version (as when a
+	// created_degraded campaign is paused). NOTE: toggle-campaign-status cascades
+	// an ACTIVATE to the recorded ad set, so a campaign ACTIVATE re-activates the
+	// recorded ad set; a deliberate ad-set pause does not survive a campaign
+	// pause/resume. Any platform but Meta is 400.
+	ToggleMetaAdSetStatus(context.Context, *ToggleMetaAdSetStatusPayload) (res *MetaAdSetStatusChange, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
 	// brief can be re-dispatched to that platform. It does NOT delete, pause, or
@@ -383,7 +517,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [31]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [35]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -679,7 +813,13 @@ type CampaignSettingsField struct {
 	// `start_date` and `end_date`. `budget_delivery_method`,
 	// `budget_explicitly_shared` and `bidding_strategy_type` are reported
 	// UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an
-	// `unknown` verdict, because nothing this service records expresses them.
+	// `unknown` verdict. For the two budget fields that is because nothing this
+	// service records expresses them. `bidding_strategy_type` IS recorded, and is
+	// left uncompared deliberately: the comparison would require mapping this
+	// service's caller vocabulary onto Google's OUTPUT_ONLY bidding-strategy enum,
+	// which is unverified exactly where it is ambiguous, and on an adopted
+	// campaign the recorded strategy was never pushed upstream, so a guessed
+	// mapping would report a false divergence on a campaign set exactly as asked.
 	// `status` is also reported with no `recorded` counterpart, but for a
 	// DIFFERENT reason: the campaign row DOES record a `status`, and it is
 	// deliberately never compared because the two are different axes. The column
@@ -692,9 +832,22 @@ type CampaignSettingsField struct {
 	// compared rather than upstream-only because the dispatch config's channel IS
 	// persisted in the campaign's config snapshot; it still reads `unknown` on a
 	// legacy row that carries no snapshot, but for the ordinary reason that
-	// nothing was recorded there — not because the field has no recorded side. The
-	// vocabulary is per-platform and may grow, so a consumer must render an
-	// unrecognised field name rather than dropping it.
+	// nothing was recorded there — not because the field has no recorded side. On
+	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
+	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
+	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
+	// dates, so they are not reported there); `status` and `bidding_strategy_type`
+	// are upstream-only on all four (none of their create paths records a
+	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
+	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
+	// last two say where the budget lives, and explain a budget that reads
+	// `unknown` because the campaign-level amount is not the one the row recorded
+	// (Reddit with campaign budget optimization off, X under anything but
+	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
+	// forward past UTC midnight (because the requested day had already begun at
+	// dispatch) is shown with both sides and an `unknown` verdict rather than a
+	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
+	// must render an unrecognised field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -1084,6 +1237,19 @@ type GetJobPayload struct {
 	JobID string
 }
 
+// GetKeywordTargetingPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service get-keyword-targeting method.
+type GetKeywordTargetingPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+}
+
 // GetWizardSessionPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service get-wizard-session method.
 type GetWizardSessionPayload struct {
@@ -1172,6 +1338,183 @@ type KeywordActions struct {
 	AppliedCount int
 }
 
+// KeywordTargeting is the result type of the lfx-v2-campaign-service-briefs
+// service get-keyword-targeting method.
+type KeywordTargeting struct {
+	// The campaign whose targeting was read
+	CampaignID string
+	// The campaign's platform
+	Platform string
+	// The ad group (Reddit) or line item (X) this service created for the
+	// campaign, whose targeting this is.
+	TargetingEntityID string
+	// The POSITIVE keywords the ad group / line item targets now, in the order the
+	// platform reported them. Empty when it targets none (every X campaign this
+	// service creates targets none: only an operator can add them, in X Ads
+	// Manager). Negative / excluded keywords are not listed.
+	Keywords []*KeywordTargetingEntry
+	// Reddit only: a fingerprint of the ad group's WHOLE targeting as read.
+	// remove-keyword-targeting requires it back and refuses (409) when the
+	// targeting has changed since, so a removal is never applied to a targeting
+	// the caller did not see. Absent on X.
+	Revision *string
+}
+
+type KeywordTargetingEntry struct {
+	// The keyword as the platform reports it.
+	Keyword string
+	// X only: the targeting criterion id that holds this keyword — what
+	// remove-keyword-targeting takes for X. Absent on Reddit, where a keyword has
+	// no id of its own.
+	CriterionID *string
+	// X only: the keyword targeting type X reports (BROAD_KEYWORD, PHRASE_KEYWORD,
+	// EXACT_KEYWORD or UNORDERED_KEYWORD). Absent on Reddit.
+	MatchType *string
+}
+
+type KeywordTargetingRemovalInput struct {
+	// Reddit: the keyword to remove, exactly as get-keyword-targeting reported it.
+	// Compared exactly — case and any surrounding whitespace included, nothing
+	// trimmed — and echoed back unchanged; an all-whitespace keyword is refused.
+	Keyword *string
+	// X: the targeting criterion id to delete, as get-keyword-targeting reported
+	// it.
+	CriterionID *string
+}
+
+type KeywordTargetingRemovalResult struct {
+	// Reddit: the keyword this result answers, as requested
+	Keyword *string
+	// X: the targeting criterion this result answers, as requested
+	CriterionID *string
+	// APPLIED — the keyword is no longer targeted; FAILED — definitely not removed
+	// (see error_code); UNCONFIRMED — may have been removed, read the targeting
+	// again before retrying.
+	Outcome string
+	// For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was
+	// never sent), NOT_FOUND (X holds no such live criterion any more),
+	// WOULD_EMPTY (X only: not sent, because a fresh read just before it showed it
+	// is now the last keyword targeted), or REJECTED (the platform refused it).
+	// The platform's own text is never returned.
+	ErrorCode *string
+}
+
+// KeywordTargetingRemovals is the result type of the
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting method.
+type KeywordTargetingRemovals struct {
+	// The campaign whose targeting was changed
+	CampaignID string
+	// Exactly one entry per requested removal, in request order, so results[i]
+	// answers keywords[i]. Reddit: one write carries every removal, so all entries
+	// share one outcome. X: one DELETE per criterion, each with its own outcome;
+	// the targeting is re-read before each, and an item that would now remove the
+	// last keyword is not sent (WOULD_EMPTY).
+	Results []*KeywordTargetingRemovalResult
+	// How many results are APPLIED.
+	AppliedCount int
+}
+
+// ListMetaAdSetsPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service list-meta-ad-sets method.
+type ListMetaAdSetsPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// Platform-agnostic reporting window; defaults to last_30_days when omitted
+	Window *string
+}
+
+type MetaAdSet struct {
+	// The Meta ad set id
+	ID string
+	// false for an ad set that DELIVERED in the window but that Meta's ad-set
+	// listing did not return (typically deleted or archived since): its counters
+	// are this campaign's spend, so they are reported, but every descriptive field
+	// is absent.
+	Listed bool
+	// The ad set's name as Meta holds it. Absent when not reported.
+	Name *string
+	// The ad set's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED,
+	// ARCHIVED). Absent when not reported.
+	Status *string
+	// The ad set's EFFECTIVE status as Meta reports it (e.g. CAMPAIGN_PAUSED when
+	// the ad set is ACTIVE but its campaign is not). Reported verbatim; Meta grows
+	// this set without notice. Absent when not reported.
+	EffectiveStatus *string
+	// The ad set's bid_strategy as Meta reports it. Absent when not reported.
+	BidStrategy *string
+	// Which budget the ad set holds. ABSENT when it holds none of its own —
+	// Campaign Budget Optimization keeps the budget on the campaign, shared across
+	// its ad sets.
+	BudgetType *string
+	// The ad set's budget in WHOLE units of `currency`, two decimals, converted
+	// from the minor units Meta reports with the account currency's own offset
+	// (100 for most currencies, 1 for zero-decimal ones such as JPY). ABSENT when
+	// there is no ad-set budget, or when the currency's minor-unit scale is not
+	// one this service knows — never rendered at a guessed scale.
+	BudgetAmount *string
+	// Impressions over the window. 0 when Meta reported no delivery for this ad
+	// set.
+	Impressions int64
+	// Clicks over the window.
+	Clicks int64
+	// Spend over the window in micro-units of `currency`.
+	CostMicros int64
+	// clicks/impressions, 0 when impressions is 0.
+	Ctr float64
+	// true for the ONE ad set this service created for the campaign (the id the
+	// campaign row recorded at dispatch). Always false on an adopted campaign,
+	// which records no ad set.
+	Recorded bool
+}
+
+// MetaAdSetStatusChange is the result type of the
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status method.
+type MetaAdSetStatusChange struct {
+	// Campaign UUID
+	CampaignID string
+	// The ad set whose status was addressed
+	AdSetID string
+	// The status requested
+	RequestedStatus string
+	// The configured status the pre-write read observed.
+	PreviousStatus *string
+	// APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read
+	// showed the ad set already at the requested status, so NOTHING WAS SENT. (A
+	// write whose outcome is unknown is never a 200: it is a 503 saying the change
+	// is unconfirmed.)
+	Outcome string
+	// ETag header value: the campaign row's version, UNCHANGED — an ad set's
+	// status is not stored on the campaign row, so this write does not bump it.
+	Etag *string
+}
+
+// MetaAdSets is the result type of the lfx-v2-campaign-service-briefs service
+// list-meta-ad-sets method.
+type MetaAdSets struct {
+	// Campaign UUID
+	CampaignID string
+	// The Meta campaign id the ad sets were read under.
+	PlatformCampaignID string
+	// The reporting window the counters cover.
+	Window string
+	// The ad account's ISO 4217 currency; `budget_amount` and `cost_micros` are
+	// denominated in it.
+	Currency string
+	// When Meta was read (RFC3339, UTC).
+	ReadAt string
+	// Every ad set the listing returned, in Meta's order, then any unlisted ad set
+	// that delivered in the window, by id. Empty when the campaign has none.
+	AdSets []*MetaAdSet
+	// len(ad_sets).
+	AdSetCount int
+}
+
 type NegativeKeywordInput struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
 	// 100 characters.
@@ -1251,6 +1594,24 @@ type PlatformResult struct {
 	HubspotURL *string
 }
 
+// RemoveKeywordTargetingPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting method.
+type RemoveKeywordTargetingPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The keywords to remove: `keyword` items on Reddit, `criterion_id` items on X.
+	Keywords []*KeywordTargetingRemovalInput
+	// Reddit: the revision get-keyword-targeting returned. Required on Reddit;
+	// must be absent on X.
+	Revision *string
+}
+
 // SetWizardSendListPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service set-wizard-send-list method.
 type SetWizardSendListPayload struct {
@@ -1306,6 +1667,25 @@ type ToggleCampaignStatusPayload struct {
 	// If-Match header carrying the current ETag/version
 	IfMatch *string
 	// Desired run state
+	Status string
+}
+
+// ToggleMetaAdSetStatusPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status method.
+type ToggleMetaAdSetStatusPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Brief UUID
+	BriefID string
+	// Campaign UUID
+	CampaignID string
+	// The Meta ad set id: digits, no leading zero, at most 32.
+	AdSetID string
+	// If-Match header carrying the current ETag/version
+	IfMatch *string
+	// Desired ad-set status, in Meta's vocabulary
 	Status string
 }
 

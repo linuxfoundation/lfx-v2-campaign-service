@@ -272,8 +272,10 @@ func (e *retriedUnconfirmedError) Unconfirmed() bool { return true }
 // THE 2xx ECHO IS CHECKED. When X's response names a campaign id or the written amount, each
 // must be the one sent; a 2xx naming a different campaign or amount means the request reached X
 // and something other than what was asked was applied, so it is returned as an UNCONFIRMED
-// transportError rather than as success or as a definite failure. An echo that names neither is
-// accepted: the 2xx itself is the confirmation, as it is for the status toggle.
+// transportError rather than as success or as a definite failure. So is an echo whose
+// daily_budget_amount_local_micro is PRESENT and null: X reporting no daily budget contradicts
+// the amount written. An echo that OMITS both fields is accepted: the 2xx itself is the
+// confirmation, as it is for the status toggle.
 func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, micros int64) error {
 	const field = dailyBudgetField
 	path, campaignID, err := c.campaignBudgetPath(campaignID)
@@ -313,6 +315,12 @@ func (c *Client) UpdateCampaignBudget(ctx context.Context, campaignID string, mi
 	}
 	if got := strings.TrimSpace(echo.ID); got != "" && got != campaignID {
 		return &transportError{Method: http.MethodPut, Path: "campaign budget", err: fmt.Errorf("budget update for campaign %s was acknowledged for campaign %s", campaignID, got)}
+	}
+	if strings.TrimSpace(string(echo.Daily)) == "null" {
+		// A PRESENT null is not an omitted echo: X named the field and reported no daily
+		// budget, which contradicts the amount just written. parseBudgetMicros folds null into
+		// "absent" (right for the read path), so the write path tells the two apart here.
+		return &transportError{Method: http.MethodPut, Path: "campaign budget", err: fmt.Errorf("budget update for campaign %s was acknowledged with a null %s instead of the %d micro-units sent", campaignID, field, micros)}
 	}
 	if got, unparseable := parseBudgetMicros(echo.Daily); unparseable || (got != nil && *got != micros) {
 		return &transportError{Method: http.MethodPut, Path: "campaign budget", err: fmt.Errorf("budget update for campaign %s was acknowledged with a %s other than the %d micro-units sent", campaignID, field, micros)}

@@ -759,6 +759,15 @@ type Orchestrator struct {
 	// is wired, and that read refuses rather than running without one.
 	keywordReportsMu sync.RWMutex
 	keywordReports   domain.KeywordReportRepository
+	// audienceReportsMu guards audienceReports, the saved-report store behind the report-backed
+	// audience read (SetAudienceReportStore) — the age/gender KIND of the same store. nil means
+	// no store is wired, and that read refuses rather than running without one.
+	audienceReportsMu sync.RWMutex
+	audienceReports   domain.AudienceReportRepository
+	// insightClockMu guards insightClock, the clock the report-backed insight reads use
+	// (SetInsightReportClock); nil is time.Now.
+	insightClockMu sync.RWMutex
+	insightClock   func() time.Time
 	// indexingDisabled is a CONFIGURATION fact (NATS_URL empty), not an observation of the
 	// publisher — a Noop also appears when the broker is unreachable. See DisableIndexing.
 	indexingDisabled bool
@@ -839,6 +848,10 @@ const (
 	opReadAudience               = "read_audience"
 	opKeywordActions             = "keyword_actions"
 	opNegativeKeywords           = "negative_keywords"
+	opReadKeywordTargeting       = "read_keyword_targeting"
+	opRemoveKeywordTargeting     = "remove_keyword_targeting"
+	opReadMetaAdSets             = "read_meta_ad_sets"
+	opToggleMetaAdSetStatus      = "toggle_meta_ad_set_status"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
@@ -1524,6 +1537,24 @@ const googleAdsChannelSearchName = "search"
 // package, so the dependency cannot run the other way.
 const googleAdsChannelDemandGenName = "demand-gen"
 
+// googleAdsChannelPerformanceMaxName mirrors internal/dispatch's
+// googleAdsChannelPerformanceMax, for the same reason as the two above.
+//
+// This list is not optional upkeep. A channel the dispatcher creates but this file has
+// not heard of resolves to VariantInvalid and is refused BEFORE the dispatcher ever
+// runs — so the create path exists, builds and tests green, and is nonetheless
+// unreachable through the orchestrator. Any new channel must be added here in the same
+// commit as its dispatch arm.
+const googleAdsChannelPerformanceMaxName = "performance-max"
+
+// googleAdsChannelVideoName mirrors internal/dispatch's googleAdsChannelVideo, under the
+// same rule the comment above states.
+const googleAdsChannelVideoName = "video"
+
+// googleAdsChannelDisplayName mirrors internal/dispatch's googleAdsChannelDisplay, under
+// the same rule.
+const googleAdsChannelDisplayName = "display"
+
 // variantForDispatch reads WHICH of a platform's campaign types this dispatch is for,
 // out of the same config envelope the dispatcher will read.
 //
@@ -1604,7 +1635,12 @@ func googleAdsChannelIsSupported(ch string) bool {
 	// before the channel field existed sends, and the dispatcher's own switch has the same
 	// empty-string arm. Treating it as unsupported would file every one of those on
 	// VariantInvalid and refuse the platform's most common create.
-	return ch == "" || ch == googleAdsChannelSearchName || ch == googleAdsChannelDemandGenName
+	return ch == "" ||
+		ch == googleAdsChannelSearchName ||
+		ch == googleAdsChannelDemandGenName ||
+		ch == googleAdsChannelPerformanceMaxName ||
+		ch == googleAdsChannelVideoName ||
+		ch == googleAdsChannelDisplayName
 }
 
 func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief *model.CampaignBrief, p model.Provider, config json.RawMessage, by *model.Actor, opts StartOptions) platformResult {
@@ -2837,6 +2873,39 @@ type KeywordInsightsReader interface {
 	ReadAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error)
 }
 
+// MetaAudienceReader is an OPTIONAL dispatcher capability: Meta's age+gender and placement
+// audience breakdowns for the campaigns a project OWNS, live from the platform. Type-asserted
+// like KeywordInsightsReader, so a dispatcher without it — every platform but Meta — yields
+// ErrKeywordInsightsUnsupported → 400, the same answer the Google audience read gives an
+// unsupported platform.
+//
+// Separate from KeywordInsightsReader because its result is a different shape (a combined
+// age,gender breakdown and a two-valued placement, not one value per dimension) and because
+// Meta has no keyword read: folding it in would force Meta to implement a keyword method it
+// cannot serve. scope carries the same contract as KeywordInsightsReader's: never empty from
+// the orchestrator, and the adapter must refuse the whole read on any provenance mismatch
+// rather than drop entries.
+type MetaAudienceReader interface {
+	ReadMetaAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.MetaAudienceInsights, error)
+}
+
+// TwitterAudienceReader is an OPTIONAL dispatcher capability: X's age, gender and platform
+// audience segmentations for the campaigns a project OWNS. Type-asserted like
+// MetaAudienceReader, so a dispatcher without it — every platform but X — yields
+// ErrKeywordInsightsUnsupported → 400. Separate from MetaAudienceReader because the result shape
+// differs (one value per X segment, not Meta's combined breakdowns). scope carries
+// KeywordInsightsReader's contract: never empty from the orchestrator, and the adapter refuses
+// the whole read on any provenance mismatch rather than dropping entries.
+//
+// AudienceEnabled reports whether the read is switched on. The orchestrator asks it BEFORE the
+// scope lookup: readScopedAudience answers an empty scope without calling the adapter, so a gate
+// checked only inside ReadTwitterAudienceInsights would let a disabled read answer 200 with empty
+// buckets for every project with no X campaigns, instead of the documented 400.
+type TwitterAudienceReader interface {
+	AudienceEnabled() error
+	ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error)
+}
+
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
 // existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
 // clean ErrKeywordActionsUnsupported → 400.
@@ -2867,6 +2936,25 @@ type NegativeKeywordAdder interface {
 	// persisted row, so the adapter can enforce provisioning and the account-identity
 	// invariant BEFORE the platform is contacted.
 	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
+}
+
+// KeywordTargetingReader is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): read the
+// POSITIVE keyword targeting of the one ad group / line item this service created for a campaign.
+// Type-asserted, so a dispatcher without it yields ErrKeywordTargetingUnsupported → 400.
+//
+// Separate from KeywordActioner for the reason NegativeKeywordAdder is: on these platforms a
+// keyword is an entry in the targeting, not a criterion with a status, and the two shapes must
+// not be routed to each other's adapters.
+type KeywordTargetingReader interface {
+	ReadKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.KeywordTargeting, error)
+}
+
+// KeywordTargetingRemover is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): take
+// keywords out of that targeting. It returns exactly one outcome per removal, in request order,
+// or an error when no removal got a definite answer. revision is Reddit's compare-and-set token
+// and must be empty for X; each adapter validates it.
+type KeywordTargetingRemover interface {
+	RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error)
 }
 
 // keywordInsightsFor resolves the dispatcher's keyword-insight capability, or returns the
@@ -2963,30 +3051,110 @@ func (o *Orchestrator) ReadAudienceInsights(ctx context.Context, projectID strin
 	if err != nil {
 		return nil, err
 	}
-	campaignIDs, err := o.projectCampaignScope(ctx, projectID, platform)
+	// Same early return as ReadKeywordPerformance, and for the same reason — see the comment
+	// there. Both endpoints need it or the exposure simply moves to the other one.
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.AudienceInsights, error) {
+			return reader.ReadAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.AudienceInsights {
+			return &model.AudienceInsights{Window: window, Buckets: []model.AudienceBucket{}}
+		},
+		func(ai *model.AudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.AudienceBucket{}
+			}
+		})
+}
+
+// ReadMetaAudienceInsights reads Meta audience breakdowns across the project's OWN campaigns.
+// Same shape as ReadAudienceInsights — capability check, then readScopedAudience — only the
+// capability and the result type differ.
+func (o *Orchestrator) ReadMetaAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.MetaAudienceInsights, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(MetaAudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.MetaAudienceInsights, error) {
+			return reader.ReadMetaAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.MetaAudienceInsights {
+			return &model.MetaAudienceInsights{Window: window, Buckets: []model.MetaAudienceBucket{}}
+		},
+		func(ai *model.MetaAudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.MetaAudienceBucket{}
+			}
+		})
+}
+
+// ReadTwitterAudienceInsights reads X audience segmentations across the project's OWN campaigns.
+// Same shape as ReadMetaAudienceInsights — capability check, then readScopedAudience (empty
+// scope answers empty WITHOUT contacting X) — only the capability and result type differ.
+func (o *Orchestrator) ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.TwitterAudienceInsights, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(TwitterAudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	if err := reader.AudienceEnabled(); err != nil {
+		return nil, err
+	}
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error) {
+			return reader.ReadTwitterAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.TwitterAudienceInsights {
+			return &model.TwitterAudienceInsights{Window: window, Buckets: []model.TwitterAudienceBucket{}}
+		},
+		func(ai *model.TwitterAudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.TwitterAudienceBucket{}
+			}
+		})
+}
+
+// readScopedAudience is the scope-then-read sequence every audience read shares, after its
+// capability check:
+//
+//   - the scope comes from this service's own rows (projectCampaignScope), and a lookup failure
+//     fails the read rather than widening it;
+//   - an EMPTY scope answers empty() WITHOUT contacting the platform — an unscoped read on a
+//     shared ad account would expose every other project's audience (see
+//     ReadKeywordPerformance);
+//   - the call runs under metricsCallTimeout and is recorded as read_audience;
+//   - (nil, nil) is a contract violation, and normalise() turns nil slices into empty ones so
+//     the wire shape is [] rather than null.
+func readScopedAudience[T any](ctx context.Context, o *Orchestrator, projectID string, platform model.Provider,
+	read func(context.Context, []model.ProjectCampaignScope) (*T, error), empty func() *T, normalise func(*T)) (*T, error) {
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
 	if err != nil {
 		return nil, err
 	}
-	// Same early return as ReadKeywordPerformance, and for the same reason — see the comment
-	// there. Both endpoints need it or the exposure simply moves to the other one.
-	if len(campaignIDs) == 0 {
-		return &model.AudienceInsights{Window: window, Buckets: []model.AudienceBucket{}}, nil
+	if len(scope) == 0 {
+		return empty(), nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	ai, rerr := reader.ReadAudienceInsights(callCtx, projectID, platform, window, campaignIDs)
+	out, rerr := read(callCtx, scope)
 	o.recordUpstream(ctx, platform, opReadAudience, start, rerr)
 	if rerr != nil {
 		return nil, rerr
 	}
-	if ai == nil {
+	if out == nil {
 		return nil, fmt.Errorf("%s audience reader returned a nil result with no error", platform)
 	}
-	if ai.Buckets == nil {
-		ai.Buckets = []model.AudienceBucket{}
-	}
-	return ai, nil
+	normalise(out)
+	return out, nil
 }
 
 // ApplyKeywordActions pauses or removes keywords on one campaign.
@@ -3113,6 +3281,68 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	}
 	if len(outcomes) != len(keywords) {
 		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(keywords)}
+	}
+	return outcomes, nil
+}
+
+// ReadKeywordTargeting reads a campaign's keyword targeting through its dispatcher's
+// KeywordTargetingReader. A nil campaign is refused here, as for every keyword lever; every other
+// guard is the adapter's. A read, so it gets the metrics timeout.
+func (o *Orchestrator) ReadKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.KeywordTargeting, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	reader, ok := d.(KeywordTargetingReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kt, rerr := reader.ReadKeywordTargeting(callCtx, projectID, platform, campaign)
+	o.recordUpstream(ctx, platform, opReadKeywordTargeting, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if kt == nil {
+		return nil, fmt.Errorf("%s keyword targeting reader returned a nil result with no error", platform)
+	}
+	if kt.Keywords == nil {
+		kt.Keywords = []model.KeywordTargetingEntry{}
+	}
+	return kt, nil
+}
+
+// RemoveKeywordTargeting removes keywords from a campaign's keyword targeting. Shaped like
+// AddNegativeKeywords: a nil campaign is refused here, every other guard is the adapter's, the
+// call gets the mutation timeout, and a short outcome slice is UNCONFIRMED because the removal
+// was already issued when it is detected.
+func (o *Orchestrator) RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error) {
+	if campaign == nil {
+		return nil, ErrCampaignNotProvisioned
+	}
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	remover, ok := d.(KeywordTargetingRemover)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordTargetingUnsupported, platform)
+	}
+	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
+	defer cancel()
+	start := time.Now()
+	outcomes, rerr := remover.RemoveKeywordTargeting(callCtx, projectID, platform, campaign, removals, revision)
+	o.recordUpstream(ctx, platform, opRemoveKeywordTargeting, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if len(outcomes) != len(removals) {
+		return nil, &unconfirmedOutcomeCountError{platform: string(platform), got: len(outcomes), want: len(removals)}
 	}
 	return outcomes, nil
 }

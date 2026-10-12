@@ -948,6 +948,12 @@ func (c *Client) fetchToken(ctx context.Context) (string, error) {
 type apiResponse struct {
 	Data       json.RawMessage `json:"data"`
 	Pagination json.RawMessage `json:"pagination"`
+	// raw is the undecoded 2xx body the envelope was decoded FROM. Unexported, so encoding/json
+	// neither fills nor emits it; set by requestWithThrottleRetryCounted. It exists for the
+	// adoption read (GetCampaign), which must refuse an ENVELOPE that decodes with silent
+	// substitution — `{"data":{A},"data":{B}}` is resolved last-wins into Data, so a guard over
+	// Data alone never sees the duplicate. Every other caller ignores it.
+	raw []byte
 }
 
 // apiError is returned by request() for a non-2xx Reddit Ads API response. It
@@ -1204,7 +1210,11 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 	// Marshal the body once; a fresh reader is created per attempt below since
 	// bytes.NewReader is consumed by the first send.
 	var encoded []byte
-	if body != nil {
+	if pre, ok := body.(preEncodedBody); ok {
+		// Already-encoded JSON, sent byte for byte: json.Marshal would HTML-escape strings
+		// inside it (see preEncodedBody).
+		encoded = []byte(pre)
+	} else if body != nil {
 		var err error
 		encoded, err = json.Marshal(body)
 		if err != nil {
@@ -1366,6 +1376,7 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("decode 2xx response: %w", err)}
 			}
 		}
+		out.raw = raw
 		return &out, nil
 	}
 

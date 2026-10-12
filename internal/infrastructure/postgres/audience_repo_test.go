@@ -261,7 +261,7 @@ func TestAudienceWrites_BindIncludeListIDs(t *testing.T) {
 }
 
 // TestMigration000040_AddsIncludeListIDs pins the DDL: a nullable JSONB column, no backfill, and a
-// down that drops it idempotently.
+// down that drops it idempotently but refuses while a multi-include audience would lose lists.
 func TestMigration000040_AddsIncludeListIDs(t *testing.T) {
 	up, err := fs.ReadFile(migrations.FS, "000040_campaign_audiences_include_list_ids.up.sql")
 	require.NoError(t, err)
@@ -272,5 +272,17 @@ func TestMigration000040_AddsIncludeListIDs(t *testing.T) {
 
 	down, err := fs.ReadFile(migrations.FS, "000040_campaign_audiences_include_list_ids.down.sql")
 	require.NoError(t, err)
-	require.Regexp(t, regexp.MustCompile(`(?i)DROP COLUMN IF EXISTS include_list_ids`), normalizeWS(string(down)))
+	downSQL := normalizeWS(string(down))
+	require.Regexp(t, regexp.MustCompile(`(?i)DROP COLUMN IF EXISTS include_list_ids`), downSQL)
+	// The revert must refuse while an audience depends on several include lists: dropping the column
+	// would silently narrow it to its first list while it stays built.
+	// Refuses while a live brief's CURRENT audience (newest, or newest built -- what dispatch reads)
+	// has several include lists, and ignores archived briefs and superseded rows, so both documented
+	// recoveries (re-attach a single master, or archive the brief) actually clear it.
+	require.Regexp(t, regexp.MustCompile(`(?i)jsonb_array_length\(include_list_ids\) > 1 \) THEN RAISE EXCEPTION`), downSQL,
+		"000040's down must refuse to drop include_list_ids while a live multi-include audience can be sent")
+	require.Regexp(t, regexp.MustCompile(`(?i)WHERE b\.status <> 'archived'`), downSQL, "archived briefs must not block the revert")
+	require.Regexp(t, regexp.MustCompile(`(?i)DISTINCT ON \(brief_id, platform\)`), downSQL,
+		"only each brief's newest rows may block, or a re-attach can never clear the guard")
+	require.Regexp(t, regexp.MustCompile(`(?i)WHERE status = 'built'`), downSQL, "the newest BUILT row -- what dispatch reads -- must be checked too")
 }

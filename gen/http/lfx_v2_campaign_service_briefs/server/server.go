@@ -19,38 +19,42 @@ import (
 // Server lists the lfx-v2-campaign-service-briefs service endpoint HTTP
 // handlers.
 type Server struct {
-	Mounts                []*MountPoint
-	CreateBrief           http.Handler
-	FindBrief             http.Handler
-	GetBrief              http.Handler
-	UpdateBrief           http.Handler
-	ApproveBrief          http.Handler
-	DeleteBrief           http.Handler
-	FetchEventURL         http.Handler
-	UploadCreativeAsset   http.Handler
-	CreateCampaigns       http.Handler
-	AdoptCampaign         http.Handler
-	GetCampaign           http.Handler
-	GetCampaignMetrics    http.Handler
-	GetCampaignSettings   http.Handler
-	GetBriefMetrics       http.Handler
-	GenerateEmailCopy     http.Handler
-	UpdateCampaign        http.Handler
-	ToggleCampaignStatus  http.Handler
-	UpdateCampaignBudget  http.Handler
-	UpdateCampaignBid     http.Handler
-	ApplyKeywordActions   http.Handler
-	AddNegativeKeywords   http.Handler
-	DeleteCampaign        http.Handler
-	GetJob                http.Handler
-	StartEmailWizardPlan  http.Handler
-	PlanEmailWizard       http.Handler
-	GenerateWizardContent http.Handler
-	UpdateWizardSections  http.Handler
-	CloneWizardEmail      http.Handler
-	SetWizardSendList     http.Handler
-	ChatWizardTurn        http.Handler
-	GetWizardSession      http.Handler
+	Mounts                 []*MountPoint
+	CreateBrief            http.Handler
+	FindBrief              http.Handler
+	GetBrief               http.Handler
+	UpdateBrief            http.Handler
+	ApproveBrief           http.Handler
+	DeleteBrief            http.Handler
+	FetchEventURL          http.Handler
+	UploadCreativeAsset    http.Handler
+	CreateCampaigns        http.Handler
+	AdoptCampaign          http.Handler
+	GetCampaign            http.Handler
+	GetCampaignMetrics     http.Handler
+	GetCampaignSettings    http.Handler
+	GetBriefMetrics        http.Handler
+	GenerateEmailCopy      http.Handler
+	UpdateCampaign         http.Handler
+	ToggleCampaignStatus   http.Handler
+	UpdateCampaignBudget   http.Handler
+	UpdateCampaignBid      http.Handler
+	ApplyKeywordActions    http.Handler
+	AddNegativeKeywords    http.Handler
+	GetKeywordTargeting    http.Handler
+	RemoveKeywordTargeting http.Handler
+	ListMetaAdSets         http.Handler
+	ToggleMetaAdSetStatus  http.Handler
+	DeleteCampaign         http.Handler
+	GetJob                 http.Handler
+	StartEmailWizardPlan   http.Handler
+	PlanEmailWizard        http.Handler
+	GenerateWizardContent  http.Handler
+	UpdateWizardSections   http.Handler
+	CloneWizardEmail       http.Handler
+	SetWizardSendList      http.Handler
+	ChatWizardTurn         http.Handler
+	GetWizardSession       http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -101,6 +105,10 @@ func New(
 			{"UpdateCampaignBid", "PATCH", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/bid"},
 			{"ApplyKeywordActions", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-actions"},
 			{"AddNegativeKeywords", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/negative-keywords"},
+			{"GetKeywordTargeting", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting"},
+			{"RemoveKeywordTargeting", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/removals"},
+			{"ListMetaAdSets", "GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets"},
+			{"ToggleMetaAdSetStatus", "POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status"},
 			{"DeleteCampaign", "DELETE", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}"},
 			{"GetJob", "GET", "/projects/{project_id}/jobs/{job_id}"},
 			{"StartEmailWizardPlan", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/plan-start"},
@@ -112,37 +120,41 @@ func New(
 			{"ChatWizardTurn", "POST", "/projects/{project_id}/briefs/{brief_id}/wizard/chat"},
 			{"GetWizardSession", "GET", "/projects/{project_id}/briefs/{brief_id}/wizard/session/{session_id}"},
 		},
-		CreateBrief:           NewCreateBriefHandler(e.CreateBrief, mux, decoder, encoder, errhandler, formatter),
-		FindBrief:             NewFindBriefHandler(e.FindBrief, mux, decoder, encoder, errhandler, formatter),
-		GetBrief:              NewGetBriefHandler(e.GetBrief, mux, decoder, encoder, errhandler, formatter),
-		UpdateBrief:           NewUpdateBriefHandler(e.UpdateBrief, mux, decoder, encoder, errhandler, formatter),
-		ApproveBrief:          NewApproveBriefHandler(e.ApproveBrief, mux, decoder, encoder, errhandler, formatter),
-		DeleteBrief:           NewDeleteBriefHandler(e.DeleteBrief, mux, decoder, encoder, errhandler, formatter),
-		FetchEventURL:         NewFetchEventURLHandler(e.FetchEventURL, mux, decoder, encoder, errhandler, formatter),
-		UploadCreativeAsset:   NewUploadCreativeAssetHandler(e.UploadCreativeAsset, mux, decoder, encoder, errhandler, formatter),
-		CreateCampaigns:       NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
-		AdoptCampaign:         NewAdoptCampaignHandler(e.AdoptCampaign, mux, decoder, encoder, errhandler, formatter),
-		GetCampaign:           NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
-		GetCampaignMetrics:    NewGetCampaignMetricsHandler(e.GetCampaignMetrics, mux, decoder, encoder, errhandler, formatter),
-		GetCampaignSettings:   NewGetCampaignSettingsHandler(e.GetCampaignSettings, mux, decoder, encoder, errhandler, formatter),
-		GetBriefMetrics:       NewGetBriefMetricsHandler(e.GetBriefMetrics, mux, decoder, encoder, errhandler, formatter),
-		GenerateEmailCopy:     NewGenerateEmailCopyHandler(e.GenerateEmailCopy, mux, decoder, encoder, errhandler, formatter),
-		UpdateCampaign:        NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
-		ToggleCampaignStatus:  NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
-		UpdateCampaignBudget:  NewUpdateCampaignBudgetHandler(e.UpdateCampaignBudget, mux, decoder, encoder, errhandler, formatter),
-		UpdateCampaignBid:     NewUpdateCampaignBidHandler(e.UpdateCampaignBid, mux, decoder, encoder, errhandler, formatter),
-		ApplyKeywordActions:   NewApplyKeywordActionsHandler(e.ApplyKeywordActions, mux, decoder, encoder, errhandler, formatter),
-		AddNegativeKeywords:   NewAddNegativeKeywordsHandler(e.AddNegativeKeywords, mux, decoder, encoder, errhandler, formatter),
-		DeleteCampaign:        NewDeleteCampaignHandler(e.DeleteCampaign, mux, decoder, encoder, errhandler, formatter),
-		GetJob:                NewGetJobHandler(e.GetJob, mux, decoder, encoder, errhandler, formatter),
-		StartEmailWizardPlan:  NewStartEmailWizardPlanHandler(e.StartEmailWizardPlan, mux, decoder, encoder, errhandler, formatter),
-		PlanEmailWizard:       NewPlanEmailWizardHandler(e.PlanEmailWizard, mux, decoder, encoder, errhandler, formatter),
-		GenerateWizardContent: NewGenerateWizardContentHandler(e.GenerateWizardContent, mux, decoder, encoder, errhandler, formatter),
-		UpdateWizardSections:  NewUpdateWizardSectionsHandler(e.UpdateWizardSections, mux, decoder, encoder, errhandler, formatter),
-		CloneWizardEmail:      NewCloneWizardEmailHandler(e.CloneWizardEmail, mux, decoder, encoder, errhandler, formatter),
-		SetWizardSendList:     NewSetWizardSendListHandler(e.SetWizardSendList, mux, decoder, encoder, errhandler, formatter),
-		ChatWizardTurn:        NewChatWizardTurnHandler(e.ChatWizardTurn, mux, decoder, encoder, errhandler, formatter),
-		GetWizardSession:      NewGetWizardSessionHandler(e.GetWizardSession, mux, decoder, encoder, errhandler, formatter),
+		CreateBrief:            NewCreateBriefHandler(e.CreateBrief, mux, decoder, encoder, errhandler, formatter),
+		FindBrief:              NewFindBriefHandler(e.FindBrief, mux, decoder, encoder, errhandler, formatter),
+		GetBrief:               NewGetBriefHandler(e.GetBrief, mux, decoder, encoder, errhandler, formatter),
+		UpdateBrief:            NewUpdateBriefHandler(e.UpdateBrief, mux, decoder, encoder, errhandler, formatter),
+		ApproveBrief:           NewApproveBriefHandler(e.ApproveBrief, mux, decoder, encoder, errhandler, formatter),
+		DeleteBrief:            NewDeleteBriefHandler(e.DeleteBrief, mux, decoder, encoder, errhandler, formatter),
+		FetchEventURL:          NewFetchEventURLHandler(e.FetchEventURL, mux, decoder, encoder, errhandler, formatter),
+		UploadCreativeAsset:    NewUploadCreativeAssetHandler(e.UploadCreativeAsset, mux, decoder, encoder, errhandler, formatter),
+		CreateCampaigns:        NewCreateCampaignsHandler(e.CreateCampaigns, mux, decoder, encoder, errhandler, formatter),
+		AdoptCampaign:          NewAdoptCampaignHandler(e.AdoptCampaign, mux, decoder, encoder, errhandler, formatter),
+		GetCampaign:            NewGetCampaignHandler(e.GetCampaign, mux, decoder, encoder, errhandler, formatter),
+		GetCampaignMetrics:     NewGetCampaignMetricsHandler(e.GetCampaignMetrics, mux, decoder, encoder, errhandler, formatter),
+		GetCampaignSettings:    NewGetCampaignSettingsHandler(e.GetCampaignSettings, mux, decoder, encoder, errhandler, formatter),
+		GetBriefMetrics:        NewGetBriefMetricsHandler(e.GetBriefMetrics, mux, decoder, encoder, errhandler, formatter),
+		GenerateEmailCopy:      NewGenerateEmailCopyHandler(e.GenerateEmailCopy, mux, decoder, encoder, errhandler, formatter),
+		UpdateCampaign:         NewUpdateCampaignHandler(e.UpdateCampaign, mux, decoder, encoder, errhandler, formatter),
+		ToggleCampaignStatus:   NewToggleCampaignStatusHandler(e.ToggleCampaignStatus, mux, decoder, encoder, errhandler, formatter),
+		UpdateCampaignBudget:   NewUpdateCampaignBudgetHandler(e.UpdateCampaignBudget, mux, decoder, encoder, errhandler, formatter),
+		UpdateCampaignBid:      NewUpdateCampaignBidHandler(e.UpdateCampaignBid, mux, decoder, encoder, errhandler, formatter),
+		ApplyKeywordActions:    NewApplyKeywordActionsHandler(e.ApplyKeywordActions, mux, decoder, encoder, errhandler, formatter),
+		AddNegativeKeywords:    NewAddNegativeKeywordsHandler(e.AddNegativeKeywords, mux, decoder, encoder, errhandler, formatter),
+		GetKeywordTargeting:    NewGetKeywordTargetingHandler(e.GetKeywordTargeting, mux, decoder, encoder, errhandler, formatter),
+		RemoveKeywordTargeting: NewRemoveKeywordTargetingHandler(e.RemoveKeywordTargeting, mux, decoder, encoder, errhandler, formatter),
+		ListMetaAdSets:         NewListMetaAdSetsHandler(e.ListMetaAdSets, mux, decoder, encoder, errhandler, formatter),
+		ToggleMetaAdSetStatus:  NewToggleMetaAdSetStatusHandler(e.ToggleMetaAdSetStatus, mux, decoder, encoder, errhandler, formatter),
+		DeleteCampaign:         NewDeleteCampaignHandler(e.DeleteCampaign, mux, decoder, encoder, errhandler, formatter),
+		GetJob:                 NewGetJobHandler(e.GetJob, mux, decoder, encoder, errhandler, formatter),
+		StartEmailWizardPlan:   NewStartEmailWizardPlanHandler(e.StartEmailWizardPlan, mux, decoder, encoder, errhandler, formatter),
+		PlanEmailWizard:        NewPlanEmailWizardHandler(e.PlanEmailWizard, mux, decoder, encoder, errhandler, formatter),
+		GenerateWizardContent:  NewGenerateWizardContentHandler(e.GenerateWizardContent, mux, decoder, encoder, errhandler, formatter),
+		UpdateWizardSections:   NewUpdateWizardSectionsHandler(e.UpdateWizardSections, mux, decoder, encoder, errhandler, formatter),
+		CloneWizardEmail:       NewCloneWizardEmailHandler(e.CloneWizardEmail, mux, decoder, encoder, errhandler, formatter),
+		SetWizardSendList:      NewSetWizardSendListHandler(e.SetWizardSendList, mux, decoder, encoder, errhandler, formatter),
+		ChatWizardTurn:         NewChatWizardTurnHandler(e.ChatWizardTurn, mux, decoder, encoder, errhandler, formatter),
+		GetWizardSession:       NewGetWizardSessionHandler(e.GetWizardSession, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -172,6 +184,10 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.UpdateCampaignBid = m(s.UpdateCampaignBid)
 	s.ApplyKeywordActions = m(s.ApplyKeywordActions)
 	s.AddNegativeKeywords = m(s.AddNegativeKeywords)
+	s.GetKeywordTargeting = m(s.GetKeywordTargeting)
+	s.RemoveKeywordTargeting = m(s.RemoveKeywordTargeting)
+	s.ListMetaAdSets = m(s.ListMetaAdSets)
+	s.ToggleMetaAdSetStatus = m(s.ToggleMetaAdSetStatus)
 	s.DeleteCampaign = m(s.DeleteCampaign)
 	s.GetJob = m(s.GetJob)
 	s.StartEmailWizardPlan = m(s.StartEmailWizardPlan)
@@ -211,6 +227,10 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountUpdateCampaignBidHandler(mux, h.UpdateCampaignBid)
 	MountApplyKeywordActionsHandler(mux, h.ApplyKeywordActions)
 	MountAddNegativeKeywordsHandler(mux, h.AddNegativeKeywords)
+	MountGetKeywordTargetingHandler(mux, h.GetKeywordTargeting)
+	MountRemoveKeywordTargetingHandler(mux, h.RemoveKeywordTargeting)
+	MountListMetaAdSetsHandler(mux, h.ListMetaAdSets)
+	MountToggleMetaAdSetStatusHandler(mux, h.ToggleMetaAdSetStatus)
 	MountDeleteCampaignHandler(mux, h.DeleteCampaign)
 	MountGetJobHandler(mux, h.GetJob)
 	MountStartEmailWizardPlanHandler(mux, h.StartEmailWizardPlan)
@@ -1338,6 +1358,223 @@ func NewAddNegativeKeywordsHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "add-negative-keywords")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGetKeywordTargetingHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint.
+func MountGetKeywordTargetingHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting", f)
+}
+
+// NewGetKeywordTargetingHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "get-keyword-targeting" endpoint.
+func NewGetKeywordTargetingHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetKeywordTargetingRequest(mux, decoder)
+		encodeResponse = EncodeGetKeywordTargetingResponse(encoder)
+		encodeError    = EncodeGetKeywordTargetingError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-keyword-targeting")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountRemoveKeywordTargetingHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint.
+func MountRemoveKeywordTargetingHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/keyword-targeting/removals", f)
+}
+
+// NewRemoveKeywordTargetingHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "remove-keyword-targeting" endpoint.
+func NewRemoveKeywordTargetingHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeRemoveKeywordTargetingRequest(mux, decoder)
+		encodeResponse = EncodeRemoveKeywordTargetingResponse(encoder)
+		encodeError    = EncodeRemoveKeywordTargetingError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "remove-keyword-targeting")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountListMetaAdSetsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint.
+func MountListMetaAdSetsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets", f)
+}
+
+// NewListMetaAdSetsHandler creates a HTTP handler which loads the HTTP request
+// and calls the "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets"
+// endpoint.
+func NewListMetaAdSetsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeListMetaAdSetsRequest(mux, decoder)
+		encodeResponse = EncodeListMetaAdSetsResponse(encoder)
+		encodeError    = EncodeListMetaAdSetsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "list-meta-ad-sets")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountToggleMetaAdSetStatusHandler configures the mux to serve the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint.
+func MountToggleMetaAdSetStatusHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status", f)
+}
+
+// NewToggleMetaAdSetStatusHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-briefs" service
+// "toggle-meta-ad-set-status" endpoint.
+func NewToggleMetaAdSetStatusHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeToggleMetaAdSetStatusRequest(mux, decoder)
+		encodeResponse = EncodeToggleMetaAdSetStatusResponse(encoder)
+		encodeError    = EncodeToggleMetaAdSetStatusError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "toggle-meta-ad-set-status")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-briefs")
 		payload, err := decodeRequest(r)
 		if err != nil {

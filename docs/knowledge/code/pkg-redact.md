@@ -205,10 +205,24 @@ elsewhere because they are a URL's diagnostic value, and an opaque URI has neith
 `campaigns.config_snapshot`, which is stored UNENCRYPTED and indexed. They are a different
 contract from the log-safe entry points above: a snapshot keeps only SCHEME AND HOST of a
 link (the path, query and fragment go, and a run carrying userinfo is dropped whole), and
-`SnapshotText` applies that to every link found inside free text — scheme-ful runs,
-scheme-less runs with a query or fragment, `user:password@host` runs, and scheme-less
-path-only runs, in that order. The rationale for each pass is on the code, and the history in
-[internal/dispatch](internal-dispatch.md).
+`SnapshotText` applies that to every link found inside free text — http(s) runs, then runs of
+ANY other `scheme://` (`ftp://host/…` → `ftp://host`; `file:///private/TOKEN`, which has no
+host to keep, is dropped), scheme-less runs with a query or fragment, `user:password@host`
+runs, and scheme-less path-only runs, in that order. `SnapshotURL` fails closed on any value
+opening with `scheme://` that will not reduce to scheme+host, not only on http(s). The http
+run's bracketed-IPv6 branch consumes an optional userinfo before the `[`
+(`https://bob:pw@[2001:db8::1]/…` is dropped whole rather than leaving `]/…` behind), and the
+`user:password@` username class is RFC 3986's userinfo alphabet including the sub-delims
+`!$&'()*+,;=` (kept in step with the X screen), so `admin!:pw@host/…` is dropped too. Its
+FIRST character must still be unreserved (a sub-delims-only username such as `!:pw@host`, or a
+blank one such as `:pw@host`, is a second alternative held to a colon right after it), so a clock opened by prose punctuation —
+`Keynote (14:00@main.stage)`, `*9:30@…*`, `'14:00@…'` — starts at the digit and is left alone.
+The clock exemption (`UsernameIsClock`, exported here and called by the X screen, so there is
+one copy) is exactly: an all-digit pair of at most two digits a side (`14:00`, `3:4` — a score
+is ordinary event copy), so a numeric user ID and PIN like `2024:1234@…` is dropped, OR any sub-delim except `+` (`Mon,9:30`, `Session;9:30`) followed by a real clock — hour
+1–2 digits ≤ 23, password exactly two digits ≤ 59 (`Mon,9:30@…`). A `+` prefix never
+qualifies: `alice+9:30@…` and `alice+2024:1234@…` are dropped, as is `a,2024:1234@…`. The
+rationale for each pass is on the code, and the history in [internal/dispatch](internal-dispatch.md).
 
 They moved here unchanged from `internal/dispatch` (which keeps thin wrappers) so that
 `internal/service` — which cannot import `internal/dispatch` without an import cycle — redacts

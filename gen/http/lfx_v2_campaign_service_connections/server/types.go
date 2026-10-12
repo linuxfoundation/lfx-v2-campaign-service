@@ -830,6 +830,52 @@ type GetGoogleAdsAudienceResponseBody struct {
 	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
 }
 
+// GetMetaAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body.
+type GetMetaAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window string `form:"window" json:"window" xml:"window"`
+	// Every bucket across both breakdowns, discriminated by `dimension`. Ordered
+	// by dimension (age_gender, then placement) then impressions descending.
+	Buckets []*MetaAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`, across both dimensions. Each dimension
+	// independently covers the same traffic, so summing any counter across
+	// dimensions double-counts it — total within one dimension only.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+	// ISO 4217 currency of the ad account that cost_micros is denominated in, as
+	// Meta reports it. ABSENT when no bucket was returned.
+	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
+}
+
+// GetTwitterAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body.
+type GetTwitterAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as days on the ad ACCOUNT's
+	// calendar (its timezone) — not the UTC days the X campaign metrics read uses
+	// for the same window name
+	Window string `form:"window" json:"window" xml:"window"`
+	// Every bucket across the three segmentations, discriminated by `dimension`.
+	// Ordered by dimension (age, gender, platform), then impressions descending,
+	// then value.
+	Buckets []*TwitterAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+	// ISO 4217 currency of the ad account that cost_micros is denominated in, as X
+	// reports it on the account. ABSENT when X was not contacted (the project has
+	// no X campaigns of its own) or the account carries no currency.
+	AccountCurrency *string `form:"account_currency,omitempty" json:"account_currency,omitempty" xml:"account_currency,omitempty"`
+	// True when, for at least one dimension, X returned segment rows whose every
+	// counter was null or absent. The zeros in that dimension are then NOT a
+	// measurement: it is either no delivery in the window or X's reported defect
+	// where segmented stats jobs succeed with all-null metrics, and the two cannot
+	// be told apart.
+	AllCountersNull bool `form:"all_counters_null" json:"all_counters_null" xml:"all_counters_null"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -871,6 +917,34 @@ type GetMicrosoftAdsKeywordsResponseBody struct {
 	DataIncomplete bool `form:"data_incomplete" json:"data_incomplete" xml:"data_incomplete"`
 }
 
+// GetMicrosoftAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body.
+type GetMicrosoftAdsAudienceResponseBody struct {
+	// The reporting window these counters cover
+	Window string `form:"window" json:"window" xml:"window"`
+	// One bucket per (age_group, gender), summed over the campaigns this project
+	// owns, from the last finished Microsoft age/gender report that covers every
+	// one of them; ordered by impressions descending. Every bucket covers a
+	// disjoint slice of the same traffic, so counters may be totalled across
+	// buckets. Empty while no such report has finished (metrics_as_of absent).
+	Buckets []*MicrosoftAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+	// When the Microsoft report these buckets come from was requested (not when it
+	// was collected). ABSENT when no finished report covers every campaign this
+	// project now owns — the first read, or the first after a campaign was added —
+	// and `buckets` is then empty rather than a partial picture.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// True while a newer Microsoft report is building, so a later read will return
+	// newer buckets (or the first ones, when metrics_as_of is absent).
+	MetricsPending bool `form:"metrics_pending" json:"metrics_pending" xml:"metrics_pending"`
+	// True when Microsoft flagged the served report's data as potentially
+	// incomplete (the window's last day may still be aggregating): its counters
+	// may still rise. False when no report is served.
+	DataIncomplete bool `form:"data_incomplete" json:"data_incomplete" xml:"data_incomplete"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -891,6 +965,54 @@ type ResolveGoogleAdsCampaignResponseBody struct {
 // "lfx-v2-campaign-service-connections" service
 // "resolve-microsoft-ads-campaign" endpoint HTTP response body.
 type ResolveMicrosoftAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches" json:"matches" xml:"matches"`
+	// How many matches were found.
+	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`
+}
+
+// ResolveMetaAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body.
+type ResolveMetaAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches" json:"matches" xml:"matches"`
+	// How many matches were found.
+	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`
+}
+
+// ResolveRedditAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body.
+type ResolveRedditAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches" json:"matches" xml:"matches"`
+	// How many matches were found.
+	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`
+}
+
+// ResolveTwitterAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body.
+type ResolveTwitterAdsCampaignResponseBody struct {
 	// The upstream id that was resolved, echoed back.
 	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
 	// Every live campaign this project holds for that upstream id. Empty when the
@@ -928,6 +1050,13 @@ type ListMicrosoftAdsAccountsResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
 // endpoint HTTP response body.
 type ListTwitterAdsAccountsResponseBody struct {
+	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
+}
+
+// ListRedditAdsAccountsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body.
+type ListRedditAdsAccountsResponseBody struct {
 	Accounts []*AccessibleAccountResponseBody `form:"accounts" json:"accounts" xml:"accounts"`
 }
 
@@ -1261,6 +1390,57 @@ type MonitorTwitterAdsAccountResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MonitorHubspotAccountResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body.
+type MonitorHubspotAccountResponseBody struct {
+	// The REQUESTED trailing-days window (today inclusive, UTC), echoed back.
+	Days int `form:"days" json:"days" xml:"days"`
+	// The project's own HubSpot marketing emails that HubSpot reports as SENT
+	// inside the window, newest-recorded campaign first. The window selects emails
+	// by SEND date; each email's counters are its totals as of when it was read
+	// (no later than metrics_as_of), not only the events inside the window.
+	Emails []*HubspotEmailMonitorEmailResponseBody `form:"emails" json:"emails" xml:"emails"`
+	// Findings across the emails, HIGH first. campaign_id is this service's
+	// campaign UUID (as on the rows), email_id the HubSpot email the finding is
+	// about — join to `emails` on email_id — and campaign_name the email's name.
+	// Every threshold is a deliverability heuristic, not a HubSpot limit.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	// The sum of the emails array, with rates from the summed counters.
+	Totals *HubspotEmailMonitorTotalsResponseBody `form:"totals" json:"totals" xml:"totals"`
+	// When the LAST HubSpot response of this read arrived — an upper bound: every
+	// email's counters were read at or before this instant (a read makes many
+	// requests over up to 20s, so earlier emails were read somewhat earlier). With
+	// no email to ask about it is when the token-info answer arrived. ABSENT when
+	// HubSpot was not called because the project has recorded no HubSpot email.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// The FIRST UTC calendar day (inclusive) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// The LAST UTC calendar day (inclusive, today) of the send-date window. Absent
+	// exactly when metrics_as_of is.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// How many of the project's recorded emails HubSpot was asked about: the
+	// emails array plus emails_not_sent_in_window.
+	EmailsChecked int `form:"emails_checked" json:"emails_checked" xml:"emails_checked"`
+	// How many checked emails HubSpot reported no send of inside the window — sent
+	// outside it, never sent (a staged draft), or no longer existing; HubSpot's
+	// answer does not tell these apart. Never reported as zeros.
+	EmailsNotSentInWindow int `form:"emails_not_sent_in_window" json:"emails_not_sent_in_window" xml:"emails_not_sent_in_window"`
+	// How many recorded emails were NOT read because they cannot be read safely:
+	// the campaign row does not record which HubSpot portal the email was created
+	// in, records a different portal than the one the project's token reaches now,
+	// or holds a malformed id. An email id means something only inside its own
+	// portal.
+	EmailsUnattributable int `form:"emails_unattributable" json:"emails_unattributable" xml:"emails_unattributable"`
+	// True whenever the project has recorded more than 50 HubSpot campaigns
+	// (deleted ones included): only the 50 most recently recorded (and their A/B
+	// variants) are checked, and any unchecked email — even one recorded long ago,
+	// since a draft can be sent late — could have been sent inside the window, so
+	// the totals may omit it.
+	EmailsTruncated bool `form:"emails_truncated" json:"emails_truncated" xml:"emails_truncated"`
 }
 
 // CreateGoogleAdsBadRequestResponseBody is the type of the
@@ -4150,6 +4330,152 @@ type GetGoogleAdsAudienceUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetMetaAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMetaAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMetaAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMetaAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMetaAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMetaAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMetaAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMetaAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMetaAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-meta-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMetaAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetTwitterAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetTwitterAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetTwitterAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetTwitterAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetTwitterAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetTwitterAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetTwitterAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetTwitterAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-twitter-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetTwitterAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4217,6 +4543,79 @@ type GetMicrosoftAdsKeywordsPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "Unauthorized" error.
 type GetMicrosoftAdsKeywordsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetMicrosoftAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetMicrosoftAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetMicrosoftAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetMicrosoftAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetMicrosoftAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetMicrosoftAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetMicrosoftAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetMicrosoftAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -4343,6 +4742,186 @@ type ResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody struct {
 // "resolve-microsoft-ads-campaign" endpoint HTTP response body for the
 // "Unauthorized" error.
 type ResolveMicrosoftAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveMetaAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveMetaAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveMetaAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveMetaAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveMetaAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveMetaAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveMetaAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveMetaAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveMetaAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveMetaAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveMetaAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-meta-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveMetaAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveRedditAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveRedditAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveRedditAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveRedditAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveRedditAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveRedditAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveRedditAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveRedditAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveRedditAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveRedditAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveRedditAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-reddit-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveRedditAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveTwitterAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "BadRequest" error.
+type ResolveTwitterAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveTwitterAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ResolveTwitterAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveTwitterAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ResolveTwitterAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveTwitterAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "NotFound" error.
+type ResolveTwitterAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveTwitterAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ResolveTwitterAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveTwitterAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ResolveTwitterAdsCampaignUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -4583,6 +5162,66 @@ type ListTwitterAdsAccountsPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "list-twitter-ads-accounts"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ListTwitterAdsAccountsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsAccountsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "BadRequest" error.
+type ListRedditAdsAccountsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsAccountsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ListRedditAdsAccountsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsAccountsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ListRedditAdsAccountsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsAccountsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "NotFound" error.
+type ListRedditAdsAccountsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsAccountsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ListRedditAdsAccountsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListRedditAdsAccountsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "list-reddit-ads-accounts"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ListRedditAdsAccountsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -5075,16 +5714,6 @@ type MonitorMicrosoftAdsAccountUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
-// MonitorTwitterAdsAccountBadRequestResponseBody is the type of the
-// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
-// endpoint HTTP response body for the "BadRequest" error.
-type MonitorTwitterAdsAccountBadRequestResponseBody struct {
-	// HTTP status code
-	Code string `form:"code" json:"code" xml:"code"`
-	// Error message
-	Message string `form:"message" json:"message" xml:"message"`
-}
-
 // MonitorTwitterAdsAccountConflictResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body for the "Conflict" error.
@@ -5093,9 +5722,21 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
 	Message string `form:"message" json:"message" xml:"message"`
-	// Stable machine-readable discriminator, present only where an endpoint
-	// returns more than one kind of conflict. Absent means unspecified.
-	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+	// Why the account cannot be monitored as it stands:
+	// account_too_many_active_campaigns (more campaigns active in the window than
+	// one report covers) or account_timezone_unsupported (the account's timezone
+	// does not start its days on a whole UTC hour).
+	Reason string `form:"reason" json:"reason" xml:"reason"`
+}
+
+// MonitorTwitterAdsAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorTwitterAdsAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
 }
 
 // MonitorTwitterAdsAccountServiceUnavailableResponseBody is the type of the
@@ -5148,14 +5789,75 @@ type MonitorTwitterAdsAccountUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// MonitorHubspotAccountBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "BadRequest" error.
+type MonitorHubspotAccountBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorHubspotAccountServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type MonitorHubspotAccountServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorHubspotAccountInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "InternalServerError" error.
+type MonitorHubspotAccountInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorHubspotAccountNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "NotFound" error.
+type MonitorHubspotAccountNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorHubspotAccountPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type MonitorHubspotAccountPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// MonitorHubspotAccountUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
+// endpoint HTTP response body for the "Unauthorized" error.
+type MonitorHubspotAccountUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AccessibleAccountResponseBody is used to define fields on response body
 // types.
 type AccessibleAccountResponseBody struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
 	// connection's account_id verbatim. The format is per-provider and is whatever
 	// that platform mints — bare digits on Google Ads, LinkedIn and Microsoft Ads;
-	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter — so a
-	// caller must treat it as an OPAQUE string and must not validate, normalise or
+	// an `act_`-prefixed id on Meta; an alphanumeric handle on X/Twitter; a
+	// letters-digits-underscores id such as `t2_gv9wtbfa` on Reddit — so a caller
+	// must treat it as an OPAQUE string and must not validate, normalise or
 	// re-derive it. Each discovery method's own example shows its provider's form.
 	// Storing it unchanged is what matters: the connection validation for each
 	// provider accepts only its own format.
@@ -5236,6 +5938,79 @@ type GoogleAdsAudienceBucketResponseBody struct {
 	// Conversions over the window, fraction intact. Summable WITHIN a dimension
 	// for the same reason impressions are; summing across dimensions triple-counts.
 	Conversions float64 `form:"conversions" json:"conversions" xml:"conversions"`
+}
+
+// MetaAdsAudienceBucketResponseBody is used to define fields on response body
+// types.
+type MetaAdsAudienceBucketResponseBody struct {
+	// Which breakdown this bucket belongs to: age_gender (Meta's combined
+	// age,gender breakdown) or placement (publisher_platform,platform_position)
+	Dimension string `form:"dimension" json:"dimension" xml:"dimension"`
+	// Meta's age bucket, verbatim (e.g. 25-34, 65+, Unknown). Present only on
+	// age_gender buckets.
+	Age *string `form:"age,omitempty" json:"age,omitempty" xml:"age,omitempty"`
+	// Meta's gender bucket, verbatim (male, female, unknown). Present only on
+	// age_gender buckets.
+	Gender *string `form:"gender,omitempty" json:"gender,omitempty" xml:"gender,omitempty"`
+	// Meta's publisher platform, verbatim (e.g. facebook, instagram,
+	// audience_network, messenger). Present only on placement buckets.
+	PublisherPlatform *string `form:"publisher_platform,omitempty" json:"publisher_platform,omitempty" xml:"publisher_platform,omitempty"`
+	// Meta's placement within the publisher platform, verbatim (e.g. feed,
+	// instagram_stories). Present only on placement buckets.
+	PlatformPosition *string `form:"platform_position,omitempty" json:"platform_position,omitempty" xml:"platform_position,omitempty"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window in micro-units of the ad account's native currency
+	// (see account_currency). This service performs no FX conversion.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
+// TwitterAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type TwitterAdsAudienceBucketResponseBody struct {
+	// Which segmentation this bucket belongs to: age (X segmentation_type AGE),
+	// gender (GENDER) or platform (PLATFORMS)
+	Dimension string `form:"dimension" json:"dimension" xml:"dimension"`
+	// X's segment name for this bucket, verbatim (for example an age range, a
+	// gender or a device platform). A value outside a conservative charset fails
+	// the read rather than being returned.
+	Value string `form:"value" json:"value" xml:"value"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Billed charge over the window (X's billed_charge_local_micro) in micro-units
+	// of the ad account's currency (see account_currency). This service performs
+	// no FX conversion.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
+// MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsAudienceBucketResponseBody struct {
+	// Microsoft's AgeGroup, verbatim (documented values 13-17, 18-24, 25-34,
+	// 35-49, 50-64, 65+; any other value Microsoft reports, such as an unknown
+	// bucket, is passed through rather than dropped).
+	AgeGroup string `form:"age_group" json:"age_group" xml:"age_group"`
+	// Microsoft's Gender, verbatim (documented as male or female; any other value
+	// Microsoft reports is passed through rather than dropped).
+	Gender string `form:"gender" json:"gender" xml:"gender"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window in micro-units of the ad account's own currency
+	// (Microsoft's Spend times 10^6). This service performs no FX conversion and
+	// does not know the currency.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
 }
 
 // CampaignRefResponseBody is used to define fields on response body types.
@@ -5346,8 +6121,14 @@ type AccountMonitorCampaignResponseBody struct {
 // AccountMonitorActionItemResponseBody is used to define fields on response
 // body types.
 type AccountMonitorActionItemResponseBody struct {
-	// The platform campaign id this item is about. Empty for an account-wide item.
+	// The campaign this item is about: the platform campaign id on the ad-platform
+	// monitors; this service's campaign UUID on monitor-hubspot-account (where
+	// email_id names the email). Empty for an account-wide item.
 	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// monitor-hubspot-account only: the HubSpot marketing-email id the item is
+	// about — the key that joins a finding to its row in `emails` (an A/B variant
+	// shares its parent's campaign_id). Absent on every ad-platform monitor.
+	EmailID *string `form:"email_id,omitempty" json:"email_id,omitempty" xml:"email_id,omitempty"`
 	// The campaign's platform-side name, carried alongside campaign_id so a
 	// renderer never needs to re-join against the row list.
 	CampaignName *string `form:"campaign_name,omitempty" json:"campaign_name,omitempty" xml:"campaign_name,omitempty"`
@@ -5375,6 +6156,81 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many campaigns the totals reflect: the length of the campaigns array
 	// these totals sum.
 	CampaignCount int `form:"campaign_count" json:"campaign_count" xml:"campaign_count"`
+}
+
+// HubspotEmailMonitorEmailResponseBody is used to define fields on response
+// body types.
+type HubspotEmailMonitorEmailResponseBody struct {
+	// This service's campaign UUID the email belongs to.
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The HubSpot marketing-email id.
+	EmailID string `form:"email_id" json:"email_id" xml:"email_id"`
+	// The email's name as this service recorded it when the email was created.
+	Name string `form:"name" json:"name" xml:"name"`
+	// True for an A/B test's variant (B) email, which is recorded on its parent
+	// campaign; false for the campaign's own email.
+	AbVariant bool `form:"ab_variant" json:"ab_variant" xml:"ab_variant"`
+	// True when the campaign was deleted in this service. A local delete neither
+	// stops nor deletes the HubSpot email, so its sends still count as the
+	// project's and it is still monitored.
+	Deleted bool `form:"deleted" json:"deleted" xml:"deleted"`
+	// HubSpot's `sent` counter for the email, to date.
+	Sent int64 `form:"sent" json:"sent" xml:"sent"`
+	// HubSpot's `delivered` counter, to date.
+	Delivered int64 `form:"delivered" json:"delivered" xml:"delivered"`
+	// HubSpot's `open` counter, to date. Inflated by mail clients that pre-fetch
+	// images (e.g. Apple Mail Privacy Protection).
+	Opens int64 `form:"opens" json:"opens" xml:"opens"`
+	// HubSpot's `click` counter, to date.
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// HubSpot's `bounce` counter, to date.
+	Bounces int64 `form:"bounces" json:"bounces" xml:"bounces"`
+	// HubSpot's `unsubscribed` counter, to date.
+	Unsubscribes int64 `form:"unsubscribes" json:"unsubscribes" xml:"unsubscribes"`
+	// HubSpot's `spamreport` counter, to date.
+	SpamReports int64 `form:"spam_reports" json:"spam_reports" xml:"spam_reports"`
+	// opens / delivered, as a fraction (0.3 = 30%). ABSENT when delivered is 0 — a
+	// rate over nothing is unknown, not 0.
+	OpenRate *float64 `form:"open_rate,omitempty" json:"open_rate,omitempty" xml:"open_rate,omitempty"`
+	// clicks / delivered, as a fraction. ABSENT when delivered is 0.
+	ClickRate *float64 `form:"click_rate,omitempty" json:"click_rate,omitempty" xml:"click_rate,omitempty"`
+	// bounces / sent, as a fraction. ABSENT when sent is 0.
+	BounceRate *float64 `form:"bounce_rate,omitempty" json:"bounce_rate,omitempty" xml:"bounce_rate,omitempty"`
+	// unsubscribes / delivered, as a fraction. ABSENT when delivered is 0.
+	UnsubscribeRate *float64 `form:"unsubscribe_rate,omitempty" json:"unsubscribe_rate,omitempty" xml:"unsubscribe_rate,omitempty"`
+	// spam_reports / delivered, as a fraction. ABSENT when delivered is 0.
+	SpamRate *float64 `form:"spam_rate,omitempty" json:"spam_rate,omitempty" xml:"spam_rate,omitempty"`
+}
+
+// HubspotEmailMonitorTotalsResponseBody is used to define fields on response
+// body types.
+type HubspotEmailMonitorTotalsResponseBody struct {
+	// How many emails the totals sum: the length of the emails array.
+	EmailCount int `form:"email_count" json:"email_count" xml:"email_count"`
+	// Sum of the emails' sent counters.
+	Sent int64 `form:"sent" json:"sent" xml:"sent"`
+	// Sum of the emails' delivered counters.
+	Delivered int64 `form:"delivered" json:"delivered" xml:"delivered"`
+	// Sum of the emails' opens.
+	Opens int64 `form:"opens" json:"opens" xml:"opens"`
+	// Sum of the emails' clicks.
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Sum of the emails' bounces.
+	Bounces int64 `form:"bounces" json:"bounces" xml:"bounces"`
+	// Sum of the emails' unsubscribes.
+	Unsubscribes int64 `form:"unsubscribes" json:"unsubscribes" xml:"unsubscribes"`
+	// Sum of the emails' spam reports.
+	SpamReports int64 `form:"spam_reports" json:"spam_reports" xml:"spam_reports"`
+	// Summed opens / summed delivered. ABSENT when that denominator is 0.
+	OpenRate *float64 `form:"open_rate,omitempty" json:"open_rate,omitempty" xml:"open_rate,omitempty"`
+	// Summed clicks / summed delivered. ABSENT when that denominator is 0.
+	ClickRate *float64 `form:"click_rate,omitempty" json:"click_rate,omitempty" xml:"click_rate,omitempty"`
+	// Summed bounces / summed sent. ABSENT when that denominator is 0.
+	BounceRate *float64 `form:"bounce_rate,omitempty" json:"bounce_rate,omitempty" xml:"bounce_rate,omitempty"`
+	// Summed unsubscribes / summed delivered. ABSENT when that denominator is 0.
+	UnsubscribeRate *float64 `form:"unsubscribe_rate,omitempty" json:"unsubscribe_rate,omitempty" xml:"unsubscribe_rate,omitempty"`
+	// Summed spam_reports / summed delivered. ABSENT when that denominator is 0.
+	SpamRate *float64 `form:"spam_rate,omitempty" json:"spam_rate,omitempty" xml:"spam_rate,omitempty"`
 }
 
 // GoogleAdsConnectionConfigRequestBody is used to define fields on request
@@ -6067,6 +6923,55 @@ func NewGetGoogleAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.Go
 	return body
 }
 
+// NewGetMetaAdsAudienceResponseBody builds the HTTP response body from the
+// result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.MetaAdsAudience) *GetMetaAdsAudienceResponseBody {
+	body := &GetMetaAdsAudienceResponseBody{
+		Window:          res.Window,
+		BucketCount:     res.BucketCount,
+		AccountCurrency: res.AccountCurrency,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*MetaAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsMetaAdsAudienceBucketToMetaAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*MetaAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudienceResponseBody builds the HTTP response body from the
+// result of the "get-twitter-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.TwitterAdsAudience) *GetTwitterAdsAudienceResponseBody {
+	body := &GetTwitterAdsAudienceResponseBody{
+		Window:          res.Window,
+		BucketCount:     res.BucketCount,
+		AccountCurrency: res.AccountCurrency,
+		AllCountersNull: res.AllCountersNull,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*TwitterAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsTwitterAdsAudienceBucketToTwitterAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*TwitterAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
 // NewGetMicrosoftAdsKeywordsResponseBody builds the HTTP response body from
 // the result of the "get-microsoft-ads-keywords" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -6091,6 +6996,32 @@ func NewGetMicrosoftAdsKeywordsResponseBody(res *lfxv2campaignserviceconnections
 		}
 	} else {
 		body.Rows = []*GoogleAdsKeywordResponseBody{}
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceResponseBody builds the HTTP response body from
+// the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.MicrosoftAdsAudience) *GetMicrosoftAdsAudienceResponseBody {
+	body := &GetMicrosoftAdsAudienceResponseBody{
+		Window:         res.Window,
+		BucketCount:    res.BucketCount,
+		MetricsAsOf:    res.MetricsAsOf,
+		MetricsPending: res.MetricsPending,
+		DataIncomplete: res.DataIncomplete,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*MicrosoftAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsMicrosoftAdsAudienceBucketToMicrosoftAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*MicrosoftAdsAudienceBucketResponseBody{}
 	}
 	return body
 }
@@ -6123,6 +7054,75 @@ func NewResolveGoogleAdsCampaignResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewResolveMicrosoftAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveMicrosoftAdsCampaignResponseBody {
 	body := &ResolveMicrosoftAdsCampaignResponseBody{
+		PlatformCampaignID: res.PlatformCampaignID,
+		MatchCount:         res.MatchCount,
+	}
+	if res.Matches != nil {
+		body.Matches = make([]*CampaignRefResponseBody, len(res.Matches))
+		for i, val := range res.Matches {
+			if val == nil {
+				body.Matches[i] = nil
+				continue
+			}
+			body.Matches[i] = marshalLfxv2campaignserviceconnectionsCampaignRefToCampaignRefResponseBody(val)
+		}
+	} else {
+		body.Matches = []*CampaignRefResponseBody{}
+	}
+	return body
+}
+
+// NewResolveMetaAdsCampaignResponseBody builds the HTTP response body from the
+// result of the "resolve-meta-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveMetaAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveMetaAdsCampaignResponseBody {
+	body := &ResolveMetaAdsCampaignResponseBody{
+		PlatformCampaignID: res.PlatformCampaignID,
+		MatchCount:         res.MatchCount,
+	}
+	if res.Matches != nil {
+		body.Matches = make([]*CampaignRefResponseBody, len(res.Matches))
+		for i, val := range res.Matches {
+			if val == nil {
+				body.Matches[i] = nil
+				continue
+			}
+			body.Matches[i] = marshalLfxv2campaignserviceconnectionsCampaignRefToCampaignRefResponseBody(val)
+		}
+	} else {
+		body.Matches = []*CampaignRefResponseBody{}
+	}
+	return body
+}
+
+// NewResolveRedditAdsCampaignResponseBody builds the HTTP response body from
+// the result of the "resolve-reddit-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveRedditAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveRedditAdsCampaignResponseBody {
+	body := &ResolveRedditAdsCampaignResponseBody{
+		PlatformCampaignID: res.PlatformCampaignID,
+		MatchCount:         res.MatchCount,
+	}
+	if res.Matches != nil {
+		body.Matches = make([]*CampaignRefResponseBody, len(res.Matches))
+		for i, val := range res.Matches {
+			if val == nil {
+				body.Matches[i] = nil
+				continue
+			}
+			body.Matches[i] = marshalLfxv2campaignserviceconnectionsCampaignRefToCampaignRefResponseBody(val)
+		}
+	} else {
+		body.Matches = []*CampaignRefResponseBody{}
+	}
+	return body
+}
+
+// NewResolveTwitterAdsCampaignResponseBody builds the HTTP response body from
+// the result of the "resolve-twitter-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveTwitterAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveTwitterAdsCampaignResponseBody {
+	body := &ResolveTwitterAdsCampaignResponseBody{
 		PlatformCampaignID: res.PlatformCampaignID,
 		MatchCount:         res.MatchCount,
 	}
@@ -6206,6 +7206,26 @@ func NewListMicrosoftAdsAccountsResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewListTwitterAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListTwitterAdsAccountsResult) *ListTwitterAdsAccountsResponseBody {
 	body := &ListTwitterAdsAccountsResponseBody{}
+	if res.Accounts != nil {
+		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
+		for i, val := range res.Accounts {
+			if val == nil {
+				body.Accounts[i] = nil
+				continue
+			}
+			body.Accounts[i] = marshalLfxv2campaignserviceconnectionsAccessibleAccountToAccessibleAccountResponseBody(val)
+		}
+	} else {
+		body.Accounts = []*AccessibleAccountResponseBody{}
+	}
+	return body
+}
+
+// NewListRedditAdsAccountsResponseBody builds the HTTP response body from the
+// result of the "list-reddit-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsAccountsResponseBody(res *lfxv2campaignserviceconnections.ListRedditAdsAccountsResult) *ListRedditAdsAccountsResponseBody {
+	body := &ListRedditAdsAccountsResponseBody{}
 	if res.Accounts != nil {
 		body.Accounts = make([]*AccessibleAccountResponseBody, len(res.Accounts))
 		for i, val := range res.Accounts {
@@ -6524,6 +7544,50 @@ func NewMonitorTwitterAdsAccountResponseBody(res *lfxv2campaignserviceconnection
 	}
 	if res.Totals != nil {
 		body.Totals = marshalLfxv2campaignserviceconnectionsAccountMonitorTotalsToAccountMonitorTotalsResponseBody(res.Totals)
+	}
+	return body
+}
+
+// NewMonitorHubspotAccountResponseBody builds the HTTP response body from the
+// result of the "monitor-hubspot-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorHubspotAccountResponseBody(res *lfxv2campaignserviceconnections.HubspotEmailMonitor) *MonitorHubspotAccountResponseBody {
+	body := &MonitorHubspotAccountResponseBody{
+		Days:                  res.Days,
+		MetricsAsOf:           res.MetricsAsOf,
+		MetricsWindowStart:    res.MetricsWindowStart,
+		MetricsWindowEnd:      res.MetricsWindowEnd,
+		EmailsChecked:         res.EmailsChecked,
+		EmailsNotSentInWindow: res.EmailsNotSentInWindow,
+		EmailsUnattributable:  res.EmailsUnattributable,
+		EmailsTruncated:       res.EmailsTruncated,
+	}
+	if res.Emails != nil {
+		body.Emails = make([]*HubspotEmailMonitorEmailResponseBody, len(res.Emails))
+		for i, val := range res.Emails {
+			if val == nil {
+				body.Emails[i] = nil
+				continue
+			}
+			body.Emails[i] = marshalLfxv2campaignserviceconnectionsHubspotEmailMonitorEmailToHubspotEmailMonitorEmailResponseBody(val)
+		}
+	} else {
+		body.Emails = []*HubspotEmailMonitorEmailResponseBody{}
+	}
+	if res.ActionItems != nil {
+		body.ActionItems = make([]*AccountMonitorActionItemResponseBody, len(res.ActionItems))
+		for i, val := range res.ActionItems {
+			if val == nil {
+				body.ActionItems[i] = nil
+				continue
+			}
+			body.ActionItems[i] = marshalLfxv2campaignserviceconnectionsAccountMonitorActionItemToAccountMonitorActionItemResponseBody(val)
+		}
+	} else {
+		body.ActionItems = []*AccountMonitorActionItemResponseBody{}
+	}
+	if res.Totals != nil {
+		body.Totals = marshalLfxv2campaignserviceconnectionsHubspotEmailMonitorTotalsToHubspotEmailMonitorTotalsResponseBody(res.Totals)
 	}
 	return body
 }
@@ -9683,6 +10747,162 @@ func NewGetGoogleAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceco
 	return body
 }
 
+// NewGetMetaAdsAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetMetaAdsAudienceBadRequestResponseBody {
+	body := &GetMetaAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceConflictResponseBody builds the HTTP response body from
+// the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetMetaAdsAudienceConflictResponseBody {
+	body := &GetMetaAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceServiceUnavailableResponseBody builds the HTTP response
+// body from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMetaAdsAudienceServiceUnavailableResponseBody {
+	body := &GetMetaAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMetaAdsAudienceInternalServerErrorResponseBody {
+	body := &GetMetaAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceNotFoundResponseBody builds the HTTP response body from
+// the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMetaAdsAudienceNotFoundResponseBody {
+	body := &GetMetaAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetMetaAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetMetaAdsAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMetaAdsAudienceUnauthorizedResponseBody builds the HTTP response body
+// from the result of the "get-meta-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMetaAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMetaAdsAudienceUnauthorizedResponseBody {
+	body := &GetMetaAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-twitter-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetTwitterAdsAudienceBadRequestResponseBody {
+	body := &GetTwitterAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "get-twitter-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetTwitterAdsAudienceConflictResponseBody {
+	body := &GetTwitterAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-twitter-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetTwitterAdsAudienceServiceUnavailableResponseBody {
+	body := &GetTwitterAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-twitter-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetTwitterAdsAudienceInternalServerErrorResponseBody {
+	body := &GetTwitterAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-twitter-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetTwitterAdsAudienceNotFoundResponseBody {
+	body := &GetTwitterAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-twitter-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetTwitterAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetTwitterAdsAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetTwitterAdsAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-twitter-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetTwitterAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetTwitterAdsAudienceUnauthorizedResponseBody {
+	body := &GetTwitterAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetMicrosoftAdsKeywordsBadRequestResponseBody builds the HTTP response
 // body from the result of the "get-microsoft-ads-keywords" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -9755,6 +10975,84 @@ func NewGetMicrosoftAdsKeywordsPayloadTooLargeResponseBody(res *lfxv2campaignser
 // "lfx-v2-campaign-service-connections" service.
 func NewGetMicrosoftAdsKeywordsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMicrosoftAdsKeywordsUnauthorizedResponseBody {
 	body := &GetMicrosoftAdsKeywordsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceBadRequestResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetMicrosoftAdsAudienceBadRequestResponseBody {
+	body := &GetMicrosoftAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetMicrosoftAdsAudienceConflictResponseBody {
+	body := &GetMicrosoftAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-audience" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetMicrosoftAdsAudienceServiceUnavailableResponseBody {
+	body := &GetMicrosoftAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-audience" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetMicrosoftAdsAudienceInternalServerErrorResponseBody {
+	body := &GetMicrosoftAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetMicrosoftAdsAudienceNotFoundResponseBody {
+	body := &GetMicrosoftAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudiencePayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "get-microsoft-ads-audience" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetMicrosoftAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetMicrosoftAdsAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetMicrosoftAdsAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-microsoft-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetMicrosoftAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetMicrosoftAdsAudienceUnauthorizedResponseBody {
+	body := &GetMicrosoftAdsAudienceUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -9887,6 +11185,204 @@ func NewResolveMicrosoftAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaig
 // endpoint of the "lfx-v2-campaign-service-connections" service.
 func NewResolveMicrosoftAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveMicrosoftAdsCampaignUnauthorizedResponseBody {
 	body := &ResolveMicrosoftAdsCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveMetaAdsCampaignBadRequestResponseBody builds the HTTP response
+// body from the result of the "resolve-meta-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveMetaAdsCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ResolveMetaAdsCampaignBadRequestResponseBody {
+	body := &ResolveMetaAdsCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveMetaAdsCampaignServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "resolve-meta-ads-campaign" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewResolveMetaAdsCampaignServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ResolveMetaAdsCampaignServiceUnavailableResponseBody {
+	body := &ResolveMetaAdsCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveMetaAdsCampaignInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "resolve-meta-ads-campaign" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewResolveMetaAdsCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ResolveMetaAdsCampaignInternalServerErrorResponseBody {
+	body := &ResolveMetaAdsCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveMetaAdsCampaignNotFoundResponseBody builds the HTTP response body
+// from the result of the "resolve-meta-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveMetaAdsCampaignNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ResolveMetaAdsCampaignNotFoundResponseBody {
+	body := &ResolveMetaAdsCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveMetaAdsCampaignPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "resolve-meta-ads-campaign" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewResolveMetaAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ResolveMetaAdsCampaignPayloadTooLargeResponseBody {
+	body := &ResolveMetaAdsCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveMetaAdsCampaignUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "resolve-meta-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveMetaAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveMetaAdsCampaignUnauthorizedResponseBody {
+	body := &ResolveMetaAdsCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveRedditAdsCampaignBadRequestResponseBody builds the HTTP response
+// body from the result of the "resolve-reddit-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveRedditAdsCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ResolveRedditAdsCampaignBadRequestResponseBody {
+	body := &ResolveRedditAdsCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveRedditAdsCampaignServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "resolve-reddit-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveRedditAdsCampaignServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ResolveRedditAdsCampaignServiceUnavailableResponseBody {
+	body := &ResolveRedditAdsCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveRedditAdsCampaignInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "resolve-reddit-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveRedditAdsCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ResolveRedditAdsCampaignInternalServerErrorResponseBody {
+	body := &ResolveRedditAdsCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveRedditAdsCampaignNotFoundResponseBody builds the HTTP response
+// body from the result of the "resolve-reddit-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveRedditAdsCampaignNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ResolveRedditAdsCampaignNotFoundResponseBody {
+	body := &ResolveRedditAdsCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveRedditAdsCampaignPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "resolve-reddit-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveRedditAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ResolveRedditAdsCampaignPayloadTooLargeResponseBody {
+	body := &ResolveRedditAdsCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveRedditAdsCampaignUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "resolve-reddit-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveRedditAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveRedditAdsCampaignUnauthorizedResponseBody {
+	body := &ResolveRedditAdsCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveTwitterAdsCampaignBadRequestResponseBody builds the HTTP response
+// body from the result of the "resolve-twitter-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveTwitterAdsCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ResolveTwitterAdsCampaignBadRequestResponseBody {
+	body := &ResolveTwitterAdsCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveTwitterAdsCampaignServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "resolve-twitter-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveTwitterAdsCampaignServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ResolveTwitterAdsCampaignServiceUnavailableResponseBody {
+	body := &ResolveTwitterAdsCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveTwitterAdsCampaignInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "resolve-twitter-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveTwitterAdsCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ResolveTwitterAdsCampaignInternalServerErrorResponseBody {
+	body := &ResolveTwitterAdsCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveTwitterAdsCampaignNotFoundResponseBody builds the HTTP response
+// body from the result of the "resolve-twitter-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveTwitterAdsCampaignNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ResolveTwitterAdsCampaignNotFoundResponseBody {
+	body := &ResolveTwitterAdsCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveTwitterAdsCampaignPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "resolve-twitter-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveTwitterAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ResolveTwitterAdsCampaignPayloadTooLargeResponseBody {
+	body := &ResolveTwitterAdsCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveTwitterAdsCampaignUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "resolve-twitter-ads-campaign" endpoint
+// of the "lfx-v2-campaign-service-connections" service.
+func NewResolveTwitterAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveTwitterAdsCampaignUnauthorizedResponseBody {
+	body := &ResolveTwitterAdsCampaignUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -10151,6 +11647,72 @@ func NewListTwitterAdsAccountsPayloadTooLargeResponseBody(res *lfxv2campaignserv
 // "lfx-v2-campaign-service-connections" service.
 func NewListTwitterAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListTwitterAdsAccountsUnauthorizedResponseBody {
 	body := &ListTwitterAdsAccountsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsAccountsBadRequestResponseBody builds the HTTP response body
+// from the result of the "list-reddit-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsAccountsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ListRedditAdsAccountsBadRequestResponseBody {
+	body := &ListRedditAdsAccountsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsAccountsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "list-reddit-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsAccountsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ListRedditAdsAccountsServiceUnavailableResponseBody {
+	body := &ListRedditAdsAccountsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsAccountsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "list-reddit-ads-accounts" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsAccountsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ListRedditAdsAccountsInternalServerErrorResponseBody {
+	body := &ListRedditAdsAccountsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsAccountsNotFoundResponseBody builds the HTTP response body
+// from the result of the "list-reddit-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsAccountsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ListRedditAdsAccountsNotFoundResponseBody {
+	body := &ListRedditAdsAccountsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsAccountsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "list-reddit-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsAccountsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ListRedditAdsAccountsPayloadTooLargeResponseBody {
+	body := &ListRedditAdsAccountsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListRedditAdsAccountsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "list-reddit-ads-accounts" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewListRedditAdsAccountsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ListRedditAdsAccountsUnauthorizedResponseBody {
+	body := &ListRedditAdsAccountsUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -10685,6 +12247,18 @@ func NewMonitorMicrosoftAdsAccountUnauthorizedResponseBody(res *lfxv2campaignser
 	return body
 }
 
+// NewMonitorTwitterAdsAccountConflictResponseBody builds the HTTP response
+// body from the result of the "monitor-twitter-ads-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorTwitterAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.AccountMonitorConflictError) *MonitorTwitterAdsAccountConflictResponseBody {
+	body := &MonitorTwitterAdsAccountConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
 // NewMonitorTwitterAdsAccountBadRequestResponseBody builds the HTTP response
 // body from the result of the "monitor-twitter-ads-account" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -10692,18 +12266,6 @@ func NewMonitorTwitterAdsAccountBadRequestResponseBody(res *lfxv2campaignservice
 	body := &MonitorTwitterAdsAccountBadRequestResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
-	}
-	return body
-}
-
-// NewMonitorTwitterAdsAccountConflictResponseBody builds the HTTP response
-// body from the result of the "monitor-twitter-ads-account" endpoint of the
-// "lfx-v2-campaign-service-connections" service.
-func NewMonitorTwitterAdsAccountConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *MonitorTwitterAdsAccountConflictResponseBody {
-	body := &MonitorTwitterAdsAccountConflictResponseBody{
-		Code:    res.Code,
-		Message: res.Message,
-		Reason:  res.Reason,
 	}
 	return body
 }
@@ -10757,6 +12319,72 @@ func NewMonitorTwitterAdsAccountPayloadTooLargeResponseBody(res *lfxv2campaignse
 // "lfx-v2-campaign-service-connections" service.
 func NewMonitorTwitterAdsAccountUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *MonitorTwitterAdsAccountUnauthorizedResponseBody {
 	body := &MonitorTwitterAdsAccountUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorHubspotAccountBadRequestResponseBody builds the HTTP response body
+// from the result of the "monitor-hubspot-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorHubspotAccountBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *MonitorHubspotAccountBadRequestResponseBody {
+	body := &MonitorHubspotAccountBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorHubspotAccountServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "monitor-hubspot-account" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewMonitorHubspotAccountServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *MonitorHubspotAccountServiceUnavailableResponseBody {
+	body := &MonitorHubspotAccountServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorHubspotAccountInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "monitor-hubspot-account" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewMonitorHubspotAccountInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *MonitorHubspotAccountInternalServerErrorResponseBody {
+	body := &MonitorHubspotAccountInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorHubspotAccountNotFoundResponseBody builds the HTTP response body
+// from the result of the "monitor-hubspot-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorHubspotAccountNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *MonitorHubspotAccountNotFoundResponseBody {
+	body := &MonitorHubspotAccountNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorHubspotAccountPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "monitor-hubspot-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorHubspotAccountPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *MonitorHubspotAccountPayloadTooLargeResponseBody {
+	body := &MonitorHubspotAccountPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewMonitorHubspotAccountUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "monitor-hubspot-account" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewMonitorHubspotAccountUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *MonitorHubspotAccountUnauthorizedResponseBody {
+	body := &MonitorHubspotAccountUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -11255,11 +12883,45 @@ func NewGetGoogleAdsAudiencePayload(projectID string, window *string, bearerToke
 	return v
 }
 
+// NewGetMetaAdsAudiencePayload builds a lfx-v2-campaign-service-connections
+// service get-meta-ads-audience endpoint payload.
+func NewGetMetaAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMetaAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetMetaAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetTwitterAdsAudiencePayload builds a lfx-v2-campaign-service-connections
+// service get-twitter-ads-audience endpoint payload.
+func NewGetTwitterAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetTwitterAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewGetMicrosoftAdsKeywordsPayload builds a
 // lfx-v2-campaign-service-connections service get-microsoft-ads-keywords
 // endpoint payload.
 func NewGetMicrosoftAdsKeywordsPayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload {
 	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsKeywordsPayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetMicrosoftAdsAudiencePayload builds a
+// lfx-v2-campaign-service-connections service get-microsoft-ads-audience
+// endpoint payload.
+func NewGetMicrosoftAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
 	v.BearerToken = bearerToken
@@ -11284,6 +12946,42 @@ func NewResolveGoogleAdsCampaignPayload(projectID string, platformCampaignID str
 // endpoint payload.
 func NewResolveMicrosoftAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload {
 	v := &lfxv2campaignserviceconnections.ResolveMicrosoftAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewResolveMetaAdsCampaignPayload builds a
+// lfx-v2-campaign-service-connections service resolve-meta-ads-campaign
+// endpoint payload.
+func NewResolveMetaAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload {
+	v := &lfxv2campaignserviceconnections.ResolveMetaAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewResolveRedditAdsCampaignPayload builds a
+// lfx-v2-campaign-service-connections service resolve-reddit-ads-campaign
+// endpoint payload.
+func NewResolveRedditAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload {
+	v := &lfxv2campaignserviceconnections.ResolveRedditAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewResolveTwitterAdsCampaignPayload builds a
+// lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
+// endpoint payload.
+func NewResolveTwitterAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload {
+	v := &lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload{}
 	v.ProjectID = projectID
 	v.PlatformCampaignID = platformCampaignID
 	v.BearerToken = bearerToken
@@ -11328,6 +13026,16 @@ func NewListMicrosoftAdsAccountsPayload(projectID string, bearerToken *string) *
 // endpoint payload.
 func NewListTwitterAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload {
 	v := &lfxv2campaignserviceconnections.ListTwitterAdsAccountsPayload{}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListRedditAdsAccountsPayload builds a lfx-v2-campaign-service-connections
+// service list-reddit-ads-accounts endpoint payload.
+func NewListRedditAdsAccountsPayload(projectID string, bearerToken *string) *lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload {
+	v := &lfxv2campaignserviceconnections.ListRedditAdsAccountsPayload{}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
@@ -11440,6 +13148,17 @@ func NewMonitorTwitterAdsAccountPayload(projectID string, accountID string, days
 	v := &lfxv2campaignserviceconnections.MonitorTwitterAdsAccountPayload{}
 	v.ProjectID = projectID
 	v.AccountID = accountID
+	v.Days = days
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewMonitorHubspotAccountPayload builds a lfx-v2-campaign-service-connections
+// service monitor-hubspot-account endpoint payload.
+func NewMonitorHubspotAccountPayload(projectID string, days int, bearerToken *string) *lfxv2campaignserviceconnections.MonitorHubspotAccountPayload {
+	v := &lfxv2campaignserviceconnections.MonitorHubspotAccountPayload{}
+	v.ProjectID = projectID
 	v.Days = days
 	v.BearerToken = bearerToken
 

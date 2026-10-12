@@ -289,6 +289,20 @@ var (
 	// tracking existed, or under a connection with no tenant id at all, needs.
 	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
 
+	// ErrCampaignUpstreamIdentityMismatch indicates the PLATFORM's own answer contradicts the
+	// identity this service recorded for a campaign, even though the recorded account and the
+	// connection agree: the platform reports the campaign under a different ad account, or a
+	// child entity recorded on the row (a Meta ad set, an X line item) now belongs to a
+	// different campaign upstream. Reading it would report somebody else's configuration as
+	// this campaign's, so it is refused.
+	//
+	// It is deliberately NOT ErrCampaignAccountMismatch: that sentinel's remedy is "reconnect
+	// the original account", and here the connection already IS the original account, so the
+	// instruction would be unactionable. The platform's record no longer matches what this
+	// service created; the remedy is to re-dispatch the campaign. A state error, not a
+	// transport one — a retry fails identically — so it maps to 409.
+	ErrCampaignUpstreamIdentityMismatch = errors.New("the platform's record of the campaign no longer matches the identity this service recorded")
+
 	// ErrCampaignWriteInProgress indicates another writer already holds the claim for this
 	// campaign, so this request did not acquire it. Maps to 409.
 	//
@@ -404,7 +418,9 @@ var (
 	// as the account's timezone keeps a fractional-hour offset (all year in most such zones;
 	// only part of the year in one with a half-hour DST shift, e.g. Australia/Lord_Howe);
 	// surfaced by Orchestrator.ReadReportedAccountCampaigns and mapped to 409 with reason
-	// "account_timezone_unsupported". Producer: the X monitor.
+	// "account_timezone_unsupported". Producers: the X monitor, and the X audience read (before
+	// any stats job), whose shared-ConflictError 409 carries this same text
+	// (classifyInsightsErrorFor).
 	//
 	// The message is fixed, client-safe text: it reaches the HTTP body.
 	ErrAccountTimezoneUnsupported = errors.New("the account's timezone does not start its days on a whole UTC hour, which the platform's report window requires")
@@ -436,6 +452,25 @@ var (
 	// sending it would be refused by the platform on every read, and dropping it would present
 	// the rest of the project as all of it. The message is fixed, client-safe text.
 	ErrKeywordReportScopeInvalid = errors.New("a campaign in this project has a stored platform id the keyword report cannot be scoped to")
+
+	// ErrAudienceScopeTooLarge indicates a project-scoped audience read refused because the
+	// project owns more campaigns on the platform than one audience request can be scoped to.
+	// The ceiling is per platform: Meta's is meta.MaxAudienceCampaigns (a local bound on the
+	// Insights campaign-id filter in the request URL); X's is twitter.MaxAudienceCampaigns (a local
+	// bound on the stats jobs one request creates and awaits); Microsoft's is
+	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
+	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
+	// counted over DISTINCT campaign ids. Refused before any upstream call and PERMANENT while the
+	// project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message is fixed,
+	// client-safe text: it reaches the HTTP body.
+	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
+
+	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft or X)
+	// refused because a campaign in the project's scope has a stored platform id that is not a
+	// valid campaign id for that platform. Refused before any upstream call, PERMANENT until the
+	// row is corrected, for ErrKeywordReportScopeInvalid's reasons. The message is fixed,
+	// client-safe text.
+	ErrAudienceScopeInvalid = errors.New("a campaign in this project has a stored platform id the audience read cannot be scoped to")
 
 	// ErrKeywordActionsUnsupported indicates the platform cannot pause or remove keywords.
 	// The platform is never contacted.
@@ -470,6 +505,74 @@ var (
 	// platform was contacted: empty or over-long, a text the platform's limits refuse, an
 	// unsupported match type, or the same keyword twice. A permanent input fault → 400.
 	ErrNegativeKeywordInvalid = errors.New("the negative keyword batch is not valid")
+
+	// ErrKeywordTargetingUnsupported indicates the platform has no keyword-TARGETING read or
+	// removal wired (LFXV2-2665: Reddit and X only), or that the capability is switched off for
+	// this deployment. The platform is never contacted; mapped to 400.
+	//
+	// Separate from ErrKeywordActionsUnsupported: a Reddit or X keyword is an entry in an ad
+	// group's or line item's targeting, not a criterion that can be paused, so the two
+	// capabilities are disjoint by platform and must not answer for each other.
+	ErrKeywordTargetingUnsupported = errors.New("keyword targeting is not supported for this platform")
+
+	// ErrKeywordTargetingInvalid indicates a keyword-targeting removal was refused as a permanent
+	// input fault: empty or over-long, an item naming the wrong field for the platform, the same
+	// keyword twice, a keyword the current targeting does not contain, or a missing or misplaced
+	// revision. Mapped to 400. Some of these are decided only after a READ of the targeting, so
+	// the platform may have been contacted, but nothing was changed.
+	ErrKeywordTargetingInvalid = errors.New("the keyword targeting removal is not valid")
+
+	// ErrKeywordTargetingUnaddressable indicates the campaign's keyword targeting cannot be
+	// addressed safely: the row records no ad group / line item, the platform no longer holds it,
+	// it reports a different campaign or none, or its targeting is not a legible keyword list.
+	// A state fault the caller cannot fix by retrying; mapped to 409 with nothing changed.
+	ErrKeywordTargetingUnaddressable = errors.New("the campaign's keyword targeting cannot be addressed")
+
+	// ErrKeywordTargetingChanged indicates a Reddit removal whose revision no longer matches the
+	// ad group's targeting: someone changed it since the caller read it. Nothing was written;
+	// mapped to 409 — read the targeting again and decide afresh.
+	ErrKeywordTargetingChanged = errors.New("the keyword targeting changed since it was read")
+
+	// ErrKeywordTargetingWouldEmpty indicates a removal that would leave the ad group / line item
+	// with no keyword at all. That stops it being keyword-targeted and WIDENS delivery to its
+	// other targeting, which this reduce-only surface never does. Mapped to 409, nothing changed.
+	ErrKeywordTargetingWouldEmpty = errors.New("the removal would leave no keyword targeted")
+
+	// ErrMetaAdSetsUnsupported indicates the campaign's platform has no ad-set read or ad-set
+	// status toggle wired (LFXV2-2665: Meta only — the ad set is Meta's unit). The platform is
+	// never contacted; mapped to 400.
+	ErrMetaAdSetsUnsupported = errors.New("ad-set operations are not supported for this platform")
+
+	// ErrMetaAdSetInvalid indicates an ad set id that cannot name a Meta ad set (not a canonical
+	// numeric id). Refused before any connection work; mapped to 400.
+	ErrMetaAdSetInvalid = errors.New("not a valid meta ad set id")
+
+	// ErrMetaAdSetNotInCampaign indicates the named ad set is not provably one of THIS campaign's
+	// ad sets under the project's connected ad account: Meta reports it under another campaign,
+	// or under another ad account. Decided by a read BEFORE any write, so nothing was changed;
+	// mapped to 409.
+	ErrMetaAdSetNotInCampaign = errors.New("the ad set does not belong to this campaign under the connected ad account")
+
+	// ErrMetaAdSetUnwritable indicates the ad set is in a state a pause/resume cannot address
+	// (Meta reports it DELETED or ARCHIVED). Nothing was changed; mapped to 409.
+	ErrMetaAdSetUnwritable = errors.New("the ad set's status cannot be changed")
+
+	// ErrMetaAdSetNotRecorded indicates an ACTIVATE of an ad set other than the one this service
+	// created for the campaign (the row's recorded ad set): this service never verified that ad
+	// set's targeting, so it will not switch its delivery on. Pausing any of the campaign's ad
+	// sets stays allowed. Decided before any write; mapped to 409.
+	ErrMetaAdSetNotRecorded = errors.New("only the ad set this service created for the campaign can be activated here")
+
+	// ErrStoredPlatformIDInvalid indicates the campaign row's stored platform campaign id is not a
+	// valid id for its platform, so nothing under it can be addressed. Decided locally — the
+	// platform is never contacted; mapped to 409.
+	ErrStoredPlatformIDInvalid = errors.New("the campaign's stored platform id is not valid for its platform")
+
+	// ErrConnectionAbsent rides ALONGSIDE ErrNotFound on the one error that means "this project has
+	// no connection for the provider, and no system fallback covered it" (dispatch's
+	// noOwnConnection), so a caller can answer that case precisely instead of matching every
+	// ErrNotFound a dispatcher might wrap.
+	ErrConnectionAbsent = errors.New("no connection is configured for this project and provider")
 
 	// ErrKeyUnavailable indicates this service could not obtain the JWT signing keys
 	// (Heimdall's JWKS) needed to check a bearer token. It is NOT a verdict on the token:
@@ -1116,6 +1219,14 @@ var (
 	// The refusal costs nothing real, because a project with no ad account of its own has no
 	// campaign of its own to adopt.
 	ErrAdoptionRequiresOwnConnection = errors.New("adoption requires a connection owned by this project")
+
+	// ErrAdoptionCampaignTypeUnsupported indicates the platform answered DEFINITELY that the
+	// campaign exists, live, under the project's own account, but it is a campaign TYPE this
+	// service cannot hold in the platform's slot (a Microsoft Audience, Shopping or Performance
+	// Max campaign, where only Search is created here). Maps to 409. Not 404: the campaign is
+	// there, and "absent" would invite an operator to create a duplicate next to a live one.
+	// Not 503: the answer is definite, and a retry is refused identically.
+	ErrAdoptionCampaignTypeUnsupported = errors.New("the campaign exists but is of a type this service cannot adopt")
 
 	// ErrStaleWizardSession indicates a wizard-session update lost an optimistic-concurrency
 	// race: the row still exists but at a different version than the caller read.

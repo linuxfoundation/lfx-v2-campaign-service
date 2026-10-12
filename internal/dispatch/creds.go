@@ -681,7 +681,7 @@ func (s *credsSource) resolveOwned(ctx context.Context, projectID string, provid
 // where two lookups missed: which one was absent is an operator's question, and systemConn
 // logs it.
 func noOwnConnection(projectID string, provider model.Provider) error {
-	return notCreated(fmt.Errorf("no %s connection configured for project %s: %w", provider, projectID, domain.ErrNotFound))
+	return notCreated(fmt.Errorf("no %s connection configured for project %s: %w: %w", provider, projectID, domain.ErrNotFound, domain.ErrConnectionAbsent))
 }
 
 // connLoadFailed reports a repo failure loading a connection. A DB error is NOT a pre-create

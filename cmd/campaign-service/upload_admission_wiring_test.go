@@ -36,7 +36,9 @@ import (
 // during the assertion, which also keeps this test clear of a pre-existing upstream data race in
 // goa v3.25.3's ErrorEncoder (http/encoding.go:265-266 writes a shared `formatter` closure
 // variable): that race fires when two error responses encode concurrently and reproduces through
-// the bare mux with no admission middleware present, so it is not this PR's to fix here.
+// the bare mux with no admission middleware present, so it is not this PR's to fix here. (That
+// write happens only for a nil formatter, and buildMux passes nil to every generated server: a
+// non-nil formatter replaces every named error's generated body, see error_formatter.go.)
 func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 	// buildHandler is exercised with a SENTINEL inner handler in place of the mux. The subject
 	// under test is buildHandler's own composition -- whether it installs UploadAdmission --

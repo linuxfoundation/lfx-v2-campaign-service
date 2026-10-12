@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run), and ad-account discovery (businesses, then each business's ad accounts)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -570,6 +570,34 @@ defect; five other defects were fixed:
 
 See [internal/platform/reddit](../../../internal/platform/reddit).
 
+## Ad-account discovery (`accounts.go`, LFXV2-2665)
+
+`Client.ListAdAccounts` backs `list-reddit-ads-accounts`. It asks about the CREDENTIAL — the
+client's `AccountConfig` is neither read nor validated — in two steps: `GET /me/businesses`, then
+`GET /businesses/{business_id}/ad_accounts` for each business, both through `request()` (so the
+bounded body read, 401 token invalidation, bounded 429 retry and the body-free `apiError` text
+all apply) and both paged by `walkPagesCapped`, the monitor's `walkPages` with the cap made the
+caller's (`next_url` must stay on the API origin and name the same resource).
+
+- **All or nothing.** Any non-2xx (401, 403, 404, 5xx, a 429 still throttled after the retry),
+  transport error, undecodable body, absent/null/non-array `data`, unusable id, duplicate within
+  one list, page cap (`discoveryBusinessMaxPages` 10, `discoveryAccountMaxPages` 20) or item bound
+  (`maxDiscoveredBusinesses` 100, `maxDiscoveredAccounts` 2000, read plus one) returns nil and an
+  error. Decoded-but-unbelievable bodies wrap `ErrDiscoveryMalformed`. Empty answers (no
+  businesses; businesses with no accounts) are an empty non-nil slice.
+- Ad-account ids are validated RAW against `accountIDRe` and 64 characters — what the
+  connection's `account_id` accepts — so discovery never offers an id bind would refuse. Business
+  ids are checked against `^[A-Za-z0-9_-]+$` (≤128) before they become a path segment.
+- An account reachable through two businesses is returned once, under the first.
+- **Verification level:** the two operations are taken from Reddit's published v3 reference
+  (List My Businesses / List Ad Accounts by Business); the element fields (`id`, `name`,
+  `currency`) and `pagination.next_url` follow the same unverified conventions as the monitor
+  read. Not exercised against a live account. A third-party report of `/me/businesses` answering
+  404 exists; if true for a token, the endpoint answers 503, never an empty list.
+
+`ValidateCampaignID` (`campaign_ref.go`) is the id rule `resolve-reddit-ads-campaign` applies:
+`accountIDRe` and at most 64 characters, untrimmed, wrapping `ErrInvalidCampaignID`.
+
 ## Connection-probe predicates (LFXV2-2665)
 
 `probe.go` exports `ProbeCredentialRejected(err) bool` and `ProbeInconclusive(err) bool` over this
@@ -638,3 +666,46 @@ this package's own path guard before anything is sent, so Reddit never evaluated
 claiming a rejection would send an operator to re-authorise a connection whose credential is
 fine, and the inconclusive default would blame an unreachable platform for an id no Reddit
 request can address. The dispatcher settles it instead, with `accountIDNotUsable`.
+
+## Ad-group keyword targeting (`keyword_targeting.go`, LFXV2-2665)
+
+`GetAdGroupTargeting` reads the ad group's `targeting` object (the GET `GetAdGroupBid` makes),
+keeping every member as raw bytes, returning `targeting.keywords` and a `Revision` — `sha256:` of
+the object's canonical JSON. An absent, null or non-object targeting, or a `keywords` that is not
+a string array (null elements are kept, not keywords), is `ErrTargetingUnreadable`.
+`RemoveAdGroupKeywords` PATCHes `targeting` back with every read member — and every keyword element
+it does not remove — unchanged, matching keywords exactly and sending the body pre-encoded with
+HTML escaping off (`preEncodedBody`, honoured by the request loop), because Reddit replaces the
+targeting object as a whole (secondary sources; the OpenAPI document cannot be fetched from the
+authoring environment). The PATCH is sent ONCE (`requestNoThrottleRetry`): unlike a bid write it
+replaces the WHOLE targeting from a pre-read snapshot, so a retry after a committed-but-throttled
+first attempt could overwrite an operator's later change to another dimension and still pass the
+final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at once; otherwise
+the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
+definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Adoption read (`campaign_lookup.go`, LFXV2-2665)
+
+`GetCampaign` is the read `RedditDispatcher.LookupCampaign` makes to adopt an existing campaign:
+one `GET /ad_accounts/{account}/campaigns/{id}` — the resource the budget read and the toggle
+address — through `request()`, so a 429 is retried and an exhausted one is an error.
+`ValidateCampaignID` (letters/digits/underscore, ≤64, no padding) runs first and returns
+`ErrInvalidCampaignID` with no request. A `configured_status` of `DELETED` or `ARCHIVED` is
+`(nil, nil)`, and so is a 404 — but only once ONE confirming read of the connection's own ad
+account (`GET /ad_accounts/{account}`, `confirmAccountReadable`) answers 2xx naming that account;
+an inaccessible or revoked account 404s the campaign path the same way, so any other answer to the
+confirming read (404, 401/403, 5xx, throttle, a body naming another account) is an error. The
+confirming read is made only after a campaign 404; `ACTIVE`/`PAUSED` is a ref; any other status, a missing name, an id echo that
+differs, an empty `data`, a 401/403, and a body `identityjson.Check` refuses or that does not decode
+are errors. The read is path-scoped; `ad_account_id` is returned when present for the dispatcher to
+compare, and an unreported one is left to the path scoping.
+
+## Settings readback read (LFXV2-2665)
+
+`GetCampaignSettings` (`campaign_settings.go`) reads the campaign at the same account-scoped
+path the budget read, adoption read and toggle use — name, `configured_status`, `goal_type`,
+`goal_value`, `is_campaign_budget_optimization`, `start_time`, `end_time`, `bid_strategy`,
+`ad_account_id` — with `identityjson.Check` over the RAW body and a strict id echo. No ad group
+is read: the create path puts everything the readback compares on the campaign. A 404 is
+`(nil, nil)`; a non-integer `goal_value` is an error; DELETED/ARCHIVED is returned with its
+status rather than as absent.

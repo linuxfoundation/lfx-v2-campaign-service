@@ -119,6 +119,25 @@ type AddNegativeKeywordsRequestBody struct {
 	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords" json:"negative_keywords" xml:"negative_keywords"`
 }
 
+// RemoveKeywordTargetingRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP request body.
+type RemoveKeywordTargetingRequestBody struct {
+	// The keywords to remove: `keyword` items on Reddit, `criterion_id` items on X.
+	Keywords []*KeywordTargetingRemovalInputRequestBody `form:"keywords" json:"keywords" xml:"keywords"`
+	// Reddit: the revision get-keyword-targeting returned. Required on Reddit;
+	// must be absent on X.
+	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
+}
+
+// ToggleMetaAdSetStatusRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP request body.
+type ToggleMetaAdSetStatusRequestBody struct {
+	// Desired ad-set status, in Meta's vocabulary
+	Status string `form:"status" json:"status" xml:"status"`
+}
+
 // StartEmailWizardPlanRequestBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "start-email-wizard-plan" endpoint
 // HTTP request body.
@@ -779,6 +798,86 @@ type AddNegativeKeywordsResponseBody struct {
 	// How many requested negative keywords are now on the campaign: results whose
 	// outcome is APPLIED or ALREADY_PRESENT.
 	AppliedCount *int `form:"applied_count,omitempty" json:"applied_count,omitempty" xml:"applied_count,omitempty"`
+}
+
+// GetKeywordTargetingResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body.
+type GetKeywordTargetingResponseBody struct {
+	// The campaign whose targeting was read
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The campaign's platform
+	Platform *string `form:"platform,omitempty" json:"platform,omitempty" xml:"platform,omitempty"`
+	// The ad group (Reddit) or line item (X) this service created for the
+	// campaign, whose targeting this is.
+	TargetingEntityID *string `form:"targeting_entity_id,omitempty" json:"targeting_entity_id,omitempty" xml:"targeting_entity_id,omitempty"`
+	// The POSITIVE keywords the ad group / line item targets now, in the order the
+	// platform reported them. Empty when it targets none (every X campaign this
+	// service creates targets none: only an operator can add them, in X Ads
+	// Manager). Negative / excluded keywords are not listed.
+	Keywords []*KeywordTargetingEntryResponseBody `form:"keywords,omitempty" json:"keywords,omitempty" xml:"keywords,omitempty"`
+	// Reddit only: a fingerprint of the ad group's WHOLE targeting as read.
+	// remove-keyword-targeting requires it back and refuses (409) when the
+	// targeting has changed since, so a removal is never applied to a targeting
+	// the caller did not see. Absent on X.
+	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
+}
+
+// RemoveKeywordTargetingResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body.
+type RemoveKeywordTargetingResponseBody struct {
+	// The campaign whose targeting was changed
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// Exactly one entry per requested removal, in request order, so results[i]
+	// answers keywords[i]. Reddit: one write carries every removal, so all entries
+	// share one outcome. X: one DELETE per criterion, each with its own outcome;
+	// the targeting is re-read before each, and an item that would now remove the
+	// last keyword is not sent (WOULD_EMPTY).
+	Results []*KeywordTargetingRemovalResultResponseBody `form:"results,omitempty" json:"results,omitempty" xml:"results,omitempty"`
+	// How many results are APPLIED.
+	AppliedCount *int `form:"applied_count,omitempty" json:"applied_count,omitempty" xml:"applied_count,omitempty"`
+}
+
+// ListMetaAdSetsResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body.
+type ListMetaAdSetsResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The Meta campaign id the ad sets were read under.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// The reporting window the counters cover.
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// The ad account's ISO 4217 currency; `budget_amount` and `cost_micros` are
+	// denominated in it.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
+	// When Meta was read (RFC3339, UTC).
+	ReadAt *string `form:"read_at,omitempty" json:"read_at,omitempty" xml:"read_at,omitempty"`
+	// Every ad set the listing returned, in Meta's order, then any unlisted ad set
+	// that delivered in the window, by id. Empty when the campaign has none.
+	AdSets []*MetaAdSetResponseBody `form:"ad_sets,omitempty" json:"ad_sets,omitempty" xml:"ad_sets,omitempty"`
+	// len(ad_sets).
+	AdSetCount *int `form:"ad_set_count,omitempty" json:"ad_set_count,omitempty" xml:"ad_set_count,omitempty"`
+}
+
+// ToggleMetaAdSetStatusResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body.
+type ToggleMetaAdSetStatusResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The ad set whose status was addressed
+	AdSetID *string `form:"ad_set_id,omitempty" json:"ad_set_id,omitempty" xml:"ad_set_id,omitempty"`
+	// The status requested
+	RequestedStatus *string `form:"requested_status,omitempty" json:"requested_status,omitempty" xml:"requested_status,omitempty"`
+	// The configured status the pre-write read observed.
+	PreviousStatus *string `form:"previous_status,omitempty" json:"previous_status,omitempty" xml:"previous_status,omitempty"`
+	// APPLIED — Meta confirmed the change. ALREADY_IN_STATE — the pre-write read
+	// showed the ad set already at the requested status, so NOTHING WAS SENT. (A
+	// write whose outcome is unknown is never a 200: it is a 503 saying the change
+	// is unconfirmed.)
+	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
 }
 
 // GetJobResponseBody is the type of the "lfx-v2-campaign-service-briefs"
@@ -2604,6 +2703,318 @@ type AddNegativeKeywordsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetKeywordTargetingBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body for the "BadRequest" error.
+type GetKeywordTargetingBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetKeywordTargetingConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body for the "Conflict" error.
+type GetKeywordTargetingConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetKeywordTargetingServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type GetKeywordTargetingServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetKeywordTargetingInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body for the "InternalServerError" error.
+type GetKeywordTargetingInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetKeywordTargetingNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body for the "NotFound" error.
+type GetKeywordTargetingNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetKeywordTargetingPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type GetKeywordTargetingPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetKeywordTargetingUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// HTTP response body for the "Unauthorized" error.
+type GetKeywordTargetingUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// RemoveKeywordTargetingBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body for the "BadRequest" error.
+type RemoveKeywordTargetingBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// RemoveKeywordTargetingConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body for the "Conflict" error.
+type RemoveKeywordTargetingConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// RemoveKeywordTargetingServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type RemoveKeywordTargetingServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// RemoveKeywordTargetingInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body for the "InternalServerError" error.
+type RemoveKeywordTargetingInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// RemoveKeywordTargetingNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body for the "NotFound" error.
+type RemoveKeywordTargetingNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// RemoveKeywordTargetingPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type RemoveKeywordTargetingPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// RemoveKeywordTargetingUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// HTTP response body for the "Unauthorized" error.
+type RemoveKeywordTargetingUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdSetsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body for the "BadRequest" error.
+type ListMetaAdSetsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdSetsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body for the "Conflict" error.
+type ListMetaAdSetsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ListMetaAdSetsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ListMetaAdSetsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdSetsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ListMetaAdSetsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdSetsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body for the "NotFound" error.
+type ListMetaAdSetsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdSetsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ListMetaAdSetsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdSetsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ad-sets" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ListMetaAdSetsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "BadRequest" error.
+type ToggleMetaAdSetStatusBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "Conflict" error.
+type ToggleMetaAdSetStatusConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ToggleMetaAdSetStatusServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type ToggleMetaAdSetStatusServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "InternalServerError" error.
+type ToggleMetaAdSetStatusInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "NotFound" error.
+type ToggleMetaAdSetStatusNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type ToggleMetaAdSetStatusPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusPreconditionFailedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "PreconditionFailed" error.
+type ToggleMetaAdSetStatusPreconditionFailedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusPreconditionRequiredResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "PreconditionRequired" error.
+type ToggleMetaAdSetStatusPreconditionRequiredResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ToggleMetaAdSetStatusUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint HTTP response body for the "Unauthorized" error.
+type ToggleMetaAdSetStatusUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // DeleteCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "delete-campaign" endpoint HTTP
 // response body for the "BadRequest" error.
@@ -3430,7 +3841,13 @@ type CampaignSettingsFieldResponseBody struct {
 	// `start_date` and `end_date`. `budget_delivery_method`,
 	// `budget_explicitly_shared` and `bidding_strategy_type` are reported
 	// UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an
-	// `unknown` verdict, because nothing this service records expresses them.
+	// `unknown` verdict. For the two budget fields that is because nothing this
+	// service records expresses them. `bidding_strategy_type` IS recorded, and is
+	// left uncompared deliberately: the comparison would require mapping this
+	// service's caller vocabulary onto Google's OUTPUT_ONLY bidding-strategy enum,
+	// which is unverified exactly where it is ambiguous, and on an adopted
+	// campaign the recorded strategy was never pushed upstream, so a guessed
+	// mapping would report a false divergence on a campaign set exactly as asked.
 	// `status` is also reported with no `recorded` counterpart, but for a
 	// DIFFERENT reason: the campaign row DOES record a `status`, and it is
 	// deliberately never compared because the two are different axes. The column
@@ -3443,9 +3860,22 @@ type CampaignSettingsFieldResponseBody struct {
 	// compared rather than upstream-only because the dispatch config's channel IS
 	// persisted in the campaign's config snapshot; it still reads `unknown` on a
 	// legacy row that carries no snapshot, but for the ordinary reason that
-	// nothing was recorded there — not because the field has no recorded side. The
-	// vocabulary is per-platform and may grow, so a consumer must render an
-	// unrecognised field name rather than dropping it.
+	// nothing was recorded there — not because the field has no recorded side. On
+	// Microsoft Advertising, Meta, Reddit and X the COMPARED settings are
+	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
+	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
+	// dates, so they are not reported there); `status` and `bidding_strategy_type`
+	// are upstream-only on all four (none of their create paths records a
+	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
+	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
+	// last two say where the budget lives, and explain a budget that reads
+	// `unknown` because the campaign-level amount is not the one the row recorded
+	// (Reddit with campaign budget optimization off, X under anything but
+	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
+	// forward past UTC midnight (because the requested day had already begun at
+	// dispatch) is shown with both sides and an `unknown` verdict rather than a
+	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
+	// must render an unrecognised field name rather than dropping it.
 	Field *string `form:"field,omitempty" json:"field,omitempty" xml:"field,omitempty"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -3648,6 +4078,96 @@ type NegativeKeywordResultResponseBody struct {
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
+// KeywordTargetingEntryResponseBody is used to define fields on response body
+// types.
+type KeywordTargetingEntryResponseBody struct {
+	// The keyword as the platform reports it.
+	Keyword *string `form:"keyword,omitempty" json:"keyword,omitempty" xml:"keyword,omitempty"`
+	// X only: the targeting criterion id that holds this keyword — what
+	// remove-keyword-targeting takes for X. Absent on Reddit, where a keyword has
+	// no id of its own.
+	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
+	// X only: the keyword targeting type X reports (BROAD_KEYWORD, PHRASE_KEYWORD,
+	// EXACT_KEYWORD or UNORDERED_KEYWORD). Absent on Reddit.
+	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
+}
+
+// KeywordTargetingRemovalInputRequestBody is used to define fields on request
+// body types.
+type KeywordTargetingRemovalInputRequestBody struct {
+	// Reddit: the keyword to remove, exactly as get-keyword-targeting reported it.
+	// Compared exactly — case and any surrounding whitespace included, nothing
+	// trimmed — and echoed back unchanged; an all-whitespace keyword is refused.
+	Keyword *string `form:"keyword,omitempty" json:"keyword,omitempty" xml:"keyword,omitempty"`
+	// X: the targeting criterion id to delete, as get-keyword-targeting reported
+	// it.
+	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
+}
+
+// KeywordTargetingRemovalResultResponseBody is used to define fields on
+// response body types.
+type KeywordTargetingRemovalResultResponseBody struct {
+	// Reddit: the keyword this result answers, as requested
+	Keyword *string `form:"keyword,omitempty" json:"keyword,omitempty" xml:"keyword,omitempty"`
+	// X: the targeting criterion this result answers, as requested
+	CriterionID *string `form:"criterion_id,omitempty" json:"criterion_id,omitempty" xml:"criterion_id,omitempty"`
+	// APPLIED — the keyword is no longer targeted; FAILED — definitely not removed
+	// (see error_code); UNCONFIRMED — may have been removed, read the targeting
+	// again before retrying.
+	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
+	// For a FAILED or UNCONFIRMED item: NOT_SENT (the request carrying it was
+	// never sent), NOT_FOUND (X holds no such live criterion any more),
+	// WOULD_EMPTY (X only: not sent, because a fresh read just before it showed it
+	// is now the last keyword targeted), or REJECTED (the platform refused it).
+	// The platform's own text is never returned.
+	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
+}
+
+// MetaAdSetResponseBody is used to define fields on response body types.
+type MetaAdSetResponseBody struct {
+	// The Meta ad set id
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// false for an ad set that DELIVERED in the window but that Meta's ad-set
+	// listing did not return (typically deleted or archived since): its counters
+	// are this campaign's spend, so they are reported, but every descriptive field
+	// is absent.
+	Listed *bool `form:"listed,omitempty" json:"listed,omitempty" xml:"listed,omitempty"`
+	// The ad set's name as Meta holds it. Absent when not reported.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The ad set's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED,
+	// ARCHIVED). Absent when not reported.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The ad set's EFFECTIVE status as Meta reports it (e.g. CAMPAIGN_PAUSED when
+	// the ad set is ACTIVE but its campaign is not). Reported verbatim; Meta grows
+	// this set without notice. Absent when not reported.
+	EffectiveStatus *string `form:"effective_status,omitempty" json:"effective_status,omitempty" xml:"effective_status,omitempty"`
+	// The ad set's bid_strategy as Meta reports it. Absent when not reported.
+	BidStrategy *string `form:"bid_strategy,omitempty" json:"bid_strategy,omitempty" xml:"bid_strategy,omitempty"`
+	// Which budget the ad set holds. ABSENT when it holds none of its own —
+	// Campaign Budget Optimization keeps the budget on the campaign, shared across
+	// its ad sets.
+	BudgetType *string `form:"budget_type,omitempty" json:"budget_type,omitempty" xml:"budget_type,omitempty"`
+	// The ad set's budget in WHOLE units of `currency`, two decimals, converted
+	// from the minor units Meta reports with the account currency's own offset
+	// (100 for most currencies, 1 for zero-decimal ones such as JPY). ABSENT when
+	// there is no ad-set budget, or when the currency's minor-unit scale is not
+	// one this service knows — never rendered at a guessed scale.
+	BudgetAmount *string `form:"budget_amount,omitempty" json:"budget_amount,omitempty" xml:"budget_amount,omitempty"`
+	// Impressions over the window. 0 when Meta reported no delivery for this ad
+	// set.
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window.
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window in micro-units of `currency`.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// clicks/impressions, 0 when impressions is 0.
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+	// true for the ONE ad set this service created for the campaign (the id the
+	// campaign row recorded at dispatch). Always false on an adopted campaign,
+	// which records no ad set.
+	Recorded *bool `form:"recorded,omitempty" json:"recorded,omitempty" xml:"recorded,omitempty"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -3830,6 +4350,38 @@ func NewAddNegativeKeywordsRequestBody(p *lfxv2campaignservicebriefs.AddNegative
 		}
 	} else {
 		body.NegativeKeywords = []*NegativeKeywordInputRequestBody{}
+	}
+	return body
+}
+
+// NewRemoveKeywordTargetingRequestBody builds the HTTP request body from the
+// payload of the "remove-keyword-targeting" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewRemoveKeywordTargetingRequestBody(p *lfxv2campaignservicebriefs.RemoveKeywordTargetingPayload) *RemoveKeywordTargetingRequestBody {
+	body := &RemoveKeywordTargetingRequestBody{
+		Revision: p.Revision,
+	}
+	if p.Keywords != nil {
+		body.Keywords = make([]*KeywordTargetingRemovalInputRequestBody, len(p.Keywords))
+		for i, val := range p.Keywords {
+			if val == nil {
+				body.Keywords[i] = nil
+				continue
+			}
+			body.Keywords[i] = marshalLfxv2campaignservicebriefsKeywordTargetingRemovalInputToKeywordTargetingRemovalInputRequestBody(val)
+		}
+	} else {
+		body.Keywords = []*KeywordTargetingRemovalInputRequestBody{}
+	}
+	return body
+}
+
+// NewToggleMetaAdSetStatusRequestBody builds the HTTP request body from the
+// payload of the "toggle-meta-ad-set-status" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewToggleMetaAdSetStatusRequestBody(p *lfxv2campaignservicebriefs.ToggleMetaAdSetStatusPayload) *ToggleMetaAdSetStatusRequestBody {
+	body := &ToggleMetaAdSetStatusRequestBody{
+		Status: p.Status,
 	}
 	return body
 }
@@ -6222,6 +6774,437 @@ func NewAddNegativeKeywordsUnauthorized(body *AddNegativeKeywordsUnauthorizedRes
 	return v
 }
 
+// NewGetKeywordTargetingKeywordTargetingOK builds a
+// "lfx-v2-campaign-service-briefs" service "get-keyword-targeting" endpoint
+// result from a HTTP "OK" response.
+func NewGetKeywordTargetingKeywordTargetingOK(body *GetKeywordTargetingResponseBody) *lfxv2campaignservicebriefs.KeywordTargeting {
+	v := &lfxv2campaignservicebriefs.KeywordTargeting{
+		CampaignID:        *body.CampaignID,
+		Platform:          *body.Platform,
+		TargetingEntityID: *body.TargetingEntityID,
+		Revision:          body.Revision,
+	}
+	v.Keywords = make([]*lfxv2campaignservicebriefs.KeywordTargetingEntry, len(body.Keywords))
+	for i, val := range body.Keywords {
+		if val == nil {
+			v.Keywords[i] = nil
+			continue
+		}
+		v.Keywords[i] = unmarshalKeywordTargetingEntryResponseBodyToLfxv2campaignservicebriefsKeywordTargetingEntry(val)
+	}
+
+	return v
+}
+
+// NewGetKeywordTargetingBadRequest builds a lfx-v2-campaign-service-briefs
+// service get-keyword-targeting endpoint BadRequest error.
+func NewGetKeywordTargetingBadRequest(body *GetKeywordTargetingBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetKeywordTargetingConflict builds a lfx-v2-campaign-service-briefs
+// service get-keyword-targeting endpoint Conflict error.
+func NewGetKeywordTargetingConflict(body *GetKeywordTargetingConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetKeywordTargetingServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service get-keyword-targeting endpoint
+// ServiceUnavailable error.
+func NewGetKeywordTargetingServiceUnavailable(body *GetKeywordTargetingServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetKeywordTargetingInternalServerError builds a
+// lfx-v2-campaign-service-briefs service get-keyword-targeting endpoint
+// InternalServerError error.
+func NewGetKeywordTargetingInternalServerError(body *GetKeywordTargetingInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetKeywordTargetingNotFound builds a lfx-v2-campaign-service-briefs
+// service get-keyword-targeting endpoint NotFound error.
+func NewGetKeywordTargetingNotFound(body *GetKeywordTargetingNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetKeywordTargetingPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service get-keyword-targeting endpoint
+// PayloadTooLarge error.
+func NewGetKeywordTargetingPayloadTooLarge(body *GetKeywordTargetingPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetKeywordTargetingUnauthorized builds a lfx-v2-campaign-service-briefs
+// service get-keyword-targeting endpoint Unauthorized error.
+func NewGetKeywordTargetingUnauthorized(body *GetKeywordTargetingUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewRemoveKeywordTargetingKeywordTargetingRemovalsOK builds a
+// "lfx-v2-campaign-service-briefs" service "remove-keyword-targeting" endpoint
+// result from a HTTP "OK" response.
+func NewRemoveKeywordTargetingKeywordTargetingRemovalsOK(body *RemoveKeywordTargetingResponseBody) *lfxv2campaignservicebriefs.KeywordTargetingRemovals {
+	v := &lfxv2campaignservicebriefs.KeywordTargetingRemovals{
+		CampaignID:   *body.CampaignID,
+		AppliedCount: *body.AppliedCount,
+	}
+	v.Results = make([]*lfxv2campaignservicebriefs.KeywordTargetingRemovalResult, len(body.Results))
+	for i, val := range body.Results {
+		if val == nil {
+			v.Results[i] = nil
+			continue
+		}
+		v.Results[i] = unmarshalKeywordTargetingRemovalResultResponseBodyToLfxv2campaignservicebriefsKeywordTargetingRemovalResult(val)
+	}
+
+	return v
+}
+
+// NewRemoveKeywordTargetingBadRequest builds a lfx-v2-campaign-service-briefs
+// service remove-keyword-targeting endpoint BadRequest error.
+func NewRemoveKeywordTargetingBadRequest(body *RemoveKeywordTargetingBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewRemoveKeywordTargetingConflict builds a lfx-v2-campaign-service-briefs
+// service remove-keyword-targeting endpoint Conflict error.
+func NewRemoveKeywordTargetingConflict(body *RemoveKeywordTargetingConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewRemoveKeywordTargetingServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting endpoint
+// ServiceUnavailable error.
+func NewRemoveKeywordTargetingServiceUnavailable(body *RemoveKeywordTargetingServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewRemoveKeywordTargetingInternalServerError builds a
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting endpoint
+// InternalServerError error.
+func NewRemoveKeywordTargetingInternalServerError(body *RemoveKeywordTargetingInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewRemoveKeywordTargetingNotFound builds a lfx-v2-campaign-service-briefs
+// service remove-keyword-targeting endpoint NotFound error.
+func NewRemoveKeywordTargetingNotFound(body *RemoveKeywordTargetingNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewRemoveKeywordTargetingPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting endpoint
+// PayloadTooLarge error.
+func NewRemoveKeywordTargetingPayloadTooLarge(body *RemoveKeywordTargetingPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewRemoveKeywordTargetingUnauthorized builds a
+// lfx-v2-campaign-service-briefs service remove-keyword-targeting endpoint
+// Unauthorized error.
+func NewRemoveKeywordTargetingUnauthorized(body *RemoveKeywordTargetingUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewListMetaAdSetsMetaAdSetsOK builds a "lfx-v2-campaign-service-briefs"
+// service "list-meta-ad-sets" endpoint result from a HTTP "OK" response.
+func NewListMetaAdSetsMetaAdSetsOK(body *ListMetaAdSetsResponseBody) *lfxv2campaignservicebriefs.MetaAdSets {
+	v := &lfxv2campaignservicebriefs.MetaAdSets{
+		CampaignID:         *body.CampaignID,
+		PlatformCampaignID: *body.PlatformCampaignID,
+		Window:             *body.Window,
+		Currency:           *body.Currency,
+		ReadAt:             *body.ReadAt,
+		AdSetCount:         *body.AdSetCount,
+	}
+	v.AdSets = make([]*lfxv2campaignservicebriefs.MetaAdSet, len(body.AdSets))
+	for i, val := range body.AdSets {
+		if val == nil {
+			v.AdSets[i] = nil
+			continue
+		}
+		v.AdSets[i] = unmarshalMetaAdSetResponseBodyToLfxv2campaignservicebriefsMetaAdSet(val)
+	}
+
+	return v
+}
+
+// NewListMetaAdSetsBadRequest builds a lfx-v2-campaign-service-briefs service
+// list-meta-ad-sets endpoint BadRequest error.
+func NewListMetaAdSetsBadRequest(body *ListMetaAdSetsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdSetsConflict builds a lfx-v2-campaign-service-briefs service
+// list-meta-ad-sets endpoint Conflict error.
+func NewListMetaAdSetsConflict(body *ListMetaAdSetsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewListMetaAdSetsServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service list-meta-ad-sets endpoint ServiceUnavailable error.
+func NewListMetaAdSetsServiceUnavailable(body *ListMetaAdSetsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdSetsInternalServerError builds a lfx-v2-campaign-service-briefs
+// service list-meta-ad-sets endpoint InternalServerError error.
+func NewListMetaAdSetsInternalServerError(body *ListMetaAdSetsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdSetsNotFound builds a lfx-v2-campaign-service-briefs service
+// list-meta-ad-sets endpoint NotFound error.
+func NewListMetaAdSetsNotFound(body *ListMetaAdSetsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdSetsPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service list-meta-ad-sets endpoint PayloadTooLarge error.
+func NewListMetaAdSetsPayloadTooLarge(body *ListMetaAdSetsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdSetsUnauthorized builds a lfx-v2-campaign-service-briefs
+// service list-meta-ad-sets endpoint Unauthorized error.
+func NewListMetaAdSetsUnauthorized(body *ListMetaAdSetsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusMetaAdSetStatusChangeOK builds a
+// "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
+// endpoint result from a HTTP "OK" response.
+func NewToggleMetaAdSetStatusMetaAdSetStatusChangeOK(body *ToggleMetaAdSetStatusResponseBody, etag *string) *lfxv2campaignservicebriefs.MetaAdSetStatusChange {
+	v := &lfxv2campaignservicebriefs.MetaAdSetStatusChange{
+		CampaignID:      *body.CampaignID,
+		AdSetID:         *body.AdSetID,
+		RequestedStatus: *body.RequestedStatus,
+		PreviousStatus:  body.PreviousStatus,
+		Outcome:         *body.Outcome,
+	}
+	v.Etag = etag
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusBadRequest builds a lfx-v2-campaign-service-briefs
+// service toggle-meta-ad-set-status endpoint BadRequest error.
+func NewToggleMetaAdSetStatusBadRequest(body *ToggleMetaAdSetStatusBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusConflict builds a lfx-v2-campaign-service-briefs
+// service toggle-meta-ad-set-status endpoint Conflict error.
+func NewToggleMetaAdSetStatusConflict(body *ToggleMetaAdSetStatusConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status endpoint
+// ServiceUnavailable error.
+func NewToggleMetaAdSetStatusServiceUnavailable(body *ToggleMetaAdSetStatusServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusInternalServerError builds a
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status endpoint
+// InternalServerError error.
+func NewToggleMetaAdSetStatusInternalServerError(body *ToggleMetaAdSetStatusInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusNotFound builds a lfx-v2-campaign-service-briefs
+// service toggle-meta-ad-set-status endpoint NotFound error.
+func NewToggleMetaAdSetStatusNotFound(body *ToggleMetaAdSetStatusNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusPayloadTooLarge builds a
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status endpoint
+// PayloadTooLarge error.
+func NewToggleMetaAdSetStatusPayloadTooLarge(body *ToggleMetaAdSetStatusPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusPreconditionFailed builds a
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status endpoint
+// PreconditionFailed error.
+func NewToggleMetaAdSetStatusPreconditionFailed(body *ToggleMetaAdSetStatusPreconditionFailedResponseBody) *lfxv2campaignservicebriefs.PreconditionFailedError {
+	v := &lfxv2campaignservicebriefs.PreconditionFailedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusPreconditionRequired builds a
+// lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status endpoint
+// PreconditionRequired error.
+func NewToggleMetaAdSetStatusPreconditionRequired(body *ToggleMetaAdSetStatusPreconditionRequiredResponseBody) *lfxv2campaignservicebriefs.PreconditionRequiredError {
+	v := &lfxv2campaignservicebriefs.PreconditionRequiredError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewToggleMetaAdSetStatusUnauthorized builds a lfx-v2-campaign-service-briefs
+// service toggle-meta-ad-set-status endpoint Unauthorized error.
+func NewToggleMetaAdSetStatusUnauthorized(body *ToggleMetaAdSetStatusUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewDeleteCampaignBadRequest builds a lfx-v2-campaign-service-briefs service
 // delete-campaign endpoint BadRequest error.
 func NewDeleteCampaignBadRequest(body *DeleteCampaignBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
@@ -7983,6 +8966,128 @@ func ValidateAddNegativeKeywordsResponseBody(body *AddNegativeKeywordsResponseBo
 	return
 }
 
+// ValidateGetKeywordTargetingResponseBody runs the validations defined on
+// Get-Keyword-TargetingResponseBody
+func ValidateGetKeywordTargetingResponseBody(body *GetKeywordTargetingResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Platform == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform", "body"))
+	}
+	if body.TargetingEntityID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("targeting_entity_id", "body"))
+	}
+	if body.Keywords == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("keywords", "body"))
+	}
+	if body.Platform != nil {
+		if !(*body.Platform == "reddit-ads" || *body.Platform == "twitter-ads") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.platform", *body.Platform, []any{"reddit-ads", "twitter-ads"}))
+		}
+	}
+	for _, e := range body.Keywords {
+		if e != nil {
+			if err2 := ValidateKeywordTargetingEntryResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingResponseBody runs the validations defined on
+// Remove-Keyword-TargetingResponseBody
+func ValidateRemoveKeywordTargetingResponseBody(body *RemoveKeywordTargetingResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Results == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("results", "body"))
+	}
+	if body.AppliedCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("applied_count", "body"))
+	}
+	for _, e := range body.Results {
+		if e != nil {
+			if err2 := ValidateKeywordTargetingRemovalResultResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMetaAdSetsResponseBody runs the validations defined on
+// List-Meta-Ad-SetsResponseBody
+func ValidateListMetaAdSetsResponseBody(body *ListMetaAdSetsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Currency == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("currency", "body"))
+	}
+	if body.ReadAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("read_at", "body"))
+	}
+	if body.AdSets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_sets", "body"))
+	}
+	if body.AdSetCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_set_count", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	if body.ReadAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.read_at", *body.ReadAt, goa.FormatDateTime))
+	}
+	for _, e := range body.AdSets {
+		if e != nil {
+			if err2 := ValidateMetaAdSetResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusResponseBody runs the validations defined on
+// Toggle-Meta-Ad-Set-StatusResponseBody
+func ValidateToggleMetaAdSetStatusResponseBody(body *ToggleMetaAdSetStatusResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.AdSetID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_set_id", "body"))
+	}
+	if body.RequestedStatus == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requested_status", "body"))
+	}
+	if body.Outcome == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
+	}
+	if body.RequestedStatus != nil {
+		if !(*body.RequestedStatus == "ACTIVE" || *body.RequestedStatus == "PAUSED") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.requested_status", *body.RequestedStatus, []any{"ACTIVE", "PAUSED"}))
+		}
+	}
+	if body.Outcome != nil {
+		if !(*body.Outcome == "APPLIED" || *body.Outcome == "ALREADY_IN_STATE") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.outcome", *body.Outcome, []any{"APPLIED", "ALREADY_IN_STATE"}))
+		}
+	}
+	return
+}
+
 // ValidateGetJobResponseBody runs the validations defined on
 // Get-JobResponseBody
 func ValidateGetJobResponseBody(body *GetJobResponseBody) (err error) {
@@ -8234,8 +9339,8 @@ func ValidateCreateBriefConflictResponseBody(body *CreateBriefConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8323,8 +9428,8 @@ func ValidateFindBriefConflictResponseBody(body *FindBriefConflictResponseBody) 
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8412,8 +9517,8 @@ func ValidateGetBriefConflictResponseBody(body *GetBriefConflictResponseBody) (e
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8501,8 +9606,8 @@ func ValidateUpdateBriefConflictResponseBody(body *UpdateBriefConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8614,8 +9719,8 @@ func ValidateApproveBriefConflictResponseBody(body *ApproveBriefConflictResponse
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8727,8 +9832,8 @@ func ValidateDeleteBriefConflictResponseBody(body *DeleteBriefConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8816,8 +9921,8 @@ func ValidateFetchEventURLConflictResponseBody(body *FetchEventURLConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8905,8 +10010,8 @@ func ValidateUploadCreativeAssetConflictResponseBody(body *UploadCreativeAssetCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -8995,8 +10100,8 @@ func ValidateCreateCampaignsConflictResponseBody(body *CreateCampaignsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9084,8 +10189,8 @@ func ValidateAdoptCampaignConflictResponseBody(body *AdoptCampaignConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9173,8 +10278,8 @@ func ValidateGetCampaignConflictResponseBody(body *GetCampaignConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9262,8 +10367,8 @@ func ValidateGetCampaignMetricsConflictResponseBody(body *GetCampaignMetricsConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9351,8 +10456,8 @@ func ValidateGetCampaignSettingsConflictResponseBody(body *GetCampaignSettingsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9441,8 +10546,8 @@ func ValidateGetBriefMetricsConflictResponseBody(body *GetBriefMetricsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9530,8 +10635,8 @@ func ValidateGenerateEmailCopyConflictResponseBody(body *GenerateEmailCopyConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9619,8 +10724,8 @@ func ValidateUpdateCampaignConflictResponseBody(body *UpdateCampaignConflictResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9732,8 +10837,8 @@ func ValidateToggleCampaignStatusConflictResponseBody(body *ToggleCampaignStatus
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9849,8 +10954,8 @@ func ValidateUpdateCampaignBudgetConflictResponseBody(body *UpdateCampaignBudget
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -9966,8 +11071,8 @@ func ValidateUpdateCampaignBidConflictResponseBody(body *UpdateCampaignBidConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10079,8 +11184,8 @@ func ValidateApplyKeywordActionsConflictResponseBody(body *ApplyKeywordActionsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10169,8 +11274,8 @@ func ValidateAddNegativeKeywordsConflictResponseBody(body *AddNegativeKeywordsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10237,6 +11342,394 @@ func ValidateAddNegativeKeywordsUnauthorizedResponseBody(body *AddNegativeKeywor
 	return
 }
 
+// ValidateGetKeywordTargetingBadRequestResponseBody runs the validations
+// defined on get-keyword-targeting_BadRequest_response_body
+func ValidateGetKeywordTargetingBadRequestResponseBody(body *GetKeywordTargetingBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetKeywordTargetingConflictResponseBody runs the validations defined
+// on get-keyword-targeting_Conflict_response_body
+func ValidateGetKeywordTargetingConflictResponseBody(body *GetKeywordTargetingConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetKeywordTargetingServiceUnavailableResponseBody runs the
+// validations defined on get-keyword-targeting_ServiceUnavailable_response_body
+func ValidateGetKeywordTargetingServiceUnavailableResponseBody(body *GetKeywordTargetingServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetKeywordTargetingInternalServerErrorResponseBody runs the
+// validations defined on
+// get-keyword-targeting_InternalServerError_response_body
+func ValidateGetKeywordTargetingInternalServerErrorResponseBody(body *GetKeywordTargetingInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetKeywordTargetingNotFoundResponseBody runs the validations defined
+// on get-keyword-targeting_NotFound_response_body
+func ValidateGetKeywordTargetingNotFoundResponseBody(body *GetKeywordTargetingNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetKeywordTargetingPayloadTooLargeResponseBody runs the validations
+// defined on get-keyword-targeting_PayloadTooLarge_response_body
+func ValidateGetKeywordTargetingPayloadTooLargeResponseBody(body *GetKeywordTargetingPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetKeywordTargetingUnauthorizedResponseBody runs the validations
+// defined on get-keyword-targeting_Unauthorized_response_body
+func ValidateGetKeywordTargetingUnauthorizedResponseBody(body *GetKeywordTargetingUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingBadRequestResponseBody runs the validations
+// defined on remove-keyword-targeting_BadRequest_response_body
+func ValidateRemoveKeywordTargetingBadRequestResponseBody(body *RemoveKeywordTargetingBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingConflictResponseBody runs the validations
+// defined on remove-keyword-targeting_Conflict_response_body
+func ValidateRemoveKeywordTargetingConflictResponseBody(body *RemoveKeywordTargetingConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingServiceUnavailableResponseBody runs the
+// validations defined on
+// remove-keyword-targeting_ServiceUnavailable_response_body
+func ValidateRemoveKeywordTargetingServiceUnavailableResponseBody(body *RemoveKeywordTargetingServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingInternalServerErrorResponseBody runs the
+// validations defined on
+// remove-keyword-targeting_InternalServerError_response_body
+func ValidateRemoveKeywordTargetingInternalServerErrorResponseBody(body *RemoveKeywordTargetingInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingNotFoundResponseBody runs the validations
+// defined on remove-keyword-targeting_NotFound_response_body
+func ValidateRemoveKeywordTargetingNotFoundResponseBody(body *RemoveKeywordTargetingNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingPayloadTooLargeResponseBody runs the
+// validations defined on remove-keyword-targeting_PayloadTooLarge_response_body
+func ValidateRemoveKeywordTargetingPayloadTooLargeResponseBody(body *RemoveKeywordTargetingPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateRemoveKeywordTargetingUnauthorizedResponseBody runs the validations
+// defined on remove-keyword-targeting_Unauthorized_response_body
+func ValidateRemoveKeywordTargetingUnauthorizedResponseBody(body *RemoveKeywordTargetingUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdSetsBadRequestResponseBody runs the validations defined on
+// list-meta-ad-sets_BadRequest_response_body
+func ValidateListMetaAdSetsBadRequestResponseBody(body *ListMetaAdSetsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdSetsConflictResponseBody runs the validations defined on
+// list-meta-ad-sets_Conflict_response_body
+func ValidateListMetaAdSetsConflictResponseBody(body *ListMetaAdSetsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateListMetaAdSetsServiceUnavailableResponseBody runs the validations
+// defined on list-meta-ad-sets_ServiceUnavailable_response_body
+func ValidateListMetaAdSetsServiceUnavailableResponseBody(body *ListMetaAdSetsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdSetsInternalServerErrorResponseBody runs the validations
+// defined on list-meta-ad-sets_InternalServerError_response_body
+func ValidateListMetaAdSetsInternalServerErrorResponseBody(body *ListMetaAdSetsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdSetsNotFoundResponseBody runs the validations defined on
+// list-meta-ad-sets_NotFound_response_body
+func ValidateListMetaAdSetsNotFoundResponseBody(body *ListMetaAdSetsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdSetsPayloadTooLargeResponseBody runs the validations
+// defined on list-meta-ad-sets_PayloadTooLarge_response_body
+func ValidateListMetaAdSetsPayloadTooLargeResponseBody(body *ListMetaAdSetsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdSetsUnauthorizedResponseBody runs the validations defined
+// on list-meta-ad-sets_Unauthorized_response_body
+func ValidateListMetaAdSetsUnauthorizedResponseBody(body *ListMetaAdSetsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusBadRequestResponseBody runs the validations
+// defined on toggle-meta-ad-set-status_BadRequest_response_body
+func ValidateToggleMetaAdSetStatusBadRequestResponseBody(body *ToggleMetaAdSetStatusBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusConflictResponseBody runs the validations
+// defined on toggle-meta-ad-set-status_Conflict_response_body
+func ValidateToggleMetaAdSetStatusConflictResponseBody(body *ToggleMetaAdSetStatusConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusServiceUnavailableResponseBody runs the
+// validations defined on
+// toggle-meta-ad-set-status_ServiceUnavailable_response_body
+func ValidateToggleMetaAdSetStatusServiceUnavailableResponseBody(body *ToggleMetaAdSetStatusServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusInternalServerErrorResponseBody runs the
+// validations defined on
+// toggle-meta-ad-set-status_InternalServerError_response_body
+func ValidateToggleMetaAdSetStatusInternalServerErrorResponseBody(body *ToggleMetaAdSetStatusInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusNotFoundResponseBody runs the validations
+// defined on toggle-meta-ad-set-status_NotFound_response_body
+func ValidateToggleMetaAdSetStatusNotFoundResponseBody(body *ToggleMetaAdSetStatusNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusPayloadTooLargeResponseBody runs the
+// validations defined on
+// toggle-meta-ad-set-status_PayloadTooLarge_response_body
+func ValidateToggleMetaAdSetStatusPayloadTooLargeResponseBody(body *ToggleMetaAdSetStatusPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusPreconditionFailedResponseBody runs the
+// validations defined on
+// toggle-meta-ad-set-status_PreconditionFailed_response_body
+func ValidateToggleMetaAdSetStatusPreconditionFailedResponseBody(body *ToggleMetaAdSetStatusPreconditionFailedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusPreconditionRequiredResponseBody runs the
+// validations defined on
+// toggle-meta-ad-set-status_PreconditionRequired_response_body
+func ValidateToggleMetaAdSetStatusPreconditionRequiredResponseBody(body *ToggleMetaAdSetStatusPreconditionRequiredResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateToggleMetaAdSetStatusUnauthorizedResponseBody runs the validations
+// defined on toggle-meta-ad-set-status_Unauthorized_response_body
+func ValidateToggleMetaAdSetStatusUnauthorizedResponseBody(body *ToggleMetaAdSetStatusUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateDeleteCampaignBadRequestResponseBody runs the validations defined on
 // delete-campaign_BadRequest_response_body
 func ValidateDeleteCampaignBadRequestResponseBody(body *DeleteCampaignBadRequestResponseBody) (err error) {
@@ -10259,8 +11752,8 @@ func ValidateDeleteCampaignConflictResponseBody(body *DeleteCampaignConflictResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10372,8 +11865,8 @@ func ValidateGetJobConflictResponseBody(body *GetJobConflictResponseBody) (err e
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10461,8 +11954,8 @@ func ValidateStartEmailWizardPlanConflictResponseBody(body *StartEmailWizardPlan
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10552,8 +12045,8 @@ func ValidatePlanEmailWizardConflictResponseBody(body *PlanEmailWizardConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10641,8 +12134,8 @@ func ValidateGenerateWizardContentConflictResponseBody(body *GenerateWizardConte
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10732,8 +12225,8 @@ func ValidateUpdateWizardSectionsConflictResponseBody(body *UpdateWizardSections
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10823,8 +12316,8 @@ func ValidateCloneWizardEmailConflictResponseBody(body *CloneWizardEmailConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -10912,8 +12405,8 @@ func ValidateSetWizardSendListConflictResponseBody(body *SetWizardSendListConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -11001,8 +12494,8 @@ func ValidateChatWizardTurnConflictResponseBody(body *ChatWizardTurnConflictResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -11090,8 +12583,8 @@ func ValidateGetWizardSessionConflictResponseBody(body *GetWizardSessionConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "account_too_many_active_campaigns" || *body.Reason == "account_timezone_unsupported") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "account_too_many_active_campaigns", "account_timezone_unsupported"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
 		}
 	}
 	return
@@ -11459,6 +12952,85 @@ func ValidateNegativeKeywordResultResponseBody(body *NegativeKeywordResultRespon
 	if body.Outcome != nil {
 		if !(*body.Outcome == "APPLIED" || *body.Outcome == "ALREADY_PRESENT" || *body.Outcome == "FAILED" || *body.Outcome == "UNCONFIRMED") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.outcome", *body.Outcome, []any{"APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED"}))
+		}
+	}
+	return
+}
+
+// ValidateKeywordTargetingEntryResponseBody runs the validations defined on
+// keyword-targeting-entryResponseBody
+func ValidateKeywordTargetingEntryResponseBody(body *KeywordTargetingEntryResponseBody) (err error) {
+	if body.Keyword == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("keyword", "body"))
+	}
+	return
+}
+
+// ValidateKeywordTargetingRemovalInputRequestBody runs the validations defined
+// on keyword-targeting-removal-inputRequestBody
+func ValidateKeywordTargetingRemovalInputRequestBody(body *KeywordTargetingRemovalInputRequestBody) (err error) {
+	if body.Keyword != nil {
+		if utf8.RuneCountInString(*body.Keyword) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.keyword", *body.Keyword, utf8.RuneCountInString(*body.Keyword), 1, true))
+		}
+	}
+	if body.Keyword != nil {
+		if utf8.RuneCountInString(*body.Keyword) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.keyword", *body.Keyword, utf8.RuneCountInString(*body.Keyword), 200, false))
+		}
+	}
+	if body.CriterionID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.criterion_id", *body.CriterionID, "^[A-Za-z0-9]+$"))
+	}
+	if body.CriterionID != nil {
+		if utf8.RuneCountInString(*body.CriterionID) > 32 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.criterion_id", *body.CriterionID, utf8.RuneCountInString(*body.CriterionID), 32, false))
+		}
+	}
+	return
+}
+
+// ValidateKeywordTargetingRemovalResultResponseBody runs the validations
+// defined on keyword-targeting-removal-resultResponseBody
+func ValidateKeywordTargetingRemovalResultResponseBody(body *KeywordTargetingRemovalResultResponseBody) (err error) {
+	if body.Outcome == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
+	}
+	if body.Outcome != nil {
+		if !(*body.Outcome == "APPLIED" || *body.Outcome == "FAILED" || *body.Outcome == "UNCONFIRMED") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.outcome", *body.Outcome, []any{"APPLIED", "FAILED", "UNCONFIRMED"}))
+		}
+	}
+	return
+}
+
+// ValidateMetaAdSetResponseBody runs the validations defined on
+// meta-ad-setResponseBody
+func ValidateMetaAdSetResponseBody(body *MetaAdSetResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Listed == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("listed", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Recorded == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("recorded", "body"))
+	}
+	if body.BudgetType != nil {
+		if !(*body.BudgetType == "daily" || *body.BudgetType == "lifetime") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.budget_type", *body.BudgetType, []any{"daily", "lifetime"}))
 		}
 	}
 	return

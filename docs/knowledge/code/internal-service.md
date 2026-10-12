@@ -318,7 +318,12 @@ in the keys). Numbers, booleans and null pass through untouched; structure is pr
 Two keys can redact to the same string (`https://a.example/x?t=1` and `https://a.example/y`).
 Nothing is silently merged or dropped: original keys are processed in sorted order, the first
 keeps the redacted key and each later one is stored as `<redacted>#2`, `#3`, … (lowest free
-suffix), so the output is stable across runs. The only reader of `config_snapshot`
+suffix), so the output is stable across runs. The next suffix to try is remembered per redacted
+base, so N keys sharing one host cost linear, not quadratic, work under the campaign lock
+(`TestRedactedConfigSnapshot_ManyCollisionsAreLinear`); the occupied-key probe stays, since a
+suffixed candidate can still be taken by a key whose own redaction produced that literal.
+`SnapshotText` also covers non-http schemes, bracketed-IPv6 userinfo and sub-delim usernames
+(see [pkg/redact](pkg-redact.md)), for keys and values alike. The only reader of `config_snapshot`
 (`googleAdsRecordedChannelType`) reads the literal key `channel`, which redaction leaves alone.
 
 The contract is deliberately NOT tightened: a non-object config (a bare string or array) is
@@ -606,7 +611,11 @@ The orchestrator applies the same mutation timeout and the same outcome-count ch
 (`unconfirmedOutcomeCountError`, whose message no longer claims every batch is atomic), and
 records the `negative_keywords` upstream op. `classifyNegativeKeywordError` mirrors the keyword
 actions' arms in the same order; `applied_count` counts `APPLIED` and `ALREADY_PRESENT`, and an
-outcome an adapter left empty is rendered `UNCONFIRMED`, never success.
+outcome an adapter left empty is rendered `UNCONFIRMED`, never success. A credential-decrypt
+failure is logged against the row that FAILED (`credentialOwnerProject`: the LF system project
+when the error carries `domain.ErrSystemConnectionOrigin`) with `requested_by_project_id`
+beside it, as the bid and budget handlers log it; `ApplyKeywordActions` and the keyword-targeting
+handlers use the same helper, so one corrupt system row reads as one incident.
 
 ## Campaign adoption
 
@@ -699,12 +708,14 @@ exists to prevent.
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts`, `ListMetaAdsAccounts`, `ListLinkedinAdsAccounts`,
-`ListMicrosoftAdsAccounts` and `ListTwitterAdsAccounts` (backing
-`GET .../connection-{google-ads,meta-ads,linkedin-ads,microsoft-ads,twitter-ads}/accounts`)
+`ListMicrosoftAdsAccounts`, `ListTwitterAdsAccounts` and `ListRedditAdsAccounts` (backing
+`GET .../connection-{google-ads,meta-ads,linkedin-ads,microsoft-ads,twitter-ads,reddit-ads}/accounts`)
 enumerate the ad accounts reachable UPSTREAM with the connection's stored credential, so an
 operator can pick one instead of pasting an account id by hand. LinkedIn and Microsoft joined in
-LFXV2-3064 and X in LFXV2-3319; Reddit has no handler because its client exposes no
-`ListAdAccounts`, so there is nothing for one to call.
+LFXV2-3064, X in LFXV2-3319 and Reddit in LFXV2-2665. Reddit's handler uses its own
+`redditAdsListDiscovery` descriptor (operation "account discovery", remedy naming
+`client_id`, `client_secret`, `refresh_token`) rather than connection_monitor.go's
+`redditAdsAccountDiscovery`, which names the account-monitor operation.
 
 X's ids are ALPHANUMERIC handles (e.g. `18ce54d4x5t`), not digits like LinkedIn's and
 Microsoft's, and are returned verbatim because that is the form its `account_id` stores. Its
@@ -1420,8 +1431,14 @@ campaign's CURRENT configuration from the ad platform and reports where it diver
 the campaign row recorded. Like the metrics read it is pure — nothing is persisted, so there is
 no `If-Match`/version — and like it, `Orchestrator.ReadCampaignSettings` type-asserts the
 platform's dispatcher for an optional capability at call time, so a platform with no readback
-wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything. Google Ads is
-the only platform wired today.
+wired returns `ErrSettingsReadbackUnsupported` (400) without contacting anything. Google Ads,
+Microsoft Advertising, Meta, Reddit and X are wired (the last four by LFXV2-2665); LinkedIn and
+HubSpot still answer 400. `TestOrchestrator_ReadCampaignSettings_MicrosoftMetaRedditXAreWired`
+(internal/dispatch) drives the real orchestrator with the four real dispatchers.
+`ErrCampaignUpstreamIdentityMismatch` has its own 409 arm, ahead of the account-mismatch arm,
+with a fixed "re-dispatch the campaign" message: it is raised when the platform's answer
+contradicts the recorded identity while the connection already IS the recorded account, where
+"reconnect the original account" would be unactionable.
 
 **It never writes back onto the row, and that is the point.** The row records what a dispatch
 ASKED FOR; writing an observation into those columns would change their meaning from request to
@@ -1910,8 +1927,9 @@ lack of budget (`domain.ErrAccountReportBudgetTooShort`) is logged at info as a 
 failure. A PERMANENT refusal — `domain.ErrAccountTooManyActiveCampaigns` or
 `domain.ErrAccountTimezoneUnsupported` (`isPermanentReportRefusal`; X is the producer) — instead
 fails the read, since no later read could submit either, and `classifyDiscoveryError` answers
-it with a 409 `ConflictError` whose `reason` is `account_too_many_active_campaigns` or
-`account_timezone_unsupported` (`TestReadReported_PermanentRefusalFailsTheRead`,
+it with a 409 `AccountMonitorConflictError` (that method's own body, so the published example
+is a refusal it can return; `reason` is required) whose `reason` is
+`account_too_many_active_campaigns` or `account_timezone_unsupported` (`TestReadReported_PermanentRefusalFailsTheRead`,
 `TestMonitorTwitterAdsAccount_PermanentRefusalsAre409`). `mergeAccountReport` also carries the finished report's calendar window as
 `ReportedAccountRead.MetricsWindowStart/End`, and `monitorReportedAccount`'s evaluate callback
 now receives the whole read, so `MonitorTwitterAdsAccount` evaluates X's rules on the report's
@@ -1957,3 +1975,147 @@ the report's Partial flag, and classifies through `classifyInsightsErrorFor` wit
 Google path's `classifyInsightsError` now delegates to it unchanged, and the one new arm
 (`ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid` → 409) are unreachable from Google. See
 [Microsoft keyword insights](../architecture/microsoft-keyword-insights.md).
+
+The collect/refresh steps are now one generic implementation over both saved-report kinds
+(`insight_report.go`: `insightReportDriver[R]`, `collectPendingInsightReport`,
+`refreshInsightReport`), with the keyword read's log text, permanence rule and ordering unchanged;
+both reads take `now` from `Orchestrator.SetInsightReportClock` (nil = `time.Now`) so tests pin it.
+Both reader interfaces embed `InsightReportPeriod` (`ReportWindowDates(window, now)`), and
+`discardOtherPeriod` drops a finished report whose saved dates are not the window's dates NOW
+before refresh and merge, so a report from before a day or month rollover is resubmitted and
+never served as the new period (#289 review). `supersedeOtherPeriodPending` (run before the
+collect step) does the same for a report still PENDING for another period: it clears it via the
+`fail` compare-and-set ("superseded: …"), so `refreshInsightReport` submits the current period's
+report on the same read; losing the CAS re-reads and adopts the whole snapshot (ready half too) and
+re-validates its pending half, superseding another old-period report at most
+`maxSupersedeAttempts` (3) times, and a store error, failed re-read or exhausted bound returns an
+error instead of continuing with the stale snapshot (#292 and #294 review).
+
+## Report-backed age/gender audience read (`audience_report.go`, LFXV2-2665)
+
+`AudienceReportReader` is `KeywordReportReader`'s twin for the Microsoft age/gender report.
+`Orchestrator.ReadReportedAudience` runs the keyword read's sequence exactly (gate and window
+first, empty scope → empty result with no store or dispatcher call, account refusals before the
+store, check/submit through the shared driver) over `domain.AudienceReportRepository`
+(`SetAudienceReportStore`, wired through `Container.newOrchestrator` with the same
+`KeywordReportRepo`); `isPermanentAudienceRefusal` uses the audience scope sentinels.
+`mergeAudienceReport` serves a covering ready report only, confined to the current scope, summed
+per (age group, gender) in int64 micros with overflow refused, impressions-descending, no cap (the
+fold bounds the bucket count). New upstream tokens `submit_audience_report` /
+`check_audience_report`. `ConnectionService.GetMicrosoftAdsAudience`
+(`connection_microsoft_audience.go`) reuses `resolveMicrosoftKeywordWindow` and
+`classifyInsightsErrorFor` with a `microsoftAdsAudienceInsights` descriptor, and publishes
+`MicrosoftAdsAudience` (`buckets`, `bucket_count`, `metrics_as_of`, `metrics_pending`,
+`data_incomplete`; no currency, no device). `TestPublishedMicrosoftAudienceSpec` pins the
+generated OpenAPI (route, window enum, required fields, composite example, no device/currency).
+
+## Reddit and X keyword targeting (`brief_keyword_targeting.go`, LFXV2-2665)
+
+`GetKeywordTargeting` and `RemoveKeywordTargeting` serve `get-keyword-targeting` and
+`remove-keyword-targeting`. Like the other keyword levers they persist nothing (no If-Match, no
+ETag, no write lock), refuse any platform but Reddit and X with 400 before the orchestrator, and
+map failures through `classifyKeywordTargetingError` — the keyword-action arms plus the four
+targeting sentinels — with fixed messages; adapter text is only logged. An outcome the adapter
+did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
+`RemoveKeywordTargeting` type-assert the capabilities, instrument `read_keyword_targeting` /
+`remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See
+[Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Meta audience read (`connection_meta_audience.go`, LFXV2-2665)
+
+`GetMetaAdsAudience` (`GET .../meta-ads/audience`) is `GetGoogleAdsAudience`'s Meta sibling:
+system scope refused (404), `resolveInsightsWindow` (all seven windows, default
+`last_30_days`), backend check, then `Orchestrator.ReadMetaAudienceInsights`, which type-asserts
+`MetaAudienceReader` (absent → `ErrKeywordInsightsUnsupported`, 400), reads the project's scope
+from `ListProjectPlatformCampaignIDs`, answers an EMPTY scope with an empty result and no
+upstream call, times the call under `metricsCallTimeout`/`read_audience`, and rejects a nil
+result / normalises nil buckets. Errors go through `classifyInsightsErrorFor` with the
+`metaAdsAudienceInsights` descriptor; two arms were added there for the Meta-only sentinels
+`domain.ErrAudienceScopeTooLarge` and `ErrAudienceScopeInvalid` (409, fixed text). Upstream
+failures (transport, 5xx, 429 after retry, 401/403, malformed rows) take the default 503 arm.
+Both audience reads share `readScopedAudience`, a small generic helper holding the scope, empty-scope, timeout, metrics, nil-result and normalise steps; only the capability assertion differs. The account-mismatch 409 text is route-neutral ("…to read this data…") since it is reached by the keyword, Google audience and Meta audience reads alike. Upstream calls run under `metricsCallTimeout` (20s). Buckets carry `dimension` (`age_gender` | `placement`) plus only that dimension's value fields
+(others absent via `optionalString`), and the envelope adds `account_currency`. Tests:
+`meta_audience_test.go`.
+
+## X audience read (`connection_twitter_audience.go`, LFXV2-2665)
+
+`GetTwitterAdsAudience` (`GET .../twitter-ads/audience`) is the X sibling: system scope refused
+(404); `resolveTwitterAudienceWindow` accepts only `today`, `yesterday` and `last_7_days` — the X
+metrics read's windows — defaults to `last_7_days`, and answers anything else with the fixed 400
+`twitterAudienceWindowMessage` (the design enum declares the same subset); then
+`Orchestrator.ReadTwitterAudienceInsights`, which type-asserts `TwitterAudienceReader` and runs
+the shared `readScopedAudience` (empty scope → 200 empty, X not contacted; `metricsCallTimeout`;
+`read_audience`). Errors go through `classifyInsightsErrorFor` with the
+`twitterAdsAudienceInsights` descriptor; an arm was added there for
+`domain.ErrAccountTimezoneUnsupported` (409, the sentinel's fixed text, shared `ConflictError`)
+alongside the audience-scope arms. Buckets are `dimension` (`age` | `gender` | `platform`) +
+`value` (X's segment name, verbatim); the envelope adds `account_currency` (absent when X was not
+contacted or the account carries none) and `all_counters_null`. The orchestrator asks the
+reader's `AudienceEnabled()` BEFORE the scope lookup, so `TWITTER_METRICS_ENABLED` off is 400 even
+for a project with no X campaigns (`TestGetTwitterAdsAudience_DisabledIs400EvenWithEmptyScope`).
+Window NAMES match the X metrics read's; the instants do not on a non-UTC account (account-local
+days here, UTC days there), so the two reads' totals are not directly comparable. Tests: `twitter_audience_test.go`;
+`twitter_audience_wire_example_test.go` (`TestPublishedTwitterAudienceExamplesArePossible`) walks
+every generated OpenAPI document and fails on an X audience example no response could contain.
+
+## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
+
+`ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
+`ResolveRedditAdsCampaign` and `ResolveTwitterAdsCampaign` (`GET .../{platform}/campaign-ref`)
+map one platform campaign id to this service's own campaign + brief. All five are one helper,
+`resolvePlatformCampaignRef(ctx, projectID, platform, id, validateID)` in
+`connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any
+lookup), then the backend check (503 when not wired), then the project-scoped DB read (500 on a
+storage fault; 200 with an empty `matches` for an unowned id; every live match returned, never
+one picked). The platform and the id rule are fixed by the method, never by the request. Google
+and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta, Reddit and X
+(LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
+`platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
+platform error. `internal/apivalidation/campaign_ref_id_drift_test.go` pins that the Goa
+Pattern/MaxLength and the platform validator accept the same ids. Over HTTP that fixed message is
+reached only by a caller the decoder lets through: the generated decoder applies the design's
+Pattern/MaxLength FIRST, so a malformed id is answered by Goa's own `invalid_pattern` /
+`invalid_length` 400. That one is non-echoing too, but because of the server-wide response encoder
+in [cmd/campaign-service](cmd-campaign-service.md), not because of `platformCampaignIDRule`.
+
+## HubSpot email account monitor (`hubspot_monitor.go`, `connection_hubspot_monitor.go`, LFXV2-2665)
+
+`EmailMonitorReader` is an optional dispatcher capability (HubSpot only) separate from
+`AccountMetricsReader` because the scope is opposite: the project's OWN recorded emails, chosen by
+the orchestrator, not a raw account. `Orchestrator.ReadHubSpotEmailMonitor`: capability check
+(else `ErrAccountMetricsUnsupported` → 400); scope from
+`ListRecentProjectPlatformCampaigns(project, hubspot, hubspotMonitorMaxCampaigns+1)` (50+1);
+EMPTY scope → empty read with no connection lookup or upstream call; more than the cap →
+truncate to 50 and set `Truncated` (unconditionally: any unchecked email could have been sent
+late inside the window; soft-deleted campaigns are in scope, since a local delete leaves the
+HubSpot email in place); the dispatcher call inside `accountsCallTimeout`, recorded as
+`read_email_monitor`; a nil read or nil `Emails` is a contract violation (503).
+
+`ConnectionService.MonitorHubspotAccount` runs the monitor guards (`rejectSystemScope`,
+`validateMonitorDays`, `resolveBackendWithOrch`) and classifies failures through
+`classifyDiscoveryError` with `hubspotMonitorDiscovery` (operation "account monitor"): 404 no
+connection (own or LF system), 400 unusable project-owned connection / days, 500 unusable LF
+system fallback connection, 500 decryption, 503 anything else upstream with fixed
+text. A HubSpot 401/403 is not in that 503: the dispatcher tags it `ErrConnectionNotUsable`, so it
+is the 400 (project-owned token) or the 500 (LF fallback token) above, and the 400's remedy names
+`private_app_token` and the token's validity and marketing-email scopes. `buildHubSpotEmailMonitor` sums the returned emails into the totals and computes the rates
+from the sums; `metrics_as_of` and the window are set together, only when HubSpot was read.
+`metrics_as_of` is formatted `RFC3339Nano`: truncating to whole seconds would publish an instant
+earlier than the last response and break its upper-bound guarantee.
+
+## Meta ad sets (`meta_ad_sets.go`, LFXV2-2665)
+
+`ListMetaAdSets` and `ToggleMetaAdSetStatus` serve `list-meta-ad-sets` and
+`toggle-meta-ad-set-status` through the optional `MetaAdSetReader` / `MetaAdSetStatusToggler`
+capabilities (`Orchestrator.ReadMetaAdSets` under `metricsCallTimeout`,
+`Orchestrator.ToggleMetaAdSetStatus` under `toggleCallTimeout`; upstream ops `read_meta_ad_sets`
+and `toggle_meta_ad_set_status`). The orchestrator checks the capability before provisioning, so
+a non-Meta row is 400 whatever its state. The toggle follows `ToggleCampaignStatus`'s
+concurrency contract — If-Match (428/412 against the loaded row), validation and
+`SupportsMetaAdSetToggle` before `ClaimCampaignVersion`, an UNCONFIRMED outcome holding the lock
+for `unconfirmedLockCooldown` and answering a 503 with fixed text, as every money lever does — but
+persists nothing: a 200's ETag is the unchanged version, checked with `VerifyClaimedVersion` after
+an APPLIED write. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
+missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
+[Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+

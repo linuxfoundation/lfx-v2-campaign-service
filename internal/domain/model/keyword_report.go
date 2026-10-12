@@ -17,13 +17,9 @@ import "time"
 //     project's own campaigns, and that set changes as campaigns are dispatched or deleted, so a
 //     saved report is only served while it still covers every campaign the project now owns.
 
-// KeywordReportKey identifies one saved keyword report.
-type KeywordReportKey struct {
-	ProjectID string
-	Platform  Provider
-	AccountID string
-	Window    MetricsWindow
-}
+// KeywordReportKey identifies one saved keyword report. It is InsightReportKey: the key is
+// shared by every report kind, which is told apart by the store method, not by the key.
+type KeywordReportKey = InsightReportKey
 
 // KeywordReportRow is one keyword's totals over a report's window, as persisted (JSONB in
 // keyword_insight_reports.ready_rows). Spend is in the ACCOUNT's currency, unconverted.
@@ -45,52 +41,20 @@ type KeywordReportRow struct {
 	Conversions  *float64 `json:"conversions,omitempty"`
 }
 
-// KeywordReportSubmission is what submitting a keyword report returns. CampaignIDs is the scope
-// the platform was actually asked for, recorded with the pending half.
-type KeywordReportSubmission struct {
-	ReportID    string
-	WindowStart time.Time
-	WindowEnd   time.Time
-	CampaignIDs []string
-}
+// KeywordReportSubmission is what submitting a keyword report returns (InsightReportSubmission).
+type KeywordReportSubmission = InsightReportSubmission
 
-// KeywordReportCheck is the outcome of checking a submitted keyword report once. Rows is set
-// only when Status is AccountReportReady.
-type KeywordReportCheck struct {
-	Status  AccountReportStatus
-	Rows    []KeywordReportRow
-	Partial bool
-}
+// KeywordReportCheck is the outcome of checking a submitted keyword report once.
+type KeywordReportCheck = InsightReportCheck[KeywordReportRow]
 
-// ReadyKeywordReport is the last keyword report that finished. AsOf is its SUBMISSION time, for
-// ReadyAccountReport.AsOf's reason.
-type ReadyKeywordReport struct {
-	ReportID    string
-	Rows        []KeywordReportRow
-	Partial     bool
-	CampaignIDs []string
-	WindowStart time.Time
-	WindowEnd   time.Time
-	AsOf        time.Time
-}
+// ReadyKeywordReport is the last keyword report that finished.
+type ReadyKeywordReport = ReadyInsightReport[KeywordReportRow]
 
 // PendingKeywordReport is a keyword report submitted and not yet collected.
-type PendingKeywordReport struct {
-	ReportID    string
-	CampaignIDs []string
-	WindowStart time.Time
-	WindowEnd   time.Time
-	SubmittedAt time.Time
-}
+type PendingKeywordReport = PendingInsightReport
 
-// KeywordReportSnapshot is everything saved for one KeywordReportKey.
-type KeywordReportSnapshot struct {
-	Key           KeywordReportKey
-	Ready         *ReadyKeywordReport
-	Pending       *PendingKeywordReport
-	LastFailure   string
-	LastFailureAt *time.Time
-}
+// KeywordReportSnapshot is everything saved for one key's keyword report.
+type KeywordReportSnapshot = InsightReportSnapshot[KeywordReportRow]
 
 // ReportedKeywordRead is the keyword read for a report-backed platform: the rows the API
 // publishes, plus the facts a reader needs to judge them.

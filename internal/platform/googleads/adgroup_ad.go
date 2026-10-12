@@ -591,6 +591,11 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 	seenAds := make(map[string]bool)
 	groupOps := make([]mutateOperation, 0, len(targets))
 	adOps := make([]mutateOperation, 0, len(targets))
+	// The resource names sent, kept so the response can be checked against WHICH
+	// resources Google reports rather than against how many — see
+	// checkStatusMutateResults.
+	wantGroups := make([]string, 0, len(targets))
+	wantAds := make([]string, 0, len(targets))
 	for i, t := range targets {
 		adGroupID := strings.TrimSpace(t.AdGroupID)
 		if adGroupID == "" {
@@ -604,9 +609,11 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 		}
 		if !seenGroups[adGroupID] {
 			seenGroups[adGroupID] = true
+			groupName := "customers/" + c.account.CustomerID + "/adGroups/" + adGroupID
+			wantGroups = append(wantGroups, groupName)
 			groupOps = append(groupOps, mutateOperation{
 				Update: adGroupStatusUpdate{
-					ResourceName: "customers/" + c.account.CustomerID + "/adGroups/" + adGroupID,
+					ResourceName: groupName,
 					Status:       status,
 				},
 				UpdateMask: "status",
@@ -627,9 +634,11 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 				continue
 			}
 			seenAds[composite] = true
+			adName := "customers/" + c.account.CustomerID + "/adGroupAds/" + composite
+			wantAds = append(wantAds, adName)
 			adOps = append(adOps, mutateOperation{
 				Update: adGroupAdStatusUpdate{
-					ResourceName: "customers/" + c.account.CustomerID + "/adGroupAds/" + composite,
+					ResourceName: adName,
 					Status:       status,
 				},
 				UpdateMask: "status",
@@ -649,7 +658,7 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 	// Wrapped as a partial cascade so IsOutcomeUnconfirmed sees it: a short response
 	// means SOME ad groups flipped, which is precisely "may be applied — verify
 	// before retrying" rather than "nothing changed".
-	if err := checkStatusMutateResults(groupResp, len(groupOps), "ad group"); err != nil {
+	if err := c.checkStatusMutateResults(groupResp, "adGroups", "ad group", wantGroups, true); err != nil {
 		return &partialCascadeError{stage: "ad group", err: err}
 	}
 
@@ -661,7 +670,7 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 		// used by the reddit and twitter cascade clients.
 		return &partialCascadeError{stage: "ad", err: err}
 	}
-	if err := checkStatusMutateResults(adResp, len(adOps), "ad"); err != nil {
+	if err := c.checkStatusMutateResults(adResp, "adGroupAds", "ad", wantAds, false); err != nil {
 		// Same reasoning: the ad groups are already flipped, so a short ad response
 		// leaves a partially-applied tree.
 		return &partialCascadeError{stage: "ad", err: err}
@@ -669,15 +678,59 @@ func (c *Client) UpdateAdGroupsAndAdsStatus(ctx context.Context, targets []AdGro
 	return nil
 }
 
-// checkStatusMutateResults reports a 2xx whose results do not account for every
-// operation as UNCONFIRMED. It deliberately accepts MORE results than operations
-// without complaint: that would be Google reporting extra work, which this client has
-// never seen and which is not evidence that the work it asked for went undone —
-// failing a correct toggle over it is the over-refusal this guard must not commit.
-func checkStatusMutateResults(resp []byte, want int, kind string) error {
+// checkStatusMutateResults reports a 2xx that does not account for every operation
+// as UNCONFIRMED.
+//
+// Matched by RESOURCE NAME, as a set, not by count. A count alone answers "did
+// Google send back as many results as I sent operations", which is the wrong
+// question when the operations address different resources: three results for three
+// operations satisfies it even when all three name the same ad group and two of the
+// three the caller asked about were never touched. The set answers the question that
+// matters — is every resource I asked about accounted for.
+//
+// Deliberately set-based rather than positional. Google documents results as
+// corresponding to the operations sent, but this client has no need of that
+// guarantee, and a positional check would turn any future reordering into a failed
+// toggle of work that actually applied.
+//
+// It still accepts MORE results than operations without complaint, for the reason
+// this tolerance was introduced: extra results are Google reporting extra work, and
+// are not evidence that the work this client asked for went undone. Failing a
+// correct toggle over them is the over-refusal this guard must not commit — which
+// is also why a name that fails validateResourceKind only fails to SATISFY an
+// expectation rather than failing the check outright. An unrecognized extra name is
+// ignored exactly like any other extra result; only a name this client sent and did
+// not get back is a problem.
+func (c *Client) checkStatusMutateResults(resp []byte, resourceKind, kind string, want []string, requireNumericID bool) error {
+	unconfirmed := func(detail string) error {
+		return fmt.Errorf("google-ads %s status update UNCONFIRMED (2xx but %s — verify in Google Ads before retrying)", kind, detail)
+	}
+
 	var mr mutateResponse
-	if err := json.Unmarshal(resp, &mr); err != nil || len(mr.Results) < want {
-		return fmt.Errorf("google-ads %s status update UNCONFIRMED (2xx with a malformed/short mutate response: %d result(s) for %d operation(s) — verify in Google Ads before retrying)", kind, len(mr.Results), want)
+	if err := json.Unmarshal(resp, &mr); err != nil {
+		return unconfirmed("the mutate response could not be parsed")
+	}
+
+	got := make(map[string]bool, len(mr.Results))
+	for _, r := range mr.Results {
+		// Checked for kind and account before it can account for anything: a name
+		// from another account, or naming another resource type, is not evidence
+		// that the operation this client sent was applied.
+		if err := c.validateResourceKind(resourceKind, r.ResourceName, requireNumericID); err != nil {
+			continue
+		}
+		got[r.ResourceName] = true
+	}
+
+	missing := make([]string, 0, len(want))
+	for _, name := range want {
+		if !got[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return unconfirmed(fmt.Sprintf("%d of %d %s(s) are unaccounted for in the %d result(s) returned, starting with %q",
+			len(missing), len(want), kind, len(mr.Results), missing[0]))
 	}
 	return nil
 }

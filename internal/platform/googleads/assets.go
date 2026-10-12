@@ -124,6 +124,13 @@ type assetCreate struct {
 	SitelinkAsset          *sitelinkAsset          `json:"sitelinkAsset,omitempty"`
 	CalloutAsset           *calloutAsset           `json:"calloutAsset,omitempty"`
 	StructuredSnippetAsset *structuredSnippetAsset `json:"structuredSnippetAsset,omitempty"`
+	// The call, promotion and price arms live in assets_extended.go. They are
+	// members of the same Google oneof and travel the same two mutates; only
+	// their shapes and validators are separate.
+	CallAsset      *callAsset      `json:"callAsset,omitempty"`
+	PromotionAsset *promotionAsset `json:"promotionAsset,omitempty"`
+	PriceAsset     *priceAsset     `json:"priceAsset,omitempty"`
+	LeadFormAsset  *leadFormAsset  `json:"leadFormAsset,omitempty"`
 }
 
 // campaignAssetCreate links an already-created asset to the campaign. FieldType
@@ -150,6 +157,10 @@ type assetPlan struct {
 	sitelinks  int
 	callouts   int
 	snippets   int
+	calls      int
+	promotions int
+	prices     int
+	leadForms  int
 }
 
 func (p assetPlan) empty() bool { return len(p.assets) == 0 }
@@ -161,7 +172,8 @@ func (p assetPlan) count() int { return len(p.assets) }
 // preflightCampaignKind, before the budget mutate, so an over-long callout or a
 // sitelink with no destination fails while nothing has been paid for.
 func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
-	asked := len(in.Sitelinks) + len(in.Callouts) + len(in.StructuredSnippets)
+	asked := len(in.Sitelinks) + len(in.Callouts) + len(in.StructuredSnippets) +
+		len(in.CallExtensions) + len(in.Promotions) + len(in.Prices) + len(in.LeadForms)
 	if asked == 0 {
 		return assetPlan{}, nil
 	}
@@ -169,7 +181,7 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 	// not take campaign-level extension assets, so sending them would fail
 	// upstream after the campaign exists.
 	if kind != campaignKindSearch {
-		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets) are supported on Search campaigns only, not on %s", kind)
+		return assetPlan{}, fmt.Errorf("google-ads ad extensions (sitelinks, callouts, structured snippets, call extensions, promotions, prices, lead forms) are supported on Search campaigns only, not on %s", kind)
 	}
 
 	var plan assetPlan
@@ -203,6 +215,46 @@ func validateAssetPlan(kind string, in CampaignInput) (assetPlan, error) {
 		plan.fieldTypes = append(plan.fieldTypes, assetFieldStructuredSnippet)
 	}
 	plan.snippets = len(snippets)
+
+	calls, err := validateCallExtensions(in.CallExtensions)
+	if err != nil {
+		return assetPlan{}, err
+	}
+	for i := range calls {
+		plan.assets = append(plan.assets, calls[i])
+		plan.fieldTypes = append(plan.fieldTypes, assetFieldCall)
+	}
+	plan.calls = len(calls)
+
+	promotions, err := validatePromotionExtensions(in)
+	if err != nil {
+		return assetPlan{}, err
+	}
+	for i := range promotions {
+		plan.assets = append(plan.assets, promotions[i])
+		plan.fieldTypes = append(plan.fieldTypes, assetFieldPromotion)
+	}
+	plan.promotions = len(promotions)
+
+	prices, err := validatePriceExtensions(in)
+	if err != nil {
+		return assetPlan{}, err
+	}
+	for i := range prices {
+		plan.assets = append(plan.assets, prices[i])
+		plan.fieldTypes = append(plan.fieldTypes, assetFieldPrice)
+	}
+	plan.prices = len(prices)
+
+	leadForms, err := validateLeadFormExtensions(in)
+	if err != nil {
+		return assetPlan{}, err
+	}
+	for i := range leadForms {
+		plan.assets = append(plan.assets, leadForms[i])
+		plan.fieldTypes = append(plan.fieldTypes, assetFieldLeadForm)
+	}
+	plan.leadForms = len(leadForms)
 
 	return plan, nil
 }
@@ -278,7 +330,7 @@ func validateCallouts(callouts []string) ([]assetCreate, error) {
 			return nil, fmt.Errorf("google-ads callout %d is empty", i)
 		}
 		if n := utf8.RuneCountInString(text); n > maxCalloutTextRunes {
-			return nil, fmt.Errorf("google-ads callout %q is %d characters, exceeding the %d limit", text, n, maxCalloutTextRunes)
+			return nil, fmt.Errorf("google-ads callout %d is %d characters, exceeding the %d limit", i, n, maxCalloutTextRunes)
 		}
 		key := strings.ToLower(text)
 		if _, dup := seen[key]; dup {
@@ -347,7 +399,7 @@ func validateStructuredSnippets(snippets []StructuredSnippet) ([]assetCreate, er
 // requested. A clause about callouts on a campaign with no callout assets is a
 // lie about a paid resource.
 func assetStep(plan assetPlan) string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 7)
 	if plan.sitelinks > 0 {
 		parts = append(parts, fmt.Sprintf("%d sitelinks", plan.sitelinks))
 	}
@@ -356,6 +408,18 @@ func assetStep(plan assetPlan) string {
 	}
 	if plan.snippets > 0 {
 		parts = append(parts, fmt.Sprintf("%d structured snippets", plan.snippets))
+	}
+	if plan.calls > 0 {
+		parts = append(parts, fmt.Sprintf("%d call extensions", plan.calls))
+	}
+	if plan.promotions > 0 {
+		parts = append(parts, fmt.Sprintf("%d promotions", plan.promotions))
+	}
+	if plan.prices > 0 {
+		parts = append(parts, fmt.Sprintf("%d prices", plan.prices))
+	}
+	if plan.leadForms > 0 {
+		parts = append(parts, fmt.Sprintf("%d lead forms", plan.leadForms))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -395,7 +459,7 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 		if createOutcomeAmbiguous(err) {
 			return nil, nil, fmt.Errorf("google-ads ad extension assets UNCONFIRMED (campaign %s; assets may exist and may be unlinked — verify in Google Ads before retrying): %w", campaignID, err)
 		}
-		return nil, nil, fmt.Errorf("google-ads ad extension asset creation failed (campaign %s created; it has NO sitelinks, callouts or structured snippets): %w", campaignID, err)
+		return nil, nil, fmt.Errorf("google-ads ad extension asset creation failed (campaign %s created; it has NO ad extensions of any kind): %w", campaignID, err)
 	}
 
 	var assetResults mutateResponse
@@ -436,7 +500,7 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 		if createOutcomeAmbiguous(err) {
 			return ids, nil, fmt.Errorf("google-ads ad extension linking UNCONFIRMED (campaign %s; %d assets created, their links may exist — verify in Google Ads before retrying): %w", campaignID, len(ids), err)
 		}
-		return ids, nil, fmt.Errorf("google-ads ad extension linking failed (campaign %s created with %d unlinked extension assets; the campaign has NO sitelinks, callouts or structured snippets): %w", campaignID, len(ids), err)
+		return ids, nil, fmt.Errorf("google-ads ad extension linking failed (campaign %s created with %d unlinked extension assets; the campaign has NO ad extensions of any kind): %w", campaignID, len(ids), err)
 	}
 
 	var linkResults mutateResponse
@@ -473,6 +537,21 @@ func (c *Client) createCampaignAssets(ctx context.Context, campaignResource, cam
 		linkIDs = append(linkIDs, assetID)
 	}
 	return ids, linkIDs, nil
+}
+
+// parsedAssetIDs is every well-formed asset id in a mutate response, in order, skipping
+// any resource name assetID refuses. It exists for the arms that return an UNCONFIRMED
+// error over a response that nonetheless PARSED: the ids in it are the only handle an
+// operator has on account-level assets that may already exist, so the error carries them
+// rather than dropping them.
+func (c *Client) parsedAssetIDs(resp mutateResponse) []string {
+	out := make([]string, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		if id := c.assetID(r.ResourceName); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // assetID applies to an Asset resource name the same four checks

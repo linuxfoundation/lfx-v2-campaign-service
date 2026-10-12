@@ -23,6 +23,8 @@ type fakeKeywordReader struct {
 	mu         sync.Mutex
 	account    string
 	accountErr error
+	enabledErr error
+	enabled    int
 	submitID   string
 	submitErr  error
 	check      *model.KeywordReportCheck
@@ -31,10 +33,34 @@ type fakeKeywordReader struct {
 	submits    int
 	checks     int
 	scopes     [][]model.ProjectCampaignScope
+	// dates, when set, is ReportWindowDates; nil answers the fake period whatever the clock.
+	dates func(model.MetricsWindow, time.Time) (time.Time, time.Time, error)
+	// submitNow is the clock a scripted-dates submission resolves its window at.
+	submitNow time.Time
+}
+
+// fakeKeywordPeriodStart..fakeKeywordPeriodEnd is the period the fake's submissions cover (SubmitKeywordReport below) and,
+// unless a test scripts dates, the period every window resolves to — so a saved fixture carrying
+// it is a report for the period being asked about.
+var fakeKeywordPeriodEnd = time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+var fakeKeywordPeriodStart = fakeKeywordPeriodEnd.AddDate(0, 0, -29)
+
+func (f *fakeKeywordReader) ReportWindowDates(w model.MetricsWindow, now time.Time) (time.Time, time.Time, error) {
+	if f.dates != nil {
+		return f.dates(w, now)
+	}
+	return fakeKeywordPeriodStart, fakeKeywordPeriodEnd, nil
 }
 
 func (f *fakeKeywordReader) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
+}
+
+func (f *fakeKeywordReader) KeywordReportEnabled(model.MetricsWindow) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enabled++
+	return f.enabledErr
 }
 
 func (f *fakeKeywordReader) KeywordReportAccount(_ context.Context, _ string, _ model.Provider, _ model.MetricsWindow, scope []model.ProjectCampaignScope) (string, error) {
@@ -48,7 +74,7 @@ func (f *fakeKeywordReader) KeywordReportAccount(_ context.Context, _ string, _ 
 	return f.account, nil
 }
 
-func (f *fakeKeywordReader) SubmitKeywordReport(_ context.Context, _ string, _ model.Provider, _ string, _ model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordReportSubmission, error) {
+func (f *fakeKeywordReader) SubmitKeywordReport(_ context.Context, _ string, _ model.Provider, _ string, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.KeywordReportSubmission, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.submits++
@@ -59,8 +85,11 @@ func (f *fakeKeywordReader) SubmitKeywordReport(_ context.Context, _ string, _ m
 	for _, s := range scope {
 		ids = append(ids, s.PlatformCampaignID)
 	}
-	d := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
-	return &model.KeywordReportSubmission{ReportID: f.submitID, WindowStart: d.AddDate(0, 0, -29), WindowEnd: d, CampaignIDs: ids}, nil
+	start, end := fakeKeywordPeriodStart, fakeKeywordPeriodEnd
+	if f.dates != nil {
+		start, end, _ = f.dates(window, f.submitNow)
+	}
+	return &model.KeywordReportSubmission{ReportID: f.submitID, WindowStart: start, WindowEnd: end, CampaignIDs: ids}, nil
 }
 
 func (f *fakeKeywordReader) CheckKeywordReport(context.Context, string, model.Provider, string, string) (*model.KeywordReportCheck, error) {
@@ -151,6 +180,20 @@ func TestReadKeywords_EmptyScopeMakesNoCalls(t *testing.T) {
 	}
 }
 
+// The rollout gate is a property of the platform, not of the project: a project with no
+// campaigns must get the same refusal as one with many, not an empty 200 (PR #263 review).
+func TestReadKeywords_GateIsCheckedBeforeTheEmptyScopeSuccess(t *testing.T) {
+	r := &fakeKeywordReader{account: "123", enabledErr: fmt.Errorf("disabled: %w", domain.ErrKeywordInsightsUnsupported)}
+	store := &fakeKeywordStore{}
+	_, err := keywordOrch([]string{}, r, store).ReadReportedKeywordPerformance(context.Background(), "cncf", model.ProviderMicrosoftAds, model.MetricsWindowLast30Days)
+	if !errors.Is(err, domain.ErrKeywordInsightsUnsupported) {
+		t.Fatalf("err = %v, want ErrKeywordInsightsUnsupported", err)
+	}
+	if r.accounts+r.submits+r.checks != 0 || len(store.keys) != 0 {
+		t.Errorf("a gated-off read must touch neither the dispatcher's account path nor the store")
+	}
+}
+
 func TestReadKeywords_FirstReadSubmitsAndServesNothing(t *testing.T) {
 	r := &fakeKeywordReader{account: "123", submitID: "k1"}
 	store := &fakeKeywordStore{}
@@ -173,7 +216,7 @@ func TestReadKeywords_CollectsAFinishedReport(t *testing.T) {
 	submitted := time.Now().Add(-5 * time.Minute)
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Pending: &model.PendingKeywordReport{
 		ReportID: "k1", CampaignIDs: []string{"111", "222"}, SubmittedAt: submitted,
-		WindowStart: time.Now(), WindowEnd: time.Now(),
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 	}}}
 	read := readKeywords(t, keywordOrch([]string{"111", "222"}, r, store))
 	if read.MetricsPending || read.MetricsAsOf == nil || !read.MetricsAsOf.Equal(submitted) {
@@ -193,6 +236,7 @@ func TestReadKeywords_CollectsAFinishedReport(t *testing.T) {
 func TestReadKeywords_FreshCoveringReportMakesNoReportCalls(t *testing.T) {
 	r := &fakeKeywordReader{account: "123"}
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Ready: &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: time.Now().Add(-time.Minute), Rows: []model.KeywordReportRow{kwRow("111", "1", 5)},
 	}}}
 	read := readKeywords(t, keywordOrch([]string{"111"}, r, store))
@@ -206,6 +250,7 @@ func TestReadKeywords_FreshCoveringReportMakesNoReportCalls(t *testing.T) {
 // submitted. A campaign the project no longer owns drops out of a covering report.
 func TestReadKeywords_ScopeCoverage(t *testing.T) {
 	ready := &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111", "999"}, AsOf: time.Now().Add(-time.Minute),
 		Rows: []model.KeywordReportRow{kwRow("111", "1", 5), kwRow("999", "9", 50)},
 	}
@@ -228,6 +273,7 @@ func TestReadKeywords_ScopeCoverage(t *testing.T) {
 func TestReadKeywords_StaleReportIsServedWhileTheNextBuilds(t *testing.T) {
 	r := &fakeKeywordReader{account: "123", submitID: "k2"}
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Ready: &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: time.Now().Add(-2 * accountReportFreshFor), Rows: []model.KeywordReportRow{kwRow("111", "1", 5)},
 	}}}
 	read := readKeywords(t, keywordOrch([]string{"111"}, r, store))
@@ -240,6 +286,7 @@ func TestReadKeywords_PendingStatesAndAbandon(t *testing.T) {
 	pending := func(age time.Duration) *fakeKeywordStore {
 		return &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Pending: &model.PendingKeywordReport{
 			ReportID: "k1", CampaignIDs: []string{"111"}, SubmittedAt: time.Now().Add(-age),
+			WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		}}}
 	}
 	// Still building: not resubmitted.
@@ -358,6 +405,7 @@ func TestGetMicrosoftAdsKeywords_MapsTheSavedReport(t *testing.T) {
 	qs := int64(6)
 	row.QualityScore = &qs
 	store := &fakeKeywordStore{snap: &model.KeywordReportSnapshot{Ready: &model.ReadyKeywordReport{
+		WindowStart: fakeKeywordPeriodStart, WindowEnd: fakeKeywordPeriodEnd,
 		ReportID: "k1", CampaignIDs: []string{"111"}, AsOf: asOf, Rows: []model.KeywordReportRow{row}, Partial: true,
 	}}}
 	// asOf is far older than accountReportFreshFor, so the read also submits a refresh.
@@ -441,6 +489,37 @@ func TestGetMicrosoftAdsKeywords_ClassifiesErrors(t *testing.T) {
 		}
 		if !ok {
 			t.Errorf("%v: got %T (%v), want %s", tc.err, err, err, tc.want)
+		}
+	}
+}
+
+// TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages pins the exact wording of the two
+// refusals lfx-self-serve's Microsoft keyword table reads as "not connected" rather than as a
+// read failure (microsoft-keywords-table.component.ts, isNotConnectedError). Those messages
+// carry no other discriminator, so rewording either one here changes what operators see on
+// every project without a Microsoft connection — update that matcher in the same change.
+func TestGetMicrosoftAdsKeywords_PinsTheNotConnectedMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{domain.ErrKeywordInsightsUnsupported, "keyword and audience insights are not supported for this platform"},
+		{domain.ErrNotFound, "no microsoft ads connection configured for this project"},
+	} {
+		_, err := microsoftKeywordService([]string{"111"}, &fakeKeywordReader{accountErr: fmt.Errorf("x: %w", tc.err)}, &fakeKeywordStore{}).
+			GetMicrosoftAdsKeywords(context.Background(), &conn.GetMicrosoftAdsKeywordsPayload{ProjectID: "p"})
+		var got string
+		switch e := err.(type) {
+		case *conn.BadRequestError:
+			got = e.Message
+		case *conn.NotFoundError:
+			got = e.Message
+		default:
+			t.Errorf("%v: got %T (%v), want a 400 or 404", tc.err, err, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%v: message = %q, want %q", tc.err, got, tc.want)
 		}
 	}
 }

@@ -635,11 +635,11 @@ func TestMonitorTwitterAdsAccount_PermanentRefusalsAre409(t *testing.T) {
 			}
 			_, err := twitterMonitorService(reader, &fakeReportStore{}).MonitorTwitterAdsAccount(context.Background(),
 				&conn.MonitorTwitterAdsAccountPayload{ProjectID: "p", AccountID: "a1", Days: 7})
-			var ce *conn.ConflictError
+			var ce *conn.AccountMonitorConflictError
 			if !errors.As(err, &ce) {
-				t.Fatalf("err = %T %v, want *conn.ConflictError", err, err)
+				t.Fatalf("err = %T %v, want *conn.AccountMonitorConflictError", err, err)
 			}
-			if ce.Code != "409" || ce.Reason == nil || *ce.Reason != reason {
+			if ce.Code != "409" || ce.Reason != reason {
 				t.Errorf("conflict = %+v (reason %v), want 409 with reason %q", ce, ce.Reason, reason)
 			}
 			if strings.Contains(ce.Message, "upstream detail") {

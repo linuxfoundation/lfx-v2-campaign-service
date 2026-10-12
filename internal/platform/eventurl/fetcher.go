@@ -347,6 +347,7 @@ func WithNAT64Prefixes(cidrs ...string) Option {
 // one inspected — and every address a multi-address host offers is inspected, not just
 // the first.
 func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn) error {
+	judge := judgeAddress(nat64)
 	return func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil {
@@ -355,6 +356,43 @@ func guardDialAddress(nat64 []nat64Prefix) func(string, string, syscall.RawConn)
 		ip := net.ParseIP(host)
 		if ip == nil {
 			return fmt.Errorf("%w: unparsable dial address %q", ErrEventURLForbidden, address)
+		}
+		return judge(ip)
+	}
+}
+
+// NewAddressGuard exposes this package's address judgement as a predicate over an
+// ALREADY-RESOLVED address, for the one caller that cannot use NewGuardedClient.
+//
+// It exists so the "exactly ONE implementation of the guard" rule NewGuardedClient states
+// survives that caller rather than being quietly broken by it. The Google Ads creative fetch
+// needs a transport this package does not build — it refuses redirects with a REDACTED target
+// (a signed CDN URL in a redirect Location is the same class of secret as the caller's own
+// URL), and its tests inject a TLS config so an httptest server is reachable. Reimplementing
+// the ADDRESS judgement to get that transport is what produced the gap this function closes:
+// the bespoke predicate it replaced decoded no NAT64 at all, so 64:ff9b::a9fe:a9fe — the
+// well-known prefix naming 169.254.169.254 — passed every one of its checks.
+//
+// Taking Option rather than a prefix slice is the same choice resolveNAT64 documents: "use the
+// deployment's prefixes" stays one argument to forward instead of a conversion each caller
+// could get wrong. Callers whose deployment sets EventURLNAT64Prefixes MUST pass
+// WithNAT64Prefixes here too — the well-known prefix alone is a NARROWER guard.
+//
+// The returned error wraps ErrEventURLForbidden. A caller outside this package is not expected
+// to classify on it; it is there so the sentinel means the same thing wherever the judgement runs.
+func NewAddressGuard(opts ...Option) func(net.IP) error {
+	return judgeAddress(resolveNAT64(opts))
+}
+
+// judgeAddress is the judgement itself, shared by the dial hook and NewAddressGuard so the two
+// cannot drift. Everything below the signature describes a decision that belongs to the
+// judgement, not to how the address was obtained.
+func judgeAddress(nat64 []nat64Prefix) func(net.IP) error {
+	return func(ip net.IP) error {
+		if ip == nil {
+			// "Cannot judge" must never become "nothing forbidden found", which is what
+			// falling through to the final return would mean.
+			return fmt.Errorf("%w: unparsable address", ErrEventURLForbidden)
 		}
 		// Configured translation prefixes are judged FIRST, and their verdict is FINAL.
 		//

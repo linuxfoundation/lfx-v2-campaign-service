@@ -96,7 +96,7 @@ func (d *MetaDispatcher) WriteBudget(ctx context.Context, projectID string, plat
 	// and the refusal is deterministic, so it is a 409 rather than the default 503.
 	adSetID := metaAdSetID(campaign)
 	if strings.TrimSpace(adSetID) == "" {
-		return fmt.Errorf("%w: meta campaign %s records no ad set, and a meta budget lives on the ad set, so there is nothing to write", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
+		return fmt.Errorf("%w: meta campaign %s records no ad set — either it was never provisioned, or the campaign was ADOPTED, which records none — and a meta budget lives on the ad set, so there is nothing to write; change the budget in Meta Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
 
 	current, err := client.GetAdSetBudget(ctx, adSetID)

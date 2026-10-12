@@ -6,6 +6,7 @@ package redact
 import (
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -18,8 +19,9 @@ import (
 
 // SnapshotURL strips the PATH, query and fragment from a URL before it is stored
 // in config_snapshot (which is persisted UNENCRYPTED). The snapshot keeps only
-// scheme+host. An absolute URL is reduced to that; an http(s)-scheme value that will not
-// reduce — it does not parse, has no host, or carries userinfo — is dropped entirely. A
+// scheme+host. An absolute URL is reduced to that; an http(s)-scheme value, or any value
+// opening with `scheme://`, that will not reduce — it does not parse, has no host, or
+// carries userinfo — is dropped entirely. A
 // value that never claimed to be a URL is truncated at the first '?'/'#' and dropped if
 // it still contains a credential delimiter '@', mirroring the reddit client's redactURL
 // fail-closed behavior. An empty input stays empty.
@@ -68,7 +70,7 @@ func SnapshotURL(raw string) string {
 	// will not reduce is malformed input, not data with another meaning. The branch
 	// below still exists for a value that never claimed to be a URL — a reddit thing
 	// id, say — where truncating and dropping on '@' is the conservative answer.
-	if isHTTPScheme(trimmed) {
+	if isHTTPScheme(trimmed) || hasAuthorityScheme(trimmed) {
 		return ""
 	}
 	if i := strings.IndexAny(trimmed, "?#"); i >= 0 {
@@ -113,6 +115,28 @@ func isHTTPScheme(raw string) bool {
 	return strings.HasPrefix(lower, "http:") || strings.HasPrefix(lower, "https:")
 }
 
+// authoritySchemePrefixRe matches a value that opens with ANY RFC 3986 scheme followed by
+// `//` — `ftp://`, `file://`, `s3://`.
+var authoritySchemePrefixRe = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
+
+// hasAuthorityScheme reports whether raw announces a scheme with an authority, of any kind.
+// It extends isHTTPScheme's fail-closed rule to every such scheme: a value that announced
+// `ftp://` or `file://` and did not reduce to scheme+host above has no host to keep
+// (`file:///private/RESET_TOKEN`) or will not parse, and the truncating branch below would
+// keep its path — the same exposure, reached by a scheme the http check does not name.
+func hasAuthorityScheme(raw string) bool {
+	return authoritySchemePrefixRe.MatchString(raw)
+}
+
+// schemeAuthorityRunRe matches a NON-http link run in free text: any scheme, then `//`,
+// then the run up to snapshotURLRunRe's stop set, with the same bracketed-host branch (and
+// optional userinfo before it) for an IPv6 literal. The body may be empty after `//`, so
+// `file:///private/TOKEN` is matched whole. It runs AFTER the http pass, so an http(s) run
+// it meets has already been reduced to scheme+host, which SnapshotURL returns unchanged.
+var schemeAuthorityRunRe = regexp.MustCompile(
+	`(?i)[a-z][a-z0-9+.-]*://(?:(?:[^\s<>"\x60\[\]}|\\^/?#@]*@)?\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]*)`,
+)
+
 // snapshotURLRunRe matches an http/https URL run inside free text: everything from the
 // scheme up to the first character that cannot continue a URL. Whitespace ends a run, and
 // so do the characters that in prose almost always belong to the sentence rather than the
@@ -147,6 +171,12 @@ func isHTTPScheme(raw string) bool {
 // direction that fails safe here: over-matching a bracketed run that is not a host costs
 // a sanitized fragment of prose, while under-matching costs a token.
 //
+// The bracketed branch admits an optional USERINFO before the bracket. Requiring `[` hard
+// against `//` sent `https://bob:pw@[2001:db8::1]/reset/SECRET?token=…` to the general
+// alternative, which stopped at the `]`, so SnapshotURL dropped only the prefix and
+// `]/reset/SECRET?token=…` stayed behind as bare text. Consumed whole, the run reaches
+// SnapshotURL with its userinfo intact and is dropped entirely, as any userinfo run is.
+//
 // There is NO `\b` before the scheme, and deliberately no replacement for it. Go's `\b`
 // is defined over `\w`, and `\w` includes `_`, so `_https://…` had no boundary between the
 // underscore and the `h` and the whole run went unmatched — `_https://events.example/cb?
@@ -169,7 +199,7 @@ func isHTTPScheme(raw string) bool {
 // follow the colon with no space between, and a sentence-final `http:` is not matched at
 // all.
 var snapshotURLRunRe = regexp.MustCompile(
-	`(?i)https?:(?://(?:\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)` +
+	`(?i)https?:(?://(?:(?:[^\s<>"\x60\[\]}|\\^/?#@]*@)?\[[^\]\s]+\][^\s<>"\x60\]}|\\^]*|[^\s<>"\x60\]}|\\^]+)` +
 		`|/?[^\s<>"\x60\]}|\\^/][^\s<>"\x60\]}|\\^]*)`,
 )
 
@@ -211,7 +241,13 @@ func SnapshotText(raw string) string {
 	// `a.example/r?token=S` down to `a.example` by the pass that is not responsible for
 	// queries. Placed last it sees neither: every earlier pass rewrites its runs to a bare
 	// authority or to nothing, and a bare authority has no path for this one to match.
+	// The non-http pass runs second, over what the http pass left: `ftp://`, `file://` and
+	// every other `scheme://` run goes through SnapshotURL too, which reduces it to
+	// scheme+host or drops it when it has no host to keep. Before it existed such a run was
+	// matched by nothing that understood it, and `file:///private/RESET_TOKEN` or
+	// `ftp://[2001:db8::1]/reset/SECRET?token=SECRET` was persisted whole.
 	out := snapshotURLRunRe.ReplaceAllStringFunc(raw, SnapshotURL)
+	out = schemeAuthorityRunRe.ReplaceAllStringFunc(out, SnapshotURL)
 	out = schemelessSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessSnapshotRun)
 	out = schemelessUserinfoSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeUserinfoSnapshotRun)
 	return schemelessPathSnapshotRunRe.ReplaceAllStringFunc(out, sanitizeSchemelessPathSnapshotRun)
@@ -264,28 +300,40 @@ var schemelessSnapshotRunRe = regexp.MustCompile(
 // internal/platform/twitter/client.go: without it this matches every email address an
 // operator writes in their copy. Keep the two in step.
 //
+// The USERNAME class is RFC 3986's userinfo alphabet before the colon — unreserved,
+// pct-encoded and the sub-delims `!$&'()*+,;=`. It used to stop at the unreserved set, so
+// `admin!:pw@events.example/reset/TOKEN` was not matched here, and the path-only pass below
+// then left it whole because it contains an `@`: password and path token both persisted.
+// Kept in step with the twitter screen's class. The FIRST character must be unreserved, so a
+// clock opened by prose punctuation (`(14:00@main.stage)`) is matched from its first digit. A
+// username made ONLY of sub-delims (`!:pw@host`), or a BLANK one (`:pw@host`), is the second
+// alternative — zero or more sub-delims — held to a colon directly after it by the pattern
+// itself (RE2 has no lookahead). A blank username is never a clock (UsernameIsClock needs
+// digits before the colon), so `:pw@host` is always a credential. See UsernameIsClock for the
+// exact clock exemption.
+//
 // It is not the only discriminator needed, and the second one is kept in step too: a time
 // of day written hard against a host — `keynote 14:00@events.example` — is the userinfo
 // production byte for byte. See sanitizeUserinfoSnapshotRun.
 var schemelessUserinfoSnapshotRunRe = regexp.MustCompile(
-	`(?i)[a-z0-9._~%+-]+:[^\s<>"\x60\]}|\\^@]*@` +
+	`(?i)(?:[a-z0-9._~%+-][a-z0-9._~%+!$&'()*,;=-]*|[!$&'()*,;=]*):[^\s<>"\x60\]}|\\^@]*@` +
 		`(?:\d{1,3}(?:\.\d{1,3}){3}|[a-z0-9][a-z0-9._~%+-]*\.[a-z][a-z0-9-]+)` +
 		`(?::\d+)?(?:/[^\s<>"\x60\]}|\\^]*)?`,
 )
 
-// sanitizeUserinfoSnapshotRun blanks a matched userinfo run unless both sides of the colon
-// are digits, which makes it a clock, a score or a ratio rather than a credential pair.
+// sanitizeUserinfoSnapshotRun blanks a matched userinfo run unless UsernameIsClock calls its
+// username:password pair a clock, a score or a ratio rather than a credential pair.
 //
-// The rule is deliberately identical to userinfoRunIsClockShaped in
-// internal/platform/twitter/client.go — the two patterns are documented as kept in step,
-// and a discriminator that lived on only one of them would put the screen and the redactor
+// internal/platform/twitter's userinfoRunIsClockShaped calls the same UsernameIsClock, so the
+// screen and the redactor share one discriminator; one living on only one side would put them
 // back out of agreement, which is the exact defect the third pass was added to fix.
 //
 // The COST direction differs, and it is worth being clear that this side is the milder
 // one: over-redacting here loses a line of the operator's own copy from a diagnostic
 // snapshot, where over-refusing on the twitter side blocks a brief before anything is
 // created. Milder is not free — the snapshot exists to be read by a human — and the
-// digits-both-sides test gives up no credential shape to buy it.
+// residual UsernameIsClock gives up is bounded: a two-digit password <= 59 behind a username
+// ending in an hour, or a pair of at most two digits a side.
 func sanitizeUserinfoSnapshotRun(run string) string {
 	at := strings.IndexByte(run, '@')
 	if at < 0 {
@@ -293,10 +341,52 @@ func sanitizeUserinfoSnapshotRun(run string) string {
 	}
 	userinfo := run[:at]
 	colon := strings.IndexByte(userinfo, ':')
-	if colon >= 0 && isAllASCIIDigits(userinfo[:colon]) && isAllASCIIDigits(userinfo[colon+1:]) {
+	if colon >= 0 && UsernameIsClock(userinfo[:colon], userinfo[colon+1:]) {
 		return run
 	}
 	return ""
+}
+
+// clockPrefixDelims are the RFC 3986 sub-delims that may sit hard against a clock in prose:
+// every sub-delim except `+`.
+const clockPrefixDelims = "!$&'()*,;="
+
+// UsernameIsClock reports whether a userinfo run's username:password pair is a time of day,
+// score or ratio rather than a credential. Two shapes qualify, and nothing else:
+//
+//   - an ALL-DIGIT pair of at most two digits a side (`14:00`, `9:30`, `3:4`). Longer digit
+//     runs (`2024:1234`, `12345:67890`, and `!2024:1234`, whose match starts at the digit) are
+//     a numeric user ID and PIN, not prose, and are caught. Two short digit pairs stay exempt
+//     on purpose: "finals 3:4@events.example" is ordinary event copy, and refusing it on the X
+//     screen blocks a working brief;
+//   - any sub-delim EXCEPT `+` hard against a REAL clock (`Mon,9:30`, `Session;9:30`,
+//     `Join!9:30`): the username's segment after its last such sub-delim must be a 1–2 digit
+//     hour <= 23 and the password exactly two digits <= 59. A longer number after the
+//     punctuation (`a,2024:1234`, `!2024:1234`) is not a clock.
+//
+// The residual is deliberate and bounded: a credential whose password is two digits <= 59 and
+// whose username ends in punctuation plus an hour. Every other numeric shape is caught.
+//
+// This is the single copy: internal/platform/twitter's tweet screen calls it, so the snapshot
+// redactor and the X screen cannot drift apart.
+//
+// `+` is deliberately NOT a qualifying prefix: it is unreserved in a username and common in
+// real ones, so `alice+9:30@ops.example` and `alice+2024:1234@…` are credentials.
+func UsernameIsClock(username, password string) bool {
+	if isAllASCIIDigits(username) {
+		return len(username) <= 2 && len(password) <= 2 && isAllASCIIDigits(password)
+	}
+	i := strings.LastIndexAny(username, clockPrefixDelims)
+	if i < 0 {
+		return false
+	}
+	hour := username[i+1:]
+	if len(hour) < 1 || len(hour) > 2 || !isAllASCIIDigits(hour) || len(password) != 2 || !isAllASCIIDigits(password) {
+		return false
+	}
+	h, _ := strconv.Atoi(hour)
+	m, _ := strconv.Atoi(password)
+	return h <= 23 && m <= 59
 }
 
 // schemelessPathSnapshotRunRe matches a scheme-less link whose secret is in the PATH and

@@ -408,6 +408,10 @@ func validateGeoPlan(kind string, in CampaignInput) (geoPlan, error) {
 			return geoPlan{}, fmt.Errorf("google-ads: geo target constant %s is both targeted and excluded — the exclusion would win and the campaign would not serve there at all", id)
 		}
 	}
+	// Still named on Demand Gen alone, and still deliberately: Search, Performance Max,
+	// Video and Display all attach location criteria at the CAMPAIGN level, where
+	// proximity is the ordinary radius target this client already sends, so a fence
+	// spelled `!= campaignKindSearch` would refuse three channels that take it.
 	if len(in.ProximityTargets) > 0 && kind == campaignKindDemandGen {
 		return geoPlan{}, fmt.Errorf("google-ads: proximity targeting is not supported on %s (Demand Gen attaches location criteria at the ad group level, where this client has not verified proximity); use country or city geo targets instead", kind)
 	}

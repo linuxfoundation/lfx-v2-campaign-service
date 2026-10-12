@@ -161,58 +161,14 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		}
 	}
 	// Spend is decimal (e.g. "12.34"), unlike Google Ads' integer cost_micros —
-	// Meta reports it in whole currency units, not minor units. Parsed as a float
-	// and scaled to micros (×1e6) rather than reusing parseMetricInt.
-	var costMicros int64
-	if row.Spend != "" {
-		spend, err := strconv.ParseFloat(row.Spend, 64)
-		if err != nil {
-			return nil, &transportError{
-				Method: http.MethodGet,
-				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend is not a number (%d bytes)", len(row.Spend)),
-			}
+	// Meta reports it in whole currency units, not minor units. See parseSpendMicros.
+	costMicros, err := parseSpendMicros(row.Spend)
+	if err != nil {
+		return nil, &transportError{
+			Method: http.MethodGet,
+			Path:   path,
+			Err:    fmt.Errorf("decode campaign metrics row: %w", err),
 		}
-		if math.IsNaN(spend) || math.IsInf(spend, 0) {
-			return nil, &transportError{
-				Method: http.MethodGet,
-				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend is not finite (%d bytes)", len(row.Spend)),
-			}
-		}
-		// Finite is not enough: spend is non-negative by definition, so a negative
-		// value is malformed upstream data. Passing it through would surface a negative
-		// CostMicros, which every consumer — cost-per-click, pacing, roll-ups — would
-		// silently absorb as a credit rather than reject. Same guard as the LinkedIn and
-		// Reddit readers.
-		if spend < 0 {
-			return nil, &transportError{
-				Method: http.MethodGet,
-				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend is negative (%d bytes)", len(row.Spend)),
-			}
-		}
-		// Scale and check for overflow: a finite value like 1e307 can become +Inf
-		// when multiplied by 1_000_000, and out-of-range values must be rejected
-		// before int64 conversion to prevent underflow/corruption.
-		//
-		// The comparison is '>=', not '>': math.MaxInt64 is not exactly representable
-		// as a float64, so float64(math.MaxInt64) is 2^63 — one MORE than MaxInt64.
-		// A product of exactly 2^63 therefore passes a '>' guard and then wraps to
-		// MinInt64 on int64 conversion, corrupting the cost. (Float spacing at this
-		// magnitude is 2048, so 2^63 is reachable while 2^63-1 is not; rounding does
-		// not create this case and cannot avoid it — only '>=' rejects it.) Round
-		// first so sub-boundary spends are rounded rather than truncated, mirroring
-		// the budget-scaling guard in client.go's applyBudget.
-		scaled := math.Round(spend * 1_000_000)
-		if math.IsInf(scaled, 0) || scaled >= float64(math.MaxInt64) || scaled <= float64(math.MinInt64) {
-			return nil, &transportError{
-				Method: http.MethodGet,
-				Path:   path,
-				Err:    fmt.Errorf("decode campaign metrics row: spend overflows int64 micros (%d bytes)", len(row.Spend)),
-			}
-		}
-		costMicros = int64(scaled)
 	}
 
 	m := &CampaignMetrics{
@@ -226,6 +182,49 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		m.Ctr = float64(clicks) / float64(impressions)
 	}
 	return m, nil
+}
+
+// parseSpendMicros parses an Insights `spend` string (whole currency units, decimal, e.g.
+// "12.34") into micros of the same currency. An empty string is a legitimate 0: Meta omits
+// spend for a zero-delivery row rather than sending "0".
+//
+// Shared by the campaign metrics read and the audience read so the two cannot disagree about
+// what a malformed spend is. The returned error never echoes the value — only its length —
+// because these errors are LOGGED (see malformedCounterSummary).
+func parseSpendMicros(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	spend, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("spend is not a number (%d bytes)", len(s))
+	}
+	if math.IsNaN(spend) || math.IsInf(spend, 0) {
+		return 0, fmt.Errorf("spend is not finite (%d bytes)", len(s))
+	}
+	// Finite is not enough: spend is non-negative by definition, so a negative value is
+	// malformed upstream data. Passing it through would surface a negative CostMicros, which
+	// every consumer — cost-per-click, pacing, roll-ups — would silently absorb as a credit
+	// rather than reject. Same guard as the LinkedIn and Reddit readers.
+	if spend < 0 {
+		return 0, fmt.Errorf("spend is negative (%d bytes)", len(s))
+	}
+	// Scale and check for overflow: a finite value like 1e307 can become +Inf when multiplied
+	// by 1_000_000, and out-of-range values must be rejected before int64 conversion to
+	// prevent underflow/corruption.
+	//
+	// The comparison is '>=', not '>': math.MaxInt64 is not exactly representable as a
+	// float64, so float64(math.MaxInt64) is 2^63 — one MORE than MaxInt64. A product of
+	// exactly 2^63 therefore passes a '>' guard and then wraps to MinInt64 on int64
+	// conversion, corrupting the cost. (Float spacing at this magnitude is 2048, so 2^63 is
+	// reachable while 2^63-1 is not; rounding does not create this case and cannot avoid it —
+	// only '>=' rejects it.) Round first so sub-boundary spends are rounded rather than
+	// truncated, mirroring the budget-scaling guard in client.go's applyBudget.
+	scaled := math.Round(spend * 1_000_000)
+	if math.IsInf(scaled, 0) || scaled >= float64(math.MaxInt64) || scaled <= float64(math.MinInt64) {
+		return 0, fmt.Errorf("spend overflows int64 micros (%d bytes)", len(s))
+	}
+	return int64(scaled), nil
 }
 
 // malformedCounterSummary names which of the two integer counters failed and why,

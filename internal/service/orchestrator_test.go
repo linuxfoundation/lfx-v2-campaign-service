@@ -174,6 +174,12 @@ type fakeCampaignRepo struct {
 	// scopeResults pins the provenance blob for a scopeIDs entry, so a test can exercise the
 	// adapter's creation-customer filter without dispatching a real campaign.
 	scopeResults map[string]json.RawMessage
+	// recent backs ListRecentProjectPlatformCampaigns (the HubSpot email monitor's scope), in
+	// the newest-first order the real query returns; recentErr makes it fail and recentLimits
+	// records every limit it was called with.
+	recent       []*model.Campaign
+	recentErr    error
+	recentLimits []int
 	// scopeErr makes the scope lookup fail, so a test can assert the read does not fall back
 	// to an unscoped platform call when the scope cannot be established.
 	scopeErr error
@@ -217,6 +223,26 @@ func (r *fakeCampaignRepo) GetCampaign(_ context.Context, _, _, campaignID strin
 		return &cp, nil
 	}
 	return nil, errors.New("unused")
+}
+
+// ListRecentProjectPlatformCampaigns serves `recent`, already newest first, truncated to limit
+// exactly as the SQL's LIMIT would.
+func (r *fakeCampaignRepo) ListRecentProjectPlatformCampaigns(_ context.Context, _ string, _ model.Provider, limit int) ([]*model.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recentLimits = append(r.recentLimits, limit)
+	if r.recentErr != nil {
+		return nil, r.recentErr
+	}
+	out := make([]*model.Campaign, 0, len(r.recent))
+	for i, c := range r.recent {
+		if i >= limit {
+			break
+		}
+		cp := *c
+		out = append(out, &cp)
+	}
+	return out, nil
 }
 
 // ListProjectPlatformCampaignIDs mirrors the SQL: the project's own live campaigns on one

@@ -186,8 +186,9 @@ func (s *BriefService) classifyKeywordActionError(ctx context.Context, p *briefs
 		// corrupted row, and this path cannot tell them apart. Re-saving credentials repairs
 		// the corrupted row but no reconnect touches a rotated key, so the conservative answer
 		// is the operator-only one. No error text is logged on a decrypt arm.
+		// Attributed to the row that failed (credentialOwnerProject), not to the requester.
 		slog.ErrorContext(ctx, "stored credentials failed authenticated decryption; keyword actions cannot proceed",
-			"project_id", p.ProjectID, "platform", platform)
+			"project_id", credentialOwnerProject(aerr, p.ProjectID), "requested_by_project_id", p.ProjectID, "platform", platform)
 		return &briefs.InternalServerError{Code: "500", Message: "the keyword actions could not be applied"}
 	case errors.Is(aerr, domain.ErrNotFound):
 		// No connection row for this project and provider, and the shared system row did not

@@ -403,10 +403,10 @@ type msKeywordRead struct {
 // GetAdGroupKeywords reads the ad group's positive keywords: the ownership check the keyword
 // actions make BEFORE any mutation. A pure read, retried on 429 like every read here.
 //
-// A body that omits the Keywords field is an ERROR, not an empty ad group: Microsoft documents
-// "If no keywords exist, an empty array is returned", so absence is a body that never answered
-// the question — and reading it as "no keywords" would refuse every action as foreign, while
-// reading a malformed entry leniently could admit one that is not.
+// A body that omits the Keywords field, or sets it to null, is an ERROR, not an empty ad group:
+// Microsoft documents "If no keywords exist, an empty array is returned", so absence (or null)
+// is a body that never answered the question — and reading it as "no keywords" would refuse
+// every action as foreign, while reading a malformed entry leniently could admit one that is not.
 func (c *Client) GetAdGroupKeywords(ctx context.Context, adGroupID string) ([]AdGroupKeyword, error) {
 	if !canonicalPositiveID(adGroupID) {
 		return nil, fmt.Errorf("microsoft-ads: ad group id %q is not a numeric id", truncate(adGroupID, maxErrorBodyChars))
@@ -426,6 +426,12 @@ func (c *Client) GetAdGroupKeywords(ctx context.Context, adGroupID string) ([]Ad
 	var rows []msKeywordRead
 	if uerr := json.Unmarshal(raw, &rows); uerr != nil {
 		return nil, fmt.Errorf("microsoft-ads: decode keywords of ad group %s: %v", adGroupID, uerr)
+	}
+	if rows == nil {
+		// `"Keywords":null` decodes without error to a nil slice. Microsoft confirms an empty
+		// ad group with `[]`, so null is as unanswered as an omitted field — read as "no
+		// keywords" it would refuse every action as foreign instead of as an upstream failure.
+		return nil, fmt.Errorf("microsoft-ads: the keywords read for ad group %s returned a null Keywords field", adGroupID)
 	}
 	out := make([]AdGroupKeyword, 0, len(rows))
 	for i, r := range rows {
@@ -583,6 +589,16 @@ func (c *Client) ApplyKeywordActions(ctx context.Context, adGroupID string, acti
 	return out, nil
 }
 
+// anyIndexedError reports whether at least one entry carries an actual code.
+func anyIndexedError(items []indexedErrorItem) bool {
+	for _, it := range items {
+		if it.isError() {
+			return true
+		}
+	}
+	return false
+}
+
 // itemOutcome is one item's outcome inside a single call.
 type itemOutcome struct {
 	outcome string
@@ -601,6 +617,13 @@ func (c *Client) keywordMutation(ctx context.Context, method, what string, body 
 	}
 	var resp keywordMutateResponse
 	if uerr := json.Unmarshal(raw, &resp); uerr != nil || !resp.sawPartialErrors {
+		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
+	}
+	// A NON-EMPTY PartialErrors whose every entry is a null or code-less placeholder (`[null]`,
+	// `[{}]`) names no rejection, yet is not the `[]`/null that affirms none: read leniently it
+	// would report every item APPLIED. Fail closed as UpdateCampaignStatus does for the same
+	// shape — the call was answered, so it may have applied, and the outcome is UNCONFIRMED.
+	if len(resp.PartialErrors.Items) > 0 && !anyIndexedError(resp.PartialErrors.Items) {
 		return nil, &keywordMutationUnconfirmedError{what: what, err: errMalformedKeywordResponse}
 	}
 	att := attribute(resp.PartialErrors, n)

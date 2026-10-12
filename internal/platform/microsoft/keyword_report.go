@@ -83,6 +83,13 @@ func ValidateKeywordReportWindow(window model.MetricsWindow) error {
 	return err
 }
 
+// ReportWindowDates returns the calendar dates a campaign-scoped report submitted at now covers
+// for window — reportDateRange, the rule SubmitKeywordReport and SubmitAgeGenderReport send — so
+// a caller can tell whether a saved report describes the period a window means NOW.
+func ReportWindowDates(window model.MetricsWindow, now time.Time) (start, end time.Time, err error) {
+	return reportDateRange(window, now)
+}
+
 // keywordReportColumns is the column list SubmitKeywordReport requests, in the order the
 // reasoning on SubmitKeywordReport gives. foldKeywordReportRows resolves every column BY NAME,
 // so the order is presentational only.
@@ -120,10 +127,21 @@ var keywordReportColumns = []string{
 // Aggregation Summary with no TimePeriod column, ReturnOnlyCompleteData=false and the shared
 // reportTime are the account monitor's settings, for the same reasons (submitReportDefinition).
 func (c *Client) SubmitKeywordReport(ctx context.Context, window model.MetricsWindow, campaignIDs []string) (reportID string, windowStart, windowEnd time.Time, err error) {
-	if err := ValidateMonitorAccountID(c.account.AccountID); err != nil {
+	if err := validateKeywordReportScope(campaignIDs); err != nil {
 		return "", time.Time{}, time.Time{}, err
 	}
-	if err := validateKeywordReportScope(campaignIDs); err != nil {
+	return c.submitCampaignScopedReport(ctx, "KeywordPerformanceReportRequest", "keyword", keywordReportColumns, window, campaignIDs, ErrKeywordReportScopeRejected)
+}
+
+// submitCampaignScopedReport submits a Summary-aggregated CSV report of reportType over window,
+// scoped to campaignIDs (already validated by the caller) on the client's account, with the
+// settings SubmitKeywordReport documents: Campaigns-only scope, each entry carrying the account
+// id nested, ReturnOnlyCompleteData=false, no Filter, no MaxRows, the shared reportTime. A
+// 2027/InvalidAccountThruCampaignReportScope rejection is returned wrapping rejected, never
+// retried with a wider scope. Shared by the keyword and age/gender reports so neither can drift
+// onto a wider scope or another day boundary.
+func (c *Client) submitCampaignScopedReport(ctx context.Context, reportType, what string, columns []string, window model.MetricsWindow, campaignIDs []string, rejected error) (reportID string, windowStart, windowEnd time.Time, err error) {
+	if err := ValidateMonitorAccountID(c.account.AccountID); err != nil {
 		return "", time.Time{}, time.Time{}, err
 	}
 	start, end, err := reportDateRange(window, c.now())
@@ -137,11 +155,11 @@ func (c *Client) SubmitKeywordReport(ctx context.Context, window model.MetricsWi
 	}
 	body := map[string]any{
 		"ReportRequest": map[string]any{
-			"Type":                   "KeywordPerformanceReportRequest",
+			"Type":                   reportType,
 			"Format":                 "Csv",
 			"ReturnOnlyCompleteData": false,
 			"Aggregation":            "Summary",
-			"Columns":                keywordReportColumns,
+			"Columns":                columns,
 			"Scope":                  map[string]any{"Campaigns": campaigns},
 			"Time":                   reportTime(start, end),
 		},
@@ -150,10 +168,10 @@ func (c *Client) SubmitKeywordReport(ctx context.Context, window model.MetricsWi
 	if err != nil {
 		var ae *apiError
 		if errors.As(err, &ae) && (ae.hasErrorCode(msErrCodeInvalidScope) || ae.hasErrorCode(msErrNameInvalidScope)) {
-			return "", time.Time{}, time.Time{}, fmt.Errorf("submit microsoft keyword report: %w "+
+			return "", time.Time{}, time.Time{}, fmt.Errorf("submit microsoft %s report: %w "+
 				"(error %s/%s); it is NOT widened to AccountIds here, because that would read every campaign on the account — see "+
 				"docs/knowledge/log/2026-08-18-LFXV2-3260-scope-union-tradeoff.md: %w",
-				ErrKeywordReportScopeRejected, msErrCodeInvalidScope, msErrNameInvalidScope, errors.Unwrap(err))
+				what, rejected, msErrCodeInvalidScope, msErrNameInvalidScope, errors.Unwrap(err))
 		}
 		return "", time.Time{}, time.Time{}, err
 	}
@@ -163,15 +181,22 @@ func (c *Client) SubmitKeywordReport(ctx context.Context, window model.MetricsWi
 // validateKeywordReportScope refuses an empty scope, one past the documented ceiling, and any
 // id that is not a canonical positive Microsoft id (the same shape as an account id).
 func validateKeywordReportScope(ids []string) error {
+	return validateCampaignReportScope(ids, ErrKeywordReportScope)
+}
+
+// validateCampaignReportScope is validateKeywordReportScope's rule with the kind's own
+// sentinel: the scope ceiling and id shape are AccountThroughAdGroupReportScope's, which both
+// the keyword and the age/gender report requests take.
+func validateCampaignReportScope(ids []string, sentinel error) error {
 	if len(ids) == 0 {
-		return fmt.Errorf("%w: no campaigns; an empty scope is never sent", ErrKeywordReportScope)
+		return fmt.Errorf("%w: no campaigns; an empty scope is never sent", sentinel)
 	}
 	if len(ids) > MaxKeywordReportCampaigns {
-		return fmt.Errorf("%w: %d campaigns exceeds the documented limit of %d", ErrKeywordReportScope, len(ids), MaxKeywordReportCampaigns)
+		return fmt.Errorf("%w: %d campaigns exceeds the documented limit of %d", sentinel, len(ids), MaxKeywordReportCampaigns)
 	}
 	for _, id := range ids {
-		if err := ValidateKeywordReportCampaignID(id); err != nil {
-			return err
+		if !monitorAccountIDRE.MatchString(id) {
+			return fmt.Errorf("%w: campaign id %q is not a Microsoft campaign id", sentinel, clipID(id))
 		}
 	}
 	return nil

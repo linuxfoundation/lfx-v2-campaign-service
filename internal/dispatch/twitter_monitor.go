@@ -32,8 +32,9 @@ import (
 // It is gated behind TWITTER_METRICS_ENABLED (twitterMonitorEnabled), default off, on the same
 // terms as Microsoft's and Reddit's: the stats-jobs contract — active_entities, job creation, the
 // job-status read and the results file — follows X's public documentation but has NOT been
-// exercised against a live X Ads account. The flag gates ONLY this monitor; X's per-campaign
-// metrics read (ReadMetrics), a different and long-standing synchronous endpoint, is unaffected.
+// exercised against a live X Ads account. The flag gates this monitor AND the X audience read
+// (twitter_audience.go), the two features on the stats-jobs contract; X's per-campaign metrics
+// read (ReadMetrics), a different and long-standing synchronous endpoint, is unaffected.
 var _ service.AccountReportReader = (*TwitterDispatcher)(nil)
 
 // twitterMonitorEnabled gates the report-backed X monitor, mirroring microsoftMonitorEnabled:
@@ -138,6 +139,12 @@ func (d *TwitterDispatcher) SubmitAccountReport(ctx context.Context, projectID s
 	client, err := d.resolveTwitterMonitorClient(ctx, projectID, platform, accountID)
 	if err != nil {
 		return nil, err
+	}
+	// Only the pod owning the account's stats-job lease submits (creates jobs); another pod's
+	// submission fails in the orchestrator's transient class — logged, the saved report still
+	// served, retried on a later read — before contacting X.
+	if lerr := d.ownStatsJobs(ctx, accountID); lerr != nil {
+		return nil, fmt.Errorf("submit x ads account report: %w", lerr)
 	}
 	reportID, start, end, err := client.SubmitAccountCampaignReport(ctx, days)
 	if errors.Is(err, twitter.ErrStatsJobBudget) {

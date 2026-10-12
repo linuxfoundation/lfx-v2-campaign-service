@@ -51,7 +51,7 @@ func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platf
 	adGroupID, _ := redditChildIDs(campaign)
 	adGroupID = strings.TrimSpace(adGroupID)
 	if adGroupID == "" {
-		return fmt.Errorf("write reddit campaign bid: campaign %s records no ad group created by this service, so there is no ad group whose bid this endpoint may set; change the bid in Reddit Ads Manager: %w",
+		return fmt.Errorf("write reddit campaign bid: campaign %s records no ad group created by this service — either it was never provisioned, or the campaign was ADOPTED, which records none — so there is no ad group whose bid this endpoint may set; change the bid in Reddit Ads Manager: %w",
 			campaign.PlatformCampaignID, domain.ErrBidUnwritable)
 	}
 
@@ -163,9 +163,15 @@ func (d *RedditDispatcher) WriteBid(ctx context.Context, projectID string, platf
 		return fmt.Errorf("write reddit campaign bid: ad group %s bids %s, not cost-per-click; this endpoint sets a max CPC bid and never changes the bid type: %w",
 			adGroupID, reported, domain.ErrBidUnwritable)
 	}
-	// GUARD 4 — THE CURRENT BID MUST BE LEGIBLE.
+	// GUARD 4 — THE CURRENT BID MUST BE LEGIBLE. An absent or null bid_value is as illegible as
+	// an unparseable one: a manual-CPC ad group always carries a bid, so its absence is an
+	// unreported fact, and unreported facts are refused, never assumed.
 	if current.BidValueUnparseable {
 		return fmt.Errorf("write reddit campaign bid: ad group %s reported a bid_value this service could not read: %w",
+			adGroupID, domain.ErrBidUnwritable)
+	}
+	if current.BidValueMicros == nil {
+		return fmt.Errorf("write reddit campaign bid: ad group %s did not report its current bid_value: %w",
 			adGroupID, domain.ErrBidUnwritable)
 	}
 

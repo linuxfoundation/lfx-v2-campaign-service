@@ -192,6 +192,58 @@ func TestAdoptCampaign_UnverifiableIsNeverReportedAsAbsent(t *testing.T) {
 	}
 }
 
+// A campaign the platform reports under ANOTHER ad account exists — it is not absent, so a 404
+// would invite a duplicate of a live campaign — and the answer is definite, so it is not a 503
+// either. It is the same 409 refusal the toggle and metrics paths give a foreign-account row
+// (LFXV2-2665: Meta, Reddit and X adopters prove provenance from the answer).
+func TestAdoptCampaign_ForeignAccountIs409NotAbsentAndPersistsNothing(t *testing.T) {
+	for _, platform := range []model.Provider{model.ProviderMetaAds, model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderMicrosoftAds} {
+		t.Run(string(platform), func(t *testing.T) {
+			disp := &adopterDispatcher{err: fmt.Errorf("adopt %s campaign 1: the platform reports it under ad account act_888, not the connection's account act_777: %w",
+				platform, domain.ErrCampaignAccountMismatch)}
+			s, camps := newAdoptService(t, platform, disp)
+			p := adoptPayload()
+			p.Platform = string(platform)
+
+			_, err := s.AdoptCampaign(context.Background(), p)
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)
+			}
+			if !strings.Contains(conflict.Message, "different ad account") {
+				t.Errorf("409 message %q does not say why the campaign was refused", conflict.Message)
+			}
+			if strings.Contains(conflict.Message, "act_888") || strings.Contains(conflict.Message, "act_777") {
+				t.Errorf("409 message %q leaks an account id", conflict.Message)
+			}
+			if len(camps.adopted) != 0 {
+				t.Errorf("persisted a binding for a campaign in another account")
+			}
+		})
+	}
+}
+
+// A live campaign of a type the platform's slot cannot hold is a definite 409 with its own message
+// — never the 404 that would invite a duplicate of a live campaign, never a retryable 503.
+func TestAdoptCampaign_UnsupportedCampaignTypeIs409(t *testing.T) {
+	disp := &adopterDispatcher{err: fmt.Errorf("adopt: %w", domain.ErrAdoptionCampaignTypeUnsupported)}
+	s, camps := newAdoptService(t, model.ProviderMicrosoftAds, disp)
+	p := adoptPayload()
+	p.Platform = string(model.ProviderMicrosoftAds)
+
+	_, err := s.AdoptCampaign(context.Background(), p)
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("got %T (%v), want *briefs.ConflictError", err, err)
+	}
+	if !strings.Contains(conflict.Message, "Microsoft Search campaigns only") {
+		t.Errorf("409 message %q does not name the supported type", conflict.Message)
+	}
+	if len(camps.adopted) != 0 {
+		t.Errorf("persisted a binding for a campaign of an unsupported type")
+	}
+}
+
 // An id-less ref, treated as success, writes a row every reader takes as provisioned.
 func TestAdoptCampaign_RefWithNoIDIsNotSuccess(t *testing.T) {
 	disp := &adopterDispatcher{ref: &model.PlatformCampaignRef{ID: "  ", Name: "n"}}
@@ -553,14 +605,30 @@ func TestAdoptCampaign_OccupiedBriefReturns409WithoutPlatformCall(t *testing.T) 
 
 	// Pre-populate the campaign repo with an existing campaign for this (brief, platform) pair
 	// The key format is briefID|platformString
-	// BOTH Google slots, because the fast-path 409 fires only when every adoptable slot is
-	// taken — with demand-gen free, the correct answer is to contact the platform and find
-	// out which slot this campaign wants. Filling both is what makes "occupied" unambiguous
-	// and keeps this test about the no-platform-call guarantee it is named for.
+	// EVERY Google slot, because the fast-path 409 fires only when all of them are taken —
+	// with one free, the correct answer is to contact the platform and find out which slot
+	// this campaign wants. Filling them all is what makes "occupied" unambiguous and keeps
+	// this test about the no-platform-call guarantee it is named for. The list must grow
+	// with model.AdoptableVariants, or this test silently stops exercising the fast path.
 	camps.existing["b1|google-ads|demand-gen"] = &model.Campaign{
 		ID: "existing-demandgen", ProjectID: "cncf", BriefID: "b1",
 		Platform: model.ProviderGoogleAds, Variant: "demand-gen",
 		PlatformCampaignID: "6666666666", Status: model.CampaignStatusCreated,
+	}
+	camps.existing["b1|google-ads|performance-max"] = &model.Campaign{
+		ID: "existing-pmax", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "performance-max",
+		PlatformCampaignID: "7777777777", Status: model.CampaignStatusCreated,
+	}
+	camps.existing["b1|google-ads|video"] = &model.Campaign{
+		ID: "existing-video", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "video",
+		PlatformCampaignID: "8888888888", Status: model.CampaignStatusCreated,
+	}
+	camps.existing["b1|google-ads|display"] = &model.Campaign{
+		ID: "existing-display", ProjectID: "cncf", BriefID: "b1",
+		Platform: model.ProviderGoogleAds, Variant: "display",
+		PlatformCampaignID: "9999999999", Status: model.CampaignStatusCreated,
 	}
 	camps.existing["b1|google-ads"] = &model.Campaign{
 		ID:                 "existing-campaign",
