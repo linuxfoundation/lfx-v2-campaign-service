@@ -428,3 +428,17 @@ func TestDiscover_HidesWhatMustNotBeIncludedAndInfersTheBrand(t *testing.T) {
 	assert.Equal(t, 3, out.Hidden)
 	assert.Equal(t, "SYN", out.Event.BrandShort, "the brand the event's own lists are filed under")
 }
+
+// TestRunQA_FlagsTheEventsOwnRegistrantsAuditedDirectly is the live miss: the
+// registrants list itself, picked as the send list, passed check 4.
+func TestRunQA_FlagsTheEventsOwnRegistrantsAuditedDirectly(t *testing.T) {
+	portal := seoulPortal()
+	portal.lists["26Q3 - AGNTCon + MCPCon Japan 2026 Registrants"] = "29895"
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "29895", "AGNTCon + MCPCon Japan 2026", false, false, nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, audience.VerdictPass, out.Checks.CurrentRegistrants.Verdict,
+		"sending a registration push to this edition's own registrants must not pass")
+}

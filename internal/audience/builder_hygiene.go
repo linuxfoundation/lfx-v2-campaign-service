@@ -61,7 +61,13 @@ var genericBrandSegments = map[string]bool{"events": true, "lf events": true, "e
 // "<YYQN> - <BRAND> - <Event>", so the brand they agree on is the event's brand.
 // At least two names must agree, and a tie between brands yields "" — a guessed
 // brand gates an audience on the wrong master list.
-func DominantBrand(names []string) string {
+//
+// eventName keeps the event itself out: some lists file the EVENT in that slot
+// ("26Q3 - AGNTCon + MCPCon Japan - APAC Registrants"), and the live test read
+// the event's own name back as its brand. A segment sharing a word with the event
+// name is the event, not a brand.
+func DominantBrand(names []string, eventName string) string {
+	eventWords := EventKeywords(eventName)
 	counts := map[string]int{}
 	display := map[string]string{}
 	for _, n := range names {
@@ -71,7 +77,7 @@ func DominantBrand(names []string) string {
 		}
 		seg := strings.TrimSpace(m[1])
 		key := strings.ToLower(seg)
-		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") {
+		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") || SharesKeyword(seg, eventWords) {
 			continue
 		}
 		counts[key]++

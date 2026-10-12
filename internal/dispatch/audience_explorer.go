@@ -277,7 +277,7 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 		for _, c := range candidates {
 			names = append(names, c.Name)
 		}
-		out.Event.BrandShort = audience.DominantBrand(names)
+		out.Event.BrandShort = audience.DominantBrand(names, out.Event.Name)
 	}
 	return out, nil
 }
@@ -1827,7 +1827,15 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// The names this list INCLUDES, for check 4. One hop is not needed here, unlike the
 	// exclusions: ComposeMaster wraps exclusions in a single Combined-Suppression list whose
 	// own name says nothing, whereas inclusions are referenced directly.
+	//
+	// The audited list's OWN name counts too. A list used directly as the send — this
+	// edition's registrants picked with "use an existing list" — includes no other list,
+	// so judging only its references passed the very list check 4 exists to catch
+	// (seen live on AgntCon Japan's registrants list).
 	inclusionNames := make([]string, 0, 4)
+	if name := strings.TrimSpace(list.Name); name != "" {
+		inclusionNames = append(inclusionNames, name)
+	}
 	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
 		if name := nameByID[id]; name != "" {
 			inclusionNames = append(inclusionNames, name)

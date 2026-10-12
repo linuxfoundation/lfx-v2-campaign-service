@@ -41,10 +41,13 @@ func TestDominantBrand(t *testing.T) {
 		"26Q3 - AAIF - AGNTCon + MCPCon Japan 2026 - APAC Event Registrants",
 		"26Q3 - CNCF - AGNTCon + MCPCon Japan - Master",
 		"26Q3 - AGNTCon + MCPCon Japan 2026 Registrants",
-	}))
-	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y", "26Q3 - CNCF - X - y"}), "a tie is not a brand")
-	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y"}), "one name is not agreement")
-	assert.Empty(t, DominantBrand([]string{"26Q3 - LF Events - A - b", "26Q3 - LF Events - C - d"}), "a generic segment is not a brand")
+		"26Q3 - AGNTCon + MCPCon Japan - APAC Sibling Registrants",
+		"26Q3 - AGNTCon + MCPCon Japan - Web Visitors",
+		"26Q3 - AGNTCon + MCPCon Japan - Speakers",
+	}, "AGNTCon + MCPCon Japan"), "the event's own name in the brand slot is not its brand (seen live)")
+	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y", "26Q3 - CNCF - X - y"}, ""), "a tie is not a brand")
+	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y"}, ""), "one name is not agreement")
+	assert.Empty(t, DominantBrand([]string{"26Q3 - LF Events - A - b", "26Q3 - LF Events - C - d"}, ""), "a generic segment is not a brand")
 }
 
 func TestGuardReuse_TheLiveTokyoRanking(t *testing.T) {

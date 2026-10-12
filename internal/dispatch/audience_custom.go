@@ -127,7 +127,7 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			for _, h := range hits {
 				names = append(names, h.Name)
 			}
-			if brand := audience.DominantBrand(names); brand != "" {
+			if brand := audience.DominantBrand(names, event.Name); brand != "" {
 				out.Draft.BrandShort = brand
 				out.Event.BrandShort = brand
 				if gate, gerr := x.bestMatch(ctx, client, audience.BrandMasterProbes(brand), func(name string) bool {

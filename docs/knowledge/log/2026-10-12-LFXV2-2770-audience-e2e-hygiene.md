@@ -20,3 +20,13 @@
   (`event_name` | `subject` | `related_words` | `brand_only`, `LastSentMatchReason`).
 - Interpretation returns the `event` it planned from, so the UI can run QA's current-registrants
   check outside discovery.
+
+**Fix, same day, found by the re-test** — `DominantBrand` read the event's OWN name back as its brand
+("AGNTCon + MCPCon Japan"), because some of the event's lists file it in the brand slot
+("26Q3 - AGNTCon + MCPCon Japan - APAC Registrants"). It now takes the event name and skips any
+segment sharing a word with it.
+
+**Fix, same day** — QA's current-registrants check judged only the lists an audited list REFERENCES,
+so this edition's own registrants list, used directly as the send list, passed. `RunQA` now counts
+the audited list's own name as an inclusion for that check
+(`TestRunQA_FlagsTheEventsOwnRegistrantsAuditedDirectly`).
