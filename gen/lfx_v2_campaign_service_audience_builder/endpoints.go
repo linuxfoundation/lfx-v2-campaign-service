@@ -27,6 +27,9 @@ type Endpoints struct {
 	ComposeAudienceMaster          goa.Endpoint
 	AttachExistingAudience         goa.Endpoint
 	RunAudienceQa                  goa.Endpoint
+	InterpretCustomAudience        goa.Endpoint
+	PreviewCustomAudience          goa.Endpoint
+	CreateCustomAudience           goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the
@@ -45,6 +48,9 @@ func NewEndpoints(s Service) *Endpoints {
 		ComposeAudienceMaster:          NewComposeAudienceMasterEndpoint(s, a.JWTAuth),
 		AttachExistingAudience:         NewAttachExistingAudienceEndpoint(s, a.JWTAuth),
 		RunAudienceQa:                  NewRunAudienceQaEndpoint(s, a.JWTAuth),
+		InterpretCustomAudience:        NewInterpretCustomAudienceEndpoint(s, a.JWTAuth),
+		PreviewCustomAudience:          NewPreviewCustomAudienceEndpoint(s, a.JWTAuth),
+		CreateCustomAudience:           NewCreateCustomAudienceEndpoint(s, a.JWTAuth),
 	}
 }
 
@@ -61,6 +67,9 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ComposeAudienceMaster = m(e.ComposeAudienceMaster)
 	e.AttachExistingAudience = m(e.AttachExistingAudience)
 	e.RunAudienceQa = m(e.RunAudienceQa)
+	e.InterpretCustomAudience = m(e.InterpretCustomAudience)
+	e.PreviewCustomAudience = m(e.PreviewCustomAudience)
+	e.CreateCustomAudience = m(e.CreateCustomAudience)
 }
 
 // NewGetAudienceBuilderCapabilitiesEndpoint returns an endpoint function that
@@ -299,5 +308,77 @@ func NewRunAudienceQaEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.End
 			return nil, err
 		}
 		return s.RunAudienceQa(ctx, p)
+	}
+}
+
+// NewInterpretCustomAudienceEndpoint returns an endpoint function that calls
+// the method "interpret-custom-audience" of service
+// "lfx-v2-campaign-service-audience-builder".
+func NewInterpretCustomAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*InterpretCustomAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.InterpretCustomAudience(ctx, p)
+	}
+}
+
+// NewPreviewCustomAudienceEndpoint returns an endpoint function that calls the
+// method "preview-custom-audience" of service
+// "lfx-v2-campaign-service-audience-builder".
+func NewPreviewCustomAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*PreviewCustomAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.PreviewCustomAudience(ctx, p)
+	}
+}
+
+// NewCreateCustomAudienceEndpoint returns an endpoint function that calls the
+// method "create-custom-audience" of service
+// "lfx-v2-campaign-service-audience-builder".
+func NewCreateCustomAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CreateCustomAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = *p.BearerToken
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.CreateCustomAudience(ctx, p)
 	}
 }

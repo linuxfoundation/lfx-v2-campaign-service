@@ -384,6 +384,7 @@ func MatchLastSent(name, subject string, t LastSentTerms) LastSentMatch {
 
 	// Nothing in the event name matched. The brand is the last resort, and it is reported
 	// AS a last resort so the caller can drop it when the event itself matched elsewhere.
+
 	for token := range t.Brand {
 		if _, ok := words[token]; ok {
 			m.Matched, m.BrandOnly, m.Fallback = true, true, true
@@ -409,4 +410,36 @@ func isOtherEdition(text string, eventRegions map[string]struct{}) bool {
 		}
 	}
 	return true
+}
+
+// Last-sent match reasons, shown beside each prior send so an operator can see why
+// it is listed — a brand-only row ("CNCF Newsletter") is precedent of a weaker kind
+// than a send named for the event, and without the reason the two look alike.
+const (
+	LastSentReasonName    = "event_name"
+	LastSentReasonSubject = "subject"
+	LastSentReasonRelated = "related_words"
+	LastSentReasonBrand   = "brand_only"
+)
+
+// LastSentMatchReason says which evidence admitted a prior send: an event word in
+// its name, an event word only in its subject, only generic event words, or only
+// the brand. "" when it does not match at all.
+func LastSentMatchReason(name, subject string, t LastSentTerms) string {
+	m := MatchLastSent(name, subject, t)
+	switch {
+	case !m.Matched:
+		return ""
+	case m.BrandOnly:
+		return LastSentReasonBrand
+	case m.Fallback:
+		return LastSentReasonRelated
+	}
+	inName := EventKeywords(name)
+	for token := range t.Event {
+		if _, ok := inName[token]; ok {
+			return LastSentReasonName
+		}
+	}
+	return LastSentReasonSubject
 }

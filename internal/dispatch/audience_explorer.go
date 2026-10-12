@@ -268,6 +268,15 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	}
 
 	out.MissingSignals = audience.MissingSignals(found)
+
+	// The page named no brand: take the one this event's own lists are filed under.
+	if strings.TrimSpace(out.Event.BrandShort) == "" {
+		names := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			names = append(names, c.Name)
+		}
+		out.Event.BrandShort = audience.DominantBrand(names)
+	}
 	return out, nil
 }
 
@@ -290,6 +299,12 @@ func (x *AudienceExplorer) classifyInto(
 	seen[list.ListID] = struct{}{}
 
 	classification := audience.ClassifyList(list.Name, filters, identity)
+	// Never offered for inclusion: a suppression would put an opt-out audience into the
+	// send, and masters, test and staff lists each belong elsewhere or nowhere.
+	if _, hide := audience.DiscoveryHidden(list.Name, classification.Signal == audience.SignalUncertain); hide {
+		out.Hidden++
+		return
+	}
 	// `uncertain` is recorded as a visible row but NOT as a signal found. Counting it
 	// would suppress the missing-signal section for a portal where nothing was
 	// actually identified — the one case where that section matters most.
@@ -879,6 +894,8 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		row := audience.LastSentEmail{
 			EmailID:          r.row.email.ID,
 			EmailName:        r.row.email.Name,
+			Subject:          r.row.email.Subject,
+			MatchReason:      audience.LastSentMatchReason(r.row.email.Name, r.row.email.Subject, terms),
 			HubSpotURL:       sendDetailsURL(client, r.row.email),
 			IncludedLists:    []audience.ListBrief{},
 			SuppressionLists: []audience.ListBrief{},
@@ -1712,7 +1729,13 @@ func (x *AudienceExplorer) createList(ctx context.Context, projectID, name strin
 //
 // It creates and changes nothing, and its verdict is evidence for a human decision
 // rather than a gate — see internal/audience/builder_qa.go.
-func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (outcome *audience.QaOutcome, err error) {
+//
+// sendSuppressionIDs are suppression lists the send will apply on top of the list
+// (HubSpot's send-time exclusions). They are read like the list's own exclusions —
+// by name, one hop into a combined suppression — and count toward the suppression
+// and completeness checks. One that cannot be read counts for nothing, so a
+// mistyped id can never turn a FAIL into a PASS.
+func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (outcome *audience.QaOutcome, err error) {
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -1779,7 +1802,25 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		}
 	}
 
-	exclusionNames := x.exclusionNames(ctx, client, cache, filters, nameByID)
+	excludedIDs := audience.ReferencedListIDs(filters, "NOT_IN_LIST")
+	alreadyExcluded := make(map[string]bool, len(excludedIDs))
+	for _, id := range excludedIDs {
+		alreadyExcluded[id] = true
+	}
+	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
+	for _, id := range audience.UniqueIDs(sendSuppressionIDs) {
+		if alreadyExcluded[id] {
+			continue
+		}
+		if _, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr != nil {
+			continue
+		}
+		if _, done := nameByID[id]; !done {
+			nameByID[id] = x.listName(ctx, client, cache, id)
+		}
+		sendTimeIDs = append(sendTimeIDs, id)
+	}
+	exclusionNames := x.exclusionNames(ctx, client, cache, append(excludedIDs, sendTimeIDs...), nameByID)
 
 	// The names this list INCLUDES, for check 4. One hop is not needed here, unlike the
 	// exclusions: ComposeMaster wraps exclusions in a single Combined-Suppression list whose
@@ -1793,7 +1834,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 
 	signalMapping := audience.CheckSignalMapping(filters, nameByID)
 	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
-	completeness := audience.CheckExclusionCompleteness(filters)
+	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs))
 	currentRegistrants := audience.CheckCurrentRegistrants(eventName, inclusionNames)
 
 	findings := make([]audience.Finding, 0, 7)
@@ -1829,9 +1870,9 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 // Exactly one hop. Suppression lists reference each other, and an unbounded walk
 // across a portal's exclusion graph would spend the request's deadline reading lists
 // whose bearing on this audience is already indirect.
-func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, filters []audience.ListFilter, nameByID map[string]string) []string {
+func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, excludedIDs []string, nameByID map[string]string) []string {
 	out := make([]string, 0, 8)
-	for _, id := range audience.ReferencedListIDs(filters, "NOT_IN_LIST") {
+	for _, id := range excludedIDs {
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
 		}

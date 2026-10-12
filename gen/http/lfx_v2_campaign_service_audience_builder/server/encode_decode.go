@@ -1723,6 +1723,533 @@ func EncodeRunAudienceQaError(encoder func(context.Context, http.ResponseWriter)
 	}
 }
 
+// EncodeInterpretCustomAudienceResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-audience-builder
+// interpret-custom-audience endpoint.
+func EncodeInterpretCustomAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceaudiencebuilder.AudienceCustomInterpretResult)
+		enc := encoder(ctx, w)
+		body := NewInterpretCustomAudienceResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeInterpretCustomAudienceRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-audience-builder interpret-custom-audience
+// endpoint.
+func DecodeInterpretCustomAudienceRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload, error) {
+		var payload *lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload
+		var (
+			body InterpretCustomAudienceRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateInterpretCustomAudienceRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewInterpretCustomAudiencePayload(&body, projectID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeInterpretCustomAudienceError returns an encoder for errors returned by
+// the interpret-custom-audience lfx-v2-campaign-service-audience-builder
+// endpoint.
+func EncodeInterpretCustomAudienceError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceaudiencebuilder.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewInterpretCustomAudienceBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceaudiencebuilder.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewInterpretCustomAudienceConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewInterpretCustomAudienceServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceaudiencebuilder.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewInterpretCustomAudienceInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceaudiencebuilder.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewInterpretCustomAudienceNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewInterpretCustomAudiencePayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewInterpretCustomAudienceUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodePreviewCustomAudienceResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-audience-builder
+// preview-custom-audience endpoint.
+func EncodePreviewCustomAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceaudiencebuilder.AudienceCustomPreviewResult)
+		enc := encoder(ctx, w)
+		body := NewPreviewCustomAudienceResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodePreviewCustomAudienceRequest returns a decoder for requests sent to
+// the lfx-v2-campaign-service-audience-builder preview-custom-audience
+// endpoint.
+func DecodePreviewCustomAudienceRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload, error) {
+		var payload *lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload
+		var (
+			body PreviewCustomAudienceRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidatePreviewCustomAudienceRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewPreviewCustomAudiencePayload(&body, projectID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodePreviewCustomAudienceError returns an encoder for errors returned by
+// the preview-custom-audience lfx-v2-campaign-service-audience-builder
+// endpoint.
+func EncodePreviewCustomAudienceError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceaudiencebuilder.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPreviewCustomAudienceBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceaudiencebuilder.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPreviewCustomAudienceConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPreviewCustomAudienceServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceaudiencebuilder.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPreviewCustomAudienceInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceaudiencebuilder.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPreviewCustomAudienceNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPreviewCustomAudiencePayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewPreviewCustomAudienceUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeCreateCustomAudienceResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-audience-builder create-custom-audience
+// endpoint.
+func EncodeCreateCustomAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceaudiencebuilder.AudienceComposedList)
+		enc := encoder(ctx, w)
+		body := NewCreateCustomAudienceResponseBody(res)
+		w.WriteHeader(http.StatusCreated)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeCreateCustomAudienceRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-audience-builder create-custom-audience endpoint.
+func DecodeCreateCustomAudienceRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload, error) {
+		var payload *lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload
+		var (
+			body CreateCustomAudienceRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateCreateCustomAudienceRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+
+		var (
+			projectID   string
+			bearerToken *string
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		payload = NewCreateCustomAudiencePayload(&body, projectID, bearerToken)
+		if payload.BearerToken != nil {
+			if strings.Contains(*payload.BearerToken, " ") {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred := strings.SplitN(*payload.BearerToken, " ", 2)[1]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeCreateCustomAudienceError returns an encoder for errors returned by
+// the create-custom-audience lfx-v2-campaign-service-audience-builder endpoint.
+func EncodeCreateCustomAudienceError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "ComposePartial":
+			var res *lfxv2campaignserviceaudiencebuilder.AudienceComposePartialError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudienceComposePartialResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceaudiencebuilder.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudienceInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "BadRequest":
+			var res *lfxv2campaignserviceaudiencebuilder.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudienceBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceaudiencebuilder.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudienceConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudienceServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceaudiencebuilder.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudienceNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudiencePayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewCreateCustomAudienceUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // marshalLfxv2campaignserviceaudiencebuilderAudienceEventIdentityToAudienceEventIdentityResponseBody
 // builds a value of type *AudienceEventIdentityResponseBody from a value of
 // type *lfxv2campaignserviceaudiencebuilder.AudienceEventIdentity.
@@ -1803,6 +2330,8 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceLastSentEmailToAudienceLa
 		SentAt:           v.SentAt,
 		HubspotURL:       v.HubspotURL,
 		ListsUnavailable: v.ListsUnavailable,
+		Subject:          v.Subject,
+		MatchReason:      v.MatchReason,
 	}
 	if v.IncludedLists != nil {
 		res.IncludedLists = make([]*AudienceListBriefResponseBody, len(v.IncludedLists))
@@ -2066,6 +2595,7 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceQaExclusionCheckToAudienc
 	res := &AudienceQaExclusionCheckResponseBody{
 		Verdict:        v.Verdict,
 		ExclusionCount: v.ExclusionCount,
+		SendTimeCount:  v.SendTimeCount,
 	}
 	if v.Findings != nil {
 		res.Findings = make([]*AudienceQaFindingResponseBody, len(v.Findings))
@@ -2078,6 +2608,282 @@ func marshalLfxv2campaignserviceaudiencebuilderAudienceQaExclusionCheckToAudienc
 		}
 	} else {
 		res.Findings = []*AudienceQaFindingResponseBody{}
+	}
+
+	return res
+}
+
+// unmarshalAudienceCustomAnswerRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomAnswer
+// builds a value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceCustomAnswer from a value of
+// type *AudienceCustomAnswerRequestBody.
+func unmarshalAudienceCustomAnswerRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomAnswer(v *AudienceCustomAnswerRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceCustomAnswer {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignserviceaudiencebuilder.AudienceCustomAnswer{
+		QuestionID: v.QuestionID,
+		Question:   v.Question,
+		Answer:     *v.Answer,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceCustomCriteriaToAudienceCustomCriteriaResponseBody
+// builds a value of type *AudienceCustomCriteriaResponseBody from a value of
+// type *lfxv2campaignserviceaudiencebuilder.AudienceCustomCriteria.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceCustomCriteriaToAudienceCustomCriteriaResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceCustomCriteria) *AudienceCustomCriteriaResponseBody {
+	res := &AudienceCustomCriteriaResponseBody{
+		ContactLocation:        v.ContactLocation,
+		EventRegistered:        v.EventRegistered,
+		EducationEnrolled:      v.EducationEnrolled,
+		GateEventHistory:       v.GateEventHistory,
+		GateListID:             v.GateListID,
+		Ambassadors:            v.Ambassadors,
+		EducationTopicProperty: v.EducationTopicProperty,
+		Label:                  v.Label,
+	}
+	if v.Cities != nil {
+		res.Cities = make([]string, len(v.Cities))
+		for i, val := range v.Cities {
+			res.Cities[i] = val
+		}
+	}
+	if v.Countries != nil {
+		res.Countries = make([]string, len(v.Countries))
+		for i, val := range v.Countries {
+			res.Countries[i] = val
+		}
+	}
+	if v.RegisteredFor != nil {
+		res.RegisteredFor = make([]string, len(v.RegisteredFor))
+		for i, val := range v.RegisteredFor {
+			res.RegisteredFor[i] = val
+		}
+	}
+	if v.PropertyFilters != nil {
+		res.PropertyFilters = make([]*AudienceCustomPropertyFilterResponseBody, len(v.PropertyFilters))
+		for i, val := range v.PropertyFilters {
+			if val == nil {
+				res.PropertyFilters[i] = nil
+				continue
+			}
+			res.PropertyFilters[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceCustomPropertyFilterToAudienceCustomPropertyFilterResponseBody(val)
+		}
+	}
+	if v.Speakers != nil {
+		res.Speakers = marshalLfxv2campaignserviceaudiencebuilderAudienceCustomSpeakersToAudienceCustomSpeakersResponseBody(v.Speakers)
+	}
+	if v.EducationTopics != nil {
+		res.EducationTopics = make([]string, len(v.EducationTopics))
+		for i, val := range v.EducationTopics {
+			res.EducationTopics[i] = val
+		}
+	}
+	if v.PageViewUrls != nil {
+		res.PageViewUrls = make([]string, len(v.PageViewUrls))
+		for i, val := range v.PageViewUrls {
+			res.PageViewUrls[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceCustomPropertyFilterToAudienceCustomPropertyFilterResponseBody
+// builds a value of type *AudienceCustomPropertyFilterResponseBody from a
+// value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceCustomPropertyFilter.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceCustomPropertyFilterToAudienceCustomPropertyFilterResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceCustomPropertyFilter) *AudienceCustomPropertyFilterResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &AudienceCustomPropertyFilterResponseBody{
+		Property: v.Property,
+		Operator: v.Operator,
+	}
+	if v.Values != nil {
+		res.Values = make([]string, len(v.Values))
+		for i, val := range v.Values {
+			res.Values[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceCustomSpeakersToAudienceCustomSpeakersResponseBody
+// builds a value of type *AudienceCustomSpeakersResponseBody from a value of
+// type *lfxv2campaignserviceaudiencebuilder.AudienceCustomSpeakers.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceCustomSpeakersToAudienceCustomSpeakersResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceCustomSpeakers) *AudienceCustomSpeakersResponseBody {
+	if v == nil {
+		return nil
+	}
+	res := &AudienceCustomSpeakersResponseBody{
+		Scope:  v.Scope,
+		ListID: v.ListID,
+	}
+	if v.EventNames != nil {
+		res.EventNames = make([]string, len(v.EventNames))
+		for i, val := range v.EventNames {
+			res.EventNames[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceCustomQuestionToAudienceCustomQuestionResponseBody
+// builds a value of type *AudienceCustomQuestionResponseBody from a value of
+// type *lfxv2campaignserviceaudiencebuilder.AudienceCustomQuestion.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceCustomQuestionToAudienceCustomQuestionResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceCustomQuestion) *AudienceCustomQuestionResponseBody {
+	res := &AudienceCustomQuestionResponseBody{
+		ID:       v.ID,
+		Question: v.Question,
+		Why:      v.Why,
+	}
+	if v.Options != nil {
+		res.Options = make([]string, len(v.Options))
+		for i, val := range v.Options {
+			res.Options[i] = val
+		}
+	} else {
+		res.Options = []string{}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceaudiencebuilderAudienceCustomSimilarListToAudienceCustomSimilarListResponseBody
+// builds a value of type *AudienceCustomSimilarListResponseBody from a value
+// of type *lfxv2campaignserviceaudiencebuilder.AudienceCustomSimilarList.
+func marshalLfxv2campaignserviceaudiencebuilderAudienceCustomSimilarListToAudienceCustomSimilarListResponseBody(v *lfxv2campaignserviceaudiencebuilder.AudienceCustomSimilarList) *AudienceCustomSimilarListResponseBody {
+	res := &AudienceCustomSimilarListResponseBody{
+		Recommendation: v.Recommendation,
+		Reason:         v.Reason,
+	}
+	if v.List != nil {
+		res.List = marshalLfxv2campaignserviceaudiencebuilderAudienceListSearchResultToAudienceListSearchResultResponseBody(v.List)
+	}
+
+	return res
+}
+
+// unmarshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput
+// builds a value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceCustomInput from a value of
+// type *AudienceCustomInputRequestBody.
+func unmarshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput(v *AudienceCustomInputRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceCustomInput {
+	res := &lfxv2campaignserviceaudiencebuilder.AudienceCustomInput{
+		Name: v.Name,
+	}
+	res.Criteria = unmarshalAudienceCustomCriteriaRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomCriteria(v.Criteria)
+
+	return res
+}
+
+// unmarshalAudienceCustomCriteriaRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomCriteria
+// builds a value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceCustomCriteria from a value of
+// type *AudienceCustomCriteriaRequestBody.
+func unmarshalAudienceCustomCriteriaRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomCriteria(v *AudienceCustomCriteriaRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceCustomCriteria {
+	res := &lfxv2campaignserviceaudiencebuilder.AudienceCustomCriteria{
+		ContactLocation:        v.ContactLocation,
+		EventRegistered:        v.EventRegistered,
+		EducationEnrolled:      v.EducationEnrolled,
+		GateEventHistory:       v.GateEventHistory,
+		GateListID:             v.GateListID,
+		Ambassadors:            v.Ambassadors,
+		EducationTopicProperty: v.EducationTopicProperty,
+		Label:                  v.Label,
+	}
+	if v.Cities != nil {
+		res.Cities = make([]string, len(v.Cities))
+		for i, val := range v.Cities {
+			res.Cities[i] = val
+		}
+	}
+	if v.Countries != nil {
+		res.Countries = make([]string, len(v.Countries))
+		for i, val := range v.Countries {
+			res.Countries[i] = val
+		}
+	}
+	if v.RegisteredFor != nil {
+		res.RegisteredFor = make([]string, len(v.RegisteredFor))
+		for i, val := range v.RegisteredFor {
+			res.RegisteredFor[i] = val
+		}
+	}
+	if v.PropertyFilters != nil {
+		res.PropertyFilters = make([]*lfxv2campaignserviceaudiencebuilder.AudienceCustomPropertyFilter, len(v.PropertyFilters))
+		for i, val := range v.PropertyFilters {
+			if val == nil {
+				res.PropertyFilters[i] = nil
+				continue
+			}
+			res.PropertyFilters[i] = unmarshalAudienceCustomPropertyFilterRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomPropertyFilter(val)
+		}
+	}
+	if v.Speakers != nil {
+		res.Speakers = unmarshalAudienceCustomSpeakersRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomSpeakers(v.Speakers)
+	}
+	if v.EducationTopics != nil {
+		res.EducationTopics = make([]string, len(v.EducationTopics))
+		for i, val := range v.EducationTopics {
+			res.EducationTopics[i] = val
+		}
+	}
+	if v.PageViewUrls != nil {
+		res.PageViewUrls = make([]string, len(v.PageViewUrls))
+		for i, val := range v.PageViewUrls {
+			res.PageViewUrls[i] = val
+		}
+	}
+
+	return res
+}
+
+// unmarshalAudienceCustomPropertyFilterRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomPropertyFilter
+// builds a value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceCustomPropertyFilter from a
+// value of type *AudienceCustomPropertyFilterRequestBody.
+func unmarshalAudienceCustomPropertyFilterRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomPropertyFilter(v *AudienceCustomPropertyFilterRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceCustomPropertyFilter {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignserviceaudiencebuilder.AudienceCustomPropertyFilter{
+		Property: *v.Property,
+		Operator: *v.Operator,
+	}
+	if v.Values != nil {
+		res.Values = make([]string, len(v.Values))
+		for i, val := range v.Values {
+			res.Values[i] = val
+		}
+	}
+
+	return res
+}
+
+// unmarshalAudienceCustomSpeakersRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomSpeakers
+// builds a value of type
+// *lfxv2campaignserviceaudiencebuilder.AudienceCustomSpeakers from a value of
+// type *AudienceCustomSpeakersRequestBody.
+func unmarshalAudienceCustomSpeakersRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomSpeakers(v *AudienceCustomSpeakersRequestBody) *lfxv2campaignserviceaudiencebuilder.AudienceCustomSpeakers {
+	if v == nil {
+		return nil
+	}
+	res := &lfxv2campaignserviceaudiencebuilder.AudienceCustomSpeakers{
+		Scope:  *v.Scope,
+		ListID: v.ListID,
+	}
+	if v.EventNames != nil {
+		res.EventNames = make([]string, len(v.EventNames))
+		for i, val := range v.EventNames {
+			res.EventNames[i] = val
+		}
 	}
 
 	return res

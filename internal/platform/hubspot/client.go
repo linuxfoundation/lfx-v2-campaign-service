@@ -289,6 +289,46 @@ type apiError struct {
 	// non-idempotent op must treat an ambiguous apiError as UNCONFIRMED (verify,
 	// don't blind-retry) — distinct from a definite 4xx, which cleanly did nothing.
 	Ambiguous bool
+	// validation is HubSpot's own explanation of a VALIDATION_ERROR 400 — and only
+	// that: one line, bounded, never any other body. Unexported and absent from
+	// Error(), so it cannot leak through logging or serialization of the error; it is
+	// read only through ValidationMessage, by a caller that chooses to show it.
+	//
+	// It exists because a refused list definition is otherwise undiagnosable: the
+	// first live custom-list create failed with nothing but "-> 400".
+	validation string
+}
+
+// validationMessageMax bounds the retained explanation.
+const validationMessageMax = 300
+
+// ValidationMessage is HubSpot's explanation of a VALIDATION_ERROR rejection, or "".
+func ValidationMessage(err error) string {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return ""
+	}
+	return ae.validation
+}
+
+// validationMessageFrom extracts the explanation from a 400 body, only when HubSpot
+// classifies it as a validation error. Anything else yields "".
+func validationMessageFrom(status int, body []byte) string {
+	if status != http.StatusBadRequest || len(body) == 0 {
+		return ""
+	}
+	var env struct {
+		Category string `json:"category"`
+		Message  string `json:"message"`
+	}
+	if json.Unmarshal(body, &env) != nil || env.Category != "VALIDATION_ERROR" {
+		return ""
+	}
+	msg := strings.Join(strings.Fields(env.Message), " ")
+	if len(msg) > validationMessageMax {
+		msg = msg[:validationMessageMax]
+	}
+	return msg
 }
 
 // IsAPIError reports whether err is one of this client's HTTP-status errors.
@@ -654,10 +694,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			}
 
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				var validation string
+				if resp.StatusCode == http.StatusBadRequest {
+					// Read (bounded) only to classify a validation error; the body itself is
+					// never retained — see apiError.validation.
+					errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+					validation = validationMessageFrom(resp.StatusCode, errBody)
+				}
 				drainAndClose(resp)
 				return nil, 0, true, &apiError{
 					StatusCode: resp.StatusCode, Method: method, Path: path,
-					Ambiguous: !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+					Ambiguous:  !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+					validation: validation,
 				}
 			}
 

@@ -141,6 +141,7 @@ var AudienceDiscoveryResult = Type("audience-discovery-result", func() {
 	Attribute("lists", ArrayOf(AudienceDiscoveredList), "Classified lists, newest-matching first")
 	Attribute("missing_signals", ArrayOf(String, audienceSignalEnum), "Signals with no qualifying list in this portal")
 	Attribute("inspected", Int64, "How many candidate lists were inspected before the bound was reached")
+	Attribute("hidden", Int, "Lists found but not offered for inclusion: suppressions, masters, test and staff lists")
 	Required("lists", "missing_signals")
 })
 
@@ -215,6 +216,10 @@ var AudienceLastSentEmail = Type("audience-last-sent-email", func() {
 	Attribute("lists_unavailable", Boolean,
 		"True when this email's list selection could not be read. The two list arrays are then "+
 			"empty because they are UNKNOWN, not because the send targeted nothing.")
+	Attribute("subject", String, "The email's subject line")
+	Attribute("match_reason", String, "Why this send is listed: event_name, subject, related_words or brand_only", func() {
+		Enum("event_name", "subject", "related_words", "brand_only")
+	})
 	Required("email_id", "email_name", "hubspot_url", "included_lists", "suppression_lists")
 	// TYPE-LEVEL so the published example is a possible one. Composed from the attribute
 	// examples, Goa published populated list arrays beside lists_unavailable=true, which this
@@ -456,7 +461,8 @@ var AudienceQaExclusionCheck = Type("audience-qa-exclusion-check", func() {
 	Reference(AudienceQaCheck)
 	Attribute("verdict")
 	Attribute("findings")
-	Attribute("exclusion_count", Int64, "How many exclusion branches the filter carries")
+	Attribute("exclusion_count", Int64, "How many exclusions apply: the list's own plus send-time suppressions")
+	Attribute("send_time_count", Int64, "How many of those are send-time suppression lists rather than filters on the list")
 	Required("verdict", "findings", "exclusion_count")
 })
 
@@ -500,6 +506,115 @@ var AudienceQaResult = Type("audience-qa-result", func() {
 })
 
 // ─── Audience-builder service ───
+
+// ---------------------------------------------------------------------------
+// Custom audiences
+//
+// A free-text request is interpreted by a model into DRAFT criteria; the operator
+// edits them; preview validates them against the portal; create builds the list.
+// The criteria are the whole contract: no endpoint accepts filter JSON, so the
+// shape HubSpot receives is always the one the service builds and tests.
+// ---------------------------------------------------------------------------
+
+// AudienceCustomPropertyFilter is one extra condition ANDed into every branch.
+var AudienceCustomPropertyFilter = Type("audience-custom-property-filter", func() {
+	Attribute("property", String, "HubSpot internal contact property name; verified against the portal", func() {
+		MinLength(1)
+		MaxLength(100)
+		Pattern(`^[A-Za-z0-9_]+$`)
+	})
+	Attribute("operator", String, "Comparison", func() {
+		Enum("is_equal_to", "contains", "is_any_of", "is_not_any_of", "is_known", "is_unknown")
+	})
+	Attribute("values", ArrayOf(String), "Values; ignored for is_known/is_unknown", func() { MaxLength(25) })
+	Required("property", "operator")
+})
+
+// AudienceCustomSpeakers restricts the audience to event speakers.
+var AudienceCustomSpeakers = Type("audience-custom-speakers", func() {
+	Attribute("scope", String, "Which editions' speakers", audienceSpeakerScopeEnum)
+	Attribute("list_id", String, "An existing speakers list; preferred over event_names when set")
+	Attribute("event_names", ArrayOf(String), "Exact event_name values, including co-located tracks", func() { MaxLength(25) })
+	Required("scope")
+})
+
+// AudienceCustomCriteria is the reviewed definition of a custom audience.
+var AudienceCustomCriteria = Type("audience-custom-criteria", func() {
+	Attribute("cities", ArrayOf(String), "Cities, matched on city and ip_city", func() { MaxLength(25) })
+	Attribute("countries", ArrayOf(String), "Countries; broadens location to country_dropdown and ip_country", func() { MaxLength(25) })
+	Attribute("contact_location", Boolean, "Include the contact-location branches (always gated by gate_list_id)")
+	Attribute("event_registered", Boolean, "Include contacts who registered for an event held in the location")
+	Attribute("education_enrolled", Boolean, "Include contacts who enrolled in education from the location")
+	Attribute("registered_for", ArrayOf(String), "Exact event names: contacts registered for any of them", func() { MaxLength(25) })
+	Attribute("gate_event_history", Boolean, "Also gate the event-history branches by gate_list_id")
+	Attribute("gate_list_id", String, "The brand master list gated branches must be in")
+	Attribute("property_filters", ArrayOf(AudienceCustomPropertyFilter), "Extra conditions ANDed into every branch", func() { MaxLength(10) })
+	Attribute("speakers", AudienceCustomSpeakers, "Restrict to event speakers")
+	Attribute("ambassadors", Boolean, "Restrict to community ambassadors")
+	Attribute("education_topics", ArrayOf(String), "Course/topic keywords narrowing education enrolment to the brand's own courses", func() { MaxLength(25) })
+	Attribute("education_topic_property", String, "The education event's course/topic property. On input, honoured only when it is one of the portal's candidates; otherwise the service picks the best one")
+	Attribute("page_view_urls", ArrayOf(String), "Contacts who viewed a page whose URL contains any of these", func() { MaxLength(10) })
+	Attribute("label", String, "The event(s) the audience is for; feeds the list name", func() { MaxLength(200) })
+})
+
+// AudienceCustomSimilarList is an existing list that may already be the requested audience.
+var AudienceCustomSimilarList = Type("audience-custom-similar-list", func() {
+	Attribute("list", AudienceListSearchResult, "The existing list")
+	Attribute("recommendation", String, "The model's suggestion; absent when it could not assess the list", func() {
+		Enum("reuse", "update", "unrelated")
+	})
+	Attribute("reason", String, "Why")
+	Required("list")
+})
+
+// AudienceCustomAnswer answers one question from a previous interpretation.
+var AudienceCustomAnswer = Type("audience-custom-answer", func() {
+	Attribute("question_id", String, "The question's id")
+	Attribute("question", String, "The question text, echoed back")
+	Attribute("answer", String, "The chosen option or the operator's own words", func() { MaxLength(500) })
+	Required("answer")
+})
+
+// AudienceCustomQuestion blocks the draft until answered.
+var AudienceCustomQuestion = Type("audience-custom-question", func() {
+	Attribute("id", String, "Stable id to send back with the answer")
+	Attribute("question", String, "The question")
+	Attribute("why", String, "Why it blocks the draft")
+	Attribute("options", ArrayOf(String), "Clickable options; free text is also accepted")
+	Required("id", "question", "options")
+})
+
+// AudienceCustomInterpretResult is the model's draft plus the portal lists resolved for it.
+var AudienceCustomInterpretResult = Type("audience-custom-interpret-result", func() {
+	Attribute("criteria", AudienceCustomCriteria, "Draft criteria for the operator to review")
+	Attribute("brand_short", String, "The brand the model inferred")
+	Attribute("gate", AudienceListSearchResult, "The brand master list found for the gate, already filled into criteria")
+	Attribute("speakers_list", AudienceListSearchResult, "An existing speakers list, already filled into criteria")
+	Attribute("questions", ArrayOf(AudienceCustomQuestion), "Questions that still block the draft")
+	Attribute("notes", ArrayOf(String), "Caveats about the draft")
+	Attribute("similar", ArrayOf(AudienceCustomSimilarList), "Existing lists that may already be this audience, found by name search and ranked by the model; it never adds one")
+	Attribute("event", AudienceEventIdentity, "The event an event audience was planned from; absent for a plain custom request")
+	Required("criteria", "questions", "notes", "similar")
+})
+
+// AudienceCustomInput is the preview/create payload.
+var AudienceCustomInput = Type("audience-custom-input", func() {
+	Attribute("criteria", AudienceCustomCriteria, "The reviewed criteria")
+	Attribute("name", String, "Explicit list name; derived from the criteria when omitted. A taken name is versioned, never reused", func() { MaxLength(250) })
+	Required("criteria")
+})
+
+// AudienceCustomPreviewResult is what create would build. Nothing is written.
+var AudienceCustomPreviewResult = Type("audience-custom-preview-result", func() {
+	Attribute("name", String, "The name the list would be created under")
+	Attribute("criteria", AudienceCustomCriteria, "The criteria as they would be built")
+	Attribute("branch_count", Int, "Filter branches after expanding roles")
+	Attribute("education_topic_candidates", ArrayOf(String), "The education event's properties that could hold a course topic, best first")
+	Attribute("gate", AudienceListSearchResult, "The gate list, as read from the portal")
+	Attribute("upper_bound", Int, "The gate list's size when every branch is gated; absent otherwise")
+	Attribute("warnings", ArrayOf(String), "Things that may make the list smaller than intended")
+	Required("name", "criteria", "branch_count", "warnings")
+})
 
 var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	Description("Explore a project's HubSpot portal to assemble, size, compose and QA a campaign audience.")
@@ -730,6 +845,12 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			// existing caller's audit: no client sends `event_name` yet, so every previously
 			// PASSing audit would have become NEEDS VERIFY and trained operators to ignore the
 			// verdict.
+			// Custom lists and directly attached lists carry no suppression of their own: the
+			// send applies it. Without these ids QA judged such a list on its own filters and
+			// failed every one of them.
+			Attribute("send_suppression_list_ids", ArrayOf(String), "Suppression lists the send applies on top of this list; counted like the list's own exclusions", func() {
+				MaxLength(200)
+			})
 			Attribute("event_name", String, "This edition's event name, so an included registration list for THIS event can be told from another event's", func() {
 				MinLength(1)
 			})
@@ -742,6 +863,71 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			Header("bearer_token:Authorization")
 			Response(StatusOK)
 			briefErrorResponses()
+		})
+	})
+
+	Method("interpret-custom-audience", func() {
+		Description("Interpret a free-text audience request into draft criteria and blocking questions. Uses a model; creates nothing.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("request", String, "The audience, described in plain words", func() {
+				MinLength(1)
+				MaxLength(2000)
+			})
+			Attribute("answers", ArrayOf(AudienceCustomAnswer), "Answers to earlier questions", func() { MaxLength(12) })
+			Attribute("event_url", String, "An event page: makes this an event audience, planned from the page's name, brand, location and dates", func() {
+				MaxLength(2048)
+			})
+			Required("project_id", "request")
+		})
+		Result(AudienceCustomInterpretResult)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/audience-builder/custom/interpret")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("preview-custom-audience", func() {
+		Description("Validate custom criteria against the portal and return the list that would be created. Creates nothing.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("custom", AudienceCustomInput, "What to preview")
+			Required("project_id", "custom")
+		})
+		Result(AudienceCustomPreviewResult)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/audience-builder/custom/preview")
+			Header("bearer_token:Authorization")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("create-custom-audience", func() {
+		Description("Create one custom contact list in the project's HubSpot portal from reviewed criteria. NOT idempotent.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("custom", AudienceCustomInput, "What to create")
+			Required("project_id", "custom")
+		})
+		Result(AudienceComposedList)
+		commonBriefErrors()
+		// Same reason compose has it: an unconfirmed create may already exist upstream,
+		// and a retry would make a second list.
+		Error("ComposePartial", AudienceComposePartialError, "The create is unconfirmed; do not retry")
+		HTTP(func() {
+			POST("/projects/{project_id}/audience-builder/custom/create")
+			Header("bearer_token:Authorization")
+			Response(StatusCreated)
+			briefErrorResponses()
+			Response("ComposePartial", StatusInternalServerError)
 		})
 	})
 })

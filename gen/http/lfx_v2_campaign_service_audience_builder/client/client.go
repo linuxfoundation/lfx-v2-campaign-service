@@ -58,6 +58,18 @@ type Client struct {
 	// run-audience-qa endpoint.
 	RunAudienceQaDoer goahttp.Doer
 
+	// InterpretCustomAudience Doer is the HTTP client used to make requests to the
+	// interpret-custom-audience endpoint.
+	InterpretCustomAudienceDoer goahttp.Doer
+
+	// PreviewCustomAudience Doer is the HTTP client used to make requests to the
+	// preview-custom-audience endpoint.
+	PreviewCustomAudienceDoer goahttp.Doer
+
+	// CreateCustomAudience Doer is the HTTP client used to make requests to the
+	// create-custom-audience endpoint.
+	CreateCustomAudienceDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -89,6 +101,9 @@ func NewClient(
 		ComposeAudienceMasterDoer:          doer,
 		AttachExistingAudienceDoer:         doer,
 		RunAudienceQaDoer:                  doer,
+		InterpretCustomAudienceDoer:        doer,
+		PreviewCustomAudienceDoer:          doer,
+		CreateCustomAudienceDoer:           doer,
 		RestoreResponseBody:                restoreBody,
 		scheme:                             scheme,
 		host:                               host,
@@ -341,6 +356,81 @@ func (c *Client) RunAudienceQa() goa.Endpoint {
 		resp, err := c.RunAudienceQaDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "run-audience-qa", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// InterpretCustomAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-audience-builder service interpret-custom-audience
+// server.
+func (c *Client) InterpretCustomAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeInterpretCustomAudienceRequest(c.encoder)
+		decodeResponse = DecodeInterpretCustomAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildInterpretCustomAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.InterpretCustomAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "interpret-custom-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// PreviewCustomAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-audience-builder service preview-custom-audience
+// server.
+func (c *Client) PreviewCustomAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodePreviewCustomAudienceRequest(c.encoder)
+		decodeResponse = DecodePreviewCustomAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildPreviewCustomAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.PreviewCustomAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "preview-custom-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// CreateCustomAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-audience-builder service create-custom-audience
+// server.
+func (c *Client) CreateCustomAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeCreateCustomAudienceRequest(c.encoder)
+		decodeResponse = DecodeCreateCustomAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildCreateCustomAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.CreateCustomAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-audience-builder", "create-custom-audience", err)
 		}
 		return decodeResponse(resp)
 	}

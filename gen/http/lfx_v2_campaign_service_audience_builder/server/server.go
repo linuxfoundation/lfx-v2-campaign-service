@@ -30,6 +30,9 @@ type Server struct {
 	ComposeAudienceMaster          http.Handler
 	AttachExistingAudience         http.Handler
 	RunAudienceQa                  http.Handler
+	InterpretCustomAudience        http.Handler
+	PreviewCustomAudience          http.Handler
+	CreateCustomAudience           http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -70,6 +73,9 @@ func New(
 			{"ComposeAudienceMaster", "POST", "/projects/{project_id}/audience-builder/compose-master"},
 			{"AttachExistingAudience", "POST", "/projects/{project_id}/audience-builder/attach-existing"},
 			{"RunAudienceQa", "POST", "/projects/{project_id}/audience-builder/qa/run"},
+			{"InterpretCustomAudience", "POST", "/projects/{project_id}/audience-builder/custom/interpret"},
+			{"PreviewCustomAudience", "POST", "/projects/{project_id}/audience-builder/custom/preview"},
+			{"CreateCustomAudience", "POST", "/projects/{project_id}/audience-builder/custom/create"},
 		},
 		GetAudienceBuilderCapabilities: NewGetAudienceBuilderCapabilitiesHandler(e.GetAudienceBuilderCapabilities, mux, decoder, encoder, errhandler, formatter),
 		DiscoverAudienceLists:          NewDiscoverAudienceListsHandler(e.DiscoverAudienceLists, mux, decoder, encoder, errhandler, formatter),
@@ -81,6 +87,9 @@ func New(
 		ComposeAudienceMaster:          NewComposeAudienceMasterHandler(e.ComposeAudienceMaster, mux, decoder, encoder, errhandler, formatter),
 		AttachExistingAudience:         NewAttachExistingAudienceHandler(e.AttachExistingAudience, mux, decoder, encoder, errhandler, formatter),
 		RunAudienceQa:                  NewRunAudienceQaHandler(e.RunAudienceQa, mux, decoder, encoder, errhandler, formatter),
+		InterpretCustomAudience:        NewInterpretCustomAudienceHandler(e.InterpretCustomAudience, mux, decoder, encoder, errhandler, formatter),
+		PreviewCustomAudience:          NewPreviewCustomAudienceHandler(e.PreviewCustomAudience, mux, decoder, encoder, errhandler, formatter),
+		CreateCustomAudience:           NewCreateCustomAudienceHandler(e.CreateCustomAudience, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -99,6 +108,9 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.ComposeAudienceMaster = m(s.ComposeAudienceMaster)
 	s.AttachExistingAudience = m(s.AttachExistingAudience)
 	s.RunAudienceQa = m(s.RunAudienceQa)
+	s.InterpretCustomAudience = m(s.InterpretCustomAudience)
+	s.PreviewCustomAudience = m(s.PreviewCustomAudience)
+	s.CreateCustomAudience = m(s.CreateCustomAudience)
 }
 
 // MethodNames returns the methods served.
@@ -117,6 +129,9 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountComposeAudienceMasterHandler(mux, h.ComposeAudienceMaster)
 	MountAttachExistingAudienceHandler(mux, h.AttachExistingAudience)
 	MountRunAudienceQaHandler(mux, h.RunAudienceQa)
+	MountInterpretCustomAudienceHandler(mux, h.InterpretCustomAudience)
+	MountPreviewCustomAudienceHandler(mux, h.PreviewCustomAudience)
+	MountCreateCustomAudienceHandler(mux, h.CreateCustomAudience)
 }
 
 // Mount configures the mux to serve the
@@ -652,6 +667,171 @@ func NewRunAudienceQaHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "run-audience-qa")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountInterpretCustomAudienceHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint.
+func MountInterpretCustomAudienceHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/audience-builder/custom/interpret", f)
+}
+
+// NewInterpretCustomAudienceHandler creates a HTTP handler which loads the
+// HTTP request and calls the "lfx-v2-campaign-service-audience-builder"
+// service "interpret-custom-audience" endpoint.
+func NewInterpretCustomAudienceHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeInterpretCustomAudienceRequest(mux, decoder)
+		encodeResponse = EncodeInterpretCustomAudienceResponse(encoder)
+		encodeError    = EncodeInterpretCustomAudienceError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "interpret-custom-audience")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountPreviewCustomAudienceHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint.
+func MountPreviewCustomAudienceHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/audience-builder/custom/preview", f)
+}
+
+// NewPreviewCustomAudienceHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-audience-builder" service
+// "preview-custom-audience" endpoint.
+func NewPreviewCustomAudienceHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodePreviewCustomAudienceRequest(mux, decoder)
+		encodeResponse = EncodePreviewCustomAudienceResponse(encoder)
+		encodeError    = EncodePreviewCustomAudienceError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "preview-custom-audience")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountCreateCustomAudienceHandler configures the mux to serve the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint.
+func MountCreateCustomAudienceHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/projects/{project_id}/audience-builder/custom/create", f)
+}
+
+// NewCreateCustomAudienceHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-audience-builder" service
+// "create-custom-audience" endpoint.
+func NewCreateCustomAudienceHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeCreateCustomAudienceRequest(mux, decoder)
+		encodeResponse = EncodeCreateCustomAudienceResponse(encoder)
+		encodeError    = EncodeCreateCustomAudienceError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "create-custom-audience")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-audience-builder")
 		payload, err := decodeRequest(r)
 		if err != nil {

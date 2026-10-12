@@ -2119,3 +2119,9 @@ an APPLIED write. `classifyMetaAdSetError` maps every failure to fixed text; its
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 
+`audience_custom.go` adds the three custom-audience handlers (`interpret-custom-audience`,
+`preview-custom-audience`, `create-custom-audience`). `customErr` maps this path's 400s with the
+SPECIFIC reason (unknown property names, the criteria rule broken) instead of the shared
+"check the event URL or list reference" text, which names neither thing a custom request has; a
+missing model is a 503 that points the operator at the criteria form. Property types are never
+read from the caller — `Enumeration` is set by the orchestration from the portal.

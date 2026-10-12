@@ -215,7 +215,7 @@ func TestCheckSuppression_CanadaAsksForConfirmationNotForAList(t *testing.T) {
 // exclusions means no unsubscribe, no opt-out and no non-marketable filter, which
 // is a send that should not go out whichever specific list is missing.
 func TestCheckExclusionCompleteness_ZeroExclusionsFails(t *testing.T) {
-	none := CheckExclusionCompleteness([]ListFilter{inList("111", "IN_LIST")})
+	none := CheckExclusionCompleteness([]ListFilter{inList("111", "IN_LIST")}, 0)
 	assert.Equal(t, VerdictFail, none.Verdict)
 	assert.Zero(t, none.ExclusionCount)
 	require.Len(t, none.Findings, 1)
@@ -225,7 +225,7 @@ func TestCheckExclusionCompleteness_ZeroExclusionsFails(t *testing.T) {
 		inList("111", "IN_LIST"),
 		inList("999", "NOT_IN_LIST"),
 		inList("998", "NOT_IN_LIST"),
-	})
+	}, 0)
 	assert.Equal(t, VerdictPass, some.Verdict)
 	assert.Equal(t, 2, some.ExclusionCount)
 	assert.Empty(t, some.Findings)
@@ -806,4 +806,16 @@ func TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot(t *testing.T)
 			}
 		})
 	}
+}
+
+// TestCheckExclusionCompleteness_CountsSendTimeSuppression covers the builder's
+// custom lists: no exclusion on the list, suppression applied at send time.
+func TestCheckExclusionCompleteness_CountsSendTimeSuppression(t *testing.T) {
+	got := CheckExclusionCompleteness(nil, 3)
+	assert.Equal(t, VerdictPass, got.Verdict)
+	assert.Equal(t, 3, got.ExclusionCount)
+	assert.Equal(t, 3, got.SendTimeCount)
+
+	none := CheckExclusionCompleteness(nil, 0)
+	assert.Equal(t, VerdictFail, none.Verdict, "nothing on the list and nothing at send time is still a FAIL")
 }

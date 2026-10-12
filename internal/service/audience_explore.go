@@ -60,7 +60,14 @@ type AudienceExplorer interface {
 	// outcome to record. It creates nothing in HubSpot. includeIDs are the lists the send
 	// goes to; the first is reported as the outcome's Master, and every one is verified.
 	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string) (*audience.ComposeOutcome, error)
-	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (*audience.QaOutcome, error)
+	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (*audience.QaOutcome, error)
+	// InterpretCustom asks the model for draft criteria; it creates nothing.
+	InterpretCustom(ctx context.Context, projectID, request, eventURL string, answers []audience.CustomAnswer) (*audience.CustomInterpretOutcome, error)
+	// PreviewCustom validates criteria against the portal; it creates nothing.
+	PreviewCustom(ctx context.Context, projectID string, criteria audience.CustomCriteria, name string) (*audience.CustomPreview, error)
+	// CreateCustom CREATES one list and is not idempotent; an unconfirmed create is a
+	// *audience.ComposePartialError carrying the name.
+	CreateCustom(ctx context.Context, projectID string, criteria audience.CustomCriteria, name string) (*audience.ComposedList, error)
 }
 
 // How hard a recording compose tries to persist the audience row once the HubSpot lists
@@ -213,6 +220,10 @@ func (s *AudienceExploreService) DiscoverAudienceLists(ctx context.Context, p *e
 		MissingSignals: signalStrings(outcome.MissingSignals),
 		Inspected:      &inspected,
 	}
+	if outcome.Hidden > 0 {
+		hidden := outcome.Hidden
+		res.Hidden = &hidden
+	}
 	for _, l := range outcome.Lists {
 		row := &explore.AudienceDiscoveredList{
 			ListID:     l.ListID,
@@ -300,6 +311,12 @@ func (s *AudienceExploreService) GetAudienceLastSent(ctx context.Context, p *exp
 		if e.ListsUnavailable {
 			unavailable := true
 			row.ListsUnavailable = &unavailable
+		}
+		if subject := strings.TrimSpace(e.Subject); subject != "" {
+			row.Subject = &subject
+		}
+		if reason := e.MatchReason; reason != "" {
+			row.MatchReason = &reason
 		}
 		// Left absent rather than sent as "": a published-at the portal did not report
 		// is not a send that happened at the zero time.
@@ -669,7 +686,7 @@ func (s *AudienceExploreService) RunAudienceQa(ctx context.Context, p *explore.R
 	if err != nil {
 		return nil, err
 	}
-	outcome, qerr := explorer.RunQA(ctx, p.ProjectID, p.ListRef, derefStr(p.EventName), derefBool(p.TargetsEu), derefBool(p.TargetsCa))
+	outcome, qerr := explorer.RunQA(ctx, p.ProjectID, p.ListRef, derefStr(p.EventName), derefBool(p.TargetsEu), derefBool(p.TargetsCa), p.SendSuppressionListIds)
 	if qerr != nil {
 		return nil, audienceExploreErr(ctx, "run audience QA", p.ProjectID, qerr)
 	}
@@ -707,6 +724,7 @@ func (s *AudienceExploreService) RunAudienceQa(ctx context.Context, p *explore.R
 				Verdict:        string(outcome.Checks.ExclusionCompleteness.Verdict),
 				Findings:       findingResults(outcome.Checks.ExclusionCompleteness.Findings),
 				ExclusionCount: int64(outcome.Checks.ExclusionCompleteness.ExclusionCount),
+				SendTimeCount:  sendTimeCount(outcome.Checks.ExclusionCompleteness.SendTimeCount),
 			},
 			// OMITTED, not zero-valued, when check 4 did not run. An
 			// `AudienceQaCheck{Verdict: ""}` on the wire is a check the client must then
@@ -964,4 +982,14 @@ func signalStrings(signals []audience.Signal) []string {
 // assertion would make the GDPR check fail lists that need no GDPR suppression.
 func derefBool(b *bool) bool {
 	return b != nil && *b
+}
+
+// sendTimeCount is absent when no send-time suppression was counted, so a client
+// tells "none supplied" from a field it does not know about.
+func sendTimeCount(n int) *int64 {
+	if n == 0 {
+		return nil
+	}
+	v := int64(n)
+	return &v
 }

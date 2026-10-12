@@ -247,7 +247,7 @@ func BuildPreviewAudienceCountPayload(lfxV2CampaignServiceAudienceBuilderPreview
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderPreviewAudienceCountBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Excepturi est et est totam.\",\n         \"Non in iure dolores et quis id.\",\n         \"Similique assumenda ut.\"\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"list_ids\": [\n         \"Distinctio non recusandae et qui ut exercitationem.\"\n      ]\n   }'")
 		}
 		if body.ListIds == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("list_ids", "body"))
@@ -296,7 +296,7 @@ func BuildComposeAudienceMasterPayload(lfxV2CampaignServiceAudienceBuilderCompos
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Sed impedit.\",\n         \"brief_id\": \"03d80800-bb8d-495f-88c6-626a4b8ea887\",\n         \"event_dates\": [\n            \"Explicabo dolorem totam non.\",\n            \"Nesciunt sed magnam sed vero nulla.\"\n         ],\n         \"event_name\": \"Quaerat qui ut ut.\",\n         \"exclude_list_ids\": [\n            \"Eius nulla suscipit ullam accusamus.\",\n            \"Sint molestiae occaecati.\",\n            \"Quos labore est ut ratione.\"\n         ],\n         \"inclusion_summary\": \"Sed sapiente aspernatur ipsam consequatur qui illo.\",\n         \"list_ids\": [\n            \"Nesciunt minus natus non.\"\n         ],\n         \"name\": \"Ut occaecati tenetur minima.\"\n      }\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"compose\": {\n         \"brand_short\": \"Tempora qui incidunt tempora.\",\n         \"brief_id\": \"961619bb-4392-4445-8bf8-2897808ed941\",\n         \"event_dates\": [\n            \"Voluptates soluta animi sit ut.\",\n            \"Voluptas incidunt eligendi consequatur.\",\n            \"Labore eos et repudiandae odit omnis cupiditate.\"\n         ],\n         \"event_name\": \"Saepe voluptatem dolores tempora qui.\",\n         \"exclude_list_ids\": [\n            \"Et iste.\",\n            \"Voluptas ut nostrum officiis et accusamus provident.\",\n            \"Odio eos earum fuga non est.\"\n         ],\n         \"inclusion_summary\": \"Possimus accusantium expedita alias.\",\n         \"list_ids\": [\n            \"Tempora ea laboriosam.\",\n            \"Unde quia ipsa sint optio nobis quae.\"\n         ],\n         \"name\": \"Rerum reiciendis similique.\"\n      }\n   }'")
 		}
 		if body.Compose == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("compose", "body"))
@@ -382,10 +382,13 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 	{
 		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderRunAudienceQaBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"v\",\n      \"list_ref\": \"nls\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"event_name\": \"s\",\n      \"list_ref\": \"sk\",\n      \"send_suppression_list_ids\": [\n         \"Pariatur ut qui sint velit earum.\",\n         \"Dignissimos reiciendis et quisquam voluptas.\",\n         \"Esse corporis molestiae excepturi.\"\n      ],\n      \"targets_ca\": false,\n      \"targets_eu\": true\n   }'")
 		}
 		if utf8.RuneCountInString(body.ListRef) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", body.ListRef, utf8.RuneCountInString(body.ListRef), 1, true))
+		}
+		if len(body.SendSuppressionListIds) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.send_suppression_list_ids", body.SendSuppressionListIds, len(body.SendSuppressionListIds), 200, false))
 		}
 		if body.EventName != nil {
 			if utf8.RuneCountInString(*body.EventName) < 1 {
@@ -411,6 +414,164 @@ func BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaB
 		TargetsEu: body.TargetsEu,
 		TargetsCa: body.TargetsCa,
 		EventName: body.EventName,
+	}
+	if body.SendSuppressionListIds != nil {
+		v.SendSuppressionListIds = make([]string, len(body.SendSuppressionListIds))
+		for i, val := range body.SendSuppressionListIds {
+			v.SendSuppressionListIds[i] = val
+		}
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildInterpretCustomAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder interpret-custom-audience endpoint
+// from CLI flags.
+func BuildInterpretCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBody string, lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectID string, lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerToken string) (*lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload, error) {
+	var err error
+	var body InterpretCustomAudienceRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"answers\": [\n         {\n            \"answer\": \"w0w\",\n            \"question\": \"Perspiciatis a aut quas delectus a.\",\n            \"question_id\": \"Quo omnis et et molestiae dolorum.\"\n         },\n         {\n            \"answer\": \"w0w\",\n            \"question\": \"Perspiciatis a aut quas delectus a.\",\n            \"question_id\": \"Quo omnis et et molestiae dolorum.\"\n         },\n         {\n            \"answer\": \"w0w\",\n            \"question\": \"Perspiciatis a aut quas delectus a.\",\n            \"question_id\": \"Quo omnis et et molestiae dolorum.\"\n         }\n      ],\n      \"event_url\": \"z96\",\n      \"request\": \"cvn\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.Request) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.request", body.Request, utf8.RuneCountInString(body.Request), 1, true))
+		}
+		if utf8.RuneCountInString(body.Request) > 2000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.request", body.Request, utf8.RuneCountInString(body.Request), 2000, false))
+		}
+		if len(body.Answers) > 12 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.answers", body.Answers, len(body.Answers), 12, false))
+		}
+		for _, e := range body.Answers {
+			if e != nil {
+				if err2 := ValidateAudienceCustomAnswerRequestBody(e); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+		if body.EventURL != nil {
+			if utf8.RuneCountInString(*body.EventURL) > 2048 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_url", *body.EventURL, utf8.RuneCountInString(*body.EventURL), 2048, false))
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload{
+		Request:  body.Request,
+		EventURL: body.EventURL,
+	}
+	if body.Answers != nil {
+		v.Answers = make([]*lfxv2campaignserviceaudiencebuilder.AudienceCustomAnswer, len(body.Answers))
+		for i, val := range body.Answers {
+			if val == nil {
+				v.Answers[i] = nil
+				continue
+			}
+			v.Answers[i] = marshalAudienceCustomAnswerRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomAnswer(val)
+		}
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildPreviewCustomAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder preview-custom-audience endpoint
+// from CLI flags.
+func BuildPreviewCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBody string, lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectID string, lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerToken string) (*lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload, error) {
+	var err error
+	var body PreviewCustomAudienceRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"custom\": {\n         \"criteria\": {\n            \"ambassadors\": true,\n            \"cities\": [\n               \"Sit et ad sed eius reiciendis.\",\n               \"Voluptatem suscipit rerum.\",\n               \"Et ex aut cupiditate qui placeat omnis.\"\n            ],\n            \"contact_location\": false,\n            \"countries\": [\n               \"Voluptatem eum consequuntur.\",\n               \"Amet et vel ipsa ad doloremque qui.\",\n               \"Repellendus velit soluta est quidem in dolorem.\"\n            ],\n            \"education_enrolled\": true,\n            \"education_topic_property\": \"Voluptatem eveniet velit corporis nemo et consectetur.\",\n            \"education_topics\": [\n               \"Earum magnam.\",\n               \"Sit excepturi eaque fuga natus expedita.\",\n               \"Sed et ducimus qui quas neque.\"\n            ],\n            \"event_registered\": false,\n            \"gate_event_history\": true,\n            \"gate_list_id\": \"Repellat et.\",\n            \"label\": \"auf\",\n            \"page_view_urls\": [\n               \"Eveniet magnam.\",\n               \"Consectetur repudiandae hic nostrum.\",\n               \"Sed est architecto sit est est labore.\"\n            ],\n            \"property_filters\": [\n               {\n                  \"operator\": \"contains\",\n                  \"property\": \"o\",\n                  \"values\": [\n                     \"Amet quia quia ea amet.\",\n                     \"Officia rerum eligendi ex.\",\n                     \"At explicabo reiciendis.\"\n                  ]\n               },\n               {\n                  \"operator\": \"contains\",\n                  \"property\": \"o\",\n                  \"values\": [\n                     \"Amet quia quia ea amet.\",\n                     \"Officia rerum eligendi ex.\",\n                     \"At explicabo reiciendis.\"\n                  ]\n               },\n               {\n                  \"operator\": \"contains\",\n                  \"property\": \"o\",\n                  \"values\": [\n                     \"Amet quia quia ea amet.\",\n                     \"Officia rerum eligendi ex.\",\n                     \"At explicabo reiciendis.\"\n                  ]\n               }\n            ],\n            \"registered_for\": [\n               \"Eligendi itaque.\",\n               \"Est temporibus explicabo doloremque possimus.\",\n               \"Cupiditate ab omnis nesciunt consequatur commodi.\"\n            ],\n            \"speakers\": {\n               \"event_names\": [\n                  \"Quod ipsum.\",\n                  \"Explicabo nesciunt qui.\",\n                  \"Perferendis et perferendis aut voluptates voluptatem similique.\"\n               ],\n               \"list_id\": \"Ratione unde dicta totam.\",\n               \"scope\": \"current\"\n            }\n         },\n         \"name\": \"ot8\"\n      }\n   }'")
+		}
+		if body.Custom == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("custom", "body"))
+		}
+		if body.Custom != nil {
+			if err2 := ValidateAudienceCustomInputRequestBody(body.Custom); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload{}
+	if body.Custom != nil {
+		v.Custom = marshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput(body.Custom)
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildCreateCustomAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-audience-builder create-custom-audience endpoint
+// from CLI flags.
+func BuildCreateCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBody string, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectID string, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerToken string) (*lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload, error) {
+	var err error
+	var body CreateCustomAudienceRequestBody
+	{
+		err = json.Unmarshal([]byte(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"custom\": {\n         \"criteria\": {\n            \"ambassadors\": true,\n            \"cities\": [\n               \"Sit et ad sed eius reiciendis.\",\n               \"Voluptatem suscipit rerum.\",\n               \"Et ex aut cupiditate qui placeat omnis.\"\n            ],\n            \"contact_location\": false,\n            \"countries\": [\n               \"Voluptatem eum consequuntur.\",\n               \"Amet et vel ipsa ad doloremque qui.\",\n               \"Repellendus velit soluta est quidem in dolorem.\"\n            ],\n            \"education_enrolled\": true,\n            \"education_topic_property\": \"Voluptatem eveniet velit corporis nemo et consectetur.\",\n            \"education_topics\": [\n               \"Earum magnam.\",\n               \"Sit excepturi eaque fuga natus expedita.\",\n               \"Sed et ducimus qui quas neque.\"\n            ],\n            \"event_registered\": false,\n            \"gate_event_history\": true,\n            \"gate_list_id\": \"Repellat et.\",\n            \"label\": \"auf\",\n            \"page_view_urls\": [\n               \"Eveniet magnam.\",\n               \"Consectetur repudiandae hic nostrum.\",\n               \"Sed est architecto sit est est labore.\"\n            ],\n            \"property_filters\": [\n               {\n                  \"operator\": \"contains\",\n                  \"property\": \"o\",\n                  \"values\": [\n                     \"Amet quia quia ea amet.\",\n                     \"Officia rerum eligendi ex.\",\n                     \"At explicabo reiciendis.\"\n                  ]\n               },\n               {\n                  \"operator\": \"contains\",\n                  \"property\": \"o\",\n                  \"values\": [\n                     \"Amet quia quia ea amet.\",\n                     \"Officia rerum eligendi ex.\",\n                     \"At explicabo reiciendis.\"\n                  ]\n               },\n               {\n                  \"operator\": \"contains\",\n                  \"property\": \"o\",\n                  \"values\": [\n                     \"Amet quia quia ea amet.\",\n                     \"Officia rerum eligendi ex.\",\n                     \"At explicabo reiciendis.\"\n                  ]\n               }\n            ],\n            \"registered_for\": [\n               \"Eligendi itaque.\",\n               \"Est temporibus explicabo doloremque possimus.\",\n               \"Cupiditate ab omnis nesciunt consequatur commodi.\"\n            ],\n            \"speakers\": {\n               \"event_names\": [\n                  \"Quod ipsum.\",\n                  \"Explicabo nesciunt qui.\",\n                  \"Perferendis et perferendis aut voluptates voluptatem similique.\"\n               ],\n               \"list_id\": \"Ratione unde dicta totam.\",\n               \"scope\": \"current\"\n            }\n         },\n         \"name\": \"ot8\"\n      }\n   }'")
+		}
+		if body.Custom == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("custom", "body"))
+		}
+		if body.Custom != nil {
+			if err2 := ValidateAudienceCustomInputRequestBody(body.Custom); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectID
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload{}
+	if body.Custom != nil {
+		v.Custom = marshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput(body.Custom)
 	}
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken

@@ -700,20 +700,27 @@ func CheckCurrentRegistrants(eventName string, includedNames []string) Check {
 // ExclusionCheck adds how many exclusion segments were found.
 type ExclusionCheck struct {
 	Check
+	// ExclusionCount is every exclusion that will apply: the list's own plus those
+	// applied at send time. SendTimeCount is the send-time share of it.
 	ExclusionCount int
+	SendTimeCount  int
 }
 
-// CheckExclusionCompleteness asks whether the list excludes anything at all.
+// CheckExclusionCompleteness asks whether the send excludes anything at all.
 //
 // Coarse on purpose, and a FAIL rather than a warning: zero exclusions means no
 // unsubscribe, no opt-out, and no non-marketable filter is applied, which is a
 // send that should not go out regardless of which specific list is missing. It says
 // nothing about whether the exclusions present are the RIGHT ones — that is
 // CheckSuppression's job.
-func CheckExclusionCompleteness(filters []ListFilter) ExclusionCheck {
-	count := len(ReferencedListIDs(filters, "NOT_IN_LIST"))
+//
+// sendTime counts suppression lists that are applied when the email is sent rather
+// than baked into the list — the builder's design for custom lists and for lists
+// attached without a composed master. They exclude the same contacts, so they count.
+func CheckExclusionCompleteness(filters []ListFilter, sendTime int) ExclusionCheck {
+	count := len(ReferencedListIDs(filters, "NOT_IN_LIST")) + sendTime
 	if count > 0 {
-		return ExclusionCheck{Check: Check{Verdict: VerdictPass, Findings: []Finding{}}, ExclusionCount: count}
+		return ExclusionCheck{Check: Check{Verdict: VerdictPass, Findings: []Finding{}}, ExclusionCount: count, SendTimeCount: sendTime}
 	}
 	return ExclusionCheck{
 		Check: Check{Verdict: VerdictFail, Findings: []Finding{{

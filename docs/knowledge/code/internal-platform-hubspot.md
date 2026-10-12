@@ -687,3 +687,15 @@ is the token's own — the same reasoning `ReadMetrics`' provenance guard record
 therefore logged as a warning about dead deep links, not returned as a failed connection test; a
 token "pasted from the wrong portal" is a token whose portal the operator chose by pasting it,
 and nothing in this package would send a campaign anywhere else.
+
+## Contact property definitions (`properties.go`)
+
+`GetContactProperty` (`GET /crm/v3/properties/contacts/{name}`, read-only) returns a property's
+name, type and options. A 404 is `(nil, nil)` rather than an error, because callers validate a SET
+of names and report every missing one together; a 2xx with no name is an error. The custom
+audience builder uses it so a property filter is never built on a guessed name, and so its
+operation type matches the property's type. It needs the token's contact-schema read scope.
+
+`EventTypeProperties` pages `/events/v3/event-definitions?includeProperties=true` (50 per page) and
+returns the properties of the definition whose `objectTypeId` matches, or `(nil, nil)` when none
+does.

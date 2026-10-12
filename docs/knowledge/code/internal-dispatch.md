@@ -4250,3 +4250,26 @@ keyed portal+id: an id is unique only within its portal, so a foreign-portal or 
 with the same number must neither suppress an attributable row nor escape the unattributable
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
+
+## Custom audiences (`audience_custom.go`, LFXV2-2770)
+
+`InterpretCustom`, `PreviewCustom` and `CreateCustom` on `AudienceExplorer`. Interpret calls the
+optional `completer` (`ErrCustomInterpretUnavailable` when none is configured — the criteria form
+still works without it) and then resolves what the model cannot know: the brand master gate via
+`bestMatch` over `BrandMasterProbes`, and an existing `<Label> Speakers` list. Both are filled into
+the draft as suggestions the operator can change.
+
+Preview and Create share `previewCustom`: every contact property the criteria read is fetched with
+`GetContactProperty` (all missing names are reported together as `UnknownPropertiesError`), each
+property filter's operation type is set from the portal's definition (an enumeration filtered as
+MULTISTRING is accepted by HubSpot and matches nobody), the gate and speakers lists are read back
+as contact lists, and the name is versioned against existing lists. **Create rebuilds from the
+criteria rather than trusting a previewed filter**, so a preview the client edited afterwards is
+never what gets created. Create is NOT idempotent: an unconfirmed create returns a
+`ComposePartialError` carrying the name, mapped to the same do-not-retry response as compose.
+Preview's `UpperBound` is the gate list's size only when every branch is gated.
+
+`similarLists` (2026-10-10) runs during interpretation: up to 8 candidates from deterministic name
+probes, ranked by a second model call. Best effort — a failed search or ranking returns the
+candidates unranked, never fails the draft. `previewCustom` resolves the education topic property
+with `EventTypeProperties` BEFORE validation and discards any value the caller sent.

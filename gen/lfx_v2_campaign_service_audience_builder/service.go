@@ -49,6 +49,15 @@ type Service interface {
 	// suppression, exclusion completeness, and whether this edition's own
 	// registrants are included. Creates nothing.
 	RunAudienceQa(context.Context, *RunAudienceQaPayload) (res *AudienceQaResult, err error)
+	// Interpret a free-text audience request into draft criteria and blocking
+	// questions. Uses a model; creates nothing.
+	InterpretCustomAudience(context.Context, *InterpretCustomAudiencePayload) (res *AudienceCustomInterpretResult, err error)
+	// Validate custom criteria against the portal and return the list that would
+	// be created. Creates nothing.
+	PreviewCustomAudience(context.Context, *PreviewCustomAudiencePayload) (res *AudienceCustomPreviewResult, err error)
+	// Create one custom contact list in the project's HubSpot portal from reviewed
+	// criteria. NOT idempotent.
+	CreateCustomAudience(context.Context, *CreateCustomAudiencePayload) (res *AudienceComposedList, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -71,7 +80,7 @@ const ServiceName = "lfx-v2-campaign-service-audience-builder"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [10]string{"get-audience-builder-capabilities", "discover-audience-lists", "search-audience-lists", "get-audience-suppression-lists", "get-audience-last-sent", "get-existing-audience-master-lists", "preview-audience-count", "compose-audience-master", "attach-existing-audience", "run-audience-qa"}
+var MethodNames = [13]string{"get-audience-builder-capabilities", "discover-audience-lists", "search-audience-lists", "get-audience-suppression-lists", "get-audience-last-sent", "get-existing-audience-master-lists", "preview-audience-count", "compose-audience-master", "attach-existing-audience", "run-audience-qa", "interpret-custom-audience", "preview-custom-audience", "create-custom-audience"}
 
 // AttachExistingAudiencePayload is the payload type of the
 // lfx-v2-campaign-service-audience-builder service attach-existing-audience
@@ -180,6 +189,9 @@ type AudienceComposeRecordedAudience struct {
 	IncludeListIds []string
 }
 
+// AudienceComposedList is the result type of the
+// lfx-v2-campaign-service-audience-builder service create-custom-audience
+// method.
 type AudienceComposedList struct {
 	// HubSpot list id
 	ListID string
@@ -189,6 +201,140 @@ type AudienceComposedList struct {
 	HubspotURL string
 	// Membership size, when HubSpot reported one
 	Size *int64
+}
+
+type AudienceCustomAnswer struct {
+	// The question's id
+	QuestionID *string
+	// The question text, echoed back
+	Question *string
+	// The chosen option or the operator's own words
+	Answer string
+}
+
+type AudienceCustomCriteria struct {
+	// Cities, matched on city and ip_city
+	Cities []string
+	// Countries; broadens location to country_dropdown and ip_country
+	Countries []string
+	// Include the contact-location branches (always gated by gate_list_id)
+	ContactLocation *bool
+	// Include contacts who registered for an event held in the location
+	EventRegistered *bool
+	// Include contacts who enrolled in education from the location
+	EducationEnrolled *bool
+	// Exact event names: contacts registered for any of them
+	RegisteredFor []string
+	// Also gate the event-history branches by gate_list_id
+	GateEventHistory *bool
+	// The brand master list gated branches must be in
+	GateListID *string
+	// Extra conditions ANDed into every branch
+	PropertyFilters []*AudienceCustomPropertyFilter
+	// Restrict to event speakers
+	Speakers *AudienceCustomSpeakers
+	// Restrict to community ambassadors
+	Ambassadors *bool
+	// Course/topic keywords narrowing education enrolment to the brand's own
+	// courses
+	EducationTopics []string
+	// The education event's course/topic property. On input, honoured only when it
+	// is one of the portal's candidates; otherwise the service picks the best one
+	EducationTopicProperty *string
+	// Contacts who viewed a page whose URL contains any of these
+	PageViewUrls []string
+	// The event(s) the audience is for; feeds the list name
+	Label *string
+}
+
+type AudienceCustomInput struct {
+	// The reviewed criteria
+	Criteria *AudienceCustomCriteria
+	// Explicit list name; derived from the criteria when omitted. A taken name is
+	// versioned, never reused
+	Name *string
+}
+
+// AudienceCustomInterpretResult is the result type of the
+// lfx-v2-campaign-service-audience-builder service interpret-custom-audience
+// method.
+type AudienceCustomInterpretResult struct {
+	// Draft criteria for the operator to review
+	Criteria *AudienceCustomCriteria
+	// The brand the model inferred
+	BrandShort *string
+	// The brand master list found for the gate, already filled into criteria
+	Gate *AudienceListSearchResult
+	// An existing speakers list, already filled into criteria
+	SpeakersList *AudienceListSearchResult
+	// Questions that still block the draft
+	Questions []*AudienceCustomQuestion
+	// Caveats about the draft
+	Notes []string
+	// Existing lists that may already be this audience, found by name search and
+	// ranked by the model; it never adds one
+	Similar []*AudienceCustomSimilarList
+	// The event an event audience was planned from; absent for a plain custom
+	// request
+	Event *AudienceEventIdentity
+}
+
+// AudienceCustomPreviewResult is the result type of the
+// lfx-v2-campaign-service-audience-builder service preview-custom-audience
+// method.
+type AudienceCustomPreviewResult struct {
+	// The name the list would be created under
+	Name string
+	// The criteria as they would be built
+	Criteria *AudienceCustomCriteria
+	// Filter branches after expanding roles
+	BranchCount int
+	// The education event's properties that could hold a course topic, best first
+	EducationTopicCandidates []string
+	// The gate list, as read from the portal
+	Gate *AudienceListSearchResult
+	// The gate list's size when every branch is gated; absent otherwise
+	UpperBound *int
+	// Things that may make the list smaller than intended
+	Warnings []string
+}
+
+type AudienceCustomPropertyFilter struct {
+	// HubSpot internal contact property name; verified against the portal
+	Property string
+	// Comparison
+	Operator string
+	// Values; ignored for is_known/is_unknown
+	Values []string
+}
+
+type AudienceCustomQuestion struct {
+	// Stable id to send back with the answer
+	ID string
+	// The question
+	Question string
+	// Why it blocks the draft
+	Why *string
+	// Clickable options; free text is also accepted
+	Options []string
+}
+
+type AudienceCustomSimilarList struct {
+	// The existing list
+	List *AudienceListSearchResult
+	// The model's suggestion; absent when it could not assess the list
+	Recommendation *string
+	// Why
+	Reason *string
+}
+
+type AudienceCustomSpeakers struct {
+	// Which editions' speakers
+	Scope string
+	// An existing speakers list; preferred over event_names when set
+	ListID *string
+	// Exact event_name values, including co-located tracks
+	EventNames []string
 }
 
 type AudienceDiscoveredList struct {
@@ -222,6 +368,9 @@ type AudienceDiscoveryResult struct {
 	MissingSignals []string
 	// How many candidate lists were inspected before the bound was reached
 	Inspected *int64
+	// Lists found but not offered for inclusion: suppressions, masters, test and
+	// staff lists
+	Hidden *int
 }
 
 type AudienceEventIdentity struct {
@@ -250,6 +399,10 @@ type AudienceLastSentEmail struct {
 	// are then empty because they are UNKNOWN, not because the send targeted
 	// nothing.
 	ListsUnavailable *bool
+	// The email's subject line
+	Subject *string
+	// Why this send is listed: event_name, subject, related_words or brand_only
+	MatchReason *string
 }
 
 type AudienceListBrief struct {
@@ -338,8 +491,11 @@ type AudienceQaExclusionCheck struct {
 	Verdict string
 	// Findings that produced the verdict
 	Findings []*AudienceQaFinding
-	// How many exclusion branches the filter carries
+	// How many exclusions apply: the list's own plus send-time suppressions
 	ExclusionCount int64
+	// How many of those are send-time suppression lists rather than filters on the
+	// list
+	SendTimeCount *int64
 }
 
 type AudienceQaFinding struct {
@@ -410,6 +566,18 @@ type ComposeAudienceMasterPayload struct {
 	ProjectID string
 	// What to compose the master list from
 	Compose *AudienceComposeMasterInput
+}
+
+// CreateCustomAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-audience-builder service create-custom-audience
+// method.
+type CreateCustomAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// What to create
+	Custom *AudienceCustomInput
 }
 
 // DiscoverAudienceListsPayload is the payload type of the
@@ -502,6 +670,23 @@ type GetExistingAudienceMasterListsResult struct {
 	Lists []*AudienceMasterListBrief
 }
 
+// InterpretCustomAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-audience-builder service interpret-custom-audience
+// method.
+type InterpretCustomAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The audience, described in plain words
+	Request string
+	// Answers to earlier questions
+	Answers []*AudienceCustomAnswer
+	// An event page: makes this an event audience, planned from the page's name,
+	// brand, location and dates
+	EventURL *string
+}
+
 // PreviewAudienceCountPayload is the payload type of the
 // lfx-v2-campaign-service-audience-builder service preview-audience-count
 // method.
@@ -512,6 +697,18 @@ type PreviewAudienceCountPayload struct {
 	ProjectID string
 	// Lists to union
 	ListIds []string
+}
+
+// PreviewCustomAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-audience-builder service preview-custom-audience
+// method.
+type PreviewCustomAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// What to preview
+	Custom *AudienceCustomInput
 }
 
 // RunAudienceQaPayload is the payload type of the
@@ -527,6 +724,9 @@ type RunAudienceQaPayload struct {
 	TargetsEu *bool
 	// The send targets Canada, so a CASL opt-out suppression is expected
 	TargetsCa *bool
+	// Suppression lists the send applies on top of this list; counted like the
+	// list's own exclusions
+	SendSuppressionListIds []string
 	// This edition's event name, so an included registration list for THIS event
 	// can be told from another event's
 	EventName *string

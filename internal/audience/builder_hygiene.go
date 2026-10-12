@@ -1,0 +1,168 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package audience
+
+import (
+	"regexp"
+	"sort"
+	"strings"
+)
+
+// ---------------------------------------------------------------------------
+// Discovery hygiene
+//
+// Rules that keep lists out of places they must not be offered, found by the
+// end-to-end test on a real portal: opt-out and GDPR lists sat in the INCLUDE
+// grid (and "Select all" would have ticked them), alongside master lists, test
+// lists and staff lists.
+// ---------------------------------------------------------------------------
+
+// discoveryHiddenHints mark lists that are never an inclusion candidate. Each has
+// its own home: suppressions in the Exclude step, masters in the Reuse step.
+var discoveryHiddenHints = []struct {
+	reason string
+	hints  []string
+}{
+	{"suppression", suppressionNameHints},
+	{"master", []string{"master"}},
+	{"test", []string{"[psh-test]", "[test", "test]", "e2e test", "(test)", "- test -"}},
+	{"staff", []string{"staff"}},
+}
+
+// uploadSuffixRE matches a list named after an uploaded file ("Japan_final1.xlsx").
+var uploadSuffixRE = regexp.MustCompile(`(?i)\.(csv|xlsx?|tsv)\s*$`)
+
+// DiscoveryHidden reports whether a discovered list must not be offered for
+// inclusion, and why. uncertain says the classifier found no signal: a file-named
+// upload is hidden only then, since a classified upload carries real evidence.
+func DiscoveryHidden(name string, uncertain bool) (string, bool) {
+	for _, group := range discoveryHiddenHints {
+		if containsAny(name, group.hints) {
+			return group.reason, true
+		}
+	}
+	if uncertain && uploadSuffixRE.MatchString(strings.TrimSpace(name)) {
+		return "upload", true
+	}
+	return "", false
+}
+
+// brandSegmentRE captures the brand segment of the naming convention
+// "<YYQN> - <BRAND> - <rest>".
+var brandSegmentRE = regexp.MustCompile(`(?i)^\s*\d{2}Q[1-4]\s*[-–]\s*([^-–]{2,24}?)\s*[-–]\s*\S`)
+
+// genericBrandSegments are segments that sit in the brand slot but are not a brand.
+var genericBrandSegments = map[string]bool{"events": true, "lf events": true, "event": true, "marketing": true}
+
+// DominantBrand is the brand most of these list names are filed under, or "".
+//
+// The fallback when an event page names no brand: an event's own lists follow
+// "<YYQN> - <BRAND> - <Event>", so the brand they agree on is the event's brand.
+// At least two names must agree, and a tie between brands yields "" — a guessed
+// brand gates an audience on the wrong master list.
+func DominantBrand(names []string) string {
+	counts := map[string]int{}
+	display := map[string]string{}
+	for _, n := range names {
+		m := brandSegmentRE.FindStringSubmatch(n)
+		if len(m) != 2 {
+			continue
+		}
+		seg := strings.TrimSpace(m[1])
+		key := strings.ToLower(seg)
+		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") {
+			continue
+		}
+		counts[key]++
+		display[key] = seg
+	}
+	type kv struct {
+		k string
+		n int
+	}
+	var ranked []kv
+	for k, n := range counts {
+		ranked = append(ranked, kv{k, n})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].n != ranked[j].n {
+			return ranked[i].n > ranked[j].n
+		}
+		return ranked[i].k < ranked[j].k
+	})
+	if len(ranked) == 0 || ranked[0].n < 2 || (len(ranked) > 1 && ranked[1].n == ranked[0].n) {
+		return ""
+	}
+	return display[ranked[0].k]
+}
+
+// audienceWords mark a list that is an audience in its own right rather than one
+// event's registrations or attendees.
+var audienceWords = []string{"mailable", "marketable", "contacts", "catchment"}
+
+// GuardReuse overrides the model where the list name contradicts it. A list
+// named for a different event ("Open Compliance Summit Tokyo 2025") is not this
+// audience however well its city matches — the live test ranked exactly that
+// "likely the same audience". A recommendation stands only when the name shares
+// an event word with the label or reads as a general audience list.
+func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarList {
+	keywords := EventKeywords(c.Label)
+	locationAudience := c.ContactLocation || c.EventRegistered || c.EducationEnrolled
+	out := make([]CustomSimilarList, 0, len(similar))
+	for _, s := range similar {
+		if s.Recommendation == CustomReuseAsIs || s.Recommendation == CustomReuseUpdate {
+			sharesEvent := len(keywords) > 0 && SharesKeyword(s.Name, keywords)
+			generalAudience := locationAudience && containsAny(s.Name, audienceWords)
+			if !sharesEvent && !generalAudience {
+				s.Recommendation = CustomReuseNone
+				s.Reason = "Named for a different event or audience."
+			}
+		}
+		out = append(out, s)
+	}
+	order := map[CustomReuseRecommendation]int{CustomReuseAsIs: 0, CustomReuseUpdate: 1, "": 2, CustomReuseNone: 3}
+	sort.SliceStable(out, func(i, j int) bool { return order[out[i].Recommendation] < order[out[j].Recommendation] })
+	return out
+}
+
+// customMaxAnswerRounds bounds the question loop: after this many answers the
+// draft is final and anything left is the operator's to adjust in the form. The
+// live test showed the model raising a fresh question every round.
+const customMaxAnswerRounds = 3
+
+// SettleQuestions drops questions already answered and, after enough rounds,
+// all of them.
+func SettleQuestions(questions []CustomQuestion, answers []CustomAnswer) []CustomQuestion {
+	if len(answers) >= customMaxAnswerRounds {
+		return []CustomQuestion{}
+	}
+	answered := map[string]bool{}
+	for _, a := range answers {
+		answered[strings.ToLower(strings.TrimSpace(a.QuestionID))] = true
+	}
+	out := make([]CustomQuestion, 0, len(questions))
+	for _, q := range questions {
+		if answered[strings.ToLower(strings.TrimSpace(q.ID))] {
+			continue
+		}
+		out = append(out, q)
+	}
+	return out
+}
+
+// WithEventYear appends the year of the event's first date to a name that has
+// none. Registration and speaker filters match event_name exactly, and edition
+// names carry their year ("AGNTCon + MCPCon Japan 2026").
+func WithEventYear(name string, dates []string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || yearRE.MatchString(name) {
+		return name
+	}
+	for _, d := range dates {
+		if y := yearRE.FindString(d); y != "" {
+			return name + " " + y
+		}
+	}
+	return name
+}

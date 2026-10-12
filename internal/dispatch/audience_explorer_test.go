@@ -484,7 +484,7 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
 	t.Run("no event name: check 4 does not run and the roll-up is untouched", func(t *testing.T) {
-		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "", false, false)
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "", false, false, nil)
 		require.NoError(t, err)
 
 		assert.Empty(t, outcome.Checks.CurrentRegistrants.Verdict,
@@ -497,7 +497,7 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 	})
 
 	t.Run("event named: check 4 catches the included registration list", func(t *testing.T) {
-		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", false, false)
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", false, false, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, audience.VerdictFail, outcome.Checks.CurrentRegistrants.Verdict,
@@ -653,7 +653,7 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
-	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", false, false)
+	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", false, false, nil)
 	require.NoError(t, err)
 	require.False(t, outcome.NeedsDisambiguation)
 

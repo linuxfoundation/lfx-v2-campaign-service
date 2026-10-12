@@ -455,3 +455,73 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   must be shown rather than a failure to retry blindly.
 
 See [internal/audience](../../../internal/audience).
+
+## Custom audiences: the model proposes, this package builds (LFXV2-2770)
+
+`builder_custom.go` and `builder_custom_interpret.go` are the "build from scratch" path, ported
+from the legacy audience builder's Custom Audience tab. There, a model read a free-text request
+AND wrote the HubSpot filter JSON AND called the create. Here the model does only the first:
+
+- **`CustomInterpretSystemPrompt` / `ParseCustomDraft`** turn the request (plus answers to
+  earlier questions) into a DRAFT `CustomCriteria` and the questions that still block it. The
+  reply is decoded with unknown fields REFUSED — a model inventing `gate_list_id` must not have it
+  silently ignored — while one unusable filter row is dropped with a note rather than costing the
+  whole draft. The model never supplies list ids (the gate and any speakers list are resolved
+  against the portal) or property types (read from the portal's definitions). Operator text is
+  quoted inside `BEGIN/END` blocks with the markers neutralised, exactly as the event-page prompt is.
+- **`CustomListFilter`** is the only thing that builds the filter, and it is pure and table-tested.
+  The shape is the reference list's (`26Q3 - Seoul - Mailable Contacts - …`): an OR root of AND
+  branches — `city`/`ip_city` (+ `country_dropdown`/`ip_country` when broadened), each gated by
+  the brand master list; and event-history branches qualified INSIDE the `UNIFIED_EVENTS` node on
+  the event's own `event_city`/`user_city` (+ country), gated only when `GateEventHistory` is set.
+  `RegisteredFor` adds a branch for exact edition names (this edition's registrants).
+- **Restrictions reach EVERY branch.** Extra property filters are ANDed into each branch; the
+  speaker restriction is an `IN_LIST` on an existing speakers list or, absent one, each branch is
+  copied once per speaker signal (`registration_type CONTAINS_TOKEN Speaker`,
+  `is_event_speaker_bool`, `is_event_speaker`) because HubSpot will not take an OR nested inside a
+  branch; ambassadors copy each branch once per programme property. A restriction on only some
+  branches is an OR'd way around it. Copies clone their slices so appending to one cannot alias
+  another. The expansion is capped at `customBranchLimit` (60).
+- **No suppression on a custom list.** It is an inclusion building block: suppressions apply once,
+  at the composed master or at send time, and baking them in would apply them again wherever the
+  block is reused (the legacy rule "single-signal lists never carry their own suppression").
+- **Fail closed.** `ValidateCustomCriteria` refuses an ungated contact-location branch (a city
+  filter alone selects everyone who ever typed that city, mailable or not), a speaker restriction
+  with neither a list nor event names (every speaker of every event), an unknown operator, and a
+  value operator with no values. Every refusal wraps `ErrInvalidRequest` with operator-facing text.
+- **Naming.** `CustomListName` follows the reference pattern
+  (`<YYQN> - <Location> - Mailable Contacts - <Label>`, `<Event> Speakers - <Scope>`,
+  `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never
+  reused: a matching name does not prove a matching audience.
+- **Gate resolution.** `BrandMasterProbes`/`MatchesBrandMaster` find the brand's STANDING master
+  list (`… - Master-list`), never a per-event `… - Master`, which is one event's audience and the
+  wrong gate for a location list. A short brand matches only as a whole token.
+
+Not ported, deliberately: the legacy Education brand-fit topic filter (it needs a course/topic
+property on the education event type that this portal has not been shown to carry) and the
+legacy REUSE/UPDATE/CREATE negotiation (the existing Reuse step already lists prior masters).
+
+**Added 2026-10-10.** Three more criteria close the legacy "Create list" gap for every missing
+signal:
+- `EducationTopics` narrow education enrolment to the brand's own courses with a CONTAINS filter
+  inside every education `UNIFIED_EVENTS` node; with no location they are the education signal on
+  their own. The property they filter on (`EducationTopicProperty`) is picked from the portal's
+  education event definition by `CourseTopicProperty` (course > topic > subject > program >
+  curriculum, by name or label) — never by the caller or the model — and topics with no such
+  property are refused rather than silently dropped, because dropping them widens the list to
+  every enrolment.
+- `PageViewURLs` add one ungated `PAGE_VIEW` branch per URL (`HAS_PAGEVIEW_CONTAINS`, `pageUrl`).
+  `filter.MarshalJSON` omits `operation` for that filter type only; every other filter's wire
+  shape is unchanged. A fragment shorter than 8 characters is refused, since it matches every
+  page that mentions it. The PAGE_VIEW shape follows the v3 Lists API documentation and has not
+  yet been confirmed against a live create.
+- **Reuse before create.** `CustomReuseProbes` searches by location/label, `ReusableCandidate`
+  drops masters, suppressions and test lists, and the model ranks the survivors
+  (`CustomReuseSystemPrompt` / `ParseCustomReuse`: reuse / update / unrelated). It ranks only
+  what the search found — an id it returns that was not a candidate is dropped.
+
+**QA and send-time suppression (2026-10-12).** `CheckExclusionCompleteness(filters, sendTime)`
+counts suppression lists the send applies as well as the list's own `NOT_IN_LIST` filters. Custom
+lists (and lists attached without a composed master) carry no suppression by design, so before
+this every one of them failed QA despite going out suppressed.
+
