@@ -47,20 +47,22 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    `account-monitor` only, until LFXV2-2665) — because folding them together would rule
    `/accounts` for hubspot and `/emails` for google-ads, neither of which is served. `parity_test` fails if the
    RuleSet and the regex ever disagree, in either direction —
-   `briefs` [+ nested campaigns], `jobs`, `{provider}/metrics` for the five ad
-   providers, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(meta-ads|twitter-ads)/audience` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine
+   `briefs` [+ nested campaigns], `jobs`, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref` (LFXV2-2665), `(meta-ads|twitter-ads)/audience` (LFXV2-2665), `(meta-ads|reddit-ads|twitter-ads)/campaign-ref` (LFXV2-2665), `hubspot`, and the nine
    `audience-builder/*` leaves). The audience-builder family (LFXV2-2770) is enumerated
    entry by entry rather than covered by an `audience-builder/**` wildcard: two of its
    leaves are two segments deep (`lists/search`, `qa/run`) so a single-segment capture
    would miss them, and `compose-master` writes real contact lists into a production
    HubSpot portal and is not idempotent, so a `**` that also authorized the bare base and
    the unimplemented `signal-list` would rule paths the service does not serve.
-   **`{provider}/metrics` is
-   ruled and routed but NOT SERVED** — no `design/` file declares it, so a request
-   reaching it is authorized here and forwarded to a service with no such route.
-   `parity_test` cannot catch that: it compares the RuleSet to the regex and reads
-   neither `design/` nor `gen/`, so a matcher for an unimplemented endpoint agrees
-   with itself. See the Monitoring warning in `docs/api-catalog.md`. Gated on the project
+   **There is no `{provider}/metrics` entry.** The rule used to authorize
+   `/projects/:projectId/{google-ads,linkedin-ads,meta-ads,reddit-ads,twitter-ads}/metrics`,
+   which no `design/` file declares, so a request was authorized here and forwarded to a
+   service with no such route. The five entries were removed together with the matching
+   HTTPRoute alternative (2026-10-13), and `parity_test` pins all five as rejected by both
+   matchers. It still cannot tell a served path from an unserved one on its own — it
+   compares the RuleSet to the regex and reads neither `design/` nor `gen/` — so a new
+   entry must be checked against `design/` by hand. See the Monitoring section of
+   `docs/api-catalog.md`. Gated on the project
    `campaign_manager` relation (D2 — reads AND writes; no read-only audience),
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
