@@ -153,17 +153,60 @@ func TestVerifyRejectsExpiredAndOverlongExpiry(t *testing.T) {
 		t.Fatal("an expired URL must not verify")
 	}
 
-	// A VALIDLY signed URL whose expiry is further away than MaxTTL is refused: a leaked key
-	// must not be able to mint long-lived URLs this service honours.
-	far := now.Add(MaxTTL + time.Minute).Unix()
+	// A VALIDLY signed URL whose expiry is further away than MaxTTL+MaxClockSkew is refused: a
+	// leaked key must not be able to mint long-lived URLs this service honours.
+	far := now.Add(MaxTTL + MaxClockSkew + time.Second).Unix()
 	farSig := base64.RawURLEncoding.EncodeToString(s.mac(p, b, a, far))
 	if s.Verify(p, b, a, far, farSig) {
-		t.Fatal("a signature over an expiry beyond MaxTTL must not verify")
+		t.Fatal("a signature over an expiry beyond MaxTTL+MaxClockSkew must not verify")
 	}
-	edge := now.Add(MaxTTL).Unix()
+	edge := now.Add(MaxTTL + MaxClockSkew).Unix()
 	edgeSig := base64.RawURLEncoding.EncodeToString(s.mac(p, b, a, edge))
 	if !s.Verify(p, b, a, edge, edgeSig) {
-		t.Fatal("an expiry exactly MaxTTL away should verify")
+		t.Fatal("an expiry exactly MaxTTL+MaxClockSkew away should verify")
+	}
+}
+
+// TestVerifyToleratesClockSkewBetweenPods: the pod that mints a URL and the pod that serves it
+// have independent clocks. A 60m URL (the TTL ceiling) minted by a pod whose clock LEADS the
+// serving pod's must still verify there; one minted by a pod that LAGS must verify until its
+// (earlier) expiry; and in both directions an expiry already past on the verifier is refused.
+func TestVerifyToleratesClockSkewBetweenPods(t *testing.T) {
+	serverNow := time.Unix(1_800_000_000, 0)
+	base, err := New(testKey(7), "https://lfx-api.example.org", "60m")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	verifier := base.WithClock(func() time.Time { return serverNow })
+
+	for _, skew := range []time.Duration{time.Second, 30 * time.Second, MaxClockSkew, -time.Second, -MaxClockSkew} {
+		t.Run(skew.String(), func(t *testing.T) {
+			minter := base.WithClock(func() time.Time { return serverNow.Add(skew) })
+			raw, exp, err := minter.Mint(testProject, testBrief, testAsset)
+			if err != nil {
+				t.Fatalf("Mint: %v", err)
+			}
+			p, b, a, e, sig := parts(t, raw)
+			if !verifier.Verify(p, b, a, e, sig) {
+				t.Fatalf("a %s-skewed 60m URL was refused by the serving pod", skew)
+			}
+			// Past its expiry on the VERIFIER's clock it is refused, whichever pod led.
+			late := base.WithClock(func() time.Time { return exp })
+			if late.Verify(p, b, a, e, sig) {
+				t.Fatal("an expiry already reached on the verifier must be refused")
+			}
+		})
+	}
+
+	// Skew beyond the allowance is refused, so the allowance is a bound, not a bypass.
+	minter := base.WithClock(func() time.Time { return serverNow.Add(MaxClockSkew + time.Second) })
+	raw, _, err := minter.Mint(testProject, testBrief, testAsset)
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	p, b, a, e, sig := parts(t, raw)
+	if verifier.Verify(p, b, a, e, sig) {
+		t.Fatal("a 60m URL from a pod more than MaxClockSkew ahead must be refused")
 	}
 }
 

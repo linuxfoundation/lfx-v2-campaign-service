@@ -55,9 +55,12 @@ sig = base64url_nopad(HMAC-SHA256(key, "lfx-v2-campaign-service/creative-asset-u
   compares exactly what arrives, so another spelling of the same UUID fails.
 - **Constant-time**: the MAC is compared with `hmac.Equal` (`macEqual`, which a test swaps to
   prove it is used); the MAC is computed even when the expiry is already bad.
-- **Expiry**: `exp` must be in the future and at most `MaxTTL` (60 min) away — a validly signed
-  URL claiming a later expiry is refused, so a leaked key cannot mint long-lived URLs this
-  service honours. Default TTL 10 min; configurable within 5–60 min. The 5-minute floor is
+- **Expiry**: `exp` must be in the future and at most `MaxTTL` + `MaxClockSkew` (60 + 1 min)
+  away — a validly signed URL claiming a later expiry is refused, so a leaked key cannot mint
+  long-lived URLs this service honours. `MaxClockSkew` exists because the minting and serving
+  pods have independent clocks: without it a URL minted at the 60-minute TTL ceiling by a pod
+  one second ahead of the serving pod was refused. It widens only the far bound; an expiry
+  already past on the verifier's clock is still refused. Default TTL 10 min; configurable within 5–60 min. The 5-minute floor is
   what the URL must outlive: the promoted-post request it is minted for (the Reddit client's
   30 s timeout), Reddit's own fetch inside that request, and clock skew between the minting and
   serving pods.

@@ -17,3 +17,9 @@ doc and the `reddit_asset.go` header still said the URL was minted inside the di
 say it is minted immediately before the Reddit post request. The create-campaigns description no
 longer implies the two dispatch-time refusals are the only synchronous ones — it names the
 request-shape 400s (such as `new_version` on an unsupported platform) alongside them.
+
+Follow-up (#317 review, clock skew): `Verify` bounded an expiry at exactly `MaxTTL` from the
+verifier's clock, so a 60-minute URL minted by a pod one second ahead of the serving pod was
+refused. It now allows `MaxTTL + MaxClockSkew` (1 minute, a documented constant); an expiry
+already past on the verifier is still refused. `TestVerifyToleratesClockSkewBetweenPods` mints
+on clocks skewed in both directions and checks that skew beyond the allowance is refused.

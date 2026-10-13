@@ -46,9 +46,17 @@ const (
 	// the image during the post-create call it is handed to, so minutes are ample.
 	DefaultTTL = 10 * time.Minute
 	// MaxTTL is the hard ceiling on a URL's lifetime, both for the configured TTL and for any
-	// expiry Verify will accept — a validly signed URL claiming a later expiry is refused, so
-	// a leaked key cannot mint long-lived URLs that this service would honour.
+	// expiry Verify will accept (plus MaxClockSkew) — a validly signed URL claiming a later
+	// expiry is refused, so a leaked key cannot mint long-lived URLs this service would honour.
 	MaxTTL = 60 * time.Minute
+	// MaxClockSkew is how far AHEAD of the verifying pod's clock the minting pod's clock may
+	// be. Verify accepts an expiry up to MaxTTL+MaxClockSkew away, because a URL minted at the
+	// MaxTTL ceiling by a pod whose clock leads the serving pod's by even one second would
+	// otherwise look "too far in the future" and be refused, failing Reddit's fetch. It widens
+	// only the far bound: an expiry already in the past is still refused (a minting pod whose
+	// clock LAGS only shortens a URL's life, which MinTTL's margin covers), and it does not let
+	// a leaked key mint materially longer-lived URLs. One minute is generous for NTP-synced pods.
+	MaxClockSkew = 1 * time.Minute
 	// MinTTL is the floor on the configured TTL. The URL is minted immediately before the
 	// promoted-post request that hands it to Reddit (reddit.CampaignInput.ImageURLSource), and
 	// Reddit fetches it inside that request, so the URL must outlive: one post attempt (bounded
@@ -238,7 +246,7 @@ func (s *Signer) Mint(projectID, briefID, assetID string) (string, time.Time, er
 }
 
 // Verify reports whether sig is this server's signature over exactly (projectID, briefID,
-// assetID, exp) AND exp is still in the future AND no further away than MaxTTL.
+// assetID, exp) AND exp is still in the future AND no further away than MaxTTL+MaxClockSkew.
 //
 // The ids are compared exactly as given, with no normalisation: Mint signs the canonical
 // spelling, so any other spelling of the same UUID is a different message and fails. The MAC
@@ -260,7 +268,7 @@ func (s *Signer) Verify(projectID, briefID, assetID string, exp int64, sig strin
 	}
 	ok := macEqual(s.mac(projectID, briefID, assetID, exp), got)
 	now := s.now().Unix()
-	fresh := exp > now && exp-now <= int64(MaxTTL/time.Second)
+	fresh := exp > now && exp-now <= int64((MaxTTL+MaxClockSkew)/time.Second)
 	return ok && fresh
 }
 
