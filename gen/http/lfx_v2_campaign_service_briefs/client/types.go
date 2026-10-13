@@ -119,8 +119,9 @@ type AddNegativeKeywordsRequestBody struct {
 	// the campaign's one ad group on Reddit, on its one line item on X.
 	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords" json:"negative_keywords" xml:"negative_keywords"`
 	// Reddit only, and required there: the revision get-keyword-targeting
-	// returned. The add is refused (409) when the ad group's targeting no longer
-	// has that fingerprint. Refused (400) on Microsoft Advertising and X.
+	// returned; an empty or blank one is 400. The add is refused (409) when the ad
+	// group's targeting no longer has that fingerprint. Microsoft Advertising and
+	// X refuse the field (400) whenever it is present, even empty.
 	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 

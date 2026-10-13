@@ -168,6 +168,7 @@ func TestReddit_AddNegativeKeywords_RefusalsWriteNothing(t *testing.T) {
 		{"duplicate ignoring case", redditBudgetCampaign(), body, rev, []model.NegativeKeyword{broad("Free"), broad("free")}, domain.ErrNegativeKeywordInvalid, true},
 		{"duplicate under unicode simple folding", redditBudgetCampaign(), body, rev, []model.NegativeKeyword{broad("ΟΣ"), broad("ος")}, domain.ErrNegativeKeywordInvalid, true},
 		{"revision missing", redditBudgetCampaign(), body, "", []model.NegativeKeyword{broad("free")}, domain.ErrNegativeKeywordInvalid, true},
+		{"revision blank", redditBudgetCampaign(), body, "   ", []model.NegativeKeyword{broad("free")}, domain.ErrNegativeKeywordInvalid, true},
 		{"provenance unknown", &model.Campaign{ID: "camp-1", Platform: model.ProviderRedditAds, PlatformCampaignID: "t3_c",
 			Result: json.RawMessage(`{"adGroupId":"t5_ag"}`)}, body, rev, []model.NegativeKeyword{broad("free")}, domain.ErrCampaignProvenanceUnknown, true},
 		{"unprovisioned", &model.Campaign{ID: "camp-1", Platform: model.ProviderRedditAds}, body, rev, []model.NegativeKeyword{broad("free")}, domain.ErrCampaignNotProvisioned, true},

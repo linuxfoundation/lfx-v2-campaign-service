@@ -52,8 +52,15 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 		keywords = append(keywords, model.NegativeKeyword{Text: k.Text, MatchType: k.MatchType})
 	}
 
+	// PRESENCE, not value, decides a non-Reddit refusal: an explicit "" collapses to the same ""
+	// as an absent field once converted, so the adapters alone would accept {"revision": ""} on
+	// Microsoft and X, which the contract says refuse any revision (PR #321 review). Reddit takes
+	// the value, and its adapter refuses a blank one as an invalid batch.
 	revision := ""
 	if p.Revision != nil {
+		if existing.Platform != model.ProviderRedditAds {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "revision applies to Reddit campaigns only — omit it, even empty, for Microsoft Advertising and X"}
+		}
 		revision = *p.Revision
 	}
 

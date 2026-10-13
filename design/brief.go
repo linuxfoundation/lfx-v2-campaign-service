@@ -2200,7 +2200,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"the project's current connection (a campaign that does not record its ad account is refused, never " +
 			"assumed), and on Reddit and X a READ proving the ad group / line item is live and reported under THIS " +
 			"campaign. Reddit also requires `revision`, the fingerprint get-keyword-targeting returned, and refuses " +
-			"(409) when the ad group's targeting has changed since; Microsoft and X refuse a revision (400). " +
+			"(409) when the ad group's targeting has changed since, and a blank one is 400; Microsoft and X refuse a present " +
+			"revision, even an empty one (400). " +
 			"Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes " +
 			"no If-Match and returns no ETag. " +
 			"Every write is sent ONCE and never retried on a 429. The 200 carries one result per requested keyword, " +
@@ -2239,7 +2240,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			})
 			// Reddit's compare-and-set token, exactly as get-keyword-targeting returned it. Never sent
 			// upstream; only compared with a fresh read's fingerprint.
-			Attribute("revision", String, "Reddit only, and required there: the revision get-keyword-targeting returned. The add is refused (409) when the ad group's targeting no longer has that fingerprint. Refused (400) on Microsoft Advertising and X.", func() {
+			Attribute("revision", String, "Reddit only, and required there: the revision get-keyword-targeting returned; an empty or blank one is 400. The add is refused (409) when the ad group's targeting no longer has that fingerprint. Microsoft Advertising and X refuse the field (400) whenever it is present, even empty.", func() {
 				MaxLength(128)
 				Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c")
 			})

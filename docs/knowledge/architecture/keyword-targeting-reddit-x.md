@@ -98,7 +98,7 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
 
 `POST …/campaigns/{campaign_id}/negative-keywords` was Microsoft-only; it now also serves Reddit
 and X through the same `NegativeKeywordAdder` capability, whose method gained a `revision`
-argument (Reddit's token; Microsoft and X refuse a non-empty one as an invalid batch).
+argument (Reddit's token, required and non-blank there). For Microsoft and X the handler refuses a PRESENT `revision` — even `""` — with 400 before any dispatcher runs, and the adapters also refuse a non-empty one as an invalid batch.
 
 | | Reddit | X |
 |---|---|---|

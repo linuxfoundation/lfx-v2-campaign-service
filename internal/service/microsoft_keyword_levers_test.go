@@ -283,6 +283,34 @@ func TestAddNegativeKeywords_RedditAndXErrorMapping(t *testing.T) {
 	}
 }
 
+// A PRESENT revision — even an explicitly empty one — is refused (400) for Microsoft and X before
+// any dispatcher is reached; it must not collapse into "absent" on the way to the adapter (PR #321
+// review). On Reddit the value is passed through, and the adapter refuses a blank one.
+func TestAddNegativeKeywords_PresentRevisionIsRefusedOutsideReddit(t *testing.T) {
+	for _, platform := range []model.Provider{model.ProviderMicrosoftAds, model.ProviderTwitterAds} {
+		for _, rev := range []string{"", "sha256:abc"} {
+			d := &msLeverDispatcher{}
+			s := keywordActionService(t, platform, d)
+			p := negativePayload(&briefs.NegativeKeywordInput{Text: "free", MatchType: "Exact"})
+			p.Revision = strPtr(rev)
+			_, err := s.AddNegativeKeywords(context.Background(), p)
+			if br, ok := err.(*briefs.BadRequestError); !ok || !strings.Contains(br.Message, "Reddit campaigns only") {
+				t.Fatalf("%s revision %q: err = %T (%v), want the revision 400", platform, rev, err, err)
+			}
+			if d.gotNegatives != nil {
+				t.Errorf("%s revision %q: the dispatcher was reached", platform, rev)
+			}
+		}
+	}
+	d := &msLeverDispatcher{negOutcomes: []model.NegativeKeywordOutcome{{Text: "free", MatchType: "Broad", Outcome: model.KeywordOutcomeApplied}}}
+	s := keywordActionService(t, model.ProviderRedditAds, d)
+	p := negativePayload(&briefs.NegativeKeywordInput{Text: "free", MatchType: "Broad"})
+	p.Revision = strPtr("")
+	if _, err := s.AddNegativeKeywords(context.Background(), p); err != nil || d.gotNegatives == nil || d.gotRevision != "" {
+		t.Fatalf("reddit: an explicit empty revision is the adapter's to judge, got %v (reached: %v)", err, d.gotNegatives != nil)
+	}
+}
+
 func TestAddNegativeKeywords_ErrorMapping(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -1,6 +1,6 @@
 # 2026-10-13 — Negative keywords for Reddit and X: review fixes (PR #321)
 
-**Fix** — Seven review fixes to `add-negative-keywords`:
+**Fix** — Eight review fixes to `add-negative-keywords`:
 
 - **Reddit's 2,000 limit counts null elements.** The write keeps every element it read, null ones
   included, so the limit is now checked against the number of array elements, both in the
@@ -34,3 +34,9 @@
   items. Reddit now follows the same rule: a definite `REJECTED` or `NOT_SENT` write is answered
   per item. Both platforms return a batch-wide error only when every item is `UNCONFIRMED`. The
   dispatch and service code docs now list Reddit and X as implementing `NegativeKeywordAdder`.
+- **Microsoft and X refuse an empty `revision`.** Converting the pointer collapsed
+  `{"revision": ""}` into the same empty string as an absent field, so Microsoft and X accepted it
+  even though the contract says they refuse any revision. The handler now checks whether the field
+  is present, not its value, and returns 400 for a non-Reddit campaign before any dispatcher runs.
+  On Reddit the value is passed through, and the adapter already refuses an empty or blank one with
+  400. The design text now states both rules.
