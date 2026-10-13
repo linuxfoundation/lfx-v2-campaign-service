@@ -1665,7 +1665,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("adopt-campaign", func() {
-		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.")
+		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign's own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only, matching create-campaigns: project_id is the exact-match key for
@@ -2020,16 +2020,20 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"account currency's minor units) of the ONE ad set this service created. X: the " +
 			"bid_amount_local_micro of the ONE line item this service created. A campaign whose row " +
 			"records none (an adopted campaign, or one whose creation never reached it) is refused (409): " +
-			"the service will not choose which of several to re-bid. " +
+			"the service will not choose which of several to re-bid. LinkedIn: the campaign's own unitCost " +
+			"(a decimal amount, written in USD at whole cents — a sub-cent amount is refused 400 rather than " +
+			"rounded); an ADOPTED LinkedIn campaign is refused (409). " +
 			"REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does " +
 			"something under a bid strategy that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's " +
 			"MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with billing_event AND " +
 			"optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on " +
 			"impressions, per 1,000 impressions — so only that pairing is a max cost per click); X's MAX " +
-			"with pay_by LINK_CLICK. Under an automated or target strategy (Microsoft MaxClicks, " +
+			"with pay_by LINK_CLICK; LinkedIn's costType CPC with optimizationTargetType NONE or " +
+			"ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or target strategy (Microsoft MaxClicks, " +
 			"MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio " +
 			"strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta " +
-			"LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET) the platform " +
+			"LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET; LinkedIn MAX_*, " +
+			"TARGET_COST_PER_*, CAP_COST_AND_*, or any CPM/CPV campaign) the platform " +
 			"would ignore it or, worse, the write would be read as a request to switch strategy — and this " +
 			"endpoint NEVER switches strategy, billing or charge unit. An unreported strategy is refused " +
 			"the same way rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked first " +
@@ -2039,11 +2043,13 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, " +
 			"and every X campaign AUTO, so those three legs apply only after an operator has moved the " +
 			"Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in " +
-			"the platform's own UI. " +
+			"the platform's own UI. A LinkedIn campaign this service creates sends no optimizationTargetType, " +
+			"which LinkedIn documents as defaulting to NONE (manual), so it is expected to pass — but the " +
+			"guard decides on what LinkedIn REPORTS, never on that expectation. " +
 			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
 			"converts it. " +
-			"Microsoft Advertising, Reddit, Meta and X today: a campaign on any other platform is refused " +
-			"with 400. " +
+			"Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other platform is " +
+			"refused with 400. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: the " +
 			"campaign is unprovisioned; it belongs to a different ad account than the project's connection " +
 			"now resolves to, or does not record which ad account it was created under; its bid strategy is " +
@@ -2053,8 +2059,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"**400** for a request fault: a non-positive, non-finite or out-of-range bid, an unknown bid type, " +
 			"a platform with no bid-write capability wired, or a bid the campaign's platform refuses on its " +
 			"own minimum or maximum — the response names what it was. " +
-			"**503** when the platform could not be reached or did not confirm — including a throttled Meta " +
-			"or X write, which is never retried in-call; the row is unchanged. Setting the same bid twice " +
+			"**503** when the platform could not be reached or did not confirm — including a throttled Meta, " +
+			"X or LinkedIn write, which is never retried in-call; the row is unchanged. Setting the same bid twice " +
 			"converges, but verify the bid in the ad platform before retrying.")
 		Payload(func() {
 			bearerToken()

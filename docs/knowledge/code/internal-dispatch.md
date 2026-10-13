@@ -1472,9 +1472,10 @@ wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
 ## Bid write (optional capability, LFXV2-2665)
 
 `service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising,
-Reddit, Meta and X**; Google Ads, LinkedIn and HubSpot are not `BidWriter`s (pinned by
-`TestBidWriter_OnlyMicrosoftRedditMetaAndXImplementIt`), so the orchestrator answers
-`ErrBidUnsupported` (400). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
+Reddit, Meta, X and LinkedIn**; Google Ads and HubSpot are not `BidWriter`s (pinned by
+`TestBidWriter_GoogleAndHubSpotDoNotImplementIt`), so the orchestrator answers
+`ErrBidUnsupported` (400). LinkedIn's leg is described in
+[LinkedIn settings, bid and adoption](#linkedin-settings-bid-and-adoption-lfxv2-2665). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
 (`Unconfirmed()`) and `rejectedBidAmountError` (`BidAmountReason()`), the bid lever's
 counterparts of the budget types. No env gate, matching the budget writers.
 
@@ -3340,7 +3341,7 @@ untouched by all of it — refusing to pause is refusing to stop spend.
 ### Microsoft, Meta, Reddit and X adopters (LFXV2-2665)
 
 (LinkedIn joined them later in LFXV2-2665 — see
-[LinkedIn settings and adoption](#linkedin-settings-and-adoption-lfxv2-2665).)
+[LinkedIn settings, bid and adoption](#linkedin-settings-bid-and-adoption-lfxv2-2665).)
 
 `MicrosoftDispatcher`, `MetaDispatcher`, `RedditDispatcher` and `TwitterDispatcher` implement
 `LookupCampaign` (`microsoft_adopt.go`, `meta_adopt.go`, `reddit_adopt.go`, `twitter_adopt.go`),
@@ -4254,12 +4255,12 @@ with the same number must neither suppress an attributable row nor escape the un
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
 
-## LinkedIn settings and adoption (LFXV2-2665)
+## LinkedIn settings, bid and adoption (LFXV2-2665)
 
-`linkedin_settings.go` and `linkedin_adopt.go` give `LinkedInDispatcher` two of the capabilities
-every other non-Google ad platform had: `SettingsReader` and `CampaignAdopter` (compile-time
-asserted beside the siblings'; LinkedIn joins the shared adopter table in `adopt_test.go` and the
-settings wiring test). Both read the campaign through ONE
+`linkedin_settings.go`, `linkedin_bid.go` and `linkedin_adopt.go` give `LinkedInDispatcher` the
+three capabilities every other non-Google ad platform had: `SettingsReader`, `BidWriter` and
+`CampaignAdopter` (compile-time asserted beside the siblings'; LinkedIn joins the shared adopter
+table in `adopt_test.go` and the settings wiring test). All three read the campaign through ONE
 client call, `linkedin.Client.GetCampaignSettings` — `GET adAccounts/{acct}/adCampaigns/{id}`,
 identity-checked, with a 404 proven absent only by a confirming ad-account read (see
 [internal/platform/linkedin](internal-platform-linkedin.md)).
@@ -4272,6 +4273,20 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
   `cost_type`, `unit_cost`, `objective_type`. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
+- **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
+  Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidUnwritable`, campaign id
+  shape, amount (`linkedin.ValidateBidAmount`: whole cents, ≤ 1,000,000 → else 400), credentials +
+  account match, ONE read, then guards — the reported `account` must be present and the
+  connection's, not terminal (CANCELED/PENDING_DELETION/REMOVED), `ManualCPC()` (costType CPC with
+  optimizationTargetType NONE or ENHANCED_CONVERSION — LinkedIn's two manual modes; MAX_*,
+  TARGET_COST_PER_*, CAP_COST_AND_*, CPM/CPV and anything unreported are refused), a legible
+  `unitCost` in USD. Then one `UpdateCampaignUnitCost`, sent ONCE: unconfirmed first
+  (`unconfirmedBidWriteError`, 503 verify), then `ErrBidAmountInvalid` → `rejectedBidAmountError`
+  (400) — produced only from LinkedIn's parsed, identity-checked error envelope — then the
+  connection-defect re-tag, else a definite failure. **Create-path finding:**
+  `createSponsoredCampaign` sends costType CPC and NO optimizationTargetType or unitCost, which
+  LinkedIn's schema defaults to NONE (manual) with unitCost 0; so unlike Reddit/Meta/X a created
+  LinkedIn campaign is expected to PASS the strategy guard — unverified live, and never assumed.
 - **Adopt** (`LookupCampaign`): `linkedin.ValidateCampaignID` (digits, no leading zero, ≤19) →
   `ErrInvalidPlatformCampaignID`; `resolveLinkedInCredentials` with `resolveOwnedForAdoption`
   (never the LF system row); an unaddressable account id → `adoptionAccountIDUnusable`; one read;
@@ -4280,7 +4295,7 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   true`**. LinkedIn records no child ids for a toggle to miss (it DISCOVERS creatives), so that
   flag (`linkedInAdopted`) is what `ToggleStatus` refuses ACTIVATE on (`ErrCampaignNotProvisioned`,
   naming adoption, before any request) and what makes PAUSE flip the campaign ALONE
-  (`UpdateCampaignStatus`), never its creatives. Budget is allowed on adopted rows (the
-  campaign's own field; a shared group budget leaves the campaign with none, which `WriteBudget`
-  already refuses).
+  (`UpdateCampaignStatus`), never its creatives. Bid is refused on adopted rows; budget is allowed
+  (the campaign's own field; a shared group budget leaves the campaign with none, which
+  `WriteBudget` already refuses).
 

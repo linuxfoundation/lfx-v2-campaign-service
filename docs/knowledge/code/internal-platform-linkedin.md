@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback and adoption, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -448,11 +448,12 @@ needing enforcement. The call returns **no body**, so the 2xx
 itself is the confirmation; `IsOutcomeUnconfirmed` still separates a maybe-applied 5xx from a
 definite 4xx.
 
-## Campaign read and adoption (`campaign_settings.go`, LFXV2-2665)
+## Campaign read, bid write and adoption (`campaign_settings.go`, `bid_update.go`, LFXV2-2665)
 
 Sources: LinkedIn Marketing API "Create and Manage Campaigns" (li-lms-2026-09,
 https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaigns),
-"Create and Manage
+"Updated Marketing API Error Responses"
+(https://learn.microsoft.com/en-us/linkedin/marketing/error-responses), "Create and Manage
 Campaign Groups"
 (https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaign-groups)
 and the error-handling guide
@@ -472,6 +473,24 @@ COMPLETED can be revived). `ValidateCampaignID` (`^[1-9][0-9]{0,18}$`) is exactl
 `resolve-linkedin-ads-campaign` Pattern (pinned by `internal/apivalidation`).
 `AdoptedCampaignResult` builds the adopted row's blob, whose new `CampaignResult.Adopted` flag is
 what the dispatcher's toggle and bid lever read.
+
+**Bid.** `unitCost` is the campaign's bid ("amount to bid (for manual bidding) ... target cost ...
+or cost cap"); `ManualCPC()` is costType CPC with optimizationTargetType NONE or
+ENHANCED_CONVERSION — the two values the reference lists as keeping a campaign "in manual bidding
+mode" (MAX_* is auto-bidding, TARGET_COST_PER_* target cost, CAP_COST_AND_* cost cap, always CPM).
+**The create path sends costType CPC and no optimizationTargetType/unitCost**, which the schema
+defaults to NONE and 0 — manual, and "if unitCost is 0, the campaign does not deliver"; whether
+LinkedIn instead applies an objective-based automated default is unverified live, so the dispatcher
+decides on the REPORTED value. `ValidateBidAmount` returns the USD wire string at whole cents
+(a sub-cent amount is refused, never rounded; ≤ 1,000,000). `UpdateCampaignUnitCost` re-runs it,
+then sends one PARTIAL_UPDATE `$set unitCost {amount, USD}` under `withSendOnce`, the context
+opt-out that stops `doRequest` retrying a PARTIAL_UPDATE 429 — so a throttle returns as the 429
+itself, which `createOutcomeAmbiguous` classifies unconfirmed (the budget write keeps its retry).
+A definite 400 becomes `ErrBidAmountInvalid` only via `bidAmountRefused`: the FULL body
+(`apiError.raw` — `Body` is cut at 400 chars) passes `identityjson`, decodes, its `status` equals
+the HTTP status, and EVERY input error names `/Campaign/unitCost/amount` with
+FIELD_VALUE_TOO_LOW/HIGH, CONDITIONAL_VALUE_TOO_LOW/HIGH or INVALID_VALUE_FOR_FIELD, any echoed
+`decimalValue` equal to the sent amount. LinkedIn's text is never surfaced.
 
 ## Metrics read
 

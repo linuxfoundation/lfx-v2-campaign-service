@@ -271,15 +271,14 @@ func TestAdopters_FoundCampaignIsBoundWithProvenanceOnly(t *testing.T) {
 				t.Errorf("PAUSE sent %q, want exactly one campaign-level mutation", mutations)
 			}
 
-			// The BID lever lives on a child entity on all four bid-capable platforms (ad group,
-			// ad set, line item), which an adopted row never records: refused before any request,
-			// and the refusal names adoption.
+			// The BID lever lives on a child entity on four platforms (ad group, ad set, line
+			// item), which an adopted row never records; LinkedIn's lives on the campaign, and an
+			// adopted LinkedIn row is refused because adoption verified identity, not bidding.
+			// Either way: refused before any request, and the refusal names adoption.
 			before = len(stub.apiRequests())
-			if bw, ok := d.(service.BidWriter); ok { // LinkedIn has no bid lever yet
-				berr := bw.WriteBid(context.Background(), "cncf", tc.provider, row, model.BidChange{Amount: 1, Type: model.BidTypeCPC})
-				if !errors.Is(berr, domain.ErrBidUnwritable) || !strings.Contains(berr.Error(), "ADOPTED") {
-					t.Errorf("WriteBid on an adopted row = %v, want ErrBidUnwritable naming adoption", berr)
-				}
+			berr := d.(service.BidWriter).WriteBid(context.Background(), "cncf", tc.provider, row, model.BidChange{Amount: 1, Type: model.BidTypeCPC})
+			if !errors.Is(berr, domain.ErrBidUnwritable) || !strings.Contains(berr.Error(), "ADOPTED") {
+				t.Errorf("WriteBid on an adopted row = %v, want ErrBidUnwritable naming adoption", berr)
 			}
 			// Meta keeps the BUDGET on the ad set too, so its budget lever is refused the same way;
 			// Microsoft, Reddit and X budget the campaign itself and are not refused here.

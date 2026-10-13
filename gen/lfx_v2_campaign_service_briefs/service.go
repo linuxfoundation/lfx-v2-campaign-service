@@ -80,11 +80,12 @@ type Service interface {
 	// them), delete and pause work on it; activation is refused on every platform
 	// because adoption does not verify the targeting the activate guard requires;
 	// the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on
-	// an ad group, ad set or line item the row does not record); the budget lever
-	// is refused on Meta (its budget lives on the ad set) and works on Microsoft,
-	// Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn
-	// PAUSE on an adopted campaign addresses the campaign alone, never its
-	// creatives.
+	// an ad group, ad set or line item the row does not record) and on LinkedIn
+	// (its bid is the campaign's own unitCost, but adoption verifies identity, not
+	// the bidding setup); the budget lever is refused on Meta (its budget lives on
+	// the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget
+	// is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the
+	// campaign alone, never its creatives.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
@@ -229,20 +230,25 @@ type Service interface {
 	// units) of the ONE ad set this service created. X: the bid_amount_local_micro
 	// of the ONE line item this service created. A campaign whose row records none
 	// (an adopted campaign, or one whose creation never reached it) is refused
-	// (409): the service will not choose which of several to re-bid. REFUSED (409)
-	// WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only
-	// does something under a bid strategy that reads it — Microsoft's EnhancedCpc
-	// or ManualCpc; Reddit's MANUAL_BIDDING with bid_type CPC; Meta's
-	// LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both
-	// LINK_CLICKS (a Meta bid cap is per optimization event and, billed on
-	// impressions, per 1,000 impressions — so only that pairing is a max cost per
-	// click); X's MAX with pay_by LINK_CLICK. Under an automated or target
-	// strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
+	// (409): the service will not choose which of several to re-bid. LinkedIn: the
+	// campaign's own unitCost (a decimal amount, written in USD at whole cents — a
+	// sub-cent amount is refused 400 rather than rounded); an ADOPTED LinkedIn
+	// campaign is refused (409). REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS
+	// NOT A COST PER CLICK. A manual bid only does something under a bid strategy
+	// that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's
+	// MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with
+	// billing_event AND optimization_goal both LINK_CLICKS (a Meta bid cap is per
+	// optimization event and, billed on impressions, per 1,000 impressions — so
+	// only that pairing is a max cost per click); X's MAX with pay_by LINK_CLICK;
+	// LinkedIn's costType CPC with optimizationTargetType NONE or
+	// ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or
+	// target strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
 	// MaxConversionValue, TargetImpressionShare, a portfolio strategy the read
 	// cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta
 	// LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO,
-	// TARGET) the platform would ignore it or, worse, the write would be read as a
-	// request to switch strategy — and this endpoint NEVER switches strategy,
+	// TARGET; LinkedIn MAX_*, TARGET_COST_PER_*, CAP_COST_AND_*, or any CPM/CPV
+	// campaign) the platform would ignore it or, worse, the write would be read as
+	// a request to switch strategy — and this endpoint NEVER switches strategy,
 	// billing or charge unit. An unreported strategy is refused the same way
 	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
 	// first and then the ad group's: with Campaign Budget Optimization on (as on
@@ -252,24 +258,27 @@ type Service interface {
 	// campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign
 	// AUTO, so those three legs apply only after an operator has moved the Reddit
 	// campaign and ad group, the Meta ad set or the X line item to a manual
-	// per-click bid in the platform's own UI. The amount is in the AD ACCOUNT's
-	// own currency, not USD, and this service neither knows nor converts it.
-	// Microsoft Advertising, Reddit, Meta and X today: a campaign on any other
-	// platform is refused with 400. **409** when the change is refused BEFORE the
-	// platform is written, so nothing has changed: the campaign is unprovisioned;
-	// it belongs to a different ad account than the project's connection now
-	// resolves to, or does not record which ad account it was created under; its
-	// bid strategy is automated, a target, or unreported; or the bid could not be
-	// addressed (no recorded ad group, ad set or line item, one reporting another
-	// campaign or deleted, or one bidding in a unit other than `bid_type`). None
-	// is retryable. **400** for a request fault: a non-positive, non-finite or
-	// out-of-range bid, an unknown bid type, a platform with no bid-write
-	// capability wired, or a bid the campaign's platform refuses on its own
-	// minimum or maximum — the response names what it was. **503** when the
-	// platform could not be reached or did not confirm — including a throttled
-	// Meta or X write, which is never retried in-call; the row is unchanged.
-	// Setting the same bid twice converges, but verify the bid in the ad platform
-	// before retrying.
+	// per-click bid in the platform's own UI. A LinkedIn campaign this service
+	// creates sends no optimizationTargetType, which LinkedIn documents as
+	// defaulting to NONE (manual), so it is expected to pass — but the guard
+	// decides on what LinkedIn REPORTS, never on that expectation. The amount is
+	// in the AD ACCOUNT's own currency, not USD, and this service neither knows
+	// nor converts it. Microsoft Advertising, Reddit, Meta, X and LinkedIn today:
+	// a campaign on any other platform is refused with 400. **409** when the
+	// change is refused BEFORE the platform is written, so nothing has changed:
+	// the campaign is unprovisioned; it belongs to a different ad account than the
+	// project's connection now resolves to, or does not record which ad account it
+	// was created under; its bid strategy is automated, a target, or unreported;
+	// or the bid could not be addressed (no recorded ad group, ad set or line
+	// item, one reporting another campaign or deleted, or one bidding in a unit
+	// other than `bid_type`). None is retryable. **400** for a request fault: a
+	// non-positive, non-finite or out-of-range bid, an unknown bid type, a
+	// platform with no bid-write capability wired, or a bid the campaign's
+	// platform refuses on its own minimum or maximum — the response names what it
+	// was. **503** when the platform could not be reached or did not confirm —
+	// including a throttled Meta, X or LinkedIn write, which is never retried
+	// in-call; the row is unchanged. Setting the same bid twice converges, but
+	// verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword

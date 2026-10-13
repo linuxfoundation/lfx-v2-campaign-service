@@ -25,10 +25,12 @@ import (
 // absences (terminal — nothing can serve), as DELETED/ARCHIVED are on Reddit.
 //
 // THE ADOPTED ROW'S RULES (LinkedIn has no child ids to be missing, so the row carries an
-// explicit `adopted` flag — linkedin.AdoptedCampaignResult — for every lever to consult):
+// explicit `adopted` flag — linkedin.AdoptedCampaignResult):
 //
 //   - ACTIVATE is refused (ErrCampaignNotProvisioned, 409) — un-pausing is done in Campaign
 //     Manager, exactly as on every other platform. PAUSE is allowed.
+//   - the BID lever is refused (ErrBidUnwritable, 409): adoption verifies identity and
+//     provenance, not the bidding setup this service would be writing into.
 //   - the BUDGET lever is allowed, because a LinkedIn budget is the campaign's own field and
 //     cannot be shared with another campaign (LinkedInDispatcher.WriteBudget). A campaign under
 //     a campaign group's DYNAMIC budget optimization carries no budget of its own, and that
