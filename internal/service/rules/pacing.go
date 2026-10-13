@@ -14,15 +14,13 @@
 // The thresholds here are therefore ONE set with per-platform overrides only where a reason is
 // stated. An override with no stated reason is drift, not configuration.
 //
-// This unification covers only the single-campaign metrics path (Thresholds/ComputePacing/
+// This file and actions.go serve the single-campaign metrics path (Thresholds/ComputePacing/
 // Evaluate below). This package's monitor_*.go siblings back the account-scoped /account-monitor
-// endpoints, which are a DIFFERENT read path running a different ladder.
+// endpoints, which are a DIFFERENT read path with their own input shapes and action items.
 //
-// Both ladders are placed by ONE implementation, PacingLadder.Label in ladder.go, and differ only
-// in their numbers: BriefViewLadder (50/100/130) here, AccountMonitorLadder (50/90/100) there.
-// Which one is correct is an open product decision (D2); switching a caller's ladder would move
-// operator-facing alerting bands, so it is its own decision on its own ticket — see ladder.go and
-// this package's entry in docs/knowledge/code/internal-service-rules.md.
+// Both paths place pacing on the SAME ladder, StandardLadder (50/90/100) in ladder.go, through
+// the one PacingLadder.Label — product decision D2 (2026-10-13). See ladder.go and this package's
+// entry in docs/knowledge/code/internal-service-rules.md.
 package rules
 
 import (
@@ -39,14 +37,14 @@ import (
 // no effect, which is worse than not offering it.
 type Thresholds = PacingLadder
 
-// DefaultThresholds is the brief view's ladder, BriefViewLadder (50/100/130), under its original
-// name. See BriefViewLadder for why it is not AccountMonitorLadder (D2 is open).
+// DefaultThresholds is the brief view's ladder under its original name: StandardLadder
+// (50/90/100), the same ladder every account monitor places on (D2). Before D2 it was 50/100/130.
 //
 // One set for every platform. Per-platform overrides are not implemented: the four UI
 // implementations differed with no stated reason, which is drift rather than a platform
 // characteristic. If a platform genuinely needs different bands, add the override WITH the
 // reason — do not reintroduce a silent divergence.
-var DefaultThresholds = BriefViewLadder()
+var DefaultThresholds = StandardLadder()
 
 // PacingLabel is the band a campaign's spend falls into.
 type PacingLabel string

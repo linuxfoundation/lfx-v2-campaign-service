@@ -25,11 +25,11 @@ import (
 // deliberately-ported defects are being fixed under their own tickets rather than frozen.
 //
 // What stays separate, and deliberately: these four still do NOT route through
-// Thresholds/Evaluate. That path runs a different ladder (50/100/130, with `Constrained` as an
-// inclusive top) against a different input shape, so routing the monitor through it would move
-// every operator-facing alerting band as a side effect. Merging the two read paths is its own
-// decision, on its own ticket, under linuxfoundation/lfx-self-serve#2519 — not a side effect of
-// deduplicating the four.
+// Thresholds/Evaluate. Both paths place pacing on the same StandardLadder (50/90/100, D2), but
+// Evaluate takes a different input shape and raises different action items, so routing the
+// monitor through it would change every operator-facing alert's text and gating as a side
+// effect. Merging the two read paths is its own decision, on its own ticket, under
+// linuxfoundation/lfx-self-serve#2519 — not a side effect of deduplicating the four.
 //
 // Ported from lfx-self-serve's campaign-metrics.service.ts (resolveDateRange,
 // parseCampaignMetrics, generateActionItems).

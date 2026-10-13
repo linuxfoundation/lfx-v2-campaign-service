@@ -59,9 +59,8 @@ func TestEvaluateGoogleMonitor_KeepsCampaignsThatMerelyStartWithZZ(t *testing.T)
 // TestGooglePacingBoundaries pins the shared account-monitor ladder (50/90/100) at its exact
 // boundaries, exercised through Google's evaluator. Google is one of the four callers of
 // monitor_shared.go's pacingLabelFor, and the boundaries are inclusive/exclusive in ways a
-// refactor can silently flip; this test is where that would be caught. The ladder is NOT
-// pacing.go's Thresholds, which run 50/100/130 for the single-campaign brief path — repointing
-// these at that one would move operator-facing alerting bands.
+// refactor can silently flip; this test is where that would be caught. Since D2 the brief path
+// (pacing.go's DefaultThresholds) places on the same StandardLadder.
 func TestGooglePacingBoundaries(t *testing.T) {
 	// budgetDay=1, days=1 => expectedSpend=1, so spend == pacingPct/100 directly.
 	tests := []struct {

@@ -10,15 +10,15 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// The account-monitor pacing ladder is AccountMonitorLadder (50/90/100) in ladder.go, placed by
-// the same PacingLadder.Label the brief view uses with BriefViewLadder.
+// The account-monitor pacing ladder is StandardLadder (50/90/100) in ladder.go — the same ladder
+// the brief view places on (D2), through the same PacingLadder.Label.
 //
 // These monitors used to carry four private copies — googlePacing*, linkedinPacing*, metaPacing*
 // and redditPacing* — carrying identical numbers under names that disagreed about what the
 // numbers MEANT: Google called its 100 "overspending" and its 90 "constrainedFrom", while the
 // other three called 100 "constrained" and 90 "normal". Same ladder, four vocabularies, so the
 // copies read as four different rules and any future edit to one looked local. They became one
-// const block and switch here, and that switch then became AccountMonitorLadder, so the ladder
+// const block and switch here, and that switch then became StandardLadder, so the ladder
 // arithmetic now exists once for both read paths.
 //
 // On the BFF side the split is real and is what linuxfoundation/lfx-self-serve#3019 records:
@@ -26,16 +26,15 @@ import (
 // while campaign-metrics.service.ts (Google) and reddit-ads.service.ts hardcode the same numbers
 // locally, so an edit to the shared constant moves two platforms and silently leaves two behind.
 
-// pacingLabelFor places a prorated spend percentage on AccountMonitorLadder.
+// pacingLabelFor places a prorated spend percentage on StandardLadder.
 //
 // It answers for the NUMBER only. Whether a campaign has a pacing figure worth placing at all is
 // each platform's own question — the guards differ because the platforms report budget
 // differently, not because the bands do — so a caller with no trustworthy budget must not reach
 // here at all. See each EvaluateXMonitor for the guard it applies first.
 //
-// Deliberately AccountMonitorLadder, NOT BriefViewLadder: which is correct is open (D2), and
-// routing the account-monitor path through the brief view's ladder would move every platform's
-// alerting bands as a side effect of a refactor.
+// It maps onto the account-monitor label enum (model.MonitorPacingLabel), which has no unknown
+// member, and keeps this path's historical NaN-is-normal placement — see the guard below.
 func pacingLabelFor(pct float64) model.MonitorPacingLabel {
 	// NaN is normal on this path, as it always was: the former switch tested `<` and two `>`
 	// comparisons, all false for NaN, and fell through to its normal default. PacingLadder.Label
@@ -46,7 +45,7 @@ func pacingLabelFor(pct float64) model.MonitorPacingLabel {
 	if math.IsNaN(pct) {
 		return model.MonitorPacingNormal
 	}
-	switch AccountMonitorLadder().Label(pct) {
+	switch StandardLadder().Label(pct) {
 	case PacingUnderspending:
 		return model.MonitorPacingUnderspending
 	case PacingConstrained:
