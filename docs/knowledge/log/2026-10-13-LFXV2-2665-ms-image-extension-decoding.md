@@ -30,5 +30,9 @@ misattributed 2xx as success:
   lookup; an untrustworthy mutation body is UNCONFIRMED. AddMedia, like the extension create,
   now classifies a null id on whole-wire `PartialErrors.AnyErrors`, so a rejection past the
   16-entry window is definite.
+  The lookup no longer returns at the first valid image association. Every image association
+  is validated, and the first valid id is returned only after all of them pass. A later foreign
+  or unusable entry makes the lookup fail closed, so a mixed response can no longer read as
+  AlreadyAttached.
 
 Concept: [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).

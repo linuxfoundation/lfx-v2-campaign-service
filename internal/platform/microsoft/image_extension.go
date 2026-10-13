@@ -490,6 +490,11 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 	if !resp.sawCollection {
 		return "", fmt.Errorf("AdExtensionsAssociations/Query response omitted AdExtensionAssociationCollection: %w", errNoID)
 	}
+	// EVERY image association is validated before any is trusted: returning at the first valid
+	// one would leave a later misattributed or unusable entry unchecked, and a mixed response
+	// would then read as AlreadyAttached. The first valid id is kept and returned only once the
+	// whole response has passed.
+	found := ""
 	for _, coll := range resp.AdExtensionAssociationCollection {
 		if coll == nil {
 			continue
@@ -510,10 +515,12 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 			if id == "" {
 				return "", fmt.Errorf("an image extension is associated with the campaign but its id is unusable: %w", errNoID)
 			}
-			return id, nil
+			if found == "" {
+				found = id
+			}
 		}
 	}
-	return "", nil
+	return found, nil
 }
 
 // adExtensionIdentity extracts the created extension id from an AddAdExtensions 200 body,

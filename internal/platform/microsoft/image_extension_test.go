@@ -643,3 +643,36 @@ func TestAttachCampaignImage_MediaEvidenceBeyondRetention(t *testing.T) {
 		})
 	}
 }
+
+// Every image association is validated, not just the first: a valid one followed by a foreign or
+// unusable one must fail the lookup closed rather than read as AlreadyAttached.
+func TestAttachCampaignImage_LookupValidatesEveryAssociation(t *testing.T) {
+	const valid = `{"AdExtension":{"Id":4441,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":321}`
+	for name, second := range map[string]string{
+		"valid then foreign entity":             `{"AdExtension":{"Id":4442,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":999}`,
+		"valid then ad group":                   `{"AdExtension":{"Id":4442,"Type":"ImageAdExtension"},"AssociationType":"AdGroup","EntityId":321}`,
+		"valid then unusable id":                `{"AdExtension":{"Id":null,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":321}`,
+		"valid then foreign in next collection": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[` + valid + `,` + second + `]}]}`
+			if second == "" {
+				body = `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[` + valid + `]},{"AdExtensionAssociations":[{"AdExtension":{"Id":4442,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":999}]}]}`
+			}
+			r, calls, err := runAttachWith(t, "AdExtensionsAssociations/Query", 200, body)
+			if err == nil || r.AlreadyAttached || r.AdExtensionID != "" {
+				t.Fatalf("a mixed lookup must fail closed, got %v, %+v", err, r)
+			}
+			if IsOutcomeUnconfirmed(err) || len(calls) != 1 {
+				t.Errorf("definite failure, nothing uploaded; got %v, calls %v", err, paths(calls))
+			}
+		})
+	}
+	t.Run("two valid associations keep the first", func(t *testing.T) {
+		body := `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[` + valid + `,{"AdExtension":{"Id":4442,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":321}]}]}`
+		r, calls, err := runAttachWith(t, "AdExtensionsAssociations/Query", 200, body)
+		if err != nil || !r.AlreadyAttached || r.AdExtensionID != "4441" || len(calls) != 1 {
+			t.Fatalf("got %v, %+v, %v", err, r, paths(calls))
+		}
+	})
+}
