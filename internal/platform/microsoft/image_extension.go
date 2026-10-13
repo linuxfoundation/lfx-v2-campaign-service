@@ -577,8 +577,11 @@ func decodeTrusted(body []byte, v any) error {
 	return json.Unmarshal(body, v)
 }
 
-// mediaIdentity extracts the created MediaId from an AddMedia 200 body. A usable id is success.
-// A null id is a DEFINITE rejection only on error EVIDENCE — the whole-wire PartialErrors.AnyErrors
+// mediaIdentity extracts the created MediaId from an AddMedia 200 body. A usable id is success
+// only when PartialErrors carries no entry at all: this call sends ONE item, so an error entry is
+// positionally about that item, and an id returned alongside one is not a confirmed upload — the
+// id is kept (so the media can be found) but errNoID makes it UNCONFIRMED and the later steps stop,
+// as adExtensionIdentity does for an identity beside nested errors. A null id is a DEFINITE rejection only on error EVIDENCE — the whole-wire PartialErrors.AnyErrors
 // tally, so an error past the 16-entry retention window still counts (and its code is still
 // reported when retained); null placeholders or an unexplained null id are UNCONFIRMED (errNoID).
 func mediaIdentity(body []byte) (string, error) {
@@ -588,6 +591,10 @@ func mediaIdentity(body []byte) (string, error) {
 	}
 	if len(resp.MediaIds) > 0 {
 		if id := numberID(resp.MediaIds[0]); id != "" {
+			pe := resp.PartialErrors
+			if pe.AnyErrors || pe.Truncated || len(pe.Items) > 0 {
+				return id, fmt.Errorf("media %s was returned alongside error entries (%s): %w", id, partialErrorCodes(pe.Items), errNoID)
+			}
 			return id, nil
 		}
 	}

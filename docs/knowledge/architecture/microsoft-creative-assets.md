@@ -100,6 +100,8 @@ Every 2xx body must actually answer before it counts. Each rule below fails clos
 - **AddMedia.** `PartialErrors` beside `MediaIds` is decoded. A null id is a definite rejection
   only on whole-wire `AnyErrors` evidence, so a rejection past the 16-entry window still counts.
   Null placeholders, or a null id with no explanation, are UNCONFIRMED.
+  A returned id next to any error entry is also UNCONFIRMED. The id is recorded, and the attach
+  stops before AddAdExtensions.
 - **AddAdExtensions.** `NestedPartialErrors` is `BatchErrorCollection[]`. It is decoded with
   `boundedNestedErrorItems`, the same decoder as geo, and both the collection-level codes and
   each nested `BatchErrors` are classified. A null identity with any error is definite. An

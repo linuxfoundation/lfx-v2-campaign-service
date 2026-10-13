@@ -34,5 +34,8 @@ misattributed 2xx as success:
   is validated, and the first valid id is returned only after all of them pass. A later foreign
   or unusable entry makes the lookup fail closed, so a mixed response can no longer read as
   AlreadyAttached.
+  AddMedia sends one item, so a MediaId returned next to any `PartialErrors` entry is no longer
+  success. The id is kept, the outcome is UNCONFIRMED (errNoID), and no extension is created
+  or associated, matching `adExtensionIdentity`.
 
 Concept: [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).

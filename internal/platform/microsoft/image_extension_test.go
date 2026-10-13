@@ -676,3 +676,32 @@ func TestAttachCampaignImage_LookupValidatesEveryAssociation(t *testing.T) {
 		}
 	})
 }
+
+// AddMedia sends one item, so an error entry beside a returned id is about that id: not a
+// confirmed upload. The id is kept, the outcome is UNCONFIRMED, and nothing further is created.
+func TestAttachCampaignImage_MediaIDBesideErrorIsNotSuccess(t *testing.T) {
+	for name, body := range map[string]string{
+		"real error":       `{"MediaIds":[5551],"PartialErrors":[{"Code":1234,"ErrorCode":"X"}]}`,
+		"null placeholder": `{"MediaIds":[5551],"PartialErrors":[null]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, calls, err := runAttachWith(t, "Media", 200, body)
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("want UNCONFIRMED, got %v", err)
+			}
+			if r.MediaID != "5551" {
+				t.Errorf("the returned id must be kept, got %q", r.MediaID)
+			}
+			if got := paths(calls); got[len(got)-1] != "Media" {
+				t.Errorf("no extension may be created or associated, calls = %v", got)
+			}
+		})
+	}
+	for name, body := range map[string]string{"null": `{"MediaIds":[5551],"PartialErrors":null}`, "empty": `{"MediaIds":[5551],"PartialErrors":[]}`, "omitted": `{"MediaIds":[5551]}`} {
+		t.Run("clean "+name, func(t *testing.T) {
+			if _, _, err := runAttachWith(t, "Media", 200, body); err != nil {
+				t.Fatalf("an id with no error entries is success, got %v", err)
+			}
+		})
+	}
+}
