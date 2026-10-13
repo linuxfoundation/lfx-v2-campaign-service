@@ -55,7 +55,7 @@ func (u *linkedInAudienceUpstream) server(t *testing.T) *httptest.Server {
 			value = "urn:li:geo:103644278"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:555",%q],"impressions":100,"clicks":5,"costInUsd":"2.5"}]}`, value)
+		_, _ = fmt.Fprintf(w, `{"elements":[{"pivotValues":[%q],"impressions":100,"clicks":5,"costInUsd":"2.5"}]}`, value)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -110,6 +110,9 @@ func TestLinkedIn_ReadAudience_HappyPathMapsEveryPivot(t *testing.T) {
 		}
 		if !strings.Contains(q, "campaigns=List("+url.QueryEscape("urn:li:sponsoredCampaign:555")+")") {
 			t.Errorf("request %d does not name the scoped campaign: %s", i, q)
+		}
+		if !strings.Contains(q, "q=analytics") {
+			t.Errorf("request %d does not use the single-pivot Analytics finder: %s", i, q)
 		}
 	}
 }
