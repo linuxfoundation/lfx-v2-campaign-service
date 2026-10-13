@@ -320,30 +320,50 @@ type Service interface {
 	// retrying, because retrying an irreversible REMOVE that already ran cannot
 	// undo it.
 	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
-	// Add campaign-level negative keywords to one live campaign. Microsoft
-	// Advertising only (AddNegativeKeywordsToEntities, EntityType Campaign); a
-	// campaign on any other platform is refused with 400 before anything is
-	// contacted. A MUTATION on a live paid campaign — a negative keyword stops the
-	// campaign serving on matching queries — so it carries the keyword actions'
-	// guard set, all before the platform is contacted: the batch's syntax, the
-	// campaign's provisioning, and the campaign's ad account against the project's
-	// current connection (a campaign that does not record its ad account is
-	// refused, never assumed). Like apply-keyword-actions it persists nothing —
-	// the negatives live on the platform — so it takes no If-Match and returns no
-	// ETag. NOT ATOMIC: Microsoft adds each negative independently, so the 200
-	// carries one result per requested keyword, in request order, each with its
-	// own outcome. A negative the campaign already has is ALREADY_PRESENT, a
-	// success. **400** for a malformed batch (empty or over 60, a text over 100
-	// characters or outside the allowed characters, consecutive punctuation, a
-	// match type other than Exact or Phrase, the same keyword twice) or an
-	// unsupported platform. A malformed batch is 400 even when the campaign is
-	// also unprovisioned. **409** when refused before the platform is contacted:
-	// unprovisioned, a different ad account, an unrecorded ad account
-	// (re-dispatch), or an unusable connection. **503** only when the platform
-	// answered nothing per keyword. The MESSAGE separates a DEFINITE failure
-	// (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a
-	// rate limit, an unreadable answer — verify the campaign's negative keywords
-	// before retrying).
+	// Add negative keywords to one live campaign (LFXV2-2665). Three platforms,
+	// each at its own level: Microsoft Advertising at CAMPAIGN level
+	// (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in the
+	// excluded_keywords of the ONE ad group this service created (a
+	// whole-targeting PATCH, behind REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off
+	// is 400 before Reddit is contacted); X as one negated keyword targeting
+	// criterion (operator_type NE) per keyword on the ONE line item this service
+	// created. A campaign on any other platform is refused with 400 before
+	// anything is contacted. Match types per platform: Microsoft Exact or Phrase;
+	// X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); Reddit Broad only,
+	// because Reddit's excluded keywords carry no match type. Any other is 400. A
+	// MUTATION on a live paid campaign — a negative keyword stops the campaign
+	// serving on matching queries, so it only narrows delivery — and it carries
+	// the keyword levers' guard set, all before the platform is mutated: the
+	// batch's syntax, the campaign's provisioning, the campaign's ad account
+	// against the project's current connection (a campaign that does not record
+	// its ad account is refused, never assumed), and on Reddit and X a READ
+	// proving the ad group / line item is live and reported under THIS campaign.
+	// Reddit also requires `revision`, the fingerprint get-keyword-targeting
+	// returned, and refuses (409) when the ad group's targeting has changed since;
+	// Microsoft and X refuse a revision (400). Like apply-keyword-actions it
+	// persists nothing — the negatives live on the platform — so it takes no
+	// If-Match and returns no ETag. Every write is sent ONCE and never retried on
+	// a 429. The 200 carries one result per requested keyword, in request order,
+	// each with its own outcome. A negative already there is ALREADY_PRESENT, a
+	// success, and is not sent again. Microsoft adds each negative independently;
+	// Reddit's one PATCH carries every new one, so they share its outcome
+	// (confirmed by a re-read); X sends one POST per keyword, at most 20 per
+	// request (X's one-write-per-second account pacing), each APPLIED, FAILED
+	// (NOT_SENT, REJECTED) or UNCONFIRMED. **400** for a malformed batch (empty or
+	// over 60 — over 20 on X —, a text over 100 characters or outside the allowed
+	// characters, consecutive punctuation, a match type the platform does not
+	// offer, the same keyword twice, a missing or misplaced revision), an
+	// unsupported platform, or Reddit writes switched off. A malformed batch is
+	// 400 even when the campaign is also unprovisioned. **409** when refused
+	// before anything is written: unprovisioned, a different ad account, an
+	// unrecorded ad account (re-dispatch), an unusable connection, an ad group /
+	// line item this service did not record or the platform no longer reports
+	// under this campaign, a stale Reddit revision, or a Reddit ad group whose
+	// excluded keywords would exceed Reddit's 2,000. **503** only when the
+	// platform answered nothing per keyword. The MESSAGE separates a DEFINITE
+	// failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a
+	// timeout, a rate limit, an unreadable answer — verify the campaign's negative
+	// keywords before retrying).
 	AddNegativeKeywords(context.Context, *AddNegativeKeywordsPayload) (res *NegativeKeywords, err error)
 	// Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the
 	// positive keywords on the ONE ad group (Reddit) or line item (X) this service
@@ -539,8 +559,13 @@ type AddNegativeKeywordsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
-	// The negative keywords to add, at campaign level.
+	// The negative keywords to add: at campaign level on Microsoft Advertising, on
+	// the campaign's one ad group on Reddit, on its one line item on X.
 	NegativeKeywords []*NegativeKeywordInput
+	// Reddit only, and required there: the revision get-keyword-targeting
+	// returned. The add is refused (409) when the ad group's targeting no longer
+	// has that fingerprint. Refused (400) on Microsoft Advertising and X.
+	Revision *string
 }
 
 // AdoptCampaignPayload is the payload type of the
@@ -1559,7 +1584,10 @@ type NegativeKeywordInput struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
 	// 100 characters.
 	Text string
-	// How the negative keyword is compared with a search query. Exact or Phrase.
+	// How the negative keyword is compared with a search query. Microsoft
+	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
+	// (Reddit's excluded keywords carry no match type). Any other value for the
+	// platform is 400.
 	MatchType string
 }
 
@@ -1569,16 +1597,18 @@ type NegativeKeywordResult struct {
 	Text string
 	// The match type as sent to the platform
 	MatchType string
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign already had
-	// it, so the requested state holds; FAILED — definitely not added (see
-	// error_code); UNCONFIRMED — may have been added, verify in the ad platform
-	// before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
+	// or ad group / line item (Reddit / X) already had it, so the requested state
+	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
+	// have been added, verify in the ad platform before retrying.
 	Outcome string
-	// The platform's id for a negative keyword this request added. Absent for
-	// every other outcome.
+	// The platform's id for a negative keyword this request added: Microsoft's
+	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
+	// an excluded keyword has no id, and for every outcome other than APPLIED.
 	NegativeKeywordID *string
-	// The platform's machine-readable error code for a FAILED keyword, when it
-	// named one.
+	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
+	// error code, when it named one. X: NOT_SENT (the request carrying it was
+	// never sent) or REJECTED (X refused it); X's own text is never returned.
 	ErrorCode *string
 }
 

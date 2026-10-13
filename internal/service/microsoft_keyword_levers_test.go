@@ -27,6 +27,7 @@ type msLeverDispatcher struct {
 	negOutcomes  []model.NegativeKeywordOutcome
 	gotActions   []model.KeywordAction
 	gotNegatives []model.NegativeKeyword
+	gotRevision  string
 }
 
 func (d *msLeverDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -49,8 +50,9 @@ func (d *msLeverDispatcher) ApplyKeywordActions(_ context.Context, _ string, _ m
 	return out, nil
 }
 
-func (d *msLeverDispatcher) AddNegativeKeywords(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+func (d *msLeverDispatcher) AddNegativeKeywords(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	d.gotNegatives = keywords
+	d.gotRevision = revision
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -177,10 +179,10 @@ func TestAddNegativeKeywords_HappyPathIsPositional(t *testing.T) {
 	}
 }
 
-// Every platform but Microsoft is a clean 400, and no dispatcher is reached — including
-// Google's, whose adapter has no negative-keyword add for a live campaign.
+// Every platform but Microsoft, Reddit and X is a clean 400, and no dispatcher is reached —
+// including Google's, whose adapter has no negative-keyword add for a live campaign.
 func TestAddNegativeKeywords_UnsupportedPlatformIsBadRequest(t *testing.T) {
-	for _, platform := range []model.Provider{model.ProviderGoogleAds, model.ProviderRedditAds} {
+	for _, platform := range []model.Provider{model.ProviderGoogleAds, model.ProviderMetaAds, model.ProviderLinkedInAds} {
 		d := &msLeverDispatcher{}
 		s := keywordActionService(t, platform, d)
 		_, err := s.AddNegativeKeywords(context.Background(), negativePayload(&briefs.NegativeKeywordInput{Text: "free", MatchType: "Exact"}))
@@ -211,6 +213,73 @@ func TestAddNegativeKeywords_EmptyBatchIsBadRequest(t *testing.T) {
 	}
 	if d.gotNegatives != nil {
 		t.Error("the dispatcher was reached for an empty batch")
+	}
+}
+
+// Reddit and X reach their dispatcher, with the revision passed through untouched, and render
+// the same positional results.
+func TestAddNegativeKeywords_RedditAndXReachTheDispatcherWithTheRevision(t *testing.T) {
+	for _, tc := range []struct {
+		platform model.Provider
+		revision *string
+	}{
+		{model.ProviderRedditAds, strPtr("sha256:abc")},
+		{model.ProviderTwitterAds, nil},
+	} {
+		d := &msLeverDispatcher{negOutcomes: []model.NegativeKeywordOutcome{
+			{Text: "free", MatchType: "Broad", Outcome: model.KeywordOutcomeApplied},
+			{Text: "jobs", MatchType: "Broad", Outcome: model.KeywordOutcomeUnconfirmed},
+		}}
+		s := keywordActionService(t, tc.platform, d)
+		p := negativePayload(&briefs.NegativeKeywordInput{Text: "free", MatchType: "Broad"}, &briefs.NegativeKeywordInput{Text: "jobs", MatchType: "Broad"})
+		p.Revision = tc.revision
+		res, err := s.AddNegativeKeywords(context.Background(), p)
+		if err != nil {
+			t.Fatalf("%s: AddNegativeKeywords: %v", tc.platform, err)
+		}
+		if len(res.Results) != 2 || res.AppliedCount != 1 || res.Results[1].Outcome != "UNCONFIRMED" {
+			t.Errorf("%s: result = %+v (applied %d)", tc.platform, res.Results, res.AppliedCount)
+		}
+		want := ""
+		if tc.revision != nil {
+			want = *tc.revision
+		}
+		if d.gotRevision != want {
+			t.Errorf("%s: dispatcher got revision %q, want %q", tc.platform, d.gotRevision, want)
+		}
+	}
+}
+
+// The refusals only Reddit and X can produce map to 400/409 with fixed text, and the connection
+// messages name the campaign's own platform.
+func TestAddNegativeKeywords_RedditAndXErrorMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		platform model.Provider
+		err      error
+		want     any
+		msg      string
+	}{
+		{"writes disabled", model.ProviderRedditAds, domain.ErrNegativeKeywordsUnsupported, &briefs.BadRequestError{}, "not enabled"},
+		{"stale revision", model.ProviderRedditAds, domain.ErrKeywordTargetingChanged, &briefs.ConflictError{}, "changed since it was read"},
+		{"over the limit", model.ProviderRedditAds, domain.ErrNegativeKeywordLimit, &briefs.ConflictError{}, "limit"},
+		{"unaddressable", model.ProviderTwitterAds, domain.ErrKeywordTargetingUnaddressable, &briefs.ConflictError{}, "cannot be addressed"},
+		{"provenance", model.ProviderTwitterAds, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch), &briefs.ConflictError{}, "re-dispatched"},
+		{"no reddit connection", model.ProviderRedditAds, domain.ErrNotFound, &briefs.NotFoundError{}, "reddit ads"},
+		{"no x connection", model.ProviderTwitterAds, domain.ErrNotFound, &briefs.NotFoundError{}, "x ads"},
+		{"x connection unusable", model.ProviderTwitterAds, domain.ErrConnectionNotUsable, &briefs.ConflictError{}, "x ads"},
+		{"x unconfirmed", model.ProviderTwitterAds, &unconfirmedKeywordActionError{err: errors.New("429 from x")}, &briefs.ConnServiceUnavailableError{}, "unconfirmed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := keywordActionService(t, tc.platform, &msLeverDispatcher{err: tc.err})
+			_, err := s.AddNegativeKeywords(context.Background(), negativePayload(&briefs.NegativeKeywordInput{Text: "free", MatchType: "Broad"}))
+			if fmt.Sprintf("%T", err) != fmt.Sprintf("%T", tc.want) {
+				t.Fatalf("err = %T (%v), want %T", err, err, tc.want)
+			}
+			if msg := leverErrMessage(err); !strings.Contains(msg, tc.msg) || strings.Contains(msg, "429 from x") || strings.Contains(msg, "microsoft") {
+				t.Errorf("message = %q, want it to contain %q, no adapter text and no other platform", msg, tc.msg)
+			}
+		})
 	}
 }
 

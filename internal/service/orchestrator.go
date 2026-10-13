@@ -2942,8 +2942,10 @@ type NegativeKeywordAdder interface {
 	// AddNegativeKeywords returns exactly one outcome per requested keyword, in request
 	// order, or an error when the platform answered nothing per keyword. campaign is the
 	// persisted row, so the adapter can enforce provisioning and the account-identity
-	// invariant BEFORE the platform is contacted.
-	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
+	// invariant BEFORE the platform is contacted. revision is Reddit's compare-and-set token
+	// (the fingerprint get-keyword-targeting returned) and must be empty for every other
+	// platform; each adapter validates it.
+	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error)
 }
 
 // KeywordTargetingReader is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): read the
@@ -3267,7 +3269,7 @@ func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }
 // order, and the call gets the mutation timeout. The outcome-count check is the same contract:
 // one outcome per requested keyword, or the response cannot be zipped back onto the request.
 // A short slice is UNCONFIRMED, because the add was already issued when it is detected.
-func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	if campaign == nil {
 		return nil, ErrCampaignNotProvisioned
 	}
@@ -3282,7 +3284,7 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
 	start := time.Now()
-	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords)
+	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords, revision)
 	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
 	if aerr != nil {
 		return nil, aerr

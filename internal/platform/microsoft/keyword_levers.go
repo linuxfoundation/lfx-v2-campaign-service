@@ -210,6 +210,50 @@ func isNegativeKeywordPunct(r rune) bool {
 	return false
 }
 
+// errNegativeKeywordText is the reason NormalizeNegativeKeywordText refuses a text. Its message
+// reads after "negative keyword <n> ", so each caller can name the position.
+type errNegativeKeywordText string
+
+func (e errNegativeKeywordText) Error() string { return string(e) }
+
+// NormalizeNegativeKeywordText applies the text half of the negative-keyword rules and returns
+// the text as it is sent: trimmed, internal whitespace collapsed, non-empty, at most 100
+// characters (runes), made only of letters, combining marks, digits, single spaces and & ' - .
+// with no two punctuation characters adjacent (see isNegativeKeywordPunct for the sources).
+//
+// Exported because add-negative-keywords publishes ONE input contract for every platform it
+// serves (LFXV2-2665: Microsoft, Reddit, X), and a text the design admits must be judged the
+// same way whichever platform the campaign is on.
+func NormalizeNegativeKeywordText(raw string) (string, error) {
+	// Control characters are checked on the RAW text, so a leading/trailing one cannot hide
+	// behind the trim below.
+	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return "", errNegativeKeywordText("contains a control character")
+	}
+	text := strings.Join(strings.Fields(raw), " ")
+	if text == "" {
+		return "", errNegativeKeywordText("is empty")
+	}
+	if n := utf8.RuneCountInString(text); n > maxNegativeKeywordRunes {
+		return "", errNegativeKeywordText(fmt.Sprintf("is %d characters, exceeding the %d-character limit", n, maxNegativeKeywordRunes))
+	}
+	prevPunct := false
+	for _, r := range text {
+		switch {
+		case unicode.IsLetter(r), unicode.IsMark(r), unicode.IsDigit(r), r == ' ':
+			prevPunct = false
+		case isNegativeKeywordPunct(r):
+			if prevPunct {
+				return "", errNegativeKeywordText("has consecutive punctuation, which Microsoft's text policy refuses")
+			}
+			prevPunct = true
+		default:
+			return "", errNegativeKeywordText(fmt.Sprintf("contains %q, which is not allowed (letters, digits, spaces and & ' - . only)", r))
+		}
+	}
+	return text, nil
+}
+
 // ValidateNegativeKeywords checks a negative-keyword batch WITHOUT contacting Microsoft and
 // returns the normalized batch, index-aligned with the input.
 //
@@ -233,31 +277,9 @@ func ValidateNegativeKeywords(in []NegativeKeyword) ([]NegativeKeyword, error) {
 	out := make([]NegativeKeyword, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
 	for i, nk := range in {
-		// Control characters are checked on the RAW text, so a leading/trailing one cannot
-		// hide behind the trim below.
-		if strings.IndexFunc(nk.Text, unicode.IsControl) >= 0 {
-			return nil, fmt.Errorf("microsoft-ads: negative keyword %d contains a control character", i)
-		}
-		text := strings.Join(strings.Fields(nk.Text), " ")
-		if text == "" {
-			return nil, fmt.Errorf("microsoft-ads: negative keyword %d is empty", i)
-		}
-		if n := utf8.RuneCountInString(text); n > maxNegativeKeywordRunes {
-			return nil, fmt.Errorf("microsoft-ads: negative keyword %d is %d characters, exceeding Microsoft's %d-character limit", i, n, maxNegativeKeywordRunes)
-		}
-		prevPunct := false
-		for _, r := range text {
-			switch {
-			case unicode.IsLetter(r), unicode.IsMark(r), unicode.IsDigit(r), r == ' ':
-				prevPunct = false
-			case isNegativeKeywordPunct(r):
-				if prevPunct {
-					return nil, fmt.Errorf("microsoft-ads: negative keyword %d has consecutive punctuation, which Microsoft's text policy refuses", i)
-				}
-				prevPunct = true
-			default:
-				return nil, fmt.Errorf("microsoft-ads: negative keyword %d contains %q, which is not allowed (letters, digits, spaces and & ' - . only)", i, r)
-			}
+		text, err := NormalizeNegativeKeywordText(nk.Text)
+		if err != nil {
+			return nil, fmt.Errorf("microsoft-ads: negative keyword %d %w", i, err)
 		}
 		matchType, ok := canonicalMatchType(nk.MatchType)
 		if !ok || matchType == MatchTypeBroad {
