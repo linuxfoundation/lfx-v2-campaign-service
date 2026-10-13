@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -31,6 +32,14 @@ func twitterNegativeTargetingType(matchType string) string {
 	}
 }
 
+// twitterNegativeKey identifies a negative keyword criterion for the ALREADY_PRESENT check. The
+// value is case-folded because the create path accepts X's case-normalised echo (EqualFold): a
+// keyword X stored as "Free Download" must match a repeat request for "free download" rather than
+// be sent again as a duplicate criterion (PR #321 review).
+func twitterNegativeKey(targetingType, value string) string {
+	return targetingType + "\x00" + strings.ToLower(value)
+}
+
 // AddNegativeKeywords implements service.NegativeKeywordAdder for X: one negated keyword
 // targeting criterion (operator_type NE) per keyword, on the ONE line item this service created
 // for the campaign (LFXV2-2665).
@@ -40,7 +49,8 @@ func twitterNegativeTargetingType(matchType string) string {
 // duplicates, no revision); provisioning; provenance FAILS CLOSED; the account; the line item is
 // X's, live and THIS campaign's (ownedTwitterLineItem); and its targeting criteria are listed
 // completely. A keyword the line item already excludes with the same type (text compared
-// exactly) is ALREADY_PRESENT and not sent.
+// ignoring case, as CreateNegativeKeywordCriterion accepts X's echo) is ALREADY_PRESENT and not
+// sent.
 //
 // Then one POST per remaining keyword, in request order, each through the account's write pacer
 // and sent once — never retried on a 429. Each is APPLIED (+ the criterion id), FAILED (NOT_SENT
@@ -71,7 +81,7 @@ func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID s
 	present := make(map[string]bool, len(all))
 	for _, tc := range all {
 		if tc.NegativeKeyword() {
-			present[tc.TargetingType+"\x00"+tc.TargetingValue] = true
+			present[twitterNegativeKey(tc.TargetingType, tc.TargetingValue)] = true
 		}
 	}
 
@@ -82,7 +92,7 @@ func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID s
 		o := model.NegativeKeywordOutcome{Text: k.Text, MatchType: k.MatchType}
 		targetingType := twitterNegativeTargetingType(k.MatchType)
 		switch {
-		case present[targetingType+"\x00"+k.Text]:
+		case present[twitterNegativeKey(targetingType, k.Text)]:
 			o.Outcome = model.KeywordOutcomeAlreadyPresent
 			definite = true
 			out = append(out, o)

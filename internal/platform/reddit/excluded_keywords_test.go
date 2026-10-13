@@ -56,6 +56,7 @@ func TestAddAdGroupExcludedKeywords_RefusesBeforeAnyRequest(t *testing.T) {
 		{"nothing to add", targetingAdGroup, nil},
 		{"already excluded", `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":{"keywords":["a"],"excluded_keywords":["x"]}}}`, []string{"x"}},
 		{"over reddit's 2000", full, []string{"new"}},
+		{"null elements count toward reddit's 2000", `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":{"keywords":["a"],"excluded_keywords":[` + strings.Join(many[:MaxExcludedKeywords-1], ",") + `,null]}}}`, []string{"new"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, seen := budgetTestClient(t, http.StatusOK, tc.body)

@@ -4991,7 +4991,7 @@ paths:
                             $ref: '#/components/schemas/AddNegativeKeywordsRequestBody'
                         example:
                             negative_keywords:
-                                - match_type: Phrase
+                                - match_type: Broad
                                   text: free download
                             revision: sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c
             responses:
@@ -15888,7 +15888,7 @@ components:
                         $ref: '#/components/schemas/NegativeKeywordInput'
                     description: 'The negative keywords to add: at campaign level on Microsoft Advertising, on the campaign''s one ad group on Reddit, on its one line item on X.'
                     example:
-                        - match_type: Phrase
+                        - match_type: Broad
                           text: free download
                     minItems: 1
                     maxItems: 60
@@ -15900,7 +15900,7 @@ components:
             description: Request body for add-negative-keywords.
             example:
                 negative_keywords:
-                    - match_type: Phrase
+                    - match_type: Broad
                       text: free download
                 revision: sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c
             required:

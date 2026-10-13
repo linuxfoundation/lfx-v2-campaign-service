@@ -127,6 +127,23 @@ func TestTwitter_AddNegativeKeywords_OnePostPerKeywordMappedToNE(t *testing.T) {
 	}
 }
 
+// X echoes a keyword case-normalised and the create path accepts that, so the ALREADY_PRESENT
+// check folds case too: a repeat request must not send a duplicate criterion (PR #321 review).
+func TestTwitter_AddNegativeKeywords_AlreadyPresentIgnoresCase(t *testing.T) {
+	criteria := `{"data":[{"id":"n7","line_item_id":"li1","targeting_type":"PHRASE_KEYWORD","targeting_value":"Free Download","operator_type":"NE","deleted":false}],"next_cursor":null}`
+	s := newXNegStub(t, xKWTLineItem, criteria, nil)
+	out, err := addXNegatives(s, xBidCampaign(), "", model.NegativeKeyword{Text: "free download", MatchType: "Phrase"}, model.NegativeKeyword{Text: "free download", MatchType: "Exact"})
+	if err != nil {
+		t.Fatalf("AddNegativeKeywords: %v", err)
+	}
+	if out[0].Outcome != model.KeywordOutcomeAlreadyPresent || out[1].Outcome != model.KeywordOutcomeApplied {
+		t.Fatalf("outcomes = %+v (the type still distinguishes them)", out)
+	}
+	if posts := s.sent(); len(posts) != 1 || posts[0].Get("targeting_type") != "EXACT_KEYWORD" {
+		t.Fatalf("POSTs = %v, want only the EXACT one", posts)
+	}
+}
+
 // Partial outcomes: X refuses one, the next is ambiguous, the last applies — each answered on its
 // own, and the call itself succeeds because some items got a definite answer.
 func TestTwitter_AddNegativeKeywords_PerItemOutcomes(t *testing.T) {

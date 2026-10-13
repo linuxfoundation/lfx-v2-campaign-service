@@ -44,6 +44,14 @@ func (t *AdGroupTargeting) ExcludedKeywords() ([]string, error) {
 	return values, err
 }
 
+// ExcludedKeywordElements is the number of ELEMENTS in `excluded_keywords` as read, a null one
+// included: a write keeps every element it read, so this — not the count of keywords — is what
+// Reddit's maxItems is measured against.
+func (t *AdGroupTargeting) ExcludedKeywordElements() (int, error) {
+	_, elems, err := decodeStringArray(t.members[excludedKeywordsMember])
+	return len(elems), err
+}
+
 // FingerprintExceptExcluded fingerprints every targeting member except `excluded_keywords`.
 func (t *AdGroupTargeting) FingerprintExceptExcluded() (string, error) {
 	return t.FingerprintExcept(excludedKeywordsMember)
@@ -55,8 +63,9 @@ func (t *AdGroupTargeting) FingerprintExceptExcluded() (string, error) {
 // targeting member, and every excluded element already there (a null one included), is sent
 // exactly as base read it. base MUST be the read of this same ad group the caller validated, and
 // add must hold only keywords base does not already exclude — the caller decides ALREADY_PRESENT;
-// an empty add, an add naming a keyword already excluded, or a total over MaxExcludedKeywords is
-// refused before any request.
+// an empty add, an add naming a keyword already excluded, or an array that would exceed
+// MaxExcludedKeywords ELEMENTS (null elements kept from the read count) is refused before any
+// request.
 //
 // The PATCH is sent ONCE and a 429 is NOT retried, for RemoveAdGroupKeywords' reason: the write
 // replaces the whole targeting from a pre-read snapshot. A 429, transport failure, 3xx or 5xx is
@@ -87,7 +96,9 @@ func (c *Client) AddAdGroupExcludedKeywords(ctx context.Context, adGroupID strin
 		}
 		present[k] = true
 	}
-	if n := len(existing) + len(add); n > MaxExcludedKeywords {
+	// Counted in ELEMENTS, not keywords: the write keeps every element read, a null one included,
+	// so the array Reddit receives is len(elems)+len(add) long.
+	if n := len(elems) + len(add); n > MaxExcludedKeywords {
 		return nil, fmt.Errorf("reddit: add ad group %s excluded keywords: %d would exceed Reddit's %d", adGroupID, n, MaxExcludedKeywords)
 	}
 

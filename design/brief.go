@@ -2230,8 +2230,10 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add: at campaign level on Microsoft Advertising, on the campaign's one ad group on Reddit, on its one line item on X.", func() {
 				MinLength(1)
 				MaxLength(60)
+				// Broad, because the generated request example also carries `revision`, which only
+				// Reddit takes, and Reddit offers Broad only (PR #321 review).
 				Example([]map[string]any{
-					{"text": "free download", "match_type": "Phrase"},
+					{"text": "free download", "match_type": "Broad"},
 				})
 			})
 			// Reddit's compare-and-set token, exactly as get-keyword-targeting returned it. Never sent

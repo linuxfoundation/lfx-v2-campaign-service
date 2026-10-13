@@ -149,6 +149,10 @@ func TestReddit_AddNegativeKeywords_RefusalsWriteNothing(t *testing.T) {
 	}
 	full := redditExcludedBody("[" + strings.Join(many, ",") + "]")
 	fullRev := redditRevisionOf(t, full)
+	// 1,999 keywords and one null: 2,000 elements already, so one more keyword is 2,001 on the
+	// wire even though only 1,999 keywords are excluded (PR #321 review).
+	nullPadded := redditExcludedBody("[" + strings.Join(many[:1999], ",") + ",null]")
+	nullPaddedRev := redditRevisionOf(t, nullPadded)
 	cases := []struct {
 		name     string
 		campaign *model.Campaign
@@ -172,6 +176,7 @@ func TestReddit_AddNegativeKeywords_RefusalsWriteNothing(t *testing.T) {
 		{"excluded keywords not a string list", redditBudgetCampaign(), redditExcludedBody(`{"a":1}`), redditRevisionOf(t, redditExcludedBody(`{"a":1}`)),
 			[]model.NegativeKeyword{broad("free")}, domain.ErrKeywordTargetingUnaddressable, false},
 		{"over reddit's 2000", redditBudgetCampaign(), full, fullRev, []model.NegativeKeyword{broad("free")}, domain.ErrNegativeKeywordLimit, false},
+		{"null elements count toward reddit's 2000", redditBudgetCampaign(), nullPadded, nullPaddedRev, []model.NegativeKeyword{broad("free")}, domain.ErrNegativeKeywordLimit, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

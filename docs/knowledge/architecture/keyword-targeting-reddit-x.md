@@ -78,7 +78,8 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
   re-escaped (`json.Marshal` would rewrite `<`, `>` and `&` inside strings, so the body is encoded
   with HTML escaping off and sent pre-encoded), numbers keeping their spelling (a 20-digit integer,
   `1.10`), an explicit `null` staying `null`, an absent member staying absent.
-- **Reddit writes are default-off** (`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, exact `"true"`):
+- **Reddit writes are default-off** (`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, exact `"true"`;
+  it gates both the removal and the negative-keyword add below — enabling one enables both):
   a read representation the write interprets differently would change geo, community or
   interest targeting on a live, spending ad group. The read is not gated.
 - **Outcomes.** Reddit: one PATCH, sent once and never retried on a 429 (a retry from the stale
@@ -103,8 +104,8 @@ argument (Reddit's token; Microsoft and X refuse a non-empty one as an invalid b
 |---|---|---|
 | Where | `targeting.excluded_keywords` of the recorded ad group — `{"type":["array","null"],"maxItems":2000,"items":{"type":"string"}}`, "The keywords to exclude from targeting." | A keyword targeting criterion of the recorded line item with `operator_type` `NE` ("to set negated targeting, use operator_type=NE"). |
 | Match types | **Broad only.** The member is a plain string list with no match type, so `Exact`/`Phrase` would promise a mode Reddit does not offer (400). | `Broad`→`BROAD_KEYWORD`, `Phrase`→`PHRASE_KEYWORD`, `Exact`→`EXACT_KEYWORD` (the guide's Negative / Negative Phrase / Negative Exact). `UNORDERED_KEYWORD` is deprecated; the legacy `NEGATIVE_*` types now read back as the positive type with `NE`. Microsoft keeps Exact/Phrase. |
-| Write | The removal's whole-targeting PATCH in the other direction: every other member and every existing excluded element sent back as read, the new strings appended. Behind `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`; `revision` required, a stale one 409; over 2,000 is `ErrNegativeKeywordLimit` (409). | One `POST accounts/:account_id/targeting_criteria` per keyword through the account write pacer, at most 20 per request (one write per second inside the 45 s mutation timeout). The batch endpoint (≤ 40) succeeds or fails as a group, so it is not used. |
-| Already there | Exact text already excluded → `ALREADY_PRESENT`, not resent; nothing new → no write. | A live `NE` criterion of the same type and exact text → `ALREADY_PRESENT`, not sent. |
+| Write | The removal's whole-targeting PATCH in the other direction: every other member and every existing excluded element sent back as read, the new strings appended. Behind `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`; `revision` required, a stale one 409; over 2,000 array elements — a null element kept from the read counts — is `ErrNegativeKeywordLimit` (409). | One `POST accounts/:account_id/targeting_criteria` per keyword through the account write pacer, at most 20 per request (one write per second inside the 45 s mutation timeout). The batch endpoint (≤ 40) succeeds or fails as a group, so it is not used. |
+| Already there | Exact text already excluded → `ALREADY_PRESENT`, not resent; nothing new → no write. | A live `NE` criterion of the same type and text compared ignoring case (the create path accepts X's case-normalised echo) → `ALREADY_PRESENT`, not sent. |
 | Outcomes | One PATCH, sent once (429 UNCONFIRMED); a re-read must show exactly the excluded list written and the fingerprint of every other member unchanged, else UNCONFIRMED. New items share the PATCH's outcome; no id. | Per item: APPLIED (+ criterion id as `negative_keyword_id`), FAILED `NOT_SENT` / `REJECTED`, or UNCONFIRMED (transport, 3xx, 5xx, 429, or a 2xx not echoing a live `NE` criterion of that type, line item and keyword — the value compared ignoring case). The call errors only when no item got a definite answer. |
 
 Guards are the removal's, in order: (Reddit) the flag; the batch — the text rules are Microsoft's

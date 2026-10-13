@@ -33,7 +33,8 @@ import (
 //  4. The ad group is read and must report THIS campaign; its excluded keywords must be legible.
 //  5. COMPARE-AND-SET: the targeting's fingerprint must equal the caller's revision (409).
 //  6. Keywords the ad group already excludes (exact text) are ALREADY_PRESENT and not sent; the
-//     rest must fit Reddit's 2,000 (ErrNegativeKeywordLimit, 409).
+//     rest must fit Reddit's 2,000 array elements, null elements kept from the read included
+//     (ErrNegativeKeywordLimit, 409).
 //
 // Then ONE PATCH, sent once and never retried on a 429, carries every new keyword, and a re-read
 // must show exactly the excluded list written and no other member moved; any doubt is UNCONFIRMED.
@@ -98,7 +99,13 @@ func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID st
 		// Nothing to write: every keyword is already excluded, so the requested state holds.
 		return out, nil
 	}
-	if n := len(existing) + len(add); n > reddit.MaxExcludedKeywords {
+	// The cap is on the ARRAY, and the write keeps every element it read — a null one included —
+	// so it is counted in elements, not keywords (PR #321 review).
+	elems, err := current.ExcludedKeywordElements()
+	if err != nil {
+		return nil, fmt.Errorf("%s: ad group %s excluded keywords: %w: %w", op, adGroupID, err, domain.ErrKeywordTargetingUnaddressable)
+	}
+	if n := elems + len(add); n > reddit.MaxExcludedKeywords {
 		return nil, fmt.Errorf("%s: ad group %s would hold %d excluded keywords, over Reddit's %d: %w",
 			op, adGroupID, n, reddit.MaxExcludedKeywords, domain.ErrNegativeKeywordLimit)
 	}
