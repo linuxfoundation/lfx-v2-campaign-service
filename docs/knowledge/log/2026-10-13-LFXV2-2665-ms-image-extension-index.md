@@ -20,5 +20,13 @@
   wire, and the association, AddMedia and AddAdExtensions messages name only those. The
   concept's AddMedia, AddAdExtensions and Set bullets now state the index-0 rule and
   `imageNestedErrors` in place of the earlier any-error and `boundedNestedErrorItems` wording.
+- #323 comment pass, comments only with no behaviour change. Every comment in
+  `image_extension.go` now states the current rules:
+  - Only a single collection answers the lookup, so `[]` is no longer described as "none".
+  - The comments on `adExtensionIdentity`, `mediaIdentity` and the file's OUTCOMES block now
+    give the index-0-exclusive rule in place of "any coded error is definite".
+  - The `NestedPartialErrors` field comment names `imageNestedErrors` instead of the geo decoder.
+  - `AnyErrors` is documented as "coded at any index", which is not rejection evidence by
+    itself.
 
 Concept: [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).
