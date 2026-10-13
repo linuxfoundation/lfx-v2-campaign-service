@@ -75,6 +75,28 @@ create has no confirmed campaign to attach to. The calls:
 4. [SetAdExtensionsAssociations](https://learn.microsoft.com/en-us/advertising/campaign-management-service/setadextensionsassociations?view=bingads-13)
    with `AssociationType` `Campaign`.
 
+## Strict response decoding
+
+Every 2xx body must actually answer before it counts. Each rule below fails closed:
+
+- **Lookup.** `AdExtensionAssociationCollection` must be present as an array. `[]`, `[null]`
+  and empty slots mean none. An omitted field, `null` or a non-array is a failed lookup, and
+  nothing is uploaded. An association counts only when its `EntityId` is this campaign and its
+  `AssociationType` is `Campaign`. Any other association also fails the lookup; it is never
+  skipped and never treated as AlreadyAttached.
+- **AddMedia.** `PartialErrors` beside `MediaIds` is decoded, so a null id it explains is a
+  definite rejection. Only an unexplained null id is UNCONFIRMED.
+- **AddAdExtensions.** `NestedPartialErrors` is `BatchErrorCollection[]`. It is decoded with
+  `boundedNestedErrorItems`, the same decoder as geo, and both the collection-level codes and
+  each nested `BatchErrors` are classified. A null identity with any error is definite. An
+  identity returned alongside errors is UNCONFIRMED: its id is recorded, and the attach stops
+  before association.
+- **SetAdExtensionsAssociations.** The presence of `PartialErrors` is tracked as in
+  `updateStatusResponse`. `null` or `[]` confirms success; an omitted field or a top-level
+  `null` is UNCONFIRMED.
+- **Error text.** An association failure's message makes no claim about whether the
+  extension is attached. The NOT attached / UNCONFIRMED step wording decides that.
+
 ## Recording and outcomes
 
 The ids are written to the persisted result as `imageMediaId` and `imageAdExtensionId`, the
