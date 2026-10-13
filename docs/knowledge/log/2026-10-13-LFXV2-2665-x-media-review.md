@@ -6,8 +6,8 @@
   `AssetReserver`, but not the X dispatcher. X uploads therefore charged a second budget, and
   the process-wide asset-memory bound did not hold. X is now rebound on both live paths. The
   wiring test checks that Meta, Microsoft, X and the signed-asset route all hold that one
-  instance (`UsesAssetReserver` / `UsesBudget`). LinkedIn holds no asset bytes, so it has no
-  reserver to share.
+  instance (`UsesAssetReserver` / `UsesBudget`). LinkedIn, whose creatives (#315)
+  landed alongside, is rebound and asserted the same way.
 - `ensureImageMedia`'s lookup, upload and library add were not coordinated, so two concurrent
   dispatches of identical bytes to one account could both upload and both add. They now run
   under a per-(account, image) lock that every client for the account shares through the

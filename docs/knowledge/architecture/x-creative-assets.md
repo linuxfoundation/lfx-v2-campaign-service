@@ -33,7 +33,7 @@ run the campaign without the image the caller asked for.
 - **Validate before mutating.** The dispatcher (`resolveTwitterImage`) parses the id and
   checks the tweetText/tweetId combination. It then reads the asset's **size** before loading
   the blob and refuses anything over `twitter.MaxImageBytes` (5 MiB). It reserves those bytes
-  on the container's single `AssetReserver`, the same instance that Meta, Microsoft and the
+  on the container's single `AssetReserver`, the same instance that Meta, Microsoft, LinkedIn and the
   signed-asset route charge, and only then loads the asset. `bindCreativeAssetSharing` rebinds
   X to it on both live paths. The wiring test asserts that every one of them holds that same
   instance, not merely a non-nil reserver: before the #311 review fix, X was left on
