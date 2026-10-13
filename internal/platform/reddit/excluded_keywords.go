@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -28,6 +29,14 @@ import (
 // sent back exactly as read (keyword_targeting.go explains why), with only `excluded_keywords`
 // changed — the elements already there kept byte for byte, the new strings appended.
 // ---------------------------------------------------------------------------
+
+// IsPlatformRefusal reports whether err is Reddit's own DEFINITE refusal of a request: a 4xx
+// answer other than 429. Together with IsOutcomeUnconfirmed it lets a caller tell "Reddit refused
+// it" from "it never reached Reddit" when reporting a write per item.
+func IsPlatformRefusal(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.StatusCode >= 400 && ae.StatusCode < 500 && ae.StatusCode != http.StatusTooManyRequests
+}
 
 // MaxExcludedKeywords is Reddit's maxItems for targeting.excluded_keywords.
 const MaxExcludedKeywords = 2000

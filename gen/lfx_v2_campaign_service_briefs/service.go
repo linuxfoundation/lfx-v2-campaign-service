@@ -352,20 +352,21 @@ type Service interface {
 	// each with its own outcome. A negative already there is ALREADY_PRESENT, a
 	// success, and is not sent again. Microsoft adds each negative independently;
 	// Reddit's one PATCH carries every new one, so they share its outcome
-	// (confirmed by a re-read); X sends one POST per keyword, at most 20 per
-	// request (X's one-write-per-second account pacing), each APPLIED, FAILED
-	// (NOT_SENT, REJECTED) or UNCONFIRMED. **400** for a malformed batch (empty or
-	// over 60 — over 20 on X —, a text over 100 characters or outside the allowed
-	// characters, consecutive punctuation, a match type the platform does not
-	// offer, the same keyword twice, a missing or misplaced revision), an
-	// unsupported platform, or Reddit writes switched off. A malformed batch is
-	// 400 even when the campaign is also unprovisioned. **409** when refused
-	// before anything is written: unprovisioned, a different ad account, an
-	// unrecorded ad account (re-dispatch), an unusable connection, an ad group /
-	// line item this service did not record or the platform no longer reports
-	// under this campaign, a stale Reddit revision, or a Reddit ad group whose
-	// excluded keywords would exceed Reddit's 2,000. **503** only when the
-	// platform answered nothing per keyword. The MESSAGE separates a DEFINITE
+	// (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch
+	// with any ALREADY_PRESENT item always answers per item; X sends one POST per
+	// keyword, at most 20 per request (X's one-write-per-second account pacing),
+	// each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. **400** for a
+	// malformed batch (empty or over 60 — over 20 on X —, a text over 100
+	// characters or outside the allowed characters, consecutive punctuation, a
+	// match type the platform does not offer, the same keyword twice, a missing or
+	// misplaced revision), an unsupported platform, or Reddit writes switched off.
+	// A malformed batch is 400 even when the campaign is also unprovisioned.
+	// **409** when refused before anything is written: unprovisioned, a different
+	// ad account, an unrecorded ad account (re-dispatch), an unusable connection,
+	// an ad group / line item this service did not record or the platform no
+	// longer reports under this campaign, a stale Reddit revision, or a Reddit ad
+	// group whose excluded keywords would exceed Reddit's 2,000. **503** only when
+	// the platform answered nothing per keyword. The MESSAGE separates a DEFINITE
 	// failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a
 	// timeout, a rate limit, an unreadable answer — verify the campaign's negative
 	// keywords before retrying).
@@ -1612,8 +1613,9 @@ type NegativeKeywordResult struct {
 	// an excluded keyword has no id, and for every outcome other than APPLIED.
 	NegativeKeywordID *string
 	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
-	// error code, when it named one. X: NOT_SENT (the request carrying it was
-	// never sent) or REJECTED (X refused it); X's own text is never returned.
+	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
+	// it was never sent) or REJECTED (the platform refused it); their own text is
+	// never returned.
 	ErrorCode *string
 }
 

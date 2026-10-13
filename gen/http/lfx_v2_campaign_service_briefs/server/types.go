@@ -4002,8 +4002,9 @@ type NegativeKeywordResultResponseBody struct {
 	// an excluded keyword has no id, and for every outcome other than APPLIED.
 	NegativeKeywordID *string `form:"negative_keyword_id,omitempty" json:"negative_keyword_id,omitempty" xml:"negative_keyword_id,omitempty"`
 	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
-	// error code, when it named one. X: NOT_SENT (the request carrying it was
-	// never sent) or REJECTED (X refused it); X's own text is never returned.
+	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
+	// it was never sent) or REJECTED (the platform refused it); their own text is
+	// never returned.
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 

@@ -1026,7 +1026,7 @@ var NegativeKeywordResult = Type("negative-keyword-result", func() {
 	Attribute("match_type", String, "The match type as sent to the platform", negativeKeywordMatchTypeEnum)
 	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft) or ad group / line item (Reddit / X) already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
 	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added: Microsoft's NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where an excluded keyword has no id, and for every outcome other than APPLIED.", func() { Example("8475612390") })
-	Attribute("error_code", String, "Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable error code, when it named one. X: NOT_SENT (the request carrying it was never sent) or REJECTED (X refused it); X's own text is never returned.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
+	Attribute("error_code", String, "Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable error code, when it named one. Reddit and X: NOT_SENT (the request carrying it was never sent) or REJECTED (the platform refused it); their own text is never returned.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
 	Required("text", "match_type", "outcome")
 })
 
@@ -2206,7 +2206,8 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"Every write is sent ONCE and never retried on a 429. The 200 carries one result per requested keyword, " +
 			"in request order, each with its own outcome. A negative already there is ALREADY_PRESENT, a success, " +
 			"and is not sent again. Microsoft adds each negative independently; Reddit's one PATCH carries every new " +
-			"one, so they share its outcome (confirmed by a re-read); X sends one POST per keyword, at most 20 per " +
+			"one, so they share its outcome (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch with " +
+			"any ALREADY_PRESENT item always answers per item; X sends one POST per keyword, at most 20 per " +
 			"request (X's one-write-per-second account pacing), each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. " +
 			"**400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters or outside " +
 			"the allowed characters, consecutive punctuation, a match type the platform does not offer, the same " +

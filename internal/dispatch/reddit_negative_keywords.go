@@ -38,7 +38,10 @@ import (
 //
 // Then ONE PATCH, sent once and never retried on a 429, carries every new keyword, and a re-read
 // must show exactly the excluded list written and no other member moved; any doubt is UNCONFIRMED.
-// The new keywords share the PATCH's outcome; ALREADY_PRESENT ones keep theirs.
+// The new keywords share the PATCH's outcome — APPLIED, FAILED (REJECTED by Reddit, or NOT_SENT)
+// or UNCONFIRMED — and ALREADY_PRESENT ones keep theirs, so a batch with any ALREADY_PRESENT item
+// always answers per item; the call errors only when every item rode on a write that did not
+// apply cleanly.
 func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	const op = "add reddit negative keywords"
 	if !redditKeywordTargetingWritesEnabled() {
@@ -114,13 +117,40 @@ func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID st
 		return nil, fmt.Errorf("%s: %w: %w", op, reddit.ErrTargetingUnreadable, domain.ErrKeywordTargetingUnaddressable)
 	}
 
+	// From here on the batch's ALREADY_PRESENT results are KNOWN, whatever happens to the write:
+	// those keywords were excluded before it was sent. So a failed or doubtful write does not
+	// discard them (PR #321 review) — settle gives every NEW keyword the write's outcome and
+	// returns per-item results, and the call errors only when no item has a definite outcome.
+	settle := func(outcome, code string, cause error) ([]model.NegativeKeywordOutcome, error) {
+		if len(add) == len(out) {
+			// Every item rode on the write: nothing is known apart from it.
+			if outcome == model.KeywordOutcomeUnconfirmed {
+				return nil, &unconfirmedKeywordLeverError{err: cause}
+			}
+			return nil, cause
+		}
+		slog.WarnContext(ctx, "reddit negative keyword write did not apply cleanly; already-excluded keywords are reported, the new ones carry the write's outcome",
+			"project_id", projectID, "campaign_id", campaign.ID, "ad_group_id", adGroupID, "outcome", outcome, "error_code", code)
+		for i := range out {
+			if out[i].Outcome == "" {
+				out[i].Outcome, out[i].ErrorCode = outcome, code
+			}
+		}
+		return out, nil
+	}
+
 	written, err := client.AddAdGroupExcludedKeywords(ctx, adGroupID, current, add)
 	if err != nil {
 		werr := fmt.Errorf("%s for ad group %s: %w", op, adGroupID, err)
-		if reddit.IsOutcomeUnconfirmed(err) {
-			return nil, &unconfirmedKeywordLeverError{err: werr}
+		switch {
+		case reddit.IsOutcomeUnconfirmed(err):
+			return settle(model.KeywordOutcomeUnconfirmed, "", werr)
+		case reddit.IsPlatformRefusal(err):
+			return settle(model.KeywordOutcomeFailed, model.KeywordTargetingErrRejected, werr)
+		default:
+			// Definite and not Reddit's answer: the PATCH never reached Reddit.
+			return settle(model.KeywordOutcomeFailed, model.KeywordTargetingErrNotSent, werr)
 		}
-		return nil, werr
 	}
 
 	// CONFIRM, as the removal does: the PATCH was acknowledged, and the re-read is what shows it
@@ -130,16 +160,16 @@ func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID st
 		if err == nil {
 			err = errors.New("the ad group was not found on re-read")
 		}
-		return nil, &unconfirmedKeywordLeverError{err: fmt.Errorf("%s: confirm ad group %s targeting after the write: %w", op, adGroupID, err)}
+		return settle(model.KeywordOutcomeUnconfirmed, "", fmt.Errorf("%s: confirm ad group %s targeting after the write: %w", op, adGroupID, err))
 	}
 	afterExcluded, xerr := after.ExcludedKeywords()
 	if xerr != nil || !reddit.SameKeywords(afterExcluded, written) {
-		return nil, &unconfirmedKeywordLeverError{err: fmt.Errorf("%s: ad group %s reports an excluded keyword list other than the one written", op, adGroupID)}
+		return settle(model.KeywordOutcomeUnconfirmed, "", fmt.Errorf("%s: ad group %s reports an excluded keyword list other than the one written", op, adGroupID))
 	}
 	if afterRest, ferr := after.FingerprintExceptExcluded(); ferr != nil || afterRest != before {
 		slog.ErrorContext(ctx, "reddit ad group targeting changed outside excluded keywords across a negative keyword add; verify its targeting in Reddit Ads Manager",
 			"project_id", projectID, "campaign_id", campaign.ID, "ad_group_id", adGroupID)
-		return nil, &unconfirmedKeywordLeverError{err: fmt.Errorf("%s: ad group %s targeting changed outside excluded keywords across the write", op, adGroupID)}
+		return settle(model.KeywordOutcomeUnconfirmed, "", fmt.Errorf("%s: ad group %s targeting changed outside excluded keywords across the write", op, adGroupID))
 	}
 	for i := range out {
 		if out[i].Outcome == "" {

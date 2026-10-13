@@ -235,3 +235,50 @@ func TestReddit_AddNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
 		}
 	})
 }
+
+// A batch mixing an already-excluded keyword with a new one answers PER ITEM whatever happens to
+// the write: the ALREADY_PRESENT result is known before the PATCH is sent and is never discarded,
+// and the new keyword carries the write's outcome (PR #321 review).
+func TestReddit_AddNegativeKeywords_MixedBatchKeepsAlreadyPresentWhenTheWriteFails(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	body := redditExcludedBody(`["jobs"]`)
+	rev := redditRevisionOf(t, body)
+	read := kwtReply{http.StatusOK, body}
+	cases := []struct {
+		name    string
+		patch   kwtReply
+		after   kwtReply
+		outcome string
+		code    string
+	}{
+		{"definite 400 on the PATCH", kwtReply{http.StatusBadRequest, `{"error":{"message":"secret upstream text"}}`}, read, model.KeywordOutcomeFailed, model.KeywordTargetingErrRejected},
+		{"5xx on the PATCH", kwtReply{http.StatusBadGateway, `{}`}, read, model.KeywordOutcomeUnconfirmed, ""},
+		{"429 on the PATCH", kwtReply{http.StatusTooManyRequests, `{}`}, read, model.KeywordOutcomeUnconfirmed, ""},
+		{"echo with another excluded list", kwtReply{http.StatusOK, `{"data":{"id":"t5_ag","targeting":{"keywords":["kubernetes"],"excluded_keywords":["jobs"]}}}`}, read, model.KeywordOutcomeUnconfirmed, ""},
+		{"re-read finds no ad group", kwtReply{http.StatusOK, `{}`}, kwtReply{http.StatusNotFound, `{}`}, model.KeywordOutcomeUnconfirmed, ""},
+		{"re-read fails", kwtReply{http.StatusOK, `{}`}, kwtReply{http.StatusBadRequest, `{}`}, model.KeywordOutcomeUnconfirmed, ""},
+		{"re-read shows the keyword missing", kwtReply{http.StatusOK, `{}`}, read, model.KeywordOutcomeUnconfirmed, ""},
+		{"re-read shows another dimension moved", kwtReply{http.StatusOK, `{}`},
+			kwtReply{http.StatusOK, `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":{"geolocations":["GB"],"keywords":["kubernetes"],"excluded_keywords":["jobs","free"]}}}`},
+			model.KeywordOutcomeUnconfirmed, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newRedditKWTStub(t, tc.patch, read, tc.after)
+			out, err := addRedditNegatives(s, redditBudgetCampaign(), rev, broad("jobs"), broad("free"))
+			if err != nil {
+				t.Fatalf("a batch with a known ALREADY_PRESENT item must answer per item, got %v", err)
+			}
+			if len(out) != 2 || out[0].Outcome != model.KeywordOutcomeAlreadyPresent ||
+				out[1].Outcome != tc.outcome || out[1].ErrorCode != tc.code || out[1].Text != "free" {
+				t.Fatalf("outcomes = %+v, want [ALREADY_PRESENT, %s/%q]", out, tc.outcome, tc.code)
+			}
+			if strings.Contains(out[1].ErrorCode, "secret") {
+				t.Errorf("upstream text leaked: %+v", out[1])
+			}
+			if n := len(s.patches()); n != 1 {
+				t.Fatalf("the PATCH must be sent exactly once, got %d", n)
+			}
+		})
+	}
+}
