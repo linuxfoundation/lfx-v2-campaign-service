@@ -1629,7 +1629,15 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			//
 			// No ETag on either: creative assets are insert-only and carry no version, so there
 			// is no optimistic-concurrency handle to hand back.
-			Response(StatusCreated, func() { Tag("created", "true") })
+			//
+			// Body(CreativeAsset) is explicit on the 201 arm because, since goa v3.31, a
+			// response's implicit body drops the attribute its Tag tests (goa treats a Tag
+			// attribute like a header-mapped one). An explicit Body is used as declared, so
+			// the 201 body keeps rendering `created` exactly as the 200 arm does.
+			Response(StatusCreated, func() {
+				Tag("created", "true")
+				Body(CreativeAsset)
+			})
 			Response(StatusOK)
 			briefErrorResponses()
 		})
