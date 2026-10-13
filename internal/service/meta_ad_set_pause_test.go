@@ -428,3 +428,73 @@ func TestToggleMetaAdSetStatus_ClaimNotReTakenStillSendsThePause(t *testing.T) {
 		t.Fatalf("err %q, sent %d", msg, d.sent)
 	}
 }
+
+// ---- an UNCONFIRMED Meta answer after an unconfirmed record (PR #309) ------
+
+// adSetAndCampaignDispatcher adds the campaign toggle to the ad-set fake, recording whether the
+// row it was handed holds the ad set paused.
+type adSetAndCampaignDispatcher struct {
+	adSetDispatcher
+	campaignHeld []bool
+}
+
+func (d *adSetAndCampaignDispatcher) ToggleStatus(_ context.Context, _ string, _ model.Provider, c *model.Campaign, _ string) error {
+	d.campaignHeld = append(d.campaignHeld, model.MetaAdSetHeldPaused(c.Result, "888"))
+	return nil
+}
+
+// The record could not be confirmed before the pause was sent (both attempts rolled back, the
+// claim could not be re-taken), and Meta answers UNCONFIRMED. Unknown counts as paused, so the
+// record is SETTLED before the 503 — and a later campaign resume keeps the ad set paused.
+func TestToggleMetaAdSetStatus_UnconfirmedPauseAfterAnUnconfirmedRecordSettlesIt(t *testing.T) {
+	for name, d := range map[string]*adSetAndCampaignDispatcher{
+		"meta answers UNCONFIRMED":      {adSetDispatcher: adSetDispatcher{sends: true, toggleErr: adSetUnconfirmedErr{msg: "timeout"}}},
+		"meta answers no known outcome": {adSetDispatcher: adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{Outcome: "DONE"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+			repo.replaceErrs = []error{ambiguousCommit(), ambiguousCommit()}
+			repo.reclaimErr = domain.ErrCampaignWriteInProgress
+			res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+			if res != nil || !isStatus(err, 503) || errMessage(err) != unconfirmedAdSetText || d.sent != 1 {
+				t.Fatalf("got %+v, %T %q, sent %d", res, err, errMessage(err), d.sent)
+			}
+			if !held(repo) || repo.cooldowns != 1 {
+				t.Fatalf("held %v, cooldowns %d; the unconfirmed pause must be on record", held(repo), repo.cooldowns)
+			}
+			// The other writer that kept the claim from being re-taken has finished.
+			repo.reclaimErr = nil
+			etag := fmt.Sprint(repo.got.Version)
+			if _, terr := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &etag, Status: model.CampaignRunActive,
+			}); terr != nil || len(d.campaignHeld) != 1 || !d.campaignHeld[0] {
+				t.Fatalf("campaign resume: %T %q, saw held %v; it must keep the ad set paused", terr, errMessage(terr), d.campaignHeld)
+			}
+		})
+	}
+}
+
+// If even the settlement cannot be confirmed, the 503 says the record is unconfirmed too.
+func TestToggleMetaAdSetStatus_UnconfirmedPauseWithAnUnsettleableRecordSaysSo(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggleErr: adSetUnconfirmedErr{msg: "timeout"}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{ambiguousCommit(), ambiguousCommit()}
+	repo.reclaimErr = domain.ErrCampaignWriteInProgress
+	repo.verifyErr = errors.New("db down")
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "unconfirmed") || !strings.Contains(msg, "whether its pause was recorded on the campaign could not be confirmed") || repo.cooldowns != 1 {
+		t.Fatalf("err %q, cooldowns %d", msg, repo.cooldowns)
+	}
+}
+
+// A CONFIRMED rollback of the record (the server rejected its commit) is a definite failure:
+// nothing is recorded, so nothing is sent.
+func TestToggleMetaAdSetStatus_ConfirmedRollbackOfTheRecordSendsNothing(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{errors.New("replace campaign: commit rolled back by the server: ERROR: deferred failure (SQLSTATE P0001)")}
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if !isStatus(err, 503) || !strings.Contains(errMessage(err), "nothing was changed on Meta") || d.sent != 0 || held(repo) || repo.replaces != 1 {
+		t.Fatalf("err %q, sent %d, held %v, writes %d", errMessage(err), d.sent, held(repo), repo.replaces)
+	}
+}

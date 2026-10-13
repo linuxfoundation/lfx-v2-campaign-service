@@ -320,9 +320,7 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 			// record stays set and a resume's stays uncleared: unknown is treated as paused.
 			slog.WarnContext(ctx, "meta ad set status change is UNCONFIRMED (the platform may or may not reflect it)",
 				append(logFields, "pause_on_record", tracked && (intentRecorded || onRecord == p.AdSetID), "error", safeErrSummary(terr))...)
-			releaseNow = false
-			campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
-			return nil, errAdSetUnconfirmed()
+			return nil, s.answerUnconfirmedAdSetWrite(ctx, campaignRepo, row, p.AdSetID, curVersion, &lockToken, recordUnknown, &releaseNow, logFields)
 		}
 		if intentErr != nil {
 			// Recording the pause failed, so the write was never sent.
@@ -351,9 +349,7 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 	default:
 		// An outcome the adapter did not name is not evidence of success.
 		slog.ErrorContext(ctx, "meta ad set toggle returned an unrecognised outcome; reporting it as UNCONFIRMED", logFields...)
-		releaseNow = false
-		campaignRepo.ReleaseCampaignLockAfterCooldown(lockToken, unconfirmedLockCooldown)
-		return nil, errAdSetUnconfirmed()
+		return nil, s.answerUnconfirmedAdSetWrite(ctx, campaignRepo, row, p.AdSetID, curVersion, &lockToken, recordUnknown, &releaseNow, logFields)
 	}
 	applied := res.Outcome == model.MetaAdSetApplied
 	switch {
@@ -597,6 +593,29 @@ func adSetRecordErr(err error, applied bool, verb string) error {
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but whether that was recorded on the campaign could not be confirmed: read the ad sets (deliberately_paused); if it is not shown, " + consequence}
 	}
 	return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but recording it on the campaign failed: " + consequence}
+}
+
+// answerUnconfirmedAdSetWrite answers a Meta write whose outcome is unknown: the fixed 503, with
+// the claim held for the cooldown. When the pause's record could not be confirmed before the
+// write (recordUnknown), it is SETTLED first: an unconfirmed pause counts as paused, so the
+// record must be on the row — otherwise a later campaign resume, finding none, would re-activate
+// an ad set Meta may well have paused. The settlement runs before the cooldown starts, so the
+// cooldown holds whichever claim it leaves (it may have re-taken it). If the record cannot be
+// confirmed either, the 503 says so.
+func (s *BriefService) answerUnconfirmedAdSetWrite(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, adSetID string, base int64, lockToken *domain.CampaignLockToken, recordUnknown bool, releaseNow *bool, logFields []any) error {
+	var settleErr error
+	if recordUnknown {
+		if _, settleErr = s.settleMetaAdSetRecord(ctx, repo, row, adSetID, base, lockToken); settleErr != nil {
+			slog.ErrorContext(ctx, "meta ad set pause is UNCONFIRMED and its deliberate-pause record could not be settled; a campaign resume may re-activate it",
+				append(logFields, "error", settleErr)...)
+		}
+	}
+	*releaseNow = false
+	repo.ReleaseCampaignLockAfterCooldown(*lockToken, unconfirmedLockCooldown)
+	if settleErr != nil {
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "the ad set status change is unconfirmed — it may or may not have been applied on Meta — and whether its pause was recorded on the campaign could not be confirmed either: read the ad sets before retrying; if it is not shown as deliberately_paused, pause it here again before resuming the campaign"}
+	}
+	return errAdSetUnconfirmed()
 }
 
 // errAdSetUnconfirmed is the fixed answer for a write whose outcome is unknown.

@@ -159,9 +159,13 @@ write lock):
 | ACTIVE → APPLIED or ALREADY_IN_STATE | CLEARED (the `ReplaceCampaign` compare-and-swap is the row check); a failed clear is 503/409 saying the ad set WAS resumed but a campaign resume will still leave it paused |
 | ACTIVE → **UNCONFIRMED** or any failure | **stays set** — the ad set may still be paused; keeping it held never spends unasked |
 
-**Ambiguous commits (PR #309).** `ReplaceCampaign` marks a failed COMMIT with
-`domain.ErrWriteOutcomeUnknown` — PostgreSQL may have committed before the acknowledgement was
-lost (the hazard `reconcileAmbiguousAudienceCommit` handles for audiences). Every record write
+**Ambiguous commits (PR #309).** `ReplaceCampaign` tells two COMMIT failures apart. If the
+SERVER answers the COMMIT with an error (a `*pgconn.PgError`, such as a deferred trigger raising,
+or `pgx.ErrTxCommitRollback`), the rollback is CONFIRMED: a definite failure, so nothing is on
+record and the pause is not sent. If the acknowledgement is LOST (a broken connection, an I/O
+error, the deadline passing while the answer is awaited), PostgreSQL may have committed; only
+that case is marked `domain.ErrWriteOutcomeUnknown` (the hazard `reconcileAmbiguousAudienceCommit`
+handles for audiences). Every record write
 goes through `writeMetaAdSetRecord`, which never reads that as "not written". It reconciles ON THE
 CLAIMED CONNECTION, never a second pooled one beside it — the claim pins its connection for the
 whole request, so a fresh one would starve on a saturated pool (certain with `pool_max_conns=1`),
@@ -185,11 +189,18 @@ that was never paused (`deliberately_paused` while it serves), so a pause whose 
 landed is ALWAYS sent — pausing never spends: landed or rewritten → the normal path; unknown → the
 pause is still sent, then the record is settled from a read at the old or next version on the
 claim's connection (a 503 "could not be confirmed" if even that fails, with the ad set paused on
-Meta, so it cannot serve despite the record). Only a DEFINITE rollback (any error without the
-sentinel) suppresses the pause. A withdrawal and a clear-on-resume are reconciled the same way.
-`TestLiveMetaPauseRecordReconcilesOnTheClaimedConnection` and
-`TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim` run both outcomes on a
-ONE-connection pool.
+Meta, so it cannot serve despite the record). The record is settled the same way when Meta's own
+answer is UNCONFIRMED or unrecognised, BEFORE the 503 and before the cooldown starts: an
+unconfirmed pause counts as paused, so the record must be on the row, or a later campaign resume
+would re-activate an ad set Meta may have paused. If even that settlement cannot be confirmed,
+the 503 says so (re-read `deliberately_paused` and pause again before resuming the campaign).
+Only a DEFINITE rollback (any error without the sentinel, including a server-rejected commit)
+suppresses the pause. A withdrawal and a clear-on-resume are reconciled the same way. On a
+ONE-connection pool, `TestLiveMetaPauseRecordConfirmedRollbackSendsNothing`,
+`TestLiveMetaPauseRecordReconcilesWithoutASecondPooledConnection` (a real lost acknowledgement,
+after which pgx closes the claimed connection, so the claim is re-taken) and
+`TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim` cover the three
+outcomes.
 
 **Concurrency.** The record and the campaign toggle are serialised by `ClaimCampaignVersion`: a
 campaign resume racing a pause in flight is refused (409, nothing sent), one on the ETag read

@@ -1518,17 +1518,22 @@ up. Gating on `status='building'` instead makes the condition that decides the o
 statement that performs it, and makes the call idempotent under retry: a row already `failed`,
 already `built`, or gone matches nothing and returns `nil` rather than an error.
 
-## `ReplaceCampaign`'s commit error is ambiguous (PR #309)
+## `ReplaceCampaign`'s commit errors: confirmed rollback vs lost acknowledgement (PR #309)
 
-A failed `tx.Commit` in `ReplaceCampaign` is returned wrapping `domain.ErrWriteOutcomeUnknown`:
-PostgreSQL may have committed before the acknowledgement was lost, the hazard
-`reconcileAmbiguousAudienceCommit` handles for audiences. Errors before the commit (begin, the
-guarded UPDATE, the 404/412 classification, the outbox insert) are definite rollbacks and never
-carry it. The Meta ad-set lever reconciles on it — on the claimed connection, or after
-releasing and re-taking the claim — never through a second pooled connection beside the claim;
-every other caller's handling is unchanged.
-`TestLiveReplaceCampaignCommitErrorIsMarkedAmbiguous` forces a commit failure with a deferred
-constraint trigger scoped to its own row.
+`classifyCommitErr` splits a failed `tx.Commit` in `ReplaceCampaign` in two. If the server
+answered with an error (a `*pgconn.PgError`, such as a deferred constraint or trigger raising, or
+`pgx.ErrTxCommitRollback`), the rollback is confirmed: PostgreSQL reports an error for a COMMIT
+only when it did not commit. That is a definite error with no sentinel. Any other failure (a
+broken connection, an I/O error, the context ending while the answer is awaited) means the
+acknowledgement was lost and the server may have committed; that is wrapped in
+`domain.ErrWriteOutcomeUnknown`, the hazard `reconcileAmbiguousAudienceCommit` handles for
+audiences. Errors before the commit (begin, the guarded UPDATE, the 404/412 classification, the
+outbox insert) are definite rollbacks and never carry it. The Meta ad-set lever reconciles on the
+sentinel, on the claimed connection or after releasing and re-taking the claim, never through a
+second pooled connection beside the claim. Every other caller's handling is unchanged.
+`TestLiveReplaceCampaignCommitErrorClasses` pins both classes with deferred triggers scoped to its
+own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
+lost acknowledgement.
 
 ## DeleteCampaign's guards
 

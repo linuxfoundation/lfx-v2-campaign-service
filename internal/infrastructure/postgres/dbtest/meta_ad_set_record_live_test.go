@@ -22,8 +22,13 @@ import (
 )
 
 // pauseRecordDispatcher is a Meta ad-set toggler that runs the service's beforeWrite hook and
-// then answers APPLIED — the "send" is counted, nothing leaves the process.
-type pauseRecordDispatcher struct{ sent int }
+// then answers APPLIED — the "send" is counted, nothing leaves the process. hookDeadline, when
+// set, is the deadline the hook runs under: a COMMIT still awaited when it passes loses its
+// acknowledgement, the ambiguous case.
+type pauseRecordDispatcher struct {
+	sent         int
+	hookDeadline time.Duration
+}
 
 func (d *pauseRecordDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
 	return nil, errors.New("unused")
@@ -31,7 +36,13 @@ func (d *pauseRecordDispatcher) Dispatch(context.Context, *model.CampaignBrief, 
 
 func (d *pauseRecordDispatcher) ToggleMetaAdSetStatus(ctx context.Context, _ string, _ model.Provider, _ *model.Campaign, adSetID, _ string, beforeWrite service.MetaAdSetBeforeWrite) (*model.MetaAdSetStatusResult, error) {
 	if beforeWrite != nil {
-		if err := beforeWrite(ctx); err != nil {
+		hctx := ctx
+		if d.hookDeadline > 0 {
+			var cancel context.CancelFunc
+			hctx, cancel = context.WithTimeout(ctx, d.hookDeadline)
+			defer cancel()
+		}
+		if err := beforeWrite(hctx); err != nil {
 			return nil, fmt.Errorf("nothing was sent: %w", err)
 		}
 	}
@@ -39,24 +50,19 @@ func (d *pauseRecordDispatcher) ToggleMetaAdSetStatus(ctx context.Context, _ str
 	return &model.MetaAdSetStatusResult{AdSetID: adSetID, Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}, nil
 }
 
-// failMarkerCommits installs a DEFERRED constraint trigger that fails the COMMIT of any update
-// writing the deliberate-pause record onto campaign id — the first `failures` of them (a
-// sequence counts, since a sequence is not rolled back with the failed transaction), or every one
-// when failures is 0. The failed commit rolls back and leaves the session usable: exactly the
-// ambiguous-but-rolled-back case.
-func failMarkerCommits(ctx context.Context, t *testing.T, pool *pgxpool.Pool, campaignID string, failures int) {
+// markerCommitTrigger installs a DEFERRED constraint trigger that runs at the COMMIT of any
+// update writing the deliberate-pause record onto campaign id: the FIRST such commit runs first
+// (a sequence counts — it is not rolled back with a failed transaction), every later one runs
+// later. Each is a PL/pgSQL statement list, or "" for nothing. Only this row is affected.
+func markerCommitTrigger(ctx context.Context, t *testing.T, pool *pgxpool.Pool, campaignID, first, later string) {
 	t.Helper()
 	name := sanitizeIdent("fmc_" + dbtest.UniqueID(t, "trg"))
-	cond := "TRUE"
-	if failures > 0 {
-		cond = fmt.Sprintf("nextval('%s') <= %d", name, failures)
-	}
 	stmts := []string{
 		`CREATE SEQUENCE ` + name,
 		`CREATE FUNCTION ` + name + `() RETURNS trigger LANGUAGE plpgsql AS $$
 			BEGIN
-				IF NEW.id::text = '` + campaignID + `' AND NEW.result::text LIKE '%UserPausedAdSetID%' AND ` + cond + ` THEN
-					RAISE EXCEPTION 'deferred failure at commit';
+				IF NEW.id::text = '` + campaignID + `' AND NEW.result::text LIKE '%UserPausedAdSetID%' THEN
+					IF nextval('` + name + `') = 1 THEN ` + first + ` ELSE ` + later + ` END IF;
 				END IF;
 				RETURN NULL;
 			END $$`,
@@ -65,7 +71,7 @@ func failMarkerCommits(ctx context.Context, t *testing.T, pool *pgxpool.Pool, ca
 	}
 	for _, q := range stmts {
 		if _, err := pool.Exec(ctx, q); err != nil {
-			t.Fatalf("install commit failure: %v", err)
+			t.Fatalf("install commit trigger: %v", err)
 		}
 	}
 	t.Cleanup(func() {
@@ -76,6 +82,12 @@ func failMarkerCommits(ctx context.Context, t *testing.T, pool *pgxpool.Pool, ca
 		_, _ = pool.Exec(cctx, `DROP SEQUENCE IF EXISTS `+name)
 	})
 }
+
+const (
+	commitRaise = `RAISE EXCEPTION 'deferred failure at commit';`
+	commitSlow  = `PERFORM pg_sleep(1.5);`
+	commitOK    = `NULL;`
+)
 
 // onePoolService wires a BriefService over a pool of ONE connection — the claim pins it, so any
 // second pooled connection taken while the claim is held would starve until its deadline.
@@ -117,72 +129,101 @@ func pausePayload(projectID, briefID, id string, version int64) *briefs.ToggleMe
 	return &briefs.ToggleMetaAdSetStatusPayload{ProjectID: projectID, BriefID: briefID, CampaignID: id, AdSetID: "888", Status: "PAUSED", IfMatch: &etag}
 }
 
-// The deadline a starved reconciliation would hit is persistResultTimeout (5s) per step; both
-// cases below must finish well inside it.
+// The deadline a starved reconciliation would hit is persistResultTimeout (5s) per step; every
+// case below must finish well inside it.
 const reconcileBudget = 4 * time.Second
 
-// TestLiveMetaPauseRecordReconcilesOnTheClaimedConnection: the record's first COMMIT fails and
-// rolls back with the session still usable, on a ONE-connection pool. The reconciliation must
-// redo the write on the claimed connection (not a second pooled one), complete promptly, record
-// the pause and send it.
-func TestLiveMetaPauseRecordReconcilesOnTheClaimedConnection(t *testing.T) {
-	shared := dbtest.Pool(t)
-	ctx := context.Background()
-	projectID, briefID, id, version := seedRecordedMetaCampaign(ctx, t, shared)
-	failMarkerCommits(ctx, t, shared, id, 1)
-	d := &pauseRecordDispatcher{}
-	s, campaigns := onePoolService(ctx, t, d)
+// claimReleased proves the call left no claim (or connection) behind: a fresh claim at the row's
+// current version succeeds on the same one-connection pool.
+func claimReleased(ctx context.Context, t *testing.T, campaigns *postgres.CampaignRepo, projectID, briefID, id string) {
+	t.Helper()
+	row, err := campaigns.GetCampaign(ctx, projectID, briefID, id)
+	if err != nil {
+		t.Fatalf("read after the call: %v", err)
+	}
+	claimCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, tok, cerr := campaigns.ClaimCampaignVersion(claimCtx, projectID, briefID, id, row.Version)
+	if cerr != nil {
+		t.Fatalf("claim after the call: %v (the claim or its connection leaked)", cerr)
+	}
+	_ = campaigns.ReleaseCampaignLock(ctx, tok)
+}
 
+func timedPause(ctx context.Context, t *testing.T, s *service.BriefService, projectID, briefID, id string, version int64) (*briefs.MetaAdSetStatusChange, error) {
+	t.Helper()
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	start := time.Now()
 	res, err := s.ToggleMetaAdSetStatus(callCtx, pausePayload(projectID, briefID, id, version))
 	if elapsed := time.Since(start); elapsed > reconcileBudget {
-		t.Fatalf("the reconciliation took %s — it waited on a pooled connection the claim pins", elapsed)
+		t.Fatalf("the call took %s — the reconciliation waited on a pooled connection the claim pins", elapsed)
 	}
-	if err != nil {
-		t.Fatalf("ToggleMetaAdSetStatus: %T %v", err, err)
-	}
-	if want := fmt.Sprintf("%q", fmt.Sprint(version+1)); res.Etag == nil || *res.Etag != want || d.sent != 1 {
-		t.Fatalf("etag = %v (want %s), sent = %d", res.Etag, want, d.sent)
-	}
-	row, gerr := campaigns.GetCampaign(ctx, projectID, briefID, id)
-	if gerr != nil || !model.MetaAdSetHeldPaused(row.Result, "888") || row.Version != version+1 {
-		t.Fatalf("row after the call = %+v, %v; want the pause on record at version %d", row, gerr, version+1)
-	}
+	return res, err
 }
 
-// TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim: every commit of the
-// record fails, on a ONE-connection pool. The fail-safe holds — the pause is still sent and the
-// answer is the 503 "could not be confirmed" — within bounded time, and the claim is released
-// afterwards (a fresh claim at the row's version succeeds on the same one-connection pool).
+// The server REJECTS the record's commit: a confirmed rollback, so nothing is on record and the
+// pause is NOT sent.
+func TestLiveMetaPauseRecordConfirmedRollbackSendsNothing(t *testing.T) {
+	shared := dbtest.Pool(t)
+	ctx := context.Background()
+	projectID, briefID, id, version := seedRecordedMetaCampaign(ctx, t, shared)
+	markerCommitTrigger(ctx, t, shared, id, commitRaise, commitRaise)
+	d := &pauseRecordDispatcher{}
+	s, campaigns := onePoolService(ctx, t, d)
+
+	_, err := timedPause(ctx, t, s, projectID, briefID, id, version)
+	var unavailable *briefs.ConnServiceUnavailableError
+	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Message, "nothing was changed on Meta") || d.sent != 0 {
+		t.Fatalf("err = %T %v, sent = %d; want the not-recorded 503 and nothing sent", err, err, d.sent)
+	}
+	row, gerr := campaigns.GetCampaign(ctx, projectID, briefID, id)
+	if gerr != nil || model.MetaAdSetHeldPaused(row.Result, "888") || row.Version != version {
+		t.Fatalf("row = %+v, %v; want it unchanged", row, gerr)
+	}
+	claimReleased(ctx, t, campaigns, projectID, briefID, id)
+}
+
+// The record's commit loses its acknowledgement (the hook's deadline passes while it is
+// awaited) on a ONE-connection pool. The reconciliation must not wait on a second pooled
+// connection: it completes promptly, the pause is SENT, and the record ends up on the row.
+func TestLiveMetaPauseRecordReconcilesWithoutASecondPooledConnection(t *testing.T) {
+	shared := dbtest.Pool(t)
+	ctx := context.Background()
+	projectID, briefID, id, version := seedRecordedMetaCampaign(ctx, t, shared)
+	markerCommitTrigger(ctx, t, shared, id, commitSlow, commitOK)
+	d := &pauseRecordDispatcher{hookDeadline: 300 * time.Millisecond}
+	s, campaigns := onePoolService(ctx, t, d)
+
+	_, err := timedPause(ctx, t, s, projectID, briefID, id, version)
+	if d.sent != 1 {
+		t.Fatalf("sent = %d (err %v); a pause whose record may have landed must be sent", d.sent, err)
+	}
+	if err != nil {
+		t.Logf("answer: %T %v", err, err)
+	}
+	row, gerr := campaigns.GetCampaign(ctx, projectID, briefID, id)
+	if gerr != nil || !model.MetaAdSetHeldPaused(row.Result, "888") {
+		t.Fatalf("row = %+v, %v; want the pause on record", row, gerr)
+	}
+	claimReleased(ctx, t, campaigns, projectID, briefID, id)
+}
+
+// The record's first commit is ambiguous and every later one is rejected, on a ONE-connection
+// pool: the record can never be established. The fail-safe holds — the pause is still sent, the
+// answer is a 503 about the record — promptly, and the claim is released.
 func TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim(t *testing.T) {
 	shared := dbtest.Pool(t)
 	ctx := context.Background()
 	projectID, briefID, id, version := seedRecordedMetaCampaign(ctx, t, shared)
-	failMarkerCommits(ctx, t, shared, id, 0)
-	d := &pauseRecordDispatcher{}
+	markerCommitTrigger(ctx, t, shared, id, commitSlow, commitRaise)
+	d := &pauseRecordDispatcher{hookDeadline: 300 * time.Millisecond}
 	s, campaigns := onePoolService(ctx, t, d)
 
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	start := time.Now()
-	_, err := s.ToggleMetaAdSetStatus(callCtx, pausePayload(projectID, briefID, id, version))
-	if elapsed := time.Since(start); elapsed > reconcileBudget {
-		t.Fatalf("the reconciliation took %s — it waited on a pooled connection the claim pins", elapsed)
-	}
+	_, err := timedPause(ctx, t, s, projectID, briefID, id, version)
 	var unavailable *briefs.ConnServiceUnavailableError
-	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Message, "could not be confirmed") || !strings.Contains(unavailable.Message, "WAS paused on Meta") {
-		t.Fatalf("err = %T %v; want the 503 saying the pause was sent but its record could not be confirmed", err, err)
+	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Message, "WAS paused on Meta") || d.sent != 1 {
+		t.Fatalf("err = %T %v, sent = %d; want the pause sent and a 503 about its record", err, err, d.sent)
 	}
-	if d.sent != 1 {
-		t.Fatalf("sent = %d; a pause whose record may have landed must be sent", d.sent)
-	}
-	claimCtx, ccancel := context.WithTimeout(ctx, 2*time.Second)
-	defer ccancel()
-	if _, tok, cerr := campaigns.ClaimCampaignVersion(claimCtx, projectID, briefID, id, version); cerr != nil {
-		t.Fatalf("claim after the call: %v (the claim or its connection leaked)", cerr)
-	} else {
-		_ = campaigns.ReleaseCampaignLock(ctx, tok)
-	}
+	claimReleased(ctx, t, campaigns, projectID, briefID, id)
 }

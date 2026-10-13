@@ -153,6 +153,9 @@ func (r *adSetRepo) VerifyClaimedVersion(ctx context.Context, projectID, briefID
 
 func (r *adSetRepo) ReleaseCampaignLockAfterCooldown(tok domain.CampaignLockToken, d time.Duration) {
 	r.cooldowns++
+	if tok.CampaignID == "" {
+		return // the zero token releases nothing, as in the real repository
+	}
 	r.toggleCampaignRepo.ReleaseCampaignLockAfterCooldown(tok, d)
 }
 

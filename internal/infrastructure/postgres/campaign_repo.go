@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -984,11 +985,27 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: %w", eerr)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		// Ambiguous, not a rollback: see domain.ErrWriteOutcomeUnknown (and the audience repo's
-		// reconcileAmbiguousAudienceCommit for the same hazard).
-		return nil, fmt.Errorf("replace campaign: commit: %w: %w", domain.ErrWriteOutcomeUnknown, cerr)
+		return nil, classifyCommitErr("replace campaign", cerr)
 	}
 	return updated, nil
+}
+
+// classifyCommitErr tells the two kinds of COMMIT failure apart.
+//
+//   - The SERVER answered the COMMIT with an error (a *pgconn.PgError — e.g. a deferred
+//     constraint or trigger raising — or pgx.ErrTxCommitRollback, the server reporting the
+//     transaction rolled back): the rollback is CONFIRMED. PostgreSQL reports an error for a
+//     COMMIT only when it did not commit, so this is a definite failure and carries no sentinel.
+//   - Anything else (a broken connection, an I/O error, the context ending while the answer was
+//     awaited) means the acknowledgement was LOST: the server may have committed. That, and only
+//     that, carries domain.ErrWriteOutcomeUnknown — the hazard the audience repo's
+//     reconcileAmbiguousAudienceCommit handles for its own writes.
+func classifyCommitErr(op string, cerr error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(cerr, &pgErr) || errors.Is(cerr, pgx.ErrTxCommitRollback) {
+		return fmt.Errorf("%s: commit rolled back by the server: %w", op, cerr)
+	}
+	return fmt.Errorf("%s: commit: %w: %w", op, domain.ErrWriteOutcomeUnknown, cerr)
 }
 
 // VerifyClaimedVersion checks that a row still matches the version claimed under
