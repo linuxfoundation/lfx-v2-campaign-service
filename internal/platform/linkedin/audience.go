@@ -189,6 +189,13 @@ func (c *Client) GetAudienceInsights(ctx context.Context, accountID string, wind
 	for pi, p := range audiencePivots {
 		for ci, id := range ids {
 			g.Go(func() error {
+				// A task the limiter released after another failed must not reach LinkedIn:
+				// the read is already lost, and a queued request is pure load on a shared
+				// account. (net/http would refuse a cancelled context too; this does not rely
+				// on it.)
+				if err := gctx.Err(); err != nil {
+					return err
+				}
 				rows, rerr := c.readAudienceCampaignPivot(gctx, p, start, end, accountID, id)
 				if rerr != nil {
 					return fmt.Errorf("get audience insights (%s): %w", p.dimension, rerr)
@@ -260,9 +267,15 @@ func (c *Client) readAudienceCampaignPivot(ctx context.Context, p audiencePivot,
 	}
 	// Rest.li 2.0 List()/nested-object literals go into RawQuery verbatim (see
 	// makeAdAnalyticsRequest). Every interpolated value is a constant, a date this client
-	// computed, or a query-escaped URN of a validated id. pivotValues is named in `fields`
-	// explicitly — LinkedIn's documented Analytics-finder fields list includes it, and every
-	// element is required to carry it below.
+	// computed, or a query-escaped URN of a validated id.
+	//
+	// pivotValues IS projected, deliberately. LinkedIn's ads-reporting page lists it among the
+	// Analytics finder's supported `fields`, its MEMBER_COMPANY sample sends
+	// `fields=…,costInLocalCurrency,pivotValues`, and its MEMBER_COUNTRY_V2 / URN-resolution
+	// samples send `fields=impressions,pivotValues`; the page says that without `fields` "only
+	// impressions and clicks are returned by default", so leaving it out risks elements with no
+	// pivotValues — every one of which fails the one-value check below. The 400 recorded in
+	// monitor.go names the legacy SINGULAR `pivotValue`, which is not a field of the schema.
 	u.RawQuery = "q=analytics" +
 		"&pivot=" + p.pivot +
 		"&timeGranularity=ALL" +
