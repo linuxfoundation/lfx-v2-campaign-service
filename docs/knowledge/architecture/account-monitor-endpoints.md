@@ -94,12 +94,12 @@ reaches), not project-scoped ones.
   whether a campaign has a pacing figure worth placing at all, because the
   platforms report budget differently. The ladder's arithmetic is now one
   implementation for both read paths, `PacingLadder.Label` in
-  `internal/service/rules/ladder.go`: `pacingLabelFor` places on
-  `AccountMonitorLadder` (50/90/100), while `pacing.go`/`actions.go` place on
-  `BriefViewLadder` (50/100/130) for the single-campaign brief path. Which
-  ladder is correct is open product decision **D2**; switching a caller's
-  ladder would move operator-facing alerting bands and remains its own
-  decision.
+  `internal/service/rules/ladder.go`, and so are its numbers: product
+  decision **D2** (2026-10-13) set the pacing ladder to 50/90/100 everywhere,
+  so `pacingLabelFor` and the single-campaign brief path
+  (`pacing.go`/`actions.go`) both place on `StandardLadder` (50/90/100). The
+  brief path's former 50/100/130 ladder is gone; the monitors' bands did not
+  move.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
   per-platform `evaluate` closure → `monitorTotals`, which sums the

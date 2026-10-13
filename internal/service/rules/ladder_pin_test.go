@@ -21,9 +21,9 @@ import (
 // the same raw 49.99% is underspending on LinkedIn and normal on Google. Each table states its
 // caller's own outcome rather than one shared expectation.
 
-// boundaryPcts is every raw percentage the tables below place: each ladder boundary of both
-// ladders (50, 90, 100, 130), a hair either side of it, and points either side of each
-// half-way mark the rounding callers resolve differently.
+// boundaryPcts is every raw percentage the tables below place: each boundary of the ladder
+// (50, 90, 100), a hair either side of it, points either side of each half-way mark the rounding
+// callers resolve differently, and the brief view's former 130 overspend edge (D2 removed it).
 var boundaryPcts = []float64{
 	0,
 	49.4, 49.6, 49.99, 50, 50.01,
@@ -57,14 +57,9 @@ var unroundedMonitorWant = map[float64]string{
 	129.99: over, 130: over, 130.01: over,
 }
 
-// briefViewWant is the brief-view ladder (50/100/130) applied to the raw pct.
-var briefViewWant = map[float64]string{
-	0:    under,
-	49.4: under, 49.6: under, 49.99: under, 50: norm, 50.01: norm,
-	89.99: norm, 90: norm, 90.01: norm, 90.4: norm, 90.6: norm,
-	99.99: norm, 100: norm, 100.01: cons, 100.4: cons, 100.6: cons,
-	129.99: cons, 130: cons, 130.01: over,
-}
+// briefViewWant is the brief view's expectation: since D2 the same 50/90/100 ladder as the
+// monitors, applied to the raw (unrounded) pct — so exactly LinkedIn's table.
+var briefViewWant = unroundedMonitorWant
 
 // pinNow is a fixed instant at noon UTC, so day-counting callers see whole days.
 var pinNow = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
@@ -229,7 +224,8 @@ func briefPinFlight() Flight {
 }
 
 // TestPin_BriefView_LadderBoundaries places every boundary percentage through ComputePacing with
-// the brief-view thresholds, unrounded.
+// the brief-view thresholds, unrounded. Since D2 these are 50/90/100: 90.01 and exactly 100 are
+// constrained, and anything above 100 is overspending.
 func TestPin_BriefView_LadderBoundaries(t *testing.T) {
 	for _, pct := range boundaryPcts {
 		got := ComputePacing(pinSpend(pct), 10, 100, BudgetDaily, briefPinFlight(), pinNow, DefaultThresholds)
@@ -256,7 +252,9 @@ func TestPin_BriefView_NoBudgetIsUnknown(t *testing.T) {
 }
 
 // TestPin_BriefView_ActionItemsAtBoundaries pins which pacing action item (rule and priority)
-// the brief view raises at each boundary, and its message.
+// the brief view raises at each boundary of the 50/90/100 ladder (D2), and its message: the
+// constrained band (> 90 up to and including 100) says "Budget constrained", only overspending
+// (> 100) says "ahead of plan".
 func TestPin_BriefView_ActionItemsAtBoundaries(t *testing.T) {
 	cases := []struct {
 		pct      float64
@@ -264,12 +262,16 @@ func TestPin_BriefView_ActionItemsAtBoundaries(t *testing.T) {
 		priority Priority
 		issue    string
 	}{
+		{49.9, "underspending", PriorityHigh, "Underspending — 50% of expected spend for this point in the flight"},
 		{49.99, "underspending", PriorityHigh, "Underspending — 50% of expected spend for this point in the flight"},
 		{50, "", "", ""},
-		{100, "", "", ""},
+		{89.9, "", "", ""},
+		{90, "", "", ""},
+		{90.01, "budget_constrained", PriorityMedium, "Budget constrained — 90% of expected spend for this point in the flight"},
+		{100, "budget_constrained", PriorityMedium, "Budget constrained — 100% of expected spend for this point in the flight"},
 		{100.01, "budget_constrained", PriorityMedium, "Spending ahead of plan — 100% of expected spend for this point in the flight"},
+		{100.1, "budget_constrained", PriorityMedium, "Spending ahead of plan — 100% of expected spend for this point in the flight"},
 		{130, "budget_constrained", PriorityMedium, "Spending ahead of plan — 130% of expected spend for this point in the flight"},
-		{130.01, "budget_constrained", PriorityMedium, "Spending ahead of plan — 130% of expected spend for this point in the flight"},
 	}
 	for _, c := range cases {
 		p := ComputePacing(pinSpend(c.pct), 10, 100, BudgetDaily, briefPinFlight(), pinNow, DefaultThresholds)

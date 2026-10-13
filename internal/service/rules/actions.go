@@ -156,7 +156,18 @@ func Evaluate(in Input) []ActionItem {
 				Issue:  fmt.Sprintf("Underspending — %.0f%% of expected spend for this point in the flight", in.Pacing.Pct),
 				Action: "Broaden targeting, raise the bid, or reduce the budget to match realistic delivery",
 			})
-		case PacingConstrained, PacingOverspending:
+		// One rule token for both bands, as before; the ISSUE text differs because on the
+		// 50/90/100 ladder (D2) the constrained band runs from just above 90% up to and including
+		// exactly on plan, where "ahead of plan" would be false. Only overspending (> 100%) is
+		// ahead of plan.
+		case PacingConstrained:
+			items = append(items, ActionItem{
+				Rule: "budget_constrained", Priority: PriorityMedium,
+				CampaignID: in.CampaignID, Platform: in.Platform,
+				Issue:  fmt.Sprintf("Budget constrained — %.0f%% of expected spend for this point in the flight", in.Pacing.Pct),
+				Action: "Raise the budget if the campaign is worth more delivery, or accept it may exhaust early",
+			})
+		case PacingOverspending:
 			items = append(items, ActionItem{
 				Rule: "budget_constrained", Priority: PriorityMedium,
 				CampaignID: in.CampaignID, Platform: in.Platform,
