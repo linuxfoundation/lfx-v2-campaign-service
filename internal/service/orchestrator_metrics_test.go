@@ -29,10 +29,17 @@ import (
 // because dispatch records from one goroutine per platform, and the suite runs
 // under -race.
 type recordingMetrics struct {
-	mu        sync.Mutex
-	dispatch  []dispatchRecord
-	jobStates []model.JobStatus
-	upstream  []upstreamRecord
+	mu         sync.Mutex
+	dispatch   []dispatchRecord
+	jobStates  []model.JobStatus
+	upstream   []upstreamRecord
+	unmeasured []unmeasuredRecord
+}
+
+type unmeasuredRecord struct {
+	platform model.Provider
+	class    string
+	n        int
 }
 
 type dispatchRecord struct {
@@ -63,6 +70,19 @@ func (m *recordingMetrics) RecordUpstreamCall(_ context.Context, p model.Provide
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.upstream = append(m.upstream, upstreamRecord{platform: p, operation: operation, outcome: outcome, seconds: seconds})
+}
+
+func (m *recordingMetrics) RecordMonitorUnmeasuredRows(_ context.Context, p model.Provider, class string, n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unmeasured = append(m.unmeasured, unmeasuredRecord{platform: p, class: class, n: n})
+}
+
+// unmeasuredRecords returns a copy of the recorded monitor unmeasured-row counts.
+func (m *recordingMetrics) unmeasuredRecords() []unmeasuredRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]unmeasuredRecord(nil), m.unmeasured...)
 }
 
 func (m *recordingMetrics) outcomesFor(p model.Provider) []string {

@@ -149,14 +149,14 @@ func TestTwitterMonitor_ListMapsCampaigns(t *testing.T) {
 		byID[r.PlatformCampaignID] = r
 	}
 	c1 := byID["c1"]
-	if c1.BudgetDay != 25 || c1.TotalBudget != 300 || c1.StartDate != "2026-09-01" || c1.EndDate != "2026-10-30" || c1.FetchFailed || c1.Status != "ACTIVE" {
+	if c1.BudgetDay != 25 || c1.TotalBudget != 300 || c1.StartDate != "2026-09-01" || c1.EndDate != "2026-10-30" || c1.FetchFailed || c1.FailureClass != "" || c1.Status != "ACTIVE" {
 		t.Errorf("c1 = %+v, want budgets 25/300, flight 2026-09-01..2026-10-30 (New York days)", c1)
 	}
-	if !byID["c2"].FetchFailed {
-		t.Errorf("c2 = %+v, want FetchFailed for a negative budget", byID["c2"])
+	if !byID["c2"].FetchFailed || byID["c2"].FailureClass != model.MonitorFailureDecode {
+		t.Errorf("c2 = %+v, want FetchFailed with failure class decode for a negative budget", byID["c2"])
 	}
-	if !byID["c3"].FetchFailed {
-		t.Errorf("c3 = %+v, want FetchFailed for an unreadable flight", byID["c3"])
+	if !byID["c3"].FetchFailed || byID["c3"].FailureClass != model.MonitorFailureDecode {
+		t.Errorf("c3 = %+v, want FetchFailed with failure class decode for an unreadable flight", byID["c3"])
 	}
 	for _, p := range seen() {
 		if !strings.Contains(p, "/accounts/acc1") {

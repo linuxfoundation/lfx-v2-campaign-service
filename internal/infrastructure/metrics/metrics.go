@@ -78,6 +78,30 @@ const (
 	CallError = "error"
 )
 
+// Monitor failure-class values, the `class` label on
+// campaign_monitor_unmeasured_rows_total. A CLOSED enum mirroring model.MonitorFailureClass;
+// anything else collapses to PlatformUnknown (safeMonitorFailureClass).
+const (
+	MonitorFailureAuth        = "auth"
+	MonitorFailureThrottle    = "throttle"
+	MonitorFailureUpstream5xx = "upstream_5xx"
+	MonitorFailureDecode      = "decode"
+	MonitorFailureNoReport    = "no_report"
+	MonitorFailureOther       = "other"
+)
+
+var safeMonitorFailureClasses = map[string]struct{}{
+	MonitorFailureAuth: {}, MonitorFailureThrottle: {}, MonitorFailureUpstream5xx: {},
+	MonitorFailureDecode: {}, MonitorFailureNoReport: {}, MonitorFailureOther: {},
+}
+
+func safeMonitorFailureClass(c string) string {
+	if _, ok := safeMonitorFailureClasses[c]; ok {
+		return c
+	}
+	return PlatformUnknown
+}
+
 // safePlatforms is the closed set of provider values allowed as a label. It is
 // keyed on model.Provider so adding a provider constant without adding it here
 // yields "unknown" (a visible, bounded degradation) rather than an unbounded
@@ -175,6 +199,7 @@ type Registry struct {
 	jobTransitions   metric.Int64Counter
 	upstreamCalls    metric.Int64Counter
 	upstreamDuration metric.Float64Histogram
+	monitorRowFails  metric.Int64Counter
 
 	// mu guards poolStats, which is swapped in after construction: the container
 	// opens the pool on a background goroutine during a cold start, while the
@@ -274,6 +299,13 @@ func New() (*Registry, error) {
 		upstreamDurationInstrument,
 		metric.WithDescription("Upstream ad-platform API call latency by platform and operation."),
 		metric.WithUnit("s"),
+	); err != nil {
+		return nil, err
+	}
+
+	if r.monitorRowFails, err = meter.Int64Counter(
+		"campaign_monitor_unmeasured_rows_total",
+		metric.WithDescription("Account-monitor campaign rows returned with fetch_failed=true, by platform and failure class."),
 	); err != nil {
 		return nil, err
 	}
@@ -450,6 +482,20 @@ func (r *Registry) RecordUpstreamCall(ctx context.Context, platform model.Provid
 	if r.upstreamDuration != nil {
 		r.upstreamDuration.Record(ctx, seconds, attrs)
 	}
+}
+
+// RecordMonitorUnmeasuredRows adds n account-monitor rows that came back FetchFailed with the
+// given failure class. Called once per class per monitor request, never per row, so a burst is
+// one Add rather than n. class passes through a closed set; no account, project or campaign id
+// is a label. A non-positive n records nothing.
+func (r *Registry) RecordMonitorUnmeasuredRows(ctx context.Context, platform model.Provider, class string, n int) {
+	if r == nil || r.monitorRowFails == nil || n <= 0 {
+		return
+	}
+	r.monitorRowFails.Add(ctx, int64(n), metric.WithAttributes(
+		attribute.String("platform", SafePlatform(platform)),
+		attribute.String("class", safeMonitorFailureClass(class)),
+	))
 }
 
 // Handler serves the Prometheus text exposition format.

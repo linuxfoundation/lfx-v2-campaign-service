@@ -1217,7 +1217,13 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	// the aggregate restating a measurement none of the rows made.
 	Attribute("conversions", Float64, "Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.", func() { Example(212.5) })
 	Attribute("campaign_count", Int, "How many campaigns the totals reflect: the length of the campaigns array these totals sum.", func() { Example(14) })
-	Required("spend", "impressions", "clicks", "campaign_count")
+	// Required and never omitted: 0 is a statement ("every row was read"), not an absence. A
+	// count rather than a boolean so a renderer can say how much of the account is missing.
+	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
+		Minimum(0)
+		Example(2)
+	})
+	Required("spend", "impressions", "clicks", "campaign_count", "unmeasured_campaigns")
 })
 
 // AccountMonitor is the account-scoped monitor read result, shared across all six

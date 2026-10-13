@@ -39,6 +39,51 @@ const (
 	MonitorPacingOverspending  MonitorPacingLabel = "overspending"
 )
 
+// MonitorFailureClass is WHY an account-monitor row is FetchFailed, as a small closed set so it
+// can be logged and used as a metric label without carrying upstream text (#220). The platform
+// client that saw the failure sets it; the service layer logs one summary per request and counts
+// rows per class (service.reportUnmeasuredRows). It is not part of the API response.
+//
+// A FetchFailed row whose client set no class — Google Ads, whose client leaves classification to
+// its owner — is counted as MonitorFailureOther (NormalizeMonitorFailureClass).
+type MonitorFailureClass string
+
+const (
+	// MonitorFailureAuth: the platform refused the credential or the token for this read
+	// (401/403, or a refused token refresh).
+	MonitorFailureAuth MonitorFailureClass = "auth"
+	// MonitorFailureThrottle: the platform rate-limited the read (429 after the client's own
+	// bounded retry).
+	MonitorFailureThrottle MonitorFailureClass = "throttle"
+	// MonitorFailureUpstream5xx: the platform could not answer (a 5xx, or its token endpoint
+	// unavailable).
+	MonitorFailureUpstream5xx MonitorFailureClass = "upstream_5xx"
+	// MonitorFailureDecode: the platform answered but the row's data could not be parsed or
+	// attributed (an unparseable spend/budget/flight value, a report row for another campaign, an
+	// id this service will not interpolate).
+	MonitorFailureDecode MonitorFailureClass = "decode"
+	// MonitorFailureNoReport: report-backed platforms (Microsoft Ads, X) only — no saved report
+	// has finished for this account and window yet, so the row has no metrics to read. Expected
+	// on a first read rather than a fault, so it is counted but never logged as a warning.
+	MonitorFailureNoReport MonitorFailureClass = "no_report"
+	// MonitorFailureOther: anything else — a transport error, a deadline, a status outside the
+	// classes above, or a row whose client did not classify it.
+	MonitorFailureOther MonitorFailureClass = "other"
+)
+
+// NormalizeMonitorFailureClass maps c onto the closed set: a value outside it, including the
+// empty class an unclassified FetchFailed row carries, becomes MonitorFailureOther. Callers use
+// the result as a log value and metric label, so it must never pass an arbitrary string through.
+func NormalizeMonitorFailureClass(c MonitorFailureClass) MonitorFailureClass {
+	switch c {
+	case MonitorFailureAuth, MonitorFailureThrottle, MonitorFailureUpstream5xx,
+		MonitorFailureDecode, MonitorFailureNoReport:
+		return c
+	default:
+		return MonitorFailureOther
+	}
+}
+
 // FlightRange is one contiguous span of scheduled calendar days: StartDate through EndDate,
 // both inclusive, as YYYY-MM-DD in the platform's own (account-local) days. EndDate is empty for
 // an open-ended span, which can only be the last range of a set.
@@ -127,6 +172,10 @@ type AccountCampaignMetrics struct {
 	// CampaignSettingsReadback's `unknown` verdict exists to preserve. Renderers MUST check
 	// this before treating any of this row's fields, zero or not, as a fully trusted reading.
 	FetchFailed bool
+	// FailureClass is why FetchFailed is set, from the platform client that saw the failure;
+	// empty when FetchFailed is false, and empty on a Google Ads row (see MonitorFailureClass).
+	// Internal only: logged and counted by the service layer, never returned in the response.
+	FailureClass MonitorFailureClass
 	// CampaignURL is Google Ads only: a direct link to the campaign in the Google Ads UI,
 	// matching the BFF's buildGoogleAdsUrl(campaignId) =
 	// "https://ads.google.com/aw/campaigns?campaignId=<id>". Empty for every other platform's
@@ -182,6 +231,16 @@ type AccountMonitorTotals struct {
 	// removed from every row.
 	Conversions   *float64
 	CampaignCount int
+	// UnmeasuredCampaigns is how many of the CampaignCount rows are FetchFailed (#218). The sums
+	// above include those rows at whatever they carry — zero for a row whose metrics could not
+	// be read — so a non-zero count says the totals may understate the account: by up to this
+	// many campaigns' delivery. It is an upper bound, not an exact count of rows missing from the
+	// sum, because FetchFailed also marks a row whose budget or flight alone was unreadable while
+	// its metrics were read and summed (Google Ads, LinkedIn, Meta, Microsoft Ads, X).
+	// PacingUnknown alone does NOT count a row: every FetchFailed row also carries it (the rule
+	// engines' fetchFailedRow), but most PacingUnknown rows — no budget, no flight — had their
+	// delivery read in full. 0 means every row in the sum was fully read.
+	UnmeasuredCampaigns int
 }
 
 // AccountMonitorRow wraps one AccountCampaignMetrics with rule-engine output, in the shape

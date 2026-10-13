@@ -6156,6 +6156,16 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many campaigns the totals reflect: the length of the campaigns array
 	// these totals sum.
 	CampaignCount int `form:"campaign_count" json:"campaign_count" xml:"campaign_count"`
+	// How many of the campaign_count campaigns have fetch_failed=true. The totals
+	// include those rows at what they carry — zero for a row whose metrics could
+	// not be read — so a non-zero value means the totals may UNDERSTATE the
+	// account, by up to this many campaigns' delivery. An upper bound rather than
+	// an exact count of rows missing from the sum: fetch_failed also marks a row
+	// whose budget or flight alone was unreadable while its metrics were read and
+	// summed. pacing_unknown=true alone does not count a row (every fetch_failed
+	// row also has it, but most pacing_unknown rows were read in full). 0 means
+	// every campaign in the sum was fully read.
+	UnmeasuredCampaigns int `form:"unmeasured_campaigns" json:"unmeasured_campaigns" xml:"unmeasured_campaigns"`
 }
 
 // HubspotEmailMonitorEmailResponseBody is used to define fields on response

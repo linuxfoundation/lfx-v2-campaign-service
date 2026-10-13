@@ -1375,6 +1375,7 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
 			FetchFailed:        r.FetchFailed,
+			FailureClass:       r.FailureClass,
 		})
 	}
 	return out, nil

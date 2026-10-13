@@ -566,6 +566,47 @@ differential diff, since fixed:
     dropping just the one row. See
     [2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md](../log/2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md).
 
+## Unmeasured rows: the totals signal and the failure-class summary
+
+`totals.unmeasured_campaigns` (required, `Int`, minimum 0; #218) is how many of the
+`campaign_count` rows carry `fetch_failed=true`, counted in `monitorTotals` over the same
+post-`evaluate` rows the sums cover. The sums still include those rows at whatever they carry —
+zero for a row whose metrics could not be read — so a non-zero count means the totals may
+UNDERSTATE the account by up to that many campaigns' delivery. Decisions:
+
+- **An upper bound, not an exact count.** `fetch_failed` also marks a row whose budget or flight
+  alone was unreadable while its metrics were read and summed (Google, LinkedIn, Meta, Microsoft,
+  X). Splitting that out would need a second row flag on every platform, Google's included, whose
+  client is owned elsewhere; the count is documented as an upper bound instead.
+- **`pacing_unknown` alone does not count.** Every `fetch_failed` row also carries it
+  (`fetchFailedRow`), but most `pacing_unknown` rows — no budget, no flight — were read in full,
+  and the totals sum no pacing input.
+- **Report-backed platforms**: before the first report finishes every row counts.
+
+Why a row failed (#220) is carried as `model.MonitorFailureClass` on
+`AccountCampaignMetrics.FailureClass` — a closed set, never upstream text, and NOT in the response:
+
+| Class | Set by |
+|---|---|
+| `auth` | Reddit: 401/403 on the report, or `ErrCredentialRejected` from the token refresh |
+| `throttle` | Reddit: 429 after the bounded retry (an over-cap `Retry-After` abort is a `transportError` → `other`) |
+| `upstream_5xx` | Reddit: 5xx, or the token endpoint unavailable |
+| `decode` | Reddit: undecodable/misattributed report, page cap, an id it will not interpolate; LinkedIn and Meta: every failed row (unparseable budget, `costInUsd`, insights counter); Microsoft/X dispatchers: unparseable budget or flight |
+| `no_report` | `mergeAccountReport`, when no report has finished (a dispatcher's class is kept) |
+| `other` | anything else, and every Google row (its client sets no class; `NormalizeMonitorFailureClass`) |
+
+`reportUnmeasuredRows` (service layer) then emits, per request: ONE `WARN`
+"account monitor: some campaigns could not be measured; totals may understate the account" with
+`project_id`, `platform`, `campaign_count`, `unmeasured_campaigns` and an `unmeasured_by_class`
+group (every class, zeros included), and one `campaign_monitor_unmeasured_rows_total{platform,class}`
+Add per class present. The account id is not logged, matching the report-backed monitor's logs
+and the clients' own redaction of it. The warning is skipped when every failed row is `no_report`
+(the expected first read); the metric still counts them.
+
+Reddit's fan-out also checks the caller's context after `g.Wait()`: if it is done and a row
+failed on a context error, the read fails (503) instead of returning rows the deadline made
+unmeasured. A row that failed on its own while the context was live keeps `fetch_failed`.
+
 ## Microsoft: a report-backed monitor
 
 Microsoft Advertising cannot be read like the other four. Its delivery metrics come only
