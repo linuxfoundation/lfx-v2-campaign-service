@@ -24,3 +24,9 @@ against. The active ad sets' shared window becomes the row's flight; differing o
 windows leave a lifetime budget unknown (daily pacing is unaffected). Meta's action-item text now
 prints money as "N.NN in account currency" (`metaMoney`) rather than `$`, since spend and budgets
 are in the ad account's currency.
+
+Second #316 review follow-up: `effective_status` on the ad-set read is decoded as raw JSON, so a
+non-string or malformed status marks only its own campaign unknown instead of failing the row's
+decode and with it the whole read (every campaign needing an ad-set budget). Tests also pin that an
+open-ended lifetime ad set beside a bounded one, ad sets sharing a start but not an end, and a
+daily beside a lifetime ad set all leave the campaign's pacing unknown.

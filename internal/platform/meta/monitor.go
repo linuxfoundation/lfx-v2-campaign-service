@@ -522,11 +522,14 @@ func (e *adSetBudgetsUnreadableError) Unwrap() error { return e.err }
 // adSetBudgetWire is one row of the account-level /adsets edge. The identifiers are pointers so
 // an absent one is distinguishable from an empty one; the budgets are RAW so an ABSENT field (no
 // budget at this level) is distinguishable from an explicit JSON null, which is not zero and not
-// absent — it is a statement that the value is unknown.
+// absent — it is a statement that the value is unknown. effective_status is RAW too (PR #316
+// review): decoded into *string, a non-string value (e.g. 123) failed the WHOLE row's decode and
+// with it the whole read, costing every campaign its ad-set budget; read separately, it marks only
+// its own campaign unknown.
 type adSetBudgetWire struct {
 	ID              *string         `json:"id"`
 	CampaignID      *string         `json:"campaign_id"`
-	EffectiveStatus *string         `json:"effective_status"`
+	EffectiveStatus json.RawMessage `json:"effective_status"`
 	DailyBudget     json.RawMessage `json:"daily_budget"`
 	LifetimeBudget  json.RawMessage `json:"lifetime_budget"`
 	StartTime       json.RawMessage `json:"start_time"`
@@ -604,11 +607,12 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 				t = &adSetBudgetTotal{}
 				out[*w.CampaignID] = t
 			}
-			if w.EffectiveStatus == nil || !statusTokenRE.MatchString(*w.EffectiveStatus) {
+			status, statusOK := adSetStatusField(w.EffectiveStatus)
+			if !statusOK {
 				t.unknown = true // cannot tell whether this ad set is spending
 				continue
 			}
-			if *w.EffectiveStatus != StatusActive {
+			if status != StatusActive {
 				continue
 			}
 			t.addWindow(adSetWindow(w.StartTime, w.EndTime))
@@ -643,6 +647,16 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 		after = next
 	}
 	return nil, &adSetBudgetsUnreadableError{err: fmt.Errorf("exceeded %d pages of %d ad sets; refusing a partial sum", monitorAdSetMaxPages, monitorAdSetPageSize)}
+}
+
+// adSetStatusField reads effective_status. ok=false for an absent, null or non-string value, or
+// one outside the status-token charset: the ad set's spending state is then unknown.
+func adSetStatusField(raw json.RawMessage) (string, bool) {
+	var s string
+	if len(bytes.TrimSpace(raw)) == 0 || json.Unmarshal(raw, &s) != nil || !statusTokenRE.MatchString(s) {
+		return "", false
+	}
+	return s, true
 }
 
 // adSetBudgetField reads one ad-set budget field in minor units. ABSENT, "" and "0" are 0 — no

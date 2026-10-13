@@ -328,6 +328,9 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 		{"lifetime ad sets sharing one window are summed on it", []string{life(oct), life(oct)}, 0, 2000, "2026-10-01", "2026-10-31"},
 		{"an open-ended flight keeps an empty end", []string{life(openEnd)}, 0, 1000, "2026-10-01", ""},
 		{"lifetime ad sets with differing windows are unknown", []string{life(oct), life(nov)}, 0, 0, "", ""},
+		{"an open-ended lifetime ad set beside a bounded one is unknown", []string{life(oct), life(openEnd)}, 0, 0, "", ""},
+		{"lifetime ad sets sharing a start but not an end are unknown", []string{life(oct), life(`"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-11-30T23:59:59+0000"`)}, 0, 0, "", ""},
+		{"a daily and a lifetime ad set sharing a window are unknown", []string{daily(oct), life(oct)}, 0, 0, "", ""},
 		{"a lifetime ad set with no start_time is unknown", []string{`"lifetime_budget":"100000","end_time":"2026-10-31T23:59:59+0000"`}, 0, 0, "", ""},
 		{"a null start_time is unknown", []string{life(`"start_time":null`)}, 0, 0, "", ""},
 		{"a null end_time is unknown", []string{life(`"start_time":"2026-10-01T09:00:00-0700","end_time":null`)}, 0, 0, "", ""},
@@ -353,6 +356,30 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 			if r.StartDate != tc.wantStart || r.EndDate != tc.wantEnd {
 				t.Errorf("flight = %q..%q, want %q..%q", r.StartDate, r.EndDate, tc.wantStart, tc.wantEnd)
 			}
+		})
+	}
+}
+
+// A malformed effective_status costs only its own campaign its ad-set budget (PR #316 review): it
+// used to fail the row's whole decode, which failed the whole read and with it every campaign
+// that needed an ad-set budget.
+func TestListAccountCampaigns_ABOBudget_BadEffectiveStatusIsLocal(t *testing.T) {
+	for _, tc := range []struct{ name, status string }{
+		{"numeric", `123`},
+		{"null", `null`},
+		{"object", `{"v":"ACTIVE"}`},
+		{"lowercase token", `"active"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := `{"id":"9001","campaign_id":"111","effective_status":` + tc.status + `,"daily_budget":"1000"}`
+			rows, _ := listMonitorRows(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, ""), monitorCampaign("222", StatusActive, ""))},
+				insights:  []string{insightsFor("111", "222")},
+				currency:  usdAccount,
+				adSets:    []string{monitorList(bad, monitorAdSetRow("9002", "222", "ACTIVE", `"daily_budget":"4000"`))},
+			})
+			assertBudgets(t, rows["111"], 0, 0)
+			assertBudgets(t, rows["222"], 40, 0)
 		})
 	}
 }

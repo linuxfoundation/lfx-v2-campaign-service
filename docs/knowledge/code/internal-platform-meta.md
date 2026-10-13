@@ -739,7 +739,8 @@ makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,dai
 (`id` is the duplicate-row proof), bounded at `monitorAdSetMaxPages` (20) × 500, every body through
 `identityjson.Check` before decoding, and sums `effective_status == ACTIVE` ad sets per campaign.
 A CBO campaign keeps its own budget. Per-ad-set defects (explicit `null`, non-string, fractional or
-negative amount, both or neither budget on an active ad set, unreadable `effective_status`) make
+negative amount, both or neither budget on an active ad set, an absent, null, non-string or
+malformed `effective_status` — decoded as raw JSON so a bad status cannot fail the whole row's decode) make
 only that campaign unknown; a mixed daily/lifetime sum is unknown; an untrustworthy answer as a
 whole — page cap hit, identity-check failure, no `data`, an unattributable or repeated row, an
 unfollowable cursor — is `adSetBudgetsUnreadableError` and leaves every campaign that needed it
@@ -749,7 +750,7 @@ the campaign-list row has no dates and a lifetime budget could not be paced. The
 the active ad sets' window: when they all share one it becomes the row's flight (and a lifetime
 budget is paced on it); when they disagree, or one's `start_time` is absent/null/malformed or its
 `end_time` null/malformed, the lifetime budget stays unknown — an absent `end_time` is an
-open-ended flight. Daily pacing (budget x days) does not read the flight, so a daily campaign
+open-ended flight, and an open-ended window differs from a bounded one with the same start. Daily pacing (budget x days) does not read the flight, so a daily campaign
 keeps its budget either way. `rules/monitor_meta.go`'s pacing needed no change (an unknown budget
 is 0/0, which `metaPacingPct` already reports as not computable); its action-item text now prints
 money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`.
