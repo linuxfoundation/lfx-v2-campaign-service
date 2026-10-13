@@ -149,19 +149,19 @@ The current inventory below bears this out: the two LinkedIn accounts are TLF's 
 
 ## Current Account Inventory
 
-Non-secret platform account IDs currently configured in the Express BFF, retained here as a migration reference. Each provider has a different tenancy model — some share one account across foundations (campaigns separated by naming convention), others use separate accounts per foundation. Under the singleton model, each row below maps to one project's connection.
+Non-secret platform account IDs currently configured in the Express BFF, retained here as a migration reference. Each provider has a different tenancy model — most share one account across foundations (campaigns separated by naming convention); LinkedIn alone uses separate accounts per foundation. The authority for tenancy is [architecture.md § Account Tenancy](architecture.md#account-tenancy). Under the singleton model, each row below maps to one project's connection.
 
 **Single shared account (all foundations):**
 - **Google Ads** — Manager `9746983954`, Customer `8666746580`; foundations distinguished by campaign naming convention today, not separate accounts.
+- **Meta Ads** — `act_193556282970417` (page `41911143546`)
+- **Reddit Ads** — `t2_gv9wtbfa`
+- **X/Twitter Ads** — `8r7gb`
 - **HubSpot** — single org-wide private app token; campaigns matched to projects by name (see the global-namespace note in [api-catalog.md](api-catalog.md#hubspot-utm-integration)).
 
-> **Migration note (shared Google Ads / HubSpot).** Because Google Ads and HubSpot are today a single shared account across all foundations, the singleton `UNIQUE (project_id)` model implies each project that uses them stores its own connection row pointing at the *same* upstream `account_id`. That is intentional (the connection row scopes LFX permissions and per-project config, even when the upstream account is shared) — it is not a violation of the one-account-per-provider design at the upstream layer.
+> **Migration note (shared accounts).** Because Google Ads, Meta, Reddit, X and HubSpot are today each a single shared account across all foundations, the singleton `UNIQUE (project_id)` model implies each project that uses them stores its own connection row pointing at the *same* upstream `account_id`. That is intentional (the connection row scopes LFX permissions and per-project config, even when the upstream account is shared) — it is not a violation of the one-account-per-provider design at the upstream layer.
 
 **Separate accounts per foundation:**
 - **LinkedIn Ads** — TLF `538170226` (org `208777`), LF Events `509430019`
-- **Meta Ads** — LF Core `act_193556282970417` (page `41911143546`)
-- **Reddit Ads** — TLF `t2_gv9wtbfa`
-- **X/Twitter Ads** — LF Events `8r7gb`
 
 ## Campaign Tables
 
