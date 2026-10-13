@@ -33,8 +33,11 @@ run the campaign without the image the caller asked for.
 - **Validate before mutating.** The dispatcher (`resolveTwitterImage`) parses the id and
   checks the tweetText/tweetId combination. It then reads the asset's **size** before loading
   the blob and refuses anything over `twitter.MaxImageBytes` (5 MiB). It reserves those bytes
-  on the shared `AssetReserver` (the same budget Meta uses, bound once in
-  `registerDispatchers`) and only then loads the asset. Every refusal is `notCreated`, so
+  on the container's single `AssetReserver`, the same instance that Meta, Microsoft and the
+  signed-asset route charge, and only then loads the asset. `bindCreativeAssetSharing` rebinds
+  X to it on both live paths. The wiring test asserts that every one of them holds that same
+  instance, not merely a non-nil reserver: before the #311 review fix, X was left on
+  `registerDispatchers`' own reserver, so its uploads ran outside the process-wide bound. Every refusal is `notCreated`, so
   the claim is released and X is not contacted. The client checks size, type and sniffed bytes
   again before making any request.
 - **Asset ownership.** `GetAssetSize`/`GetAsset` are scoped by the brief's project and
@@ -47,7 +50,19 @@ run the campaign without the image the caller asked for.
   uploading, the client looks the name up and reuses a live IMAGE entry with exactly that name.
   It applies `findByName`'s pagination rules: a short page settles the lookup, and a full page
   with no usable cursor is an error rather than a not-found. The key is recorded in
-  `CampaignResult.MediaKey`.
+  `CampaignResult.MediaKey`. Lookup, upload and library add run under a per-(account, image)
+  lock that every client for the account shares through the `AccountPacers` registry. Two
+  concurrent dispatches of the same bytes therefore produce one upload and one library add,
+  and the second dispatch reuses the first one's entry. The lock is a channel semaphore, so a
+  waiter's context bounds its wait, and an entry is dropped once no dispatch holds or waits on
+  it. It covers one process only. Separate replicas can still race, and the by-name lookup
+  remains the backstop.
+- **Readiness.** Media is used only when X has said it is ready. That means a finalize
+  `data` object with no `processing_info`, which is the normal answer for an image, or a
+  `succeeded` state. A finalize or STATUS body with no `data` or `"data":null`, or a STATUS
+  answer that drops `processing_info` after X reported processing, is reported UNCONFIRMED
+  as an unreadable 2xx. An empty or unknown state is polled like `pending` and refused at the
+  poll bound.
 - **Outcome classes.** These match the client's existing writes. A definite 4xx or pre-send
   failure reads "failed before any campaign was created". A transport error, 5xx, mutating 3xx
   or mutating 429 reads "UNCONFIRMED". A stalled upload session expires on its own. An

@@ -71,6 +71,22 @@ func TestBindCreativeAssetSharing(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, rd.CreativeAssetURLsEnabled(), "the Reddit dispatcher must receive the signer")
 
+	// ONE budget, asserted as IDENTITY: every asset-holding dispatcher and the signed-asset
+	// route charge the container's reserver. A non-nil check passed while X still charged
+	// registerDispatchers' own reserver (#311 review). LinkedIn holds no asset bytes and has no
+	// reserver to share.
+	require.NotNil(t, cont.assetReserver)
+	md, ok := m[model.ProviderMetaAds].(*dispatch.MetaDispatcher)
+	require.True(t, ok)
+	assert.True(t, md.UsesAssetReserver(cont.assetReserver), "Meta must charge the shared reserver")
+	msd, ok := m[model.ProviderMicrosoftAds].(*dispatch.MicrosoftDispatcher)
+	require.True(t, ok)
+	assert.True(t, msd.UsesAssetReserver(cont.assetReserver), "Microsoft must charge the shared reserver")
+	td, ok := m[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher)
+	require.True(t, ok)
+	assert.True(t, td.UsesAssetReserver(cont.assetReserver), "X must charge the shared reserver")
+	assert.True(t, cont.SignedAssets.UsesBudget(cont.assetReserver), "the signed-asset route must charge the shared reserver")
+
 	unbound := registerDispatchers(nil, nil, nil, nil, nil)
 	cont.bindCreativeAssetSharing(unbound, nil)
 	ru, ok := unbound[model.ProviderRedditAds].(*dispatch.RedditDispatcher)
