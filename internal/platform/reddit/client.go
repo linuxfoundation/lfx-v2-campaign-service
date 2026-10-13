@@ -324,6 +324,10 @@ type Client struct {
 	// makes the single-flight above safe for a client many callers share. See
 	// WithCallerScopedTokenRefresh.
 	callerScopedRefresh bool
+
+	// reportBudgets is the reporting-attempt ledger this client spends from; nil means the
+	// process-wide defaultReportBudgets (report_budget.go). Set only by tests.
+	reportBudgets *ReportBudgets
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
@@ -1223,6 +1227,12 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 	}
 
 	for attempt := 0; attempt <= retryMax; attempt++ {
+		// A reporting-operation attempt — every page, every 429 retry — first takes a slot in the
+		// ad account's process-wide reporting budget (report_budget.go), and is not sent without
+		// one. Nothing has been sent when this fails.
+		if err := c.acquireReportSlot(ctx, rawPath); err != nil {
+			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
+		}
 		// Refresh (cached/coalesced) each attempt so a token that expired between
 		// retries is renewed. The reader is rebuilt every attempt because the
 		// previous send consumed it.

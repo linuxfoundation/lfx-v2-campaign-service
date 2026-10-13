@@ -732,3 +732,15 @@ then impressions descending, then value (unattributed last). AGE is not requeste
 `breakdowns` enum has no AGE. Tests: `audience_test.go` (request shape, aggregation, empty report,
 eighteen fail-closed bodies with no upstream text or account id in the error, upstream 403
 redaction, page cap, pre-request refusals, concurrency bound).
+
+### Reporting budget (`report_budget.go`, PR #306)
+
+`requestWithThrottleRetryCounted` calls `acquireReportSlot` at the top of EVERY attempt: when the
+path is the reports operation (`reportPathRE`, `/ad_accounts/{id}/reports`), the attempt takes a
+slot from the account's ledger in the process-wide `defaultReportBudgets` (sliding 60 s; 45 in all,
+24 for attempts whose context carries `withInsightsReports` — the audience read). So each page and
+each 429 retry of the audience read, the campaign metrics read and the account monitor is counted.
+A slot that will not free before the context's deadline fails at once with
+`ErrReportBudgetExhausted`, nothing sent. `WithReportBudgets` / `NewReportBudgets` let tests use a
+ledger of their own; the package's tests run on an unlimited default ledger
+(`report_budget_main_test.go`) and `report_budget_test.go` exercises the real limits.

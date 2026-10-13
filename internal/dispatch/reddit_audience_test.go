@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -72,14 +73,22 @@ func (s *redditAudienceServer) requests() []string {
 	return append([]string(nil), s.paths...)
 }
 
+func (s *redditAudienceServer) dispatcherWithBudget(repo connReader, b *reddit.ReportBudgets) *RedditDispatcher {
+	return NewRedditDispatcher(repo, identityEncryptor{}, reddit.WithBaseURL(s.api.URL+"/api/v3"), reddit.WithTokenURL(s.tok.URL), reddit.WithReportBudgets(b))
+}
+
 func (s *redditAudienceServer) dispatcher(repo connReader) *RedditDispatcher {
-	return NewRedditDispatcher(repo, identityEncryptor{}, reddit.WithBaseURL(s.api.URL+"/api/v3"), reddit.WithTokenURL(s.tok.URL))
+	// A ledger of its own, so these tests neither wait on nor exhaust the process-wide one.
+	return NewRedditDispatcher(repo, identityEncryptor{}, reddit.WithBaseURL(s.api.URL+"/api/v3"), reddit.WithTokenURL(s.tok.URL),
+		reddit.WithReportBudgets(reddit.NewReportBudgets(time.Minute, 1<<20, 1<<20)))
 }
 
 func redditScope(ids ...string) []model.ProjectCampaignScope {
 	out := make([]model.ProjectCampaignScope, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id})
+		// Recorded under the fixture connection's account (activeRedditConn): an unrecorded one is
+		// refused (TestReddit_ReadRedditAudienceInsights_UnknownProvenanceRefusesWholeRead).
+		out = append(out, model.ProjectCampaignScope{PlatformCampaignID: id, Result: json.RawMessage(`{"accountId":"t2_acct"}`)})
 	}
 	return out
 }
@@ -216,16 +225,36 @@ func TestReddit_ReadRedditAudienceInsights_AccountMismatchRefusesWholeRead(t *te
 	}
 }
 
-// Matching or unknown provenance is read: each owned campaign gets its own filtered reports.
-func TestReddit_ReadRedditAudienceInsights_MatchingOrUnknownProvenanceReads(t *testing.T) {
-	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
-	scope := []model.ProjectCampaignScope{
-		{PlatformCampaignID: "t3_a", Result: json.RawMessage(`{"accountId":"t2_acct"}`)},
-		{PlatformCampaignID: "t3_b"},
+// A campaign that does not record its creating account refuses the whole read — alone or beside
+// matching ones — before Reddit is contacted: its id cannot be proven to name the same campaign on
+// the connected account.
+func TestReddit_ReadRedditAudienceInsights_UnknownProvenanceRefusesWholeRead(t *testing.T) {
+	legacy := []model.ProjectCampaignScope{{PlatformCampaignID: "t3_old"}, {PlatformCampaignID: "t3_blob", Result: json.RawMessage(`{"adGroupId":"t5_x"}`)}}
+	for name, scope := range map[string][]model.ProjectCampaignScope{
+		"all unrecorded":   legacy,
+		"one beside known": append(redditScope("t3_a"), legacy[0]),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+			s := newRedditAudienceServer(t)
+			_, err := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}).
+				ReadRedditAudienceInsights(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, scope)
+			if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) || !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+				t.Fatalf("error = %v, want ErrCampaignProvenanceUnknown joined with ErrCampaignAccountMismatch", err)
+			}
+			if n := len(s.requests()); n != 0 {
+				t.Errorf("Reddit was contacted %d time(s)", n)
+			}
+		})
 	}
+}
+
+// Recorded, matching provenance is read: each owned campaign gets its own filtered reports.
+func TestReddit_ReadRedditAudienceInsights_MatchingProvenanceReads(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
 	s := newRedditAudienceServer(t)
 	if _, err := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}).
-		ReadRedditAudienceInsights(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, scope); err != nil {
+		ReadRedditAudienceInsights(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, redditScope("t3_a", "t3_b")); err != nil {
 		t.Fatalf("ReadRedditAudienceInsights: %v", err)
 	}
 	s.mu.Lock()
@@ -257,5 +286,27 @@ func TestReddit_ReadRedditAudienceInsights_UpstreamFailureIsUnclassified(t *test
 	}
 	if strings.Contains(err.Error(), "t2_acct") {
 		t.Errorf("error leaks the account id: %v", err)
+	}
+}
+
+// An exhausted reporting budget fails the read whole, unclassified (→ the fixed 503), and sends
+// nothing.
+func TestReddit_ReadRedditAudienceInsights_BudgetExhaustedIsUnclassified(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	s := newRedditAudienceServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ai, err := s.dispatcherWithBudget(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, reddit.NewReportBudgets(time.Minute, 100, 2)).
+		ReadRedditAudienceInsights(ctx, "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, redditScope("t3_c"))
+	if !errors.Is(err, reddit.ErrReportBudgetExhausted) || ai != nil {
+		t.Fatalf("got (%+v, %v), want ErrReportBudgetExhausted and no result", ai, err)
+	}
+	for _, sentinel := range []error{domain.ErrConnectionNotUsable, domain.ErrNotFound, domain.ErrCampaignAccountMismatch, domain.ErrAudienceScopeInvalid, domain.ErrKeywordInsightsUnsupported, domain.ErrAudienceScopeTooLarge} {
+		if errors.Is(err, sentinel) {
+			t.Errorf("a budget refusal must not carry %v", sentinel)
+		}
+	}
+	if n := len(s.requests()); n > 2 {
+		t.Errorf("sent %d requests on a budget of 2", n)
 	}
 }

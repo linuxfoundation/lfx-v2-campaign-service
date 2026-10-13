@@ -32,15 +32,15 @@ const (
 )
 
 const (
-	// MaxAudienceCampaigns bounds the campaigns one audience read covers. A LOCAL bound, not a
-	// Reddit limit: the read issues one report per campaign per breakdown (see
-	// GetAudienceInsights for why), and Reddit's published rate limit for the reporting policy
-	// (`ads-reporting`) is 60 requests per 60 seconds per caller. 8 campaigns × 3 breakdowns = 24
-	// requests, under half the quota, leaving the rest for the campaign metrics read and the
-	// account monitor, which share it.
+	// MaxAudienceCampaigns bounds the campaigns one audience read covers: 8 campaigns × 3
+	// breakdowns = 24 reports, which is exactly the insight sub-budget (reportBudgetInsights), so a
+	// project at the cap can complete in one budget window when nothing else is spending it. It
+	// does NOT bound the requests sent: a report may span pages and a 429 is retried, and each of
+	// those attempts is its own request. What bounds the requests is the ad account's process-wide
+	// reporting budget (report_budget.go), from which every attempt — of this read, the metrics
+	// read and the account monitor alike — takes a slot before it is sent.
 	MaxAudienceCampaigns = 8
-	// audienceReportConcurrency bounds the reports in flight at once: enough to fit 24 requests
-	// in the orchestrator's 20s metrics budget, below the monitor's own 5.
+	// audienceReportConcurrency bounds the reports in flight at once, below the monitor's own 5.
 	audienceReportConcurrency = 3
 	// audienceMaxPages bounds one report's pagination walk. One campaign broken down by one
 	// dimension is at most a few hundred rows (Reddit's countries or the communities it served
@@ -175,7 +175,9 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window model.MetricsWi
 	// results[b][i] is breakdown b's per-value totals for campaign ids[i]; each goroutine writes
 	// only its own cell.
 	results := make([][]map[string]*AudienceBucket, len(audienceBreakdowns))
-	g, gctx := errgroup.WithContext(ctx)
+	// Every attempt of this read draws on the account's insight sub-budget as well as its total
+	// (report_budget.go).
+	g, gctx := errgroup.WithContext(withInsightsReports(ctx))
 	g.SetLimit(audienceReportConcurrency)
 	for bi, b := range audienceBreakdowns {
 		results[bi] = make([]map[string]*AudienceBucket, len(ids))

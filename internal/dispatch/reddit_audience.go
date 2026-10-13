@@ -54,14 +54,18 @@ func (d *RedditDispatcher) AudienceEnabled() error { return redditAudienceEnable
 //     + ErrAccountNotSelected (400), refused by resolveRedditClientWithCreds.
 //  3. The connection's bound account must be addressable (reddit.ValidateAccountID) before Reddit
 //     is contacted; the client reads ONLY that account.
-//  4. Every scope entry's recorded creation account (redditCreationAccountID, "" = unknown,
-//     proceed) must be the one the connection resolves to. ANY mismatch refuses the whole read
-//     (ErrCampaignAccountMismatch, 409) rather than dropping the entry: Reddit campaign ids are
-//     unique only within an account, so a stored id read under another account is another
-//     campaign's data or none.
+//  4. Every scope entry's recorded creation account (redditCreationAccountID) must be the one
+//     the connection resolves to — and must be RECORDED. Reddit campaign ids are unique only
+//     within an account, so a stored id read under another account is another campaign's data or
+//     none; a row with no recorded account (written before the accountId field existed) cannot
+//     prove it is not exactly that after the connection was re-pointed. ANY mismatch or unknown
+//     refuses the whole read (409) BEFORE Reddit is contacted, rather than dropping the entry.
 //
 // The CACHED client is used, as by the metrics read, so the read reuses the connection's OAuth
-// access token rather than minting one per call.
+// access token rather than minting one per call. The call runs through d.audience: an identical
+// concurrent read is joined and a successful one reused for a minute (redditReportGuard), and
+// every report attempt spends from the ad account's process-wide reporting budget
+// (reddit/report_budget.go) — a read that cannot get its slots before its deadline fails whole.
 func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error) {
 	if err := redditAudienceEnabled(); err != nil {
 		return nil, err
@@ -81,7 +85,9 @@ func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, proje
 	if err != nil {
 		return nil, err
 	}
-	ai, err := client.GetAudienceInsights(ctx, window, campaignIDs)
+	ai, err := d.audience.read(ctx, accountID, window, campaignIDs, func(callCtx context.Context) (*reddit.AudienceInsights, error) {
+		return client.GetAudienceInsights(callCtx, window, campaignIDs)
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, reddit.ErrAudienceScopeTooLarge):
@@ -109,29 +115,40 @@ func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, proje
 	return &model.RedditAudienceInsights{Window: window, Buckets: buckets}, nil
 }
 
-// redditScopeForAccount is twitterScopeForAccount for Reddit: the campaign ids in scope, provided
-// every entry's recorded creation account (redditCreationAccountID, "" = unknown, proceed) is the
-// account the connection resolves to. A stored id that is not a usable Reddit campaign id is
-// refused as domain.ErrAudienceScopeInvalid (409) before any request, never dropped.
+// redditScopeForAccount is twitterScopeForAccount for Reddit, but STRICTER about provenance: the
+// campaign ids in scope, provided every entry's recorded creation account (redditCreationAccountID)
+// is present AND is the account the connection resolves to. The X and Meta reads let an unrecorded
+// account through; this read does not, because nothing else bounds it — Reddit ids are only unique
+// within an account, and a legacy row read on a re-pointed connection would publish another
+// campaign's audience as this project's. An unrecorded account is
+// ErrCampaignAccountMismatch joined with ErrCampaignProvenanceUnknown (409, remedy: re-dispatch);
+// a different one is ErrCampaignAccountMismatch (409). A stored id that is not a usable Reddit
+// campaign id is ErrAudienceScopeInvalid (409). All refused before any request, never dropped.
 func redditScopeForAccount(scope []model.ProjectCampaignScope, accountID, op string) ([]string, error) {
 	current := strings.TrimSpace(accountID)
 	ids := make([]string, 0, len(scope))
-	skipped := 0
+	unknown, foreign := 0, 0
 	for _, s := range scope {
 		if verr := reddit.ValidateCampaignID(s.PlatformCampaignID); verr != nil {
 			return nil, fmt.Errorf("%s: a campaign in scope has a malformed reddit campaign id (%d bytes): %w",
 				op, len(s.PlatformCampaignID), domain.ErrAudienceScopeInvalid)
 		}
-		created := redditCreationAccountID(&model.Campaign{Result: s.Result})
-		if created != "" && created != current {
-			skipped++
-			continue
+		switch created := redditCreationAccountID(&model.Campaign{Result: s.Result}); {
+		case created == "":
+			unknown++
+		case created != current:
+			foreign++
+		default:
+			ids = append(ids, s.PlatformCampaignID)
 		}
-		ids = append(ids, s.PlatformCampaignID)
 	}
-	if skipped > 0 {
+	if foreign > 0 {
 		return nil, fmt.Errorf("%s: %d of this project's %d campaigns were created under a different reddit ad account than the one its connection now resolves to; returning only the rest would report a partial result as complete: %w",
-			op, skipped, len(scope), domain.ErrCampaignAccountMismatch)
+			op, foreign, len(scope), domain.ErrCampaignAccountMismatch)
+	}
+	if unknown > 0 {
+		return nil, fmt.Errorf("%s: %d of this project's %d campaigns do not record which reddit ad account they were created under, so their ids cannot be proven to name the same campaigns on the connected account: %w",
+			op, unknown, len(scope), errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
 	}
 	if len(ids) == 0 {
 		// Unreachable from the orchestrator, which answers an empty scope without calling the

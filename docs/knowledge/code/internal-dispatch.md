@@ -4268,3 +4268,10 @@ whole read (`ErrCampaignAccountMismatch`, 409). Only then the cached client's
 failure is returned unclassified (503). Tests: `reddit_audience_test.go` (mapping on the bound
 account, every refusal with zero upstream calls including the LF-system-only case, flag values,
 partial mismatch, matching/unknown provenance, 403 unclassified without the account id).
+
+The Reddit audience read refuses a scope entry with NO recorded creation account
+(`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`, 409) rather than letting
+it through as the X/Meta reads do, and runs its upstream call through `d.audience`, a
+`redditReportGuard` (`reddit_report_guard.go`): single flight for identical reads (account, window,
+UTC day, sorted scope) with leader-context re-lead, and a 60 s cache of successes. Tests:
+`reddit_report_guard_test.go`, and the provenance/budget cases in `reddit_audience_test.go`.

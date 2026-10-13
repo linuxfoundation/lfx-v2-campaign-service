@@ -102,11 +102,15 @@ type RedditDispatcher struct {
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// audience de-duplicates identical concurrent audience reads and briefly reuses a successful
+	// one (reddit_report_guard.go), so refreshes do not each spend the ad account's reporting
+	// budget.
+	audience *redditReportGuard[reddit.AudienceInsights]
 }
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
-	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newRedditReportGuard[reddit.AudienceInsights]()}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
