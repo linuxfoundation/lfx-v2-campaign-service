@@ -104,8 +104,8 @@ func TestImageAltTextFromName(t *testing.T) {
 // ---- attach -----------------------------------------------------------------
 
 const (
-	noImageAssociations  = `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[]}],"PartialErrors":[]}`
-	nullImageAssociation = `{"AdExtensionAssociationCollection":[null],"PartialErrors":null}`
+	noImageAssociations = `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[]}],"PartialErrors":[]}`
+	nullSlotAssociation = `{"AdExtensionAssociationCollection":[null],"PartialErrors":null}`
 )
 
 // imageHappyPath answers every attach step successfully.
@@ -226,10 +226,12 @@ func TestAttachCampaignImage_AlreadyAttachedUploadsNothing(t *testing.T) {
 	}
 }
 
-func TestAttachCampaignImage_NullCollectionIsAbsent(t *testing.T) {
+// A null SLOT inside the collection array ([null]) is Microsoft's documented "none"; a literal
+// null COLLECTION is unanswered and fails the lookup (TestAttachCampaignImage_LookupMustAnswer).
+func TestAttachCampaignImage_NullSlotIsAbsent(t *testing.T) {
 	c, calls := kwRecorder(t, func(m, p string) (int, string) {
 		if p == "AdExtensionsAssociations/Query" {
-			return 200, nullImageAssociation
+			return 200, nullSlotAssociation
 		}
 		return imageHappyPath(m, p)
 	})
@@ -577,5 +579,67 @@ func TestAttachCampaignImage_AssociationNullEntriesAreUnconfirmed(t *testing.T) 
 		if err == nil || !IsOutcomeUnconfirmed(err) {
 			t.Errorf("%s: a present error array with no codes must be UNCONFIRMED, got %v", body, err)
 		}
+	}
+}
+
+// ---- raw-body integrity (#312 review) ----------------------------------------
+
+// A lookup body whose collection key is declared twice — exactly or under the decoder's case
+// fold — could be marked present by one spelling and decoded empty from the other. It must fail
+// the lookup, not read as "none".
+func TestAttachCampaignImage_LookupRefusesDuplicateKeys(t *testing.T) {
+	for name, body := range map[string]string{
+		"exact duplicate":  `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":4441,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":321}]}],"AdExtensionAssociationCollection":[]}`,
+		"folded duplicate": `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":4441,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":321}]}],"adextensionassociationcollection":[]}`,
+		"malformed utf-8":  "{\"AdExtensionAssociationCollection\":[],\"x\":\"\xff\"}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, calls, err := runAttachWith(t, "AdExtensionsAssociations/Query", 200, body)
+			if err == nil || IsOutcomeUnconfirmed(err) || r.AlreadyAttached {
+				t.Fatalf("an untrustworthy lookup body must fail definitely, got %v, %+v", err, r)
+			}
+			if len(calls) != 1 {
+				t.Errorf("nothing may be uploaded, calls = %v", paths(calls))
+			}
+		})
+	}
+}
+
+func TestAttachCampaignImage_MutatingBodiesRefuseDuplicateKeys(t *testing.T) {
+	for _, tc := range []struct{ path, body string }{
+		{"Media", `{"MediaIds":[5551],"mediaids":[null]}`},
+		{"AdExtensions", `{"AdExtensionIdentities":[{"Id":7771}],"NestedPartialErrors":[],"nestedpartialerrors":[{"Code":1}]}`},
+		{"AdExtensionsAssociations/Set", `{"PartialErrors":[],"partialerrors":[{"Code":1}]}`},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			_, _, err := runAttachWith(t, tc.path, 200, tc.body)
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("an untrustworthy 2xx on a mutation must be UNCONFIRMED, got %v", err)
+			}
+		})
+	}
+}
+
+// AddMedia classifies a null id on whole-wire evidence, like adExtensionIdentity.
+func TestAttachCampaignImage_MediaEvidenceBeyondRetention(t *testing.T) {
+	nulls := strings.Repeat("null,", maxDecodedErrorItems+1)
+	cases := []struct {
+		name     string
+		body     string
+		definite bool
+	}{
+		{"real error past the window", `{"MediaIds":[null],"PartialErrors":[` + nulls + `{"Code":3001,"ErrorCode":"InvalidMedia"}]}`, true},
+		{"null placeholders only", `{"MediaIds":[null],"PartialErrors":[` + strings.TrimSuffix(nulls, ",") + `]}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runAttachWith(t, "Media", 200, tc.body)
+			if err == nil {
+				t.Fatal("a null media id is never success")
+			}
+			if got := !IsOutcomeUnconfirmed(err); got != tc.definite {
+				t.Errorf("definite = %v, want %v (%v)", got, tc.definite, err)
+			}
+		})
 	}
 }

@@ -19,6 +19,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -404,13 +406,7 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 		Media:     []msImageMedia{{Type: "Image", MediaType: mediaTypeGenericImage, Data: data}},
 	}, false)
 	if err == nil {
-		r.MediaID, err = firstEntityID(body, "MediaIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
-			var resp addMediaResponse
-			if uerr := json.Unmarshal(b, &resp); uerr != nil {
-				return nil, nil, uerr
-			}
-			return resp.MediaIds, resp.PartialErrors.Items, nil
-		})
+		r.MediaID, err = mediaIdentity(body)
 	}
 	if err != nil {
 		return r, classifyImageStep("microsoft-ads image extension: image upload", err)
@@ -443,7 +439,7 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 	}, false)
 	if err == nil {
 		var resp setAdExtensionsAssociationsResponse
-		switch uerr := json.Unmarshal(body, &resp); {
+		switch uerr := decodeTrusted(body, &resp); {
 		case uerr != nil:
 			// A 2xx we cannot read: the association may have committed.
 			err = fmt.Errorf("decode AdExtensionsAssociations/Set response (%v): %w", uerr, errNoID)
@@ -485,8 +481,8 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 		return "", err
 	}
 	var resp adExtensionAssociationsQueryResponse
-	if uerr := json.Unmarshal(body, &resp); uerr != nil {
-		return "", fmt.Errorf("decode AdExtensionsAssociations/Query response: %w", errNoID)
+	if uerr := decodeTrusted(body, &resp); uerr != nil {
+		return "", fmt.Errorf("decode AdExtensionsAssociations/Query response (%v): %w", uerr, errNoID)
 	}
 	if resp.PartialErrors.AnyErrors {
 		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
@@ -534,7 +530,7 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 //   - no id and no explaining error, or an unreadable body → errNoID (UNCONFIRMED).
 func adExtensionIdentity(body []byte) (string, error) {
 	var resp addAdExtensionsResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := decodeTrusted(body, &resp); err != nil {
 		return "", fmt.Errorf("decode AdExtensionIdentities response (%v): %w", err, errNoID)
 	}
 	id := ""
@@ -558,4 +554,38 @@ func adExtensionIdentity(body []byte) (string, error) {
 		return "", fmt.Errorf("AdExtensionIdentities %w", errNoID)
 	}
 	return id, nil
+}
+
+// decodeTrusted refuses a body encoding/json would decode WITHOUT error into something other
+// than what its bytes say — malformed UTF-8, an unpaired surrogate escape, or a key declared twice
+// (including under the decoder's case fold) — and only then decodes it. Every presence probe in
+// this file reads an exact map key while the struct decode is case-folded and last-key-wins, so
+// `{"AdExtensionAssociationCollection":[...],"adextensionassociationcollection":[]}` would
+// otherwise mark the field present from one spelling and decode it empty from the other: a lookup
+// answering "none" that licenses a second AddMedia. The adoption reads apply the same check.
+func decodeTrusted(body []byte, v any) error {
+	if err := identityjson.Check(body); err != nil {
+		return err
+	}
+	return json.Unmarshal(body, v)
+}
+
+// mediaIdentity extracts the created MediaId from an AddMedia 200 body. A usable id is success.
+// A null id is a DEFINITE rejection only on error EVIDENCE — the whole-wire PartialErrors.AnyErrors
+// tally, so an error past the 16-entry retention window still counts (and its code is still
+// reported when retained); null placeholders or an unexplained null id are UNCONFIRMED (errNoID).
+func mediaIdentity(body []byte) (string, error) {
+	var resp addMediaResponse
+	if err := decodeTrusted(body, &resp); err != nil {
+		return "", fmt.Errorf("decode MediaIds response (%v): %w", err, errNoID)
+	}
+	if len(resp.MediaIds) > 0 {
+		if id := numberID(resp.MediaIds[0]); id != "" {
+			return id, nil
+		}
+	}
+	if resp.PartialErrors.AnyErrors {
+		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
+	}
+	return "", fmt.Errorf("MediaIds %w", errNoID)
 }

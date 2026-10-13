@@ -23,5 +23,12 @@ misattributed 2xx as success:
   calling them definite invites a retry that creates a second extension. A Set body whose
   `PartialErrors` is present but has no codes (`[null]`) is UNCONFIRMED, not confirmed. The
   concept's lookup wording now says that non-image associations are skipped.
+  Every image-extension response body now passes `identityjson.Check` before it is decoded.
+  The presence probes read exact keys while the struct decode is case-folded and keeps the
+  last duplicate, so a duplicated or case-folded key could mark the collection present and
+  decode it empty, which licensed a second upload. An untrustworthy lookup body fails the
+  lookup; an untrustworthy mutation body is UNCONFIRMED. AddMedia, like the extension create,
+  now classifies a null id on whole-wire `PartialErrors.AnyErrors`, so a rejection past the
+  16-entry window is definite.
 
 Concept: [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).

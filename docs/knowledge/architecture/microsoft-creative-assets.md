@@ -91,8 +91,14 @@ Every 2xx body must actually answer before it counts. Each rule below fails clos
   identity stay UNCONFIRMED, because they explain nothing.
 - **Association success.** A `PartialErrors` array that is present but carries no codes (for
   example `[null]`) is UNCONFIRMED, not success.
-- **AddMedia.** `PartialErrors` beside `MediaIds` is decoded, so a null id it explains is a
-  definite rejection. Only an unexplained null id is UNCONFIRMED.
+- **Raw-body integrity.** Every image-extension response body passes `identityjson.Check`
+  before it is decoded. That rejects malformed UTF-8, unpaired surrogates, and keys declared
+  twice, including under the case fold. Without it, a duplicate key could mark a field present
+  from one spelling and decode it empty from the other. An untrustworthy lookup fails, and
+  nothing is uploaded; an untrustworthy mutation body is UNCONFIRMED.
+- **AddMedia.** `PartialErrors` beside `MediaIds` is decoded. A null id is a definite rejection
+  only on whole-wire `AnyErrors` evidence, so a rejection past the 16-entry window still counts.
+  Null placeholders, or a null id with no explanation, are UNCONFIRMED.
 - **AddAdExtensions.** `NestedPartialErrors` is `BatchErrorCollection[]`. It is decoded with
   `boundedNestedErrorItems`, the same decoder as geo, and both the collection-level codes and
   each nested `BatchErrors` are classified. A null identity with any error is definite. An
