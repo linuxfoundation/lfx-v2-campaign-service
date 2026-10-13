@@ -157,7 +157,13 @@ type Service interface {
 	// row. META: ACTIVE cascades to the campaign's recorded ad set and its ads,
 	// EXCEPT that a recorded ad set deliberately paused through
 	// toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left
-	// PAUSED — its ads and the campaign are still activated.
+	// PAUSED — its ads and the campaign are still activated. That record is this
+	// service's, not Meta's, so the held ad set is READ first (GET
+	// /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written
+	// unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an
+	// ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the
+	// record, through toggle-meta-ad-set-status first), and an unreadable one is
+	// 503 with the campaign not modified.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Change how much a campaign may spend, on its ad platform, then persist the
 	// new amount. A MUTATION on a live paid campaign, dispatched to the platform

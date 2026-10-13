@@ -134,6 +134,26 @@ and then the campaign (last, as always) but never posts the ad set. Its ads are 
 later resume of the ad set alone is enough to serve; the paused ad set gates them meanwhile. A
 campaign PAUSE cascades exactly as before.
 
+**The record is checked against Meta before it is honoured.** It is this service's record, not
+Meta's: an UNCONFIRMED pause that never applied, or an ad set re-activated in Ads Manager, leaves
+it over an ACTIVE ad set, and a holding activation would then switch on the ads and the campaign
+over a serving ad set. So before `ActivateCampaignHoldingAdSet` the dispatcher READS the held ad
+set (`GET /{ad_set_id}?fields=id,campaign_id,account_id,status`, `verifyMetaHeldAdSetPaused`). Its
+CONFIGURED status decides, because an ad set under a paused campaign is effectively
+`CAMPAIGN_PAUSED` whatever it is configured to, and the configured status is what serves once the
+campaign is ACTIVE:
+
+- `PAUSED`, or `DELETED`/`ARCHIVED` (which cannot serve): proceed.
+- `ACTIVE`: `domain.ErrMetaHeldAdSetActive`, a definite 409, and nothing is written. Refusing
+  rather than pausing it here keeps the campaign toggle from writing an ad set's status the
+  operator did not ask for in this call. The 409 names the remedy: pause the ad set, or clear the
+  record by resuming it, through `toggle-meta-ad-set-status`, then resume the campaign.
+- Unreadable, reported under another campaign or account, or an unrecognised status: the
+  toggle's 503 "the campaign was not modified". Only a read preceded it, and nothing is activated.
+
+Without a record nothing extra is read (`TestMeta_ToggleStatus_HeldActivationReadsTheAdSetFirst`,
+`…UnheldActivationDoesNotReadTheAdSet`).
+
 **Where it lives.** In the row's existing `result` JSON (the create path's untagged
 `meta.CampaignResult` blob) under the extra key `UserPausedAdSetID` — no migration, no new
 column (the column is Meta-only state; `metaAdSetID` records why the ad set id itself is not a

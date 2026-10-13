@@ -655,3 +655,44 @@ func TestToggleMetaAdSetStatus_ClaimLostAfterAConfirmedOutcomeReportsOnlyTheReco
 		})
 	}
 }
+
+// heldRefusingDispatcher is a Meta campaign toggler whose activation is refused by the
+// held-ad-set pre-read.
+type heldRefusingDispatcher struct {
+	adSetDispatcher
+	err error
+}
+
+func (d *heldRefusingDispatcher) ToggleStatus(context.Context, string, model.Provider, *model.Campaign, string) error {
+	return d.err
+}
+
+// A campaign resume refused because the held ad set is ACTIVE on Meta is a definite 409 that
+// names the remedy; an unreadable held ad set is the toggle's "not modified" 503. The row is
+// never written on either.
+func TestToggleCampaignStatus_HeldAdSetRefusals(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err      error
+		want     int
+		contains string
+	}{
+		"held ad set active":     {fmt.Errorf("verify: %w", domain.ErrMetaHeldAdSetActive), 409, "recorded as deliberately paused, but Meta reports it ACTIVE"},
+		"held ad set unreadable": {errors.New("verify the held meta ad set: read failed (nothing was changed)"), 503, "the campaign was not modified"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := heldRow(t)
+			row.Status = model.CampaignRunPaused
+			s, repo := adSetService(row, model.ProviderMetaAds, &heldRefusingDispatcher{err: tc.err})
+			etag := "3"
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &etag, Status: model.CampaignRunActive,
+			})
+			if msg := errMessage(err); !isStatus(err, tc.want) || !strings.Contains(msg, tc.contains) {
+				t.Fatalf("err %T %q; want %d containing %q", err, msg, tc.want, tc.contains)
+			}
+			if repo.replaces != 0 || repo.got.Status != model.CampaignRunPaused {
+				t.Fatalf("writes %d, status %q; a refused resume must not touch the row", repo.replaces, repo.got.Status)
+			}
+		})
+	}
+}

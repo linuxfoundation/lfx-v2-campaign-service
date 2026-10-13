@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 )
@@ -27,8 +28,13 @@ import (
 type cascadeReq struct{ method, path, status string }
 
 // cascadeServer records every request of a campaign status cascade; ads under any ad set are
-// 111 and 222.
+// 111 and 222. A GET of an ad set node (the held-activation pre-read) answers with the ad set
+// reported at status under campaign 23847290 and account 777; status "" answers 500.
 func cascadeServer(t *testing.T) (*httptest.Server, func() []cascadeReq) {
+	return cascadeServerWithAdSet(t, meta.StatusPaused)
+}
+
+func cascadeServerWithAdSet(t *testing.T, status string) (*httptest.Server, func() []cascadeReq) {
 	t.Helper()
 	var mu sync.Mutex
 	var seen []cascadeReq
@@ -39,6 +45,19 @@ func cascadeServer(t *testing.T) (*httptest.Server, func() []cascadeReq) {
 			seen = append(seen, cascadeReq{r.Method, r.URL.Path, ""})
 			mu.Unlock()
 			_, _ = io.WriteString(w, `{"data":[{"id":"111"},{"id":"222"}]}`)
+			return
+		}
+		if r.Method == http.MethodGet {
+			mu.Lock()
+			seen = append(seen, cascadeReq{r.Method, r.URL.Path, ""})
+			mu.Unlock()
+			if status == "" {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"error":{"message":"unavailable","code":2}}`)
+				return
+			}
+			id := strings.TrimPrefix(r.URL.Path, "/")
+			_, _ = io.WriteString(w, `{"id":"`+id+`","campaign_id":"23847290","account_id":"777","status":"`+status+`"}`)
 			return
 		}
 		var body map[string]any
@@ -244,5 +263,75 @@ func TestMetaClient_ActivateCampaignHoldingAdSet(t *testing.T) {
 	// The campaign flip is LAST, as in the full cascade.
 	if last := reqs[len(reqs)-1]; last.path != "/23847290" {
 		t.Fatalf("last request = %+v, want the campaign flip", last)
+	}
+}
+
+// The record is the row's, not Meta's. Before a holding ACTIVATE the held ad set is READ: only a
+// PAUSED (or DELETED/ARCHIVED, which cannot serve) ad set lets the activation proceed. ACTIVE is a
+// definite refusal (ErrMetaHeldAdSetActive → 409) and an unreadable state an ordinary error — and
+// on both, NOTHING is activated: no campaign, ad set or ad write at all.
+func TestMeta_ToggleStatus_HeldActivationReadsTheAdSetFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   string
+		proceeds bool
+		check    func(t *testing.T, err error)
+	}{
+		{"paused proceeds", meta.StatusPaused, true, nil},
+		{"archived cannot serve, proceeds", meta.StatusArchived, true, nil},
+		{"active is refused", meta.StatusActive, false, func(t *testing.T, err error) {
+			if !errors.Is(err, domain.ErrMetaHeldAdSetActive) {
+				t.Fatalf("err = %v; want ErrMetaHeldAdSetActive", err)
+			}
+		}},
+		{"unreadable is refused", "", false, func(t *testing.T, err error) {
+			if err == nil || errors.Is(err, domain.ErrMetaHeldAdSetActive) || meta.IsOutcomeUnconfirmed(err) {
+				t.Fatalf("err = %v; want an ordinary (nothing-changed) error", err)
+			}
+		}},
+		{"unrecognised status is refused", "IN_PROCESS", false, func(t *testing.T, err error) {
+			if err == nil || errors.Is(err, domain.ErrMetaHeldAdSetActive) {
+				t.Fatalf("err = %v; want an ordinary error", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, seen := cascadeServerWithAdSet(t, tc.status)
+			d := cascadeDispatcher(srv)
+			row := pausedOnRecord(t, metaToggleCampaign("23847290", "999"), "999")
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, row, model.CampaignRunActive)
+			reqs := seen()
+			if len(reqs) == 0 || reqs[0].method != http.MethodGet || reqs[0].path != "/999" {
+				t.Fatalf("first request = %+v; want the held ad set read first", reqs)
+			}
+			posts := postsByPath(reqs)
+			if tc.proceeds {
+				if err != nil {
+					t.Fatalf("ToggleStatus: %v", err)
+				}
+				if _, touched := posts["/999"]; touched || posts["/23847290"] != meta.StatusActive {
+					t.Fatalf("posts = %+v; want the campaign activated and the ad set left alone", posts)
+				}
+				return
+			}
+			tc.check(t, err)
+			if len(posts) != 0 {
+				t.Fatalf("a refused activation still wrote %+v", posts)
+			}
+		})
+	}
+}
+
+// Without a record nothing extra is read: the ordinary cascade is unchanged.
+func TestMeta_ToggleStatus_UnheldActivationDoesNotReadTheAdSet(t *testing.T) {
+	srv, seen := cascadeServerWithAdSet(t, "")
+	d := cascadeDispatcher(srv)
+	if err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, metaToggleCampaign("23847290", "999"), model.CampaignRunActive); err != nil {
+		t.Fatalf("ToggleStatus: %v", err)
+	}
+	for _, r := range seen() {
+		if r.method == http.MethodGet && r.path == "/999" {
+			t.Fatalf("an unheld activation read the ad set: %+v", seen())
+		}
 	}
 }

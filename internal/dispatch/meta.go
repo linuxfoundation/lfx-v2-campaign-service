@@ -857,6 +857,13 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	// Only resuming the ad set through that lever clears the record. A PAUSE cascades as always.
 	var uerr error
 	if metaStatus == meta.StatusActive && model.MetaAdSetHeldPaused(campaign.Result, adSetID) {
+		// The record is the row's, not Meta's: an UNCONFIRMED pause that never applied, or an ad
+		// set re-activated in Ads Manager, leaves it over an ACTIVE ad set, and holding activation
+		// would then switch on the ads and the campaign over a serving ad set. So Meta is READ
+		// first, before anything is written (fail closed).
+		if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, res.accountID); herr != nil {
+			return herr
+		}
 		slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
 			"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID)
 		uerr = client.ActivateCampaignHoldingAdSet(ctx, campaign.PlatformCampaignID, adSetID)
@@ -877,6 +884,40 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 		return uerr
 	}
 	return nil
+}
+
+// verifyMetaHeldAdSetPaused reads the held ad set (GET /{id}?fields=id,campaign_id,account_id,
+// status) before a holding ACTIVATE. Its CONFIGURED status decides — the effective status of an
+// ad set under a paused campaign is CAMPAIGN_PAUSED whatever it is configured to, and it is the
+// configured status that serves once the campaign is ACTIVE:
+//
+//   - PAUSED, or DELETED/ARCHIVED (which cannot serve) → nil: the activation may hold it.
+//   - ACTIVE → domain.ErrMetaHeldAdSetActive (409), nothing written. Refusing rather than
+//     pausing it here keeps the campaign toggle's contract — it never writes an ad set's status
+//     the operator did not ask for in this call — and the remedy is explicit: pause the ad set,
+//     or clear the record by resuming it, through toggle-meta-ad-set-status.
+//   - The read fails, reports another campaign or account, or an unrecognised status → an
+//     ordinary error (the campaign toggle's 503 "the campaign was not modified"): a pure read
+//     preceded it, so nothing was written, and nothing is activated.
+func verifyMetaHeldAdSetPaused(ctx context.Context, client *meta.Client, campaign *model.Campaign, adSetID, accountID string) error {
+	const op = "verify the held meta ad set before activating its campaign"
+	state, err := client.GetAdSetState(ctx, adSetID)
+	if err != nil {
+		return fmt.Errorf("%s: %v (nothing was changed)", op, err)
+	}
+	if state.CampaignID != campaign.PlatformCampaignID || normalizeMetaAccountID(state.AccountID) != normalizeMetaAccountID(accountID) {
+		return fmt.Errorf("%s: ad set %s is reported under campaign %s / account %s, not %s / %s; nothing was changed",
+			op, adSetID, state.CampaignID, state.AccountID, campaign.PlatformCampaignID, accountID)
+	}
+	switch state.Status {
+	case meta.StatusPaused, meta.StatusDeleted, meta.StatusArchived:
+		return nil
+	case meta.StatusActive:
+		return fmt.Errorf("%s: ad set %s is ACTIVE on Meta although this service holds it as deliberately paused: %w",
+			op, adSetID, domain.ErrMetaHeldAdSetActive)
+	default:
+		return fmt.Errorf("%s: ad set %s reports a status this service does not recognise (%d bytes); nothing was changed", op, adSetID, len(state.Status))
+	}
 }
 
 // metaMetricsWindow maps the platform-agnostic model.MetricsWindow vocabulary to Meta's

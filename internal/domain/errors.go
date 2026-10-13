@@ -579,6 +579,13 @@ var (
 	// sets stays allowed. Decided before any write; mapped to 409.
 	ErrMetaAdSetNotRecorded = errors.New("only the ad set this service created for the campaign can be activated here")
 
+	// ErrMetaHeldAdSetActive refuses a Meta campaign ACTIVATE whose recorded ad set the row holds
+	// as deliberately paused while Meta reports that ad set ACTIVE (its pause was never applied, or
+	// it was re-activated elsewhere). Activating the campaign then would let the "deliberately
+	// paused" ad set serve, so nothing is written; mapped to 409. The operator pauses the ad set,
+	// or clears the record by resuming it, through toggle-meta-ad-set-status first.
+	ErrMetaHeldAdSetActive = errors.New("the campaign's deliberately paused ad set is ACTIVE on Meta")
+
 	// ErrStoredPlatformIDInvalid indicates the campaign row's stored platform campaign id is not a
 	// valid id for its platform, so nothing under it can be addressed. Decided locally — the
 	// platform is never contacted; mapped to 409.
