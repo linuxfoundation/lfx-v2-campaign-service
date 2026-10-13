@@ -517,3 +517,65 @@ func TestAttachCampaignImage_UnconfirmedAssociationMakesNoDefiniteClaim(t *testi
 		t.Errorf("an unconfirmed outcome must not say 'not attached': %v", err)
 	}
 }
+
+// ---- evidence vs truncation (#312 review) -----------------------------------
+
+// nestedSlots renders n NestedPartialErrors entries, the entry at index realAt (if >= 0)
+// carrying a real nested BatchError and the rest null placeholders.
+func nestedSlots(n, realAt int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = "null"
+		if i == realAt {
+			parts[i] = `{"BatchErrors":[{"Code":3001,"ErrorCode":"CampaignServiceInvalidImage","Index":0}]}`
+		}
+	}
+	return `{"AdExtensionIdentities":[null],"NestedPartialErrors":[` + strings.Join(parts, ",") + `]}`
+}
+
+func TestAttachCampaignImage_TruncationAloneIsNotDefinite(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		definite bool
+	}{
+		{"17 null slots (over the cap, no error)", nestedSlots(maxDecodedErrorItems+1, -1), false},
+		{"a few null slots", nestedSlots(3, -1), false},
+		{"real error beyond the retained window", nestedSlots(maxDecodedErrorItems+4, maxDecodedErrorItems+2), true},
+		{"real error retained", nestedSlots(3, 1), true},
+		{"inner BatchErrors over the cap, real error beyond it", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"BatchErrors":[` +
+			strings.Repeat("null,", maxDecodedErrorItems+2) + `{"Code":3001}]}]}`, true},
+		{"inner BatchErrors over the cap, nulls only", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"BatchErrors":[` +
+			strings.TrimSuffix(strings.Repeat("null,", maxDecodedErrorItems+3), ",") + `]}]}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runAttachWith(t, "AdExtensions", 200, tc.body)
+			if err == nil {
+				t.Fatal("a null identity is never success")
+			}
+			if got := !IsOutcomeUnconfirmed(err); got != tc.definite {
+				t.Errorf("definite = %v, want %v (%v)", got, tc.definite, err)
+			}
+			if tc.definite != errors.Is(err, errPartialFailure) {
+				t.Errorf("errPartialFailure must mark exactly the definite case: %v", err)
+			}
+		})
+	}
+}
+
+func TestAttachCampaignImage_IdentityWithNullNestedEntryIsNotSuccess(t *testing.T) {
+	r, _, err := runAttachWith(t, "AdExtensions", 200, `{"AdExtensionIdentities":[{"Id":7771}],"NestedPartialErrors":[null]}`)
+	if err == nil || !IsOutcomeUnconfirmed(err) || r.AdExtensionID != "7771" {
+		t.Fatalf("an identity beside a malformed nested entry must be UNCONFIRMED with its id, got %v, %+v", err, r)
+	}
+}
+
+func TestAttachCampaignImage_AssociationNullEntriesAreUnconfirmed(t *testing.T) {
+	for _, body := range []string{`{"PartialErrors":[null]}`, `{"PartialErrors":[{}]}`} {
+		_, _, err := runAttachWith(t, "AdExtensionsAssociations/Set", 200, body)
+		if err == nil || !IsOutcomeUnconfirmed(err) {
+			t.Errorf("%s: a present error array with no codes must be UNCONFIRMED, got %v", body, err)
+		}
+	}
+}

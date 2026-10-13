@@ -723,9 +723,16 @@ func (b *boundedGeoIDs) UnmarshalJSON(data []byte) error {
 
 // boundedNestedErrorItems bounds the NestedPartialErrors array the same way boundedErrorItems
 // bounds a flat one, and tracks truncation for the same reason.
+//
+// AnyErrors is the whole-wire error-evidence tally, the nested counterpart of
+// boundedErrorItems.AnyErrors: true when ANY collection on the wire — retained or discarded —
+// carried a collection-level code or a nested BatchErrors entry with one (itself tallied over
+// the whole inner array). Truncation says only that something was dropped; AnyErrors says
+// whether something dropped or kept was actually an error.
 type boundedNestedErrorItems struct {
 	Items     []msNestedErrorCollection
 	Truncated bool
+	AnyErrors bool
 }
 
 func (b *boundedNestedErrorItems) UnmarshalJSON(data []byte) error {
@@ -744,6 +751,9 @@ func (b *boundedNestedErrorItems) UnmarshalJSON(data []byte) error {
 		var it msNestedErrorCollection
 		if err := dec.Decode(&it); err != nil {
 			return err
+		}
+		if rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode) || it.BatchErrors.AnyErrors {
+			b.AnyErrors = true
 		}
 		if len(b.Items) < maxDecodedErrorItems {
 			b.Items = append(b.Items, it)

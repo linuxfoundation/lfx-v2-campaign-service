@@ -81,9 +81,16 @@ Every 2xx body must actually answer before it counts. Each rule below fails clos
 
 - **Lookup.** `AdExtensionAssociationCollection` must be present as an array. `[]`, `[null]`
   and empty slots mean none. An omitted field, `null` or a non-array is a failed lookup, and
-  nothing is uploaded. An association counts only when its `EntityId` is this campaign and its
-  `AssociationType` is `Campaign`. Any other association also fails the lookup; it is never
-  skipped and never treated as AlreadyAttached.
+  nothing is uploaded. Associations with no `AdExtension`, or with an explicit `Type` other than
+  `ImageAdExtension`, are skipped. An image association that reaches the entity check counts only
+  when its `EntityId` is this campaign and its `AssociationType` is `Campaign`; otherwise it
+  fails the lookup and is never treated as AlreadyAttached.
+- **AddAdExtensions errors vs. truncation.** Only actual error evidence counts toward a definite
+  rejection. That evidence is the whole-wire `AnyErrors` tallies, so an error beyond the
+  16-entry retention window still counts. Truncation or null-only placeholders with a null
+  identity stay UNCONFIRMED, because they explain nothing.
+- **Association success.** A `PartialErrors` array that is present but carries no codes (for
+  example `[null]`) is UNCONFIRMED, not success.
 - **AddMedia.** `PartialErrors` beside `MediaIds` is decoded, so a null id it explains is a
   definite rejection. Only an unexplained null id is UNCONFIRMED.
 - **AddAdExtensions.** `NestedPartialErrors` is `BatchErrorCollection[]`. It is decoded with

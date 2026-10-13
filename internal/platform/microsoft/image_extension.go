@@ -452,6 +452,10 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 			err = fmt.Errorf("AdExtensionsAssociations/Set response omitted PartialErrors: %w", errNoID)
 		case resp.PartialErrors.AnyErrors:
 			err = fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
+		case len(resp.PartialErrors.Items) > 0:
+			// Present but malformed (`[null]`, `[{}]`): entries that carry no code neither confirm
+			// nor reject, so it is not the empty-error success — mirrors putUpdateOutcome.
+			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors present but carried no error codes: %w", errNoID)
 		}
 	}
 	if err != nil {
@@ -520,9 +524,11 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 // classifying BOTH levels of NestedPartialErrors:
 //
 //   - no errors anywhere + a usable id → success;
-//   - errors (or a truncated error array) + NO usable id → a DEFINITE rejection
-//     (errPartialFailure): Microsoft explained the empty slot;
-//   - errors + a usable id → NOT clean success. The extension exists, but Microsoft also
+//   - an actual error code anywhere on the wire + NO usable id → a DEFINITE rejection
+//     (errPartialFailure): Microsoft explained the empty slot. Truncation or null-only
+//     placeholders are not an explanation and stay UNCONFIRMED (errNoID);
+//   - any error entry (even a null placeholder or a truncated array) + a usable id → NOT clean
+//     success. The extension exists, but Microsoft also
 //     reported failures against it, so the outcome is UNCONFIRMED (errNoID) and the id is still
 //     returned so the extension can be found;
 //   - no id and no explaining error, or an unreadable body → errNoID (UNCONFIRMED).
@@ -535,13 +541,19 @@ func adExtensionIdentity(body []byte) (string, error) {
 	if len(resp.AdExtensionIdentities) > 0 && resp.AdExtensionIdentities[0] != nil {
 		id = numberID(resp.AdExtensionIdentities[0].Id)
 	}
-	failed := resp.NestedPartialErrors.Truncated || nestedTruncated(resp.NestedPartialErrors.Items) ||
-		nestedErrorsHaveAny(resp.NestedPartialErrors.Items)
+	// EVIDENCE and INCOMPLETENESS are kept apart. Only evidence — an actual code anywhere on the
+	// wire, counted by the decoders' whole-array AnyErrors tallies so an error past the retention
+	// cap still counts — can make a null identity a DEFINITE rejection. Truncation or null-only
+	// placeholders explain nothing, so a null identity with only those stays UNCONFIRMED: calling
+	// it definite would invite a retry that creates a second extension.
+	nested := resp.NestedPartialErrors
+	evidence := nested.AnyErrors
+	incomplete := nested.Truncated || nestedTruncated(nested.Items) || len(nested.Items) > 0
 	switch {
-	case failed && id == "":
-		return "", fmt.Errorf("%w: %s", errPartialFailure, nestedErrorCodes(resp.NestedPartialErrors.Items))
-	case failed:
-		return id, fmt.Errorf("extension %s was returned alongside nested errors (%s): %w", id, nestedErrorCodes(resp.NestedPartialErrors.Items), errNoID)
+	case id == "" && evidence:
+		return "", fmt.Errorf("%w: %s", errPartialFailure, nestedErrorCodes(nested.Items))
+	case id != "" && (evidence || incomplete):
+		return id, fmt.Errorf("extension %s was returned alongside nested error entries (%s): %w", id, nestedErrorCodes(nested.Items), errNoID)
 	case id == "":
 		return "", fmt.Errorf("AdExtensionIdentities %w", errNoID)
 	}

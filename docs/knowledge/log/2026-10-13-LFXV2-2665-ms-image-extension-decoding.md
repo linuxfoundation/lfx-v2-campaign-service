@@ -17,5 +17,11 @@ misattributed 2xx as success:
 - SetAdExtensionsAssociations: a 2xx with `PartialErrors` omitted (`{}` or `null`) is UNCONFIRMED.
   The failure message no longer says "the extension exists but is not attached" under an
   UNCONFIRMED classification.
+- #312 review: error EVIDENCE is now separate from TRUNCATION. `boundedNestedErrorItems` gained
+  a whole-wire `AnyErrors` tally. A null identity becomes a definite rejection only when some
+  real code is present (retained or not). Truncation or null-only slots stay UNCONFIRMED, since
+  calling them definite invites a retry that creates a second extension. A Set body whose
+  `PartialErrors` is present but has no codes (`[null]`) is UNCONFIRMED, not confirmed. The
+  concept's lookup wording now says that non-image associations are skipped.
 
 Concept: [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).
