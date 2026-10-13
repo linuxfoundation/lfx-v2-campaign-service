@@ -24,3 +24,5 @@ Reddit Ads API v3 `KEYWORD` report breakdown, top 50 by impressions with `trunca
   every request attempt from the ad account's reporting budget (sharing the audience read's
   insight allowance), and has its own single-flight guard with a 60 s success cache.
 - Verified only against Reddit's published schema, not a live account.
+- `kubernetes/httproute.md`, `kubernetes/ruleset.md` and `kubernetes/deployment.md` list
+  `reddit-ads/keywords` and say `REDDIT_METRICS_ENABLED` gates the keyword read too.

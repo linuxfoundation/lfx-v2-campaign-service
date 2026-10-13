@@ -352,6 +352,13 @@ var (
 	// source email id, a portal id or anything HubSpot returned.
 	ErrABTestUnsupportedSendType = errors.New("A/B testing is not available for emails sent based on recipients' time zones")
 
+	// ErrCreateConfigInvalid is returned by a create-time pre-check that refused the request on
+	// the config ALONE — no platform was asked. It surfaces synchronously as a 400 carrying the
+	// error's message, so a dispatcher must wrap it only with fixed, caller-safe text (never
+	// anything a platform returned, never a secret). The first user is the Reddit stored-asset
+	// check (LFXV2-2665): imageAssetId with the feature off, or alongside imageUrl/postUrl.
+	ErrCreateConfigInvalid = errors.New("invalid campaign config")
+
 	// ErrPreflightNotApplicable is returned by a CreatePreflighter that looked at the request and
 	// had nothing to check, so it made NO platform call. It is neither a refusal nor a failure:
 	// the orchestrator skips the platform without logging it and without recording an upstream

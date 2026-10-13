@@ -148,3 +148,14 @@ func (a *AssetReserver) reserve(ctx context.Context, want int64) (func(), bool) 
 	}
 	return func() { a.sem.Release(want) }, true
 }
+
+// Reserve is reserve, exported for the one consumer outside this package: the signed
+// creative-asset route (internal/service/signed_asset.go), which materialises a stored asset's
+// bytes to serve them to Reddit. It charges the SAME process-wide budget the Meta and
+// Microsoft dispatches do (the container binds one instance to all three), so serving an image
+// and uploading one to an ad platform can never together hold more asset memory than this
+// reserver admits. Same contract as reserve: priced before the load, the
+// returned func releases exactly what was taken, false means "no capacity in time".
+func (a *AssetReserver) Reserve(ctx context.Context, want int64) (func(), bool) {
+	return a.reserve(ctx, want)
+}

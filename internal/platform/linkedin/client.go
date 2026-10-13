@@ -92,6 +92,11 @@ type Client struct {
 	// caller's cache check. The alternative is a test whose correctness depends on the
 	// scheduler, which is not a test.
 	pastCacheCheck func()
+
+	// imagePollInterval and imageAvailabilityWait bound the Images API availability poll
+	// (images.go). Defaults set in NewClient; WithImagePolling overrides them.
+	imagePollInterval     time.Duration
+	imageAvailabilityWait time.Duration
 }
 
 // Option customizes a Client.
@@ -187,6 +192,9 @@ func NewClient(creds Credentials, cfg RuntimeConfig, opts ...Option) *Client {
 		tokenURL:       oauthTokenURL,
 		now:            time.Now,
 		retryBaseDelay: retryBaseDelay,
+
+		imagePollInterval:     defaultImagePollInterval,
+		imageAvailabilityWait: defaultImageAvailabilityWait,
 	}
 	for _, o := range opts {
 		o(c)
@@ -220,6 +228,10 @@ type CreativeVariant struct {
 	IntroText string
 	Headline  string
 	ImageURN  string // optional
+	// ImageAssetID optionally names a stored creative asset whose bytes are uploaded through
+	// the Images API and used as this variant's thumbnail (images.go). It is a key into
+	// CampaignInput.Images and is MUTUALLY EXCLUSIVE with ImageURN.
+	ImageAssetID string
 }
 
 // CampaignInput is the full campaign-creation request. Mirrors
@@ -239,6 +251,9 @@ type CampaignInput struct {
 	// AdAccountID optionally overrides the default account. Must be in the
 	// runtime config's accounts list when set.
 	AdAccountID string
+	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
+	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
+	Images map[string]ImageUpload
 }
 
 // CampaignResult is the outcome of CreateCampaign. Mirrors
@@ -258,6 +273,10 @@ type CampaignResult struct {
 	CreativeCount int      `json:"creativeCount"`
 	LinkedInURL   string   `json:"linkedInUrl"`
 	Steps         []string `json:"steps"`
+	// ImageURNs records, per stored asset id, the urn:li:image this run minted for it through
+	// the Images API — including one that then failed to upload or process, so the result names
+	// every image this run created. Omitted when no variant named a stored asset.
+	ImageURNs map[string]string `json:"imageUrns,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -2487,6 +2506,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if variant.ImageURN != "" && !imageURNRE.MatchString(variant.ImageURN) {
 			return nil, fmt.Errorf("variant-%d image URN %q is malformed: expected an Images-API urn:li:image:<id> (the legacy urn:li:digitalmediaAsset form is not accepted by the Posts API)", i+1, variant.ImageURN)
 		}
+		// A stored image is validated here too, so it is refused before any POST however the
+		// client is called (images.go).
+		if variant.ImageAssetID != "" {
+			if variant.ImageURN != "" {
+				return nil, fmt.Errorf("variant-%d names both an image URN and a stored image asset; supply one", i+1)
+			}
+			img, ok := in.Images[variant.ImageAssetID]
+			if !ok {
+				return nil, fmt.Errorf("variant-%d names stored image asset %s, which was not supplied", i+1, variant.ImageAssetID)
+			}
+			if err := ValidateImage(img); err != nil {
+				return nil, fmt.Errorf("variant-%d image asset %s: %w", i+1, variant.ImageAssetID, err)
+			}
+		}
 	}
 
 	// Project is the campaign-name Project segment the data pipeline joins on for
@@ -2638,6 +2671,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// found path, so the step states only that the campaign is ensured to exist.
 	steps = append(steps, fmt.Sprintf("Campaign ensured: %s (ID: %s)", campaignName, campaignID))
 
+	// Stored images are uploaded once each, after the campaign exists and before the first
+	// dark post (see uploadVariantImages for why that window). withImages records the minted
+	// URNs on every result returned from here on.
+	imageURNs, imageSteps, err := c.uploadVariantImages(ctx, accountID, in)
+	steps = append(steps, imageSteps...)
+	withImages := func(r *CampaignResult) *CampaignResult {
+		if len(imageURNs) > 0 {
+			r.ImageURNs = imageURNs
+		}
+		return r
+	}
+	if err != nil {
+		return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, 0, steps)),
+			fmt.Errorf("variant images failed after campaign %q was ensured (no dark post or creative was created): %w", campaignID, err)
+	}
+
 	// NOT idempotent: dark posts and creatives have no name-based lookup and
 	// LinkedIn has no upsert, so re-running this loop duplicates every dark post
 	// and creative. A single-flight guard one layer up (the PLANNED orchestrator
@@ -2647,7 +2696,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	creativeCount := 0
 	for i, variant := range in.Variants {
 		destURL := BuildUTMURL(reg, in.HSToken, campaignName, i+1)
-		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, variant.ImageURN)
+		imageURN := variant.ImageURN
+		if variant.ImageAssetID != "" {
+			imageURN = imageURNs[variant.ImageAssetID]
+		}
+		shareURN, err := c.createDarkPost(ctx, accountID, variant.IntroText, variant.Headline, destURL, imageURN)
 		if err != nil {
 			// Dark posts have NO name-based reconciliation lookup and LinkedIn exposes
 			// no upsert, so an AMBIGUOUS failure (transport/timeout after send, a 5xx,
@@ -2669,10 +2722,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// create — we do NOT intercept it with a nil clean-abort. Mirrors Reddit/Meta.
 			if createOutcomeAmbiguous(err) {
 				steps = append(steps, fmt.Sprintf("Dark post variant-%d outcome UNCONFIRMED (timeout, server error, or an in-flight cancellation); it may have been created — verify before recreating (a dark post has no idempotency lookup)", i+1))
-				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+				return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps)),
 					fmt.Errorf("variant-%d dark post UNCONFIRMED after %d of %d variant(s) created: %w — group %q and campaign %q already exist; the dark post MAY have been created and has no idempotency lookup, so do NOT blindly retry (would duplicate it); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID)
 			}
-			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+			return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps)),
 				fmt.Errorf("variant-%d dark post failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist; do NOT blindly retry (would duplicate the %d created creative(s)); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, creativeCount)
 		}
 		steps = append(steps, fmt.Sprintf("Dark post variant-%d: %s", i+1, shareURN))
@@ -2706,17 +2759,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			// Mirrors Reddit/Meta.
 			if createOutcomeAmbiguous(err) {
 				steps = append(steps, fmt.Sprintf("Creative variant-%d outcome UNCONFIRMED (timeout, server error, or an in-flight cancellation); it may have been created — verify before recreating (orphaned dark post: %s)", i+1, shareURN))
-				return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+				return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps)),
 					fmt.Errorf("variant-%d creative UNCONFIRMED after %d of %d variant(s) created: %w — group %q and campaign %q already exist AND this variant's dark post %q was already created; the creative MAY have been created and has no idempotency lookup, so do NOT blindly retry (would duplicate the creative and the dark post %q); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, shareURN, shareURN)
 			}
-			return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps),
+			return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps)),
 				fmt.Errorf("variant-%d creative failed after %d of %d variant(s) created: %w — group %q and campaign %q already exist AND this variant's dark post %q was already created; do NOT blindly retry (would duplicate the %d created creative(s) and the dark post %q, which has no idempotency lookup); inspect the returned partial result", i+1, creativeCount, len(in.Variants), err, groupID, campaignID, shareURN, creativeCount, shareURN)
 		}
 		steps = append(steps, fmt.Sprintf("Creative (DRAFT): %s", creativeID))
 		creativeCount++
 	}
 
-	return c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps), nil
+	return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps)), nil
 }
 
 // campaignManagerURL returns the Campaign Manager deep link. When no campaign was

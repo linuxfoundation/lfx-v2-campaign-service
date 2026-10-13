@@ -438,6 +438,33 @@ app:
     AI_MODEL:
       value: ''
 
+    # Signed creative-asset URLs (LFXV2-2665): lets a Reddit dispatch use an image stored
+    # through upload-creative-asset. Reddit only accepts a PUBLIC image URL it fetches, so the
+    # service serves the stored bytes at a short-lived HMAC-signed URL on the public gateway
+    # (/_campaigns/creative-assets/..., anonymous by design — see ruleset.yaml) and passes it
+    # to Reddit. Optional as a PAIR: with the key or the base URL unset the feature is OFF (the
+    # route 404s and a Reddit config naming imageAssetId is refused with a 400). A value that
+    # is SET but unusable fails startup.
+    #
+    # Rollout prerequisite: ExternalSecret / secret sync must provision
+    # `creative-asset-url-signing-key` (standard base64 of >= 32 random bytes, e.g.
+    # `openssl rand -base64 32`) on lfx-v2-campaign-service-secrets, AND the overlay must set
+    # CREATIVE_ASSET_PUBLIC_BASE_URL to the https origin of this environment's public gateway
+    # (the lfx-api host this chart's HTTPRoute serves), reachable by Reddit from the internet.
+    # Rotating the key invalidates only URLs minted in the last TTL.
+    CREATIVE_ASSET_URL_SIGNING_KEY:
+      valueFrom:
+        secretKeyRef:
+          name: lfx-v2-campaign-service-secrets
+          key: creative-asset-url-signing-key
+          optional: true
+    # https origin only (no path/query); empty keeps the feature off. e.g. https://lfx-api.<domain>
+    CREATIVE_ASSET_PUBLIC_BASE_URL:
+      value: ''
+    # Lifetime of a minted URL (Go duration, 1m..60m). Reddit fetches during the post create.
+    CREATIVE_ASSET_URL_TTL:
+      value: "10m"
+
     # INDEXER_SERVICE_TOKEN is the SERVICE credential the index relay stamps onto
     # messages it replays from the outbox. Outbox rows deliberately store no token
     # (the table is JSONB retained for audit with no pruning, so a per-request JWT

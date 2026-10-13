@@ -62,7 +62,11 @@ accidentally enable an unverified integration. The env var is read per call
 pod restart to pick up the new `app.environment` value but no rebuild — and the
 disabled path costs one env read. With the gate off the read returns
 `ErrMetricsUnsupported`, which the service maps to the same 400 a platform with
-no metrics adapter at all returns.
+no metrics adapter at all returns. The same flag, read the same way, also gates the
+Reddit audience and keyword performance reads (`GET /projects/{project_id}/reddit-ads/audience`
+and `.../reddit-ads/keywords`, `RedditDispatcher.AudienceEnabled` / `KeywordsEnabled`,
+LFXV2-2665), which run on the same reporting operation with breakdowns: off, each answers 400 "not supported" before the project's
+campaign scope is looked up or Reddit is contacted.
 
 `MICROSOFT_METRICS_ENABLED` is the same kind of gate on the same terms, and defaults
 to `"false"` for the same reason: the Microsoft Advertising v13 Reporting contract

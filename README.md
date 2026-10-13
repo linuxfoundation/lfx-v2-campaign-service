@@ -350,6 +350,26 @@ with or without these values configured.
 In-cluster the two secrets come from the same ExternalSecret-managed secret as
 the rest; `AI_MODEL` is a plain chart value.
 
+### Signed creative-asset URLs for Reddit (optional, `CREATIVE_ASSET_*`)
+
+Lets a Reddit campaign use an image stored through `upload-creative-asset`
+(`redditConfig.imageAssetId`). Reddit only accepts a **public** image URL that it
+fetches, so the service serves the stored bytes at a short-lived HMAC-signed URL
+(`GET|HEAD /_campaigns/creative-assets/{project}/{brief}/{asset}?exp=…&sig=…`,
+anonymous by design) and hands that URL to Reddit (LFXV2-2665). Optional as a
+PAIR: with either of the first two unset the feature is OFF — the route returns
+404 and a Reddit config naming `imageAssetId` is refused with a 400. A value that
+is set but unusable stops the pod at startup.
+
+- `CREATIVE_ASSET_URL_SIGNING_KEY` — **secret**; standard base64 of at least 32
+  random bytes (`openssl rand -base64 32`). In-cluster it comes from
+  `creative-asset-url-signing-key` on the ExternalSecret-managed secret.
+- `CREATIVE_ASSET_PUBLIC_BASE_URL` — the `https` origin of the public gateway
+  Reddit can reach (e.g. `https://lfx-api.<domain>`); no path, query or userinfo.
+- `CREATIVE_ASSET_URL_TTL` — optional Go duration, default `10m`, allowed `1m`..`60m`.
+
+See `docs/knowledge/architecture/signed-creative-asset-urls.md` for the security model.
+
 ### Observability (`OTEL_*`)
 
 OpenTelemetry is opt-in. Exporters default to `none` (no collector

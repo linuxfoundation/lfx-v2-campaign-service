@@ -1696,6 +1696,41 @@ func TestRegisterDispatchers_BindsMicrosoftCreativeAssets(t *testing.T) {
 	assert.False(t, mu.CreativeAssetRepoIsSet(), "a nil *CreativeAssetRepo must leave the Microsoft dispatcher UNBOUND")
 }
 
+// TestRegisterDispatchers_BindsTwitterCreativeAssets pins the X dispatcher's creative-asset
+// wiring (LFXV2-2665) for the reason the Meta test above gives: deleting either bind compiles
+// and leaves every other test green, while every imageAssetId dispatch in production fails
+// pre-create with "the creative-asset store is not configured", or runs outside the shared
+// aggregate asset budget.
+func TestRegisterDispatchers_BindsTwitterCreativeAssets(t *testing.T) {
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
+	td, ok := m[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher)
+	require.True(t, ok, "the twitter entry must be a *dispatch.TwitterDispatcher")
+	assert.True(t, td.CreativeAssetRepoIsSet(), "registerDispatchers must bind the creative-asset repo onto the X dispatcher")
+	assert.True(t, td.AssetReserverIsSet(), "registerDispatchers must bind the shared asset budget onto the X dispatcher")
+
+	unbound := registerDispatchers(nil, nil, nil, nil, nil)
+	tu, ok := unbound[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher)
+	require.True(t, ok, "the twitter entry must be a *dispatch.TwitterDispatcher")
+	assert.False(t, tu.CreativeAssetRepoIsSet(), "a nil *CreativeAssetRepo must leave the X dispatcher UNBOUND, not bound to a typed nil")
+}
+
+// TestRegisterDispatchers_BindsLinkedInCreativeAssets pins the same wiring for the LinkedIn
+// dispatcher (linkedInConfig.variants[].imageAssetId, LFXV2-2665): dropping either bind compiles
+// and leaves every direct-construction test green while every image-backed LinkedIn dispatch
+// fails pre-create with "the creative-asset store is not configured".
+func TestRegisterDispatchers_BindsLinkedInCreativeAssets(t *testing.T) {
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
+	ld, ok := m[model.ProviderLinkedInAds].(*dispatch.LinkedInDispatcher)
+	require.True(t, ok, "the linkedin entry must be a *dispatch.LinkedInDispatcher")
+	assert.True(t, ld.CreativeAssetRepoIsSet(), "registerDispatchers must bind the creative-asset repo onto the LinkedIn dispatcher")
+	assert.True(t, ld.AssetReserverIsSet(), "registerDispatchers must bind the shared asset budget onto the LinkedIn dispatcher")
+
+	unbound := registerDispatchers(nil, nil, nil, nil, nil)
+	lu, ok := unbound[model.ProviderLinkedInAds].(*dispatch.LinkedInDispatcher)
+	require.True(t, ok)
+	assert.False(t, lu.CreativeAssetRepoIsSet(), "a nil *CreativeAssetRepo must leave the LinkedIn dispatcher UNBOUND")
+}
+
 // orderRecordingBriefSetter records the ORDER in which the live-wiring helper publishes each
 // dependency. The order is the property under test, so it is captured rather than the values.
 type orderRecordingBriefSetter struct {

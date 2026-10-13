@@ -57,6 +57,10 @@ type twitterConfig struct {
 	// empty, the client auto-resolves it (exactly one candidate) or refuses (zero or
 	// several candidates) rather than guessing which LF handle publishes.
 	AsUserID string `json:"asUserId"`
+	// ImageAssetID references a creative asset stored for THIS brief (upload-creative-asset)
+	// to attach to the AUTHORED tweet as its image. Requires tweetText and no tweetId; see
+	// resolveTwitterImage (twitter_creative.go) and twitter/media.go.
+	ImageAssetID string `json:"imageAssetId"`
 }
 
 // TwitterDispatcher creates X (Twitter) campaigns for the orchestrator.
@@ -94,6 +98,12 @@ type TwitterDispatcher struct {
 	// (SetStatsJobLease). nil — no database, and the direct-construction tests — admits every
 	// call: without a database there is nothing to coordinate replicas through.
 	statsLease domain.StatsJobLease
+	// creatives resolves twitterConfig.imageAssetId to image bytes; assets bounds the bytes
+	// concurrent dispatches hold. Both bound by registerDispatchers (SetCreativeAssetRepo,
+	// SetAssetReserver in twitter_creative.go); nil in direct-construction tests, where an
+	// asset-referencing config is refused as "store not configured" and the reserver is a no-op.
+	creatives creativeAssetReader
+	assets    *AssetReserver
 }
 
 // SetStatsJobLease binds the cross-pod stats-job lease the audience read and the account
@@ -260,6 +270,15 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		hsToken = bf.HSToken
 	}
 
+	// The creative image is resolved BEFORE the client is built or X contacted: every refusal
+	// here is a pre-create caller/wiring error. The reservation is held until CreateCampaign
+	// has uploaded the bytes.
+	image, releaseImage, err := d.resolveTwitterImage(ctx, brief, cfg, tweetID)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseImage()
+
 	in := twitter.CampaignInput{
 		EventName: bf.EventName,
 		EventSlug: brief.EventSlug,
@@ -273,6 +292,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		TweetID:         tweetID, // normalized above; the gate and the client must agree on empty
 		TweetText:       cfg.TweetText,
 		AsUserID:        asUserID,
+		Image:           image,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE
