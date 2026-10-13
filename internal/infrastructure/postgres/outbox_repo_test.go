@@ -411,3 +411,46 @@ func TestMigrations_AllowedVersionGapsAreStillOpen(t *testing.T) {
 				"unnoticed.", gapStart, gapStart, why)
 	}
 }
+
+// TestMigration000042_IsASeparateLinkedInIndex pins 000042's shape the way 000020's guards pin
+// that one: its OWN index name, the `platform = 'linkedin-ads'` scope (LinkedIn ids are globally
+// unique, so the key carries no account), CONCURRENTLY, and NO `IF NOT EXISTS` (a retry over an
+// INVALID leftover must fail, not record the version clean). It also pins that 000020 was NOT
+// widened to cover LinkedIn — each provider's binding rule is its own constraint.
+func TestMigration000042_IsASeparateLinkedInIndex(t *testing.T) {
+	stmt := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("migrations", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		var lines []string
+		for _, line := range strings.Split(string(b), "\n") {
+			if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "--") {
+				lines = append(lines, trimmed)
+			}
+		}
+		return strings.Join(lines, " ")
+	}
+	up := stmt("000042_campaigns_unique_linkedin_campaign.up.sql")
+	for _, want := range []string{
+		"CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_linkedin_campaign_live",
+		"ON campaigns (platform, platform_campaign_id)",
+		"status <> 'deleted'", "platform_campaign_id IS NOT NULL", "platform = 'linkedin-ads'",
+	} {
+		if !strings.Contains(up, want) {
+			t.Errorf("000042 up is missing %q: %q", want, up)
+		}
+	}
+	if strings.Contains(strings.ToUpper(up), "IF NOT EXISTS") {
+		t.Errorf("000042 up uses IF NOT EXISTS: a retry after a failed CONCURRENTLY build would record the version clean over an INVALID index: %q", up)
+	}
+	if n := strings.Count(up, ";"); n != 1 {
+		t.Errorf("000042 up has %d statements; the runner needs exactly one per file for CONCURRENTLY", n)
+	}
+	if down := stmt("000042_campaigns_unique_linkedin_campaign.down.sql"); down != "DROP INDEX CONCURRENTLY IF EXISTS uq_campaigns_linkedin_campaign_live;" {
+		t.Errorf("000042 down = %q", down)
+	}
+	if strings.Contains(stmt("000020_campaigns_unique_platform_campaign.up.sql"), "linkedin") {
+		t.Error("000020 was widened to cover LinkedIn; LinkedIn's binding rule belongs in its own index (000042)")
+	}
+}

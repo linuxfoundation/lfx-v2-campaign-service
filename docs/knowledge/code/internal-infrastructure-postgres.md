@@ -408,7 +408,8 @@ looking at. The seven connection entries are therefore GENERATED from the table 
 than written out, so an eighth provider added to the schema and the list is covered without
 anyone remembering, and `TestMigrateRefusesEachDroppedSingletonIndex` drops each one against
 a live database and requires `Migrate` to refuse. The counts above are the ten that existed
-when the list was written; 000020's `uq_campaigns_platform_campaign_live` is the eleventh,
+when the list was written; 000020's `uq_campaigns_platform_campaign_live` is the eleventh (and
+000042's `uq_campaigns_linkedin_campaign_live` a later one),
 and it arrived by exactly the route this paragraph warns about — the index was created on one
 branch while the list was introduced on another, so neither tree was wrong on its own and the
 schema-wide check in `TestEveryUniquePartialIndexIsRequired` is what caught it. That test
@@ -1734,6 +1735,24 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   000013 carries the clause and is safe only because 000014 follows it with an explicit
   `indisvalid` guard; nothing follows 000020, so the absence of the clause is the guard.
   `TestMigration000020_HasNoIfNotExists` keeps it absent.
+- **`uq_campaigns_linkedin_campaign_live`** (migration 000042, LFXV2-2665) — LinkedIn's binding
+  guard, a SEPARATE index exactly as the paragraph above requires rather than a wider 000020
+  predicate. Keyed `(platform, platform_campaign_id)` over live rows with `platform =
+  'linkedin-ads'`, and global ON PURPOSE for LinkedIn's own reason: LinkedIn documents URNs as
+  globally unique identifiers and a campaign's URN, `urn:li:sponsoredCampaign:{id}`, carries no
+  account, so the same id in two projects IS the same paid campaign and the key can neither
+  false-reject nor false-accept. Registered in `requiredIndexes`, built CONCURRENTLY with no
+  `IF NOT EXISTS` for 000020's reason (`TestMigration000042_IsASeparateLinkedInIndex` pins the
+  text and that 000020 was not widened). Its violation is classified by
+  `isPlatformCampaignBindingViolation` — `ErrPlatformCampaignAlreadyBound` from `AdoptCampaign`
+  and now also from `UpsertCampaign`, where a LinkedIn dispatch that resolved to an
+  already-bound campaign (its create path reuses a same-name campaign in its group) is reported
+  by the orchestrator as a named conflict with the claim retained, not as "created upstream but
+  failed to record it". Live coverage: `adopt_linkedin_binding_live_test.go` (two concurrent
+  adoptions into two projects' briefs → exactly one success and one AlreadyBound; a dispatch
+  onto a bound id → AlreadyBound, freed by soft delete; the raw index refuses LinkedIn across
+  projects and leaves Meta alone). Meta, Reddit, X and Microsoft adoption still have no binding
+  index; each needs its own per-provider decision (Microsoft's ids are account-scoped).
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.

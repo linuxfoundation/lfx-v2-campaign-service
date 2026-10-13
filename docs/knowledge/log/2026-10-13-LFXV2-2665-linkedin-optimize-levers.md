@@ -62,3 +62,13 @@ amount sent EXACTLY (`big.Rat` via `exactDecimal`, plain decimals only) instead 
 was float-based: `UpdateCampaignUnitCost` compares canonical wire strings, the readback parses
 amounts into exact micro-units, and `ValidateBidAmount`'s check is against the request's own
 float64 (the API body is a JSON number, so that float IS the requested value).
+
+Ninth #318 review round: migration 000042 adds `uq_campaigns_linkedin_campaign_live`, a SEPARATE
+unique index on `(platform, platform_campaign_id)` for live `linkedin-ads` rows, so one LinkedIn
+campaign cannot be adopted (or dispatched) into two briefs in any project. Global by design:
+LinkedIn URNs are globally unique and `urn:li:sponsoredCampaign:{id}` carries no account
+(https://learn.microsoft.com/en-us/linkedin/shared/api-guide/concepts/urns). Registered in
+`requiredIndexes`; `AdoptCampaign` and `UpsertCampaign` classify its 23505 as
+`ErrPlatformCampaignAlreadyBound`, and the orchestrator reports a duplicate dispatch as a named
+conflict with the claim retained. A deploy whose data already holds two live rows for one LinkedIn
+id fails the CONCURRENTLY build loudly until the duplicate is resolved.
