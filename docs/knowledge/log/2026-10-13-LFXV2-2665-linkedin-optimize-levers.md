@@ -27,3 +27,7 @@ adoption validates the echoed account BEFORE interpreting a terminal status; the
 an unreported status; `ValidateBidAmount` requires the two-decimal wire form to equal the requested
 float exactly (no tolerance); and the bid endpoint description scopes "not USD" to the non-LinkedIn
 adapters.
+
+Third #318 review round: the bid rejection classifier now REQUIRES every input error to echo
+`input.value.decimalValue` equal to the submitted bid; an envelope that omits it is no longer an
+amount REJECTED (400) and stays an ordinary definite failure.

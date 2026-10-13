@@ -229,7 +229,7 @@ var amountErrorCodes = map[string]bool{
 //     this body describes this response;
 //   - there is at least one input error, and EVERY one names /Campaign/unitCost/amount with an
 //     amount code — an envelope that also blames another field is not an amount refusal;
-//   - where an input error echoes the value, it is the value sent.
+//   - EVERY input error echoes `input.value.decimalValue`, and it is the value sent.
 //
 // The message text is never consulted.
 func bidAmountRefused(ae *apiError, wire string) bool {
@@ -255,11 +255,16 @@ func bidAmountRefused(ae *apiError, wire string) bool {
 		if ie.Input.InputPath.FieldPath != unitCostFieldPath || !amountErrorCodes[ie.Code] {
 			return false
 		}
-		if v := ie.Input.Value; v != nil && v.DecimalValue != nil {
-			echoed, perr := strconv.ParseFloat(*v.DecimalValue, 64)
-			if perr != nil || echoed != sent {
-				return false
-			}
+		// The echo is REQUIRED, not merely checked when present: an input error that does not
+		// say which value it refused cannot prove it was ours, so the envelope is structurally
+		// incomplete and stays an ordinary definite failure, never an amount rejection.
+		v := ie.Input.Value
+		if v == nil || v.DecimalValue == nil {
+			return false
+		}
+		echoed, perr := strconv.ParseFloat(*v.DecimalValue, 64)
+		if perr != nil || echoed != sent {
+			return false
 		}
 	}
 	return true

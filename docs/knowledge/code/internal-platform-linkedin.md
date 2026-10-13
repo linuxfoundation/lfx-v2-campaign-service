@@ -491,8 +491,8 @@ itself, which `createOutcomeAmbiguous` classifies unconfirmed (the budget write 
 A definite 400 becomes `ErrBidAmountInvalid` only via `bidAmountRefused`: the FULL body
 (`apiError.raw` — `Body` is cut at 400 chars) passes `identityjson`, decodes, its `status` equals
 the HTTP status, and EVERY input error names `/Campaign/unitCost/amount` with
-FIELD_VALUE_TOO_LOW/HIGH, CONDITIONAL_VALUE_TOO_LOW/HIGH or INVALID_VALUE_FOR_FIELD, any echoed
-`decimalValue` equal to the sent amount. LinkedIn's text is never surfaced.
+FIELD_VALUE_TOO_LOW/HIGH, CONDITIONAL_VALUE_TOO_LOW/HIGH or INVALID_VALUE_FOR_FIELD and
+echoing a `decimalValue` (required, not optional) equal to the sent amount. LinkedIn's text is never surfaced.
 
 ## Metrics read
 

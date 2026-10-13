@@ -123,6 +123,8 @@ func TestUpdateCampaignUnitCost_Classification(t *testing.T) {
 		{"refusal with a non-amount code", 400, amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_IMMUTABLE_FOR_NON_DRAFT_CAMPAIGNS", "5.25"), false, false, 1},
 		{"envelope status disagrees with HTTP", 400, amountEnvelope(422, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), false, false, 1},
 		{"envelope echoes another value", 400, amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "9.99"), false, false, 1},
+		{"envelope omits the echoed value", 400, strings.Replace(amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), `"value":{"decimalValue":"5.25"},`, ``, 1), false, false, 1},
+		{"envelope echoes a null decimalValue", 400, strings.Replace(amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), `"decimalValue":"5.25"`, `"decimalValue":null`, 1), false, false, 1},
 		{"envelope with a duplicated key", 400, strings.Replace(amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), `"status":400,`, `"status":400,"status":400,`, 1), false, false, 1},
 		{"unstructured 400", 400, `{"message":"bid too low","status":400}`, false, false, 1},
 		{"403 is definite", 403, `{"status":403}`, false, false, 1},
