@@ -33,6 +33,8 @@ func TestMonitorFailureClass_Mapping(t *testing.T) {
 		{"page cap", fmt.Errorf("walk: %w", errPageCapReached), model.MonitorFailureDecode},
 		{"400", &apiError{StatusCode: http.StatusBadRequest}, model.MonitorFailureOther},
 		{"404", &apiError{StatusCode: http.StatusNotFound}, model.MonitorFailureOther},
+		{"malformed 2xx envelope", fmt.Errorf("page 1: %w", &transportError{Err: fmt.Errorf("%w: unexpected end of JSON input", errUndecodable2xxResponse)}), model.MonitorFailureDecode},
+		{"2xx body unreadable", &transportError{Err: fmt.Errorf("read 2xx response body: %w", errors.New("unexpected EOF"))}, model.MonitorFailureOther},
 		{"transport", &transportError{Err: errors.New("connection reset")}, model.MonitorFailureOther},
 		{"deadline", context.DeadlineExceeded, model.MonitorFailureOther},
 		{"plain", errors.New("something"), model.MonitorFailureOther},
@@ -55,12 +57,16 @@ func TestListAccountCampaigns_ClassifiesEachFailedRow(t *testing.T) {
 		"camp2": http.StatusBadGateway,
 		"camp4": http.StatusForbidden,
 	}
-	stub := &monitorStub{t: t, listBody: `{"data":` + manyActiveCampaignsBody(6) + `}`, report: func(id string) (int, string) {
+	stub := &monitorStub{t: t, listBody: `{"data":` + manyActiveCampaignsBody(7) + `}`, report: func(id string) (int, string) {
 		if s, ok := statuses[id]; ok {
 			return s, `{"error":"x"}`
 		}
 		if id == "camp3" {
 			return http.StatusOK, `{"data":"not-a-report"}`
+		}
+		if id == "camp5" {
+			// Not JSON at all: request() fails the envelope decode before decodeReportRows runs.
+			return http.StatusOK, `<html>gateway hiccup</html>`
 		}
 		return healthyReport(id)
 	}}
@@ -77,7 +83,8 @@ func TestListAccountCampaigns_ClassifiesEachFailedRow(t *testing.T) {
 		"camp2": model.MonitorFailureUpstream5xx,
 		"camp3": model.MonitorFailureDecode,
 		"camp4": model.MonitorFailureAuth,
-		"camp5": "",
+		"camp5": model.MonitorFailureDecode,
+		"camp6": "",
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("got %d rows, want %d", len(rows), len(want))

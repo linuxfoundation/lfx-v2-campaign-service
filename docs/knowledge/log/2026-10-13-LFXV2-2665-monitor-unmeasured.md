@@ -10,3 +10,9 @@ none when every failure is `no_report`) and adds them to the new
 `campaign_monitor_unmeasured_rows_total{platform,class}` counter (#220). Reddit's fan-out now fails
 the read when the caller's deadline killed in-flight reports. The class is not in the response.
 See `architecture/account-monitor-endpoints.md` and `code/internal-infrastructure-metrics.md`.
+
+PR review (#319): a 2xx report whose body is not valid JSON was classed `other`, because
+`request()` wraps that unmarshal failure in a `transportError` before `decodeReportRows` runs. It
+now carries `errUndecodable2xxResponse` inside the same `transportError` (still ambiguous for
+mutating callers, same message text) and classes as `decode`; a 2xx body that could not be read
+stays `other`.

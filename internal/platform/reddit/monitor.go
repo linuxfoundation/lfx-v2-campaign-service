@@ -359,13 +359,18 @@ var errMonitorReportUndecodable = errors.New("reddit: campaign report could not 
 // closed model.MonitorFailureClass set. Only the error's TYPE and STATUS are read, never its
 // text, which is the point: the class reaches a log line and a metric label.
 //
+// A 2xx whose envelope is not valid JSON is decode even though request() wraps it in a
+// transportError (errUndecodable2xxResponse is checked before anything transport-shaped); a 2xx
+// body that could not be READ is a failed round trip and stays other.
+//
 // A 429 that aborted because Reddit's Retry-After exceeded the wait cap surfaces as a
 // transportError and so classes as other; a 429 after the bounded retry is an apiError and
 // classes as throttle.
 func monitorFailureClass(err error) model.MonitorFailureClass {
 	var ae *apiError
 	switch {
-	case errors.Is(err, errMonitorReportUndecodable), errors.Is(err, errPageCapReached):
+	case errors.Is(err, errMonitorReportUndecodable), errors.Is(err, errPageCapReached),
+		errors.Is(err, errUndecodable2xxResponse):
 		return model.MonitorFailureDecode
 	case errors.Is(err, ErrCredentialRejected):
 		return model.MonitorFailureAuth

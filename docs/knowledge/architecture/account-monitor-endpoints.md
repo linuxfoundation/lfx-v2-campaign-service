@@ -591,7 +591,7 @@ Why a row failed (#220) is carried as `model.MonitorFailureClass` on
 | `auth` | Reddit: 401/403 on the report, or `ErrCredentialRejected` from the token refresh |
 | `throttle` | Reddit: 429 after the bounded retry (an over-cap `Retry-After` abort is a `transportError` → `other`) |
 | `upstream_5xx` | Reddit: 5xx, or the token endpoint unavailable |
-| `decode` | Reddit: undecodable/misattributed report, page cap, an id it will not interpolate; LinkedIn and Meta: every failed row (unparseable budget, `costInUsd`, insights counter); Microsoft/X dispatchers: unparseable budget or flight |
+| `decode` | Reddit: a 2xx body that is not valid JSON (`errUndecodable2xxResponse`, inside the `transportError` `request()` returns), an undecodable/misattributed report, page cap, an id it will not interpolate; LinkedIn and Meta: every failed row (unparseable budget, `costInUsd`, insights counter); Microsoft/X dispatchers: unparseable budget or flight |
 | `no_report` | `mergeAccountReport`, when no report has finished (a dispatcher's class is kept) |
 | `other` | anything else, and every Google row (its client sets no class; `NormalizeMonitorFailureClass`) |
 
