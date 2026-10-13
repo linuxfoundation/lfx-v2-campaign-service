@@ -294,9 +294,10 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 		// (ListAccountCampaigns) would then read as "every listed campaign had zero activity"
 		// instead of "the analytics read failed" (round-24 review).
 		Elements *[]struct {
-			// PivotValues arrives automatically once `pivot=CAMPAIGN` is set — it is not, and
-			// cannot be, requested via `fields` (see the RawQuery comment above). Mirrors the
-			// BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
+			// PivotValues is not named in this read's `fields`; it relies on the field arriving
+			// with `pivot=CAMPAIGN`, as the BFF's does. Only the legacy SINGULAR `pivotValue` is
+			// unprojectable — the plural is a documented `fields` value (see the RawQuery comment
+			// above). Mirrors the BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
 			PivotValues []string `json:"pivotValues"`
 			Impressions int64    `json:"impressions"`
 			Clicks      int64    `json:"clicks"`
