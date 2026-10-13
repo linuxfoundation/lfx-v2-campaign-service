@@ -250,10 +250,16 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 	//   - SET before the write is sent (the beforeWrite hook), or after ALREADY_IN_STATE, so a
 	//     pause whose outcome is UNCONFIRMED is ON RECORD: unknown is treated as paused, and a
 	//     later campaign ACTIVATE never silently re-activates an ad set a user may have paused;
-	//   - REMOVED again (best effort) only when that write definitely changed nothing;
+	//   - REMOVED again only when that write definitely changed nothing;
 	//   - CLEARED only by a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE). An UNCONFIRMED
 	//     resume leaves it set — the fail-safe direction: the ad set may stay paused, never spend
 	//     unasked.
+	//
+	// Every record write goes through writeMetaAdSetRecord, which RECONCILES a commit whose
+	// outcome is unknown (domain.ErrWriteOutcomeUnknown) instead of reading it as "not written".
+	// The one state this must never produce is a pause on record over an ad set that was never
+	// paused — list-meta-ad-sets would report it deliberately paused while it serves — so once a
+	// pause record MAY have landed, the pause is always sent.
 	recorded := model.MetaRecordedAdSetID(existing.Result)
 	onRecord := model.MetaUserPausedAdSetID(existing.Result)
 	tracked := recorded != "" && p.AdSetID == recorded
@@ -274,17 +280,30 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 	// row/curVersion track the row as this call last wrote it (the claim does not bump it).
 	row, curVersion := existing, version
 	var intentErr error
-	intentRecorded := false
+	// intentRecorded: the pause is on record at curVersion. recordUnknown: the pause record's
+	// write could not be reconciled, so it may or may not be on record (version unknown).
+	intentRecorded, recordUnknown := false, false
 	var beforeWrite MetaAdSetBeforeWrite
 	if setRecord {
 		beforeWrite = func(hctx context.Context) error {
-			updated, perr := s.persistMetaAdSetRecord(hctx, campaignRepo, row, p.AdSetID, curVersion, lockToken)
-			if perr != nil {
+			updated, perr := s.writeMetaAdSetRecord(hctx, campaignRepo, row, p.AdSetID, curVersion, lockToken)
+			switch {
+			case perr == nil:
+				row, curVersion, intentRecorded = updated, updated.Version, true
+				return nil
+			case errors.Is(perr, errMetaAdSetRecordUnknown):
+				// The record may have landed. Suppressing the pause now could leave it on record
+				// over a live ad set, so the pause is SENT — pausing never spends — and the record
+				// is settled after Meta answers.
+				slog.WarnContext(ctx, "meta ad set pause record write is unconfirmed; sending the pause anyway (fail-safe)",
+					"campaign_id", p.CampaignID, "ad_set_id", p.AdSetID, "error", perr)
+				recordUnknown = true
+				return nil
+			default:
+				// A definite rollback: nothing is on record, so nothing is sent.
 				intentErr = perr
 				return perr
 			}
-			row, curVersion, intentRecorded = updated, updated.Version, true
-			return nil
 		}
 	}
 	logFields := []any{"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
@@ -314,11 +333,16 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 			}
 			return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the ad set's pause could not be recorded on the campaign, so it was not sent — nothing was changed on Meta"}
 		}
-		if intentRecorded {
-			// The write definitely changed nothing, so the pause it recorded is withdrawn. Best
-			// effort: if this fails the record stays, which only keeps the ad set paused on a
-			// later campaign resume (the fail-safe direction), and list-meta-ad-sets shows it.
-			s.withdrawMetaAdSetRecord(ctx, campaignRepo, row, curVersion, lockToken, logFields)
+		if intentRecorded || recordUnknown {
+			// The write definitely changed nothing, so the pause it recorded (or may have
+			// recorded) is withdrawn. If that cannot be established, the record may now claim a
+			// pause over an ad set that is still active, and the answer says so instead of
+			// "nothing was changed".
+			if werr := s.withdrawMetaAdSetRecord(ctx, campaignRepo, row, curVersion, lockToken, recordUnknown, p.AdSetID); werr != nil {
+				slog.ErrorContext(ctx, "meta ad set pause was not applied, and withdrawing its deliberate-pause record failed; the campaign may report the ad set deliberately paused while it is active",
+					append(logFields, "error", werr, "platform_error", safeErrSummary(terr))...)
+				return nil, &briefs.ConnServiceUnavailableError{Code: "503", Message: "the ad set's pause was not applied on Meta, but the pause recorded on the campaign could not be withdrawn: it may be shown as deliberately paused while it is active — resume it here to clear the record"}
+			}
 		}
 		return nil, s.classifyMetaAdSetError(ctx, "toggle", p.ProjectID, p.BriefID, p.CampaignID, existing.Platform, terr)
 	}
@@ -333,11 +357,21 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 	}
 	applied := res.Outcome == model.MetaAdSetApplied
 	switch {
+	case recordUnknown:
+		// The pause reached Meta (or was already there) but whether the record landed is
+		// unknown: settle it from a fresh read — the ad set is paused, so either answer is safe.
+		updated, perr := s.settleMetaAdSetRecord(ctx, campaignRepo, row, p.AdSetID)
+		if perr != nil {
+			slog.ErrorContext(ctx, "meta ad set is paused on the platform but its deliberate-pause record could not be settled",
+				append(logFields, "outcome", res.Outcome, "error", perr)...)
+			return nil, adSetRecordErr(perr, applied, "paused")
+		}
+		row, curVersion = updated, updated.Version
 	case setRecord && !intentRecorded:
 		// ALREADY_IN_STATE: nothing was sent, and the pause is recorded now. (APPLIED without the
 		// hook having run would be an adapter defect; recording is still the safe answer.)
 		pctx, cancel := persistCtxFor(ctx)
-		updated, perr := s.persistMetaAdSetRecord(pctx, campaignRepo, row, p.AdSetID, curVersion, lockToken)
+		updated, perr := s.writeMetaAdSetRecord(pctx, campaignRepo, row, p.AdSetID, curVersion, lockToken)
 		cancel()
 		if perr != nil {
 			slog.ErrorContext(ctx, "meta ad set is paused on the platform but recording the deliberate pause failed",
@@ -349,7 +383,7 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 		// A CONFIRMED resume clears the record. ReplaceCampaign's compare-and-swap at the claimed
 		// version is itself the proof that no other writer changed the row meanwhile.
 		pctx, cancel := persistCtxFor(ctx)
-		updated, perr := s.persistMetaAdSetRecord(pctx, campaignRepo, row, "", curVersion, lockToken)
+		updated, perr := s.writeMetaAdSetRecord(pctx, campaignRepo, row, "", curVersion, lockToken)
 		cancel()
 		if perr != nil {
 			slog.ErrorContext(ctx, "meta ad set is active on the platform but clearing its deliberate-pause record failed",
@@ -401,15 +435,82 @@ func (s *BriefService) persistMetaAdSetRecord(ctx context.Context, repo domain.C
 	return repo.ReplaceCampaign(ctx, &cp, expectedVersion, lockToken, s.campaignIndexPayload(indexer.ActionUpdated))
 }
 
-// withdrawMetaAdSetRecord removes a pause record this call wrote before a write that then
-// definitely changed nothing. Best effort and logged; see the caller.
-func (s *BriefService) withdrawMetaAdSetRecord(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, version int64, lockToken domain.CampaignLockToken, logFields []any) {
+// errMetaAdSetRecordUnknown: a deliberate-pause record write whose commit outcome could not be
+// reconciled — it may or may not be on the row.
+var errMetaAdSetRecordUnknown = errors.New("whether the ad set's deliberate-pause record was written is unknown")
+
+// writeMetaAdSetRecord is persistMetaAdSetRecord with an ambiguous commit RECONCILED. A commit
+// error (domain.ErrWriteOutcomeUnknown) does not prove a rollback, so the same guarded write is
+// repeated once on a fresh pool connection (the claim's own connection may be what failed),
+// under a detached deadline:
+//
+//   - it succeeds → the first attempt had rolled back, and the record is now written;
+//   - ErrPreconditionFailed → the row moved past expectedVersion. A guarded UPDATE waits on the
+//     row lock of any transaction still resolving, so this is the FIRST attempt's outcome made
+//     visible, provided a fresh read shows exactly expectedVersion+1 carrying the intended
+//     record; then that row is returned. Anything else is unknown;
+//   - any other failure, including a second ambiguous commit → errMetaAdSetRecordUnknown.
+//
+// The repeat is a database write, never the Meta mutation, so "send at most once" is untouched.
+// Every definite error (anything without ErrWriteOutcomeUnknown) is returned unchanged.
+func (s *BriefService) writeMetaAdSetRecord(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, adSetID string, expectedVersion int64, lockToken domain.CampaignLockToken) (*model.Campaign, error) {
+	updated, err := s.persistMetaAdSetRecord(ctx, repo, row, adSetID, expectedVersion, lockToken)
+	if err == nil || !errors.Is(err, domain.ErrWriteOutcomeUnknown) {
+		return updated, err
+	}
+	slog.WarnContext(ctx, "meta ad set deliberate-pause record commit is ambiguous; reconciling",
+		"campaign_id", row.ID, "expected_version", expectedVersion, "error", err)
+	rctx, cancel := persistCtxFor(ctx)
+	defer cancel()
+	again, rerr := s.persistMetaAdSetRecord(rctx, repo, row, adSetID, expectedVersion, domain.CampaignLockToken{})
+	switch {
+	case rerr == nil:
+		return again, nil
+	case errors.Is(rerr, domain.ErrPreconditionFailed):
+		cur, gerr := repo.GetCampaign(rctx, row.ProjectID, row.BriefID, row.ID)
+		if gerr == nil && cur.Version == expectedVersion+1 && model.MetaUserPausedAdSetID(cur.Result) == adSetID {
+			return cur, nil
+		}
+		return nil, fmt.Errorf("%w: the row moved past version %d without the intended record (read error: %v)", errMetaAdSetRecordUnknown, expectedVersion, gerr)
+	default:
+		return nil, fmt.Errorf("%w: reconciling write failed: %v", errMetaAdSetRecordUnknown, rerr)
+	}
+}
+
+// settleMetaAdSetRecord makes the pause of adSetID be on record when an earlier write of it could
+// not be reconciled: a fresh read that already shows it is accepted; otherwise it is written at
+// the read version on a fresh connection (an ambiguous commit is reconciled as above).
+func (s *BriefService) settleMetaAdSetRecord(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, adSetID string) (*model.Campaign, error) {
 	pctx, cancel := persistCtxFor(ctx)
 	defer cancel()
-	if _, err := s.persistMetaAdSetRecord(pctx, repo, row, "", version, lockToken); err != nil {
-		slog.ErrorContext(ctx, "meta ad set pause was not applied, but withdrawing its deliberate-pause record failed; a campaign resume will leave this ad set paused until it is resumed through the ad-set lever",
-			append(logFields, "error", err)...)
+	cur, err := repo.GetCampaign(pctx, row.ProjectID, row.BriefID, row.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: re-read failed: %v", errMetaAdSetRecordUnknown, err)
 	}
+	if model.MetaUserPausedAdSetID(cur.Result) == adSetID {
+		return cur, nil
+	}
+	return s.writeMetaAdSetRecord(pctx, repo, cur, adSetID, cur.Version, domain.CampaignLockToken{})
+}
+
+// withdrawMetaAdSetRecord removes a pause record before a write that then definitely changed
+// nothing. With fromRead (the record's write was never reconciled) the row is re-read first: no
+// record means nothing to withdraw. A nil error means the record is established to be absent.
+func (s *BriefService) withdrawMetaAdSetRecord(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, version int64, lockToken domain.CampaignLockToken, fromRead bool, adSetID string) error {
+	pctx, cancel := persistCtxFor(ctx)
+	defer cancel()
+	if fromRead {
+		cur, err := repo.GetCampaign(pctx, row.ProjectID, row.BriefID, row.ID)
+		if err != nil {
+			return fmt.Errorf("%w: re-read failed: %v", errMetaAdSetRecordUnknown, err)
+		}
+		if model.MetaUserPausedAdSetID(cur.Result) != adSetID {
+			return nil
+		}
+		row, version, lockToken = cur, cur.Version, domain.CampaignLockToken{}
+	}
+	_, err := s.writeMetaAdSetRecord(pctx, repo, row, "", version, lockToken)
+	return err
 }
 
 // adSetRecordErr answers a failed record write made AFTER Meta's definite outcome. applied says
@@ -425,6 +526,9 @@ func adSetRecordErr(err error, applied bool, verb string) error {
 	}
 	if errors.Is(err, domain.ErrPreconditionFailed) || errors.Is(err, domain.ErrNotFound) {
 		return &briefs.ConflictError{Code: "409", Message: what + ", but this campaign was modified or deleted by another request meanwhile, so the change was not recorded: " + consequence + " after reading the campaign"}
+	}
+	if errors.Is(err, errMetaAdSetRecordUnknown) {
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but whether that was recorded on the campaign could not be confirmed: read the ad sets (deliberately_paused); if it is not shown, " + consequence}
 	}
 	return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but recording it on the campaign failed: " + consequence}
 }

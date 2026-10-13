@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -230,6 +232,12 @@ func TestToggleMetaAdSetStatus_RacesTheCampaignToggleThroughTheWriteLock(t *test
 	row.Status = model.CampaignRunPaused
 	d := &pauseAndCampaignDispatcher{inWrite: make(chan struct{}), release: make(chan struct{})}
 	s, repo := adSetService(row, model.ProviderMetaAds, d)
+	// Every wait below is bounded, and release is closed on cleanup whatever happens, so a
+	// regression fails this test instead of hanging the package or leaking the goroutine.
+	var releaseOnce sync.Once
+	releaseLever := func() { releaseOnce.Do(func() { close(d.release) }) }
+	t.Cleanup(releaseLever)
+	const wait = 5 * time.Second
 
 	type result struct {
 		res *briefs.MetaAdSetStatusChange
@@ -240,7 +248,13 @@ func TestToggleMetaAdSetStatus_RacesTheCampaignToggleThroughTheWriteLock(t *test
 		res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
 		done <- result{res, err}
 	}()
-	<-d.inWrite
+	select {
+	case <-d.inWrite:
+	case r := <-done:
+		t.Fatalf("the pause returned before reaching its write: %+v, %v", r.res, r.err)
+	case <-time.After(wait):
+		t.Fatal("the pause never reached its write")
+	}
 
 	resume := func(etag string) error {
 		_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
@@ -252,8 +266,13 @@ func TestToggleMetaAdSetStatus_RacesTheCampaignToggleThroughTheWriteLock(t *test
 	if err := resume("4"); !isStatus(err, 409) || d.campaignCalls != 0 {
 		t.Fatalf("resume during the pause: %T %v, campaign toggles %d; want a 409 that never reaches Meta", err, err, d.campaignCalls)
 	}
-	close(d.release)
-	r := <-done
+	releaseLever()
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(wait):
+		t.Fatal("the pause did not finish after its write was released")
+	}
 	if r.err != nil || *r.res.Etag != `"4"` {
 		t.Fatalf("pause: %+v, %v", r.res, r.err)
 	}
@@ -266,4 +285,110 @@ func TestToggleMetaAdSetStatus_RacesTheCampaignToggleThroughTheWriteLock(t *test
 	if d.campaignCalls != 1 || !d.campaignHeld || d.campaignStatus != model.CampaignRunActive || !held(repo) {
 		t.Fatalf("campaign toggles %d, saw the record %v, status %q; the resume must see the pause on record", d.campaignCalls, d.campaignHeld, d.campaignStatus)
 	}
+}
+
+// ---- ambiguous commits of the record (PR #309) -----------------------------
+//
+// A ReplaceCampaign whose COMMIT errored (domain.ErrWriteOutcomeUnknown) may have landed. The one
+// state the lever must never produce is a pause on record over an ad set that was never paused.
+
+// The dangerous case: the record landed though its commit errored. Before the fix the pause was
+// then suppressed, leaving the record over a live ad set; now it is reconciled as landed and sent.
+func TestToggleMetaAdSetStatus_AmbiguousRecordThatLandedStillSendsThePause(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{errLandedButAmbiguous}
+	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if err != nil || *res.Etag != `"4"` {
+		t.Fatalf("got %+v, %v", res, err)
+	}
+	if d.sent != 1 || !held(repo) {
+		t.Fatalf("sent %d, held %v; a record that landed must be followed by the pause", d.sent, held(repo))
+	}
+}
+
+// Rolled back: the reconciling write records it, and the pause is sent.
+func TestToggleMetaAdSetStatus_AmbiguousRecordThatRolledBackIsWrittenAndSent(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{ambiguousCommit()}
+	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if err != nil || *res.Etag != `"4"` || d.sent != 1 || !held(repo) || repo.replaces != 2 {
+		t.Fatalf("got %+v, %v; sent %d, held %v, writes %d", res, err, d.sent, held(repo), repo.replaces)
+	}
+}
+
+// Unreconcilable (the re-read fails too): the pause is still SENT — never suppressed over a
+// record that may exist — and the answer says the record could not be confirmed.
+func TestToggleMetaAdSetStatus_UnreconcilableRecordStillSendsThePause(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{errLandedButAmbiguous}
+	repo.readErrAfterFirst = errors.New("db down")
+	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); res != nil || !isStatus(err, 503) || !strings.Contains(msg, "WAS paused on Meta") || !strings.Contains(msg, "could not be confirmed") {
+		t.Fatalf("got %+v, %T %q", res, err, msg)
+	}
+	if d.sent != 1 || !held(repo) {
+		t.Fatalf("sent %d, held %v", d.sent, held(repo))
+	}
+}
+
+// A definite pause failure after an ambiguous-but-landed record withdraws it.
+func TestToggleMetaAdSetStatus_RefusedPauseWithdrawsALandedAmbiguousRecord(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggleErr: errors.New("meta refused the write")}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{errLandedButAmbiguous}
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if !isStatus(err, 503) || !strings.Contains(errMessage(err), "nothing was changed") || held(repo) {
+		t.Fatalf("err %q, held %v", errMessage(err), held(repo))
+	}
+}
+
+// If the withdrawal cannot be established, the answer says the record may claim a pause over an
+// active ad set — never "nothing was changed".
+func TestToggleMetaAdSetStatus_UnwithdrawableRecordIsReportedLoudly(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggleErr: errors.New("meta refused the write")}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{errLandedButAmbiguous}
+	repo.readErrAfterFirst = errors.New("db down")
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "could not be withdrawn") || strings.Contains(msg, "nothing was changed") {
+		t.Fatalf("err = %q", msg)
+	}
+}
+
+// The withdrawal's own ambiguous commit is reconciled too.
+func TestToggleMetaAdSetStatus_AmbiguousWithdrawalIsReconciled(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggleErr: errors.New("meta refused the write")}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{nil, errLandedButAmbiguous}
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if !isStatus(err, 503) || !strings.Contains(errMessage(err), "nothing was changed") || held(repo) {
+		t.Fatalf("err %q, held %v", errMessage(err), held(repo))
+	}
+}
+
+// Clear-on-resume shares the path: a landed ambiguous clear is success; an unreconcilable one is
+// a 503 saying it could not be confirmed.
+func TestToggleMetaAdSetStatus_AmbiguousClearOnResume(t *testing.T) {
+	t.Run("landed", func(t *testing.T) {
+		d := &adSetDispatcher{toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "PAUSED"}}
+		s, repo := adSetService(heldRow(t), model.ProviderMetaAds, d)
+		repo.replaceErrs = []error{errLandedButAmbiguous}
+		res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "ACTIVE"))
+		if err != nil || *res.Etag != `"4"` || held(repo) {
+			t.Fatalf("got %+v, %v, held %v", res, err, held(repo))
+		}
+	})
+	t.Run("unreconcilable", func(t *testing.T) {
+		d := &adSetDispatcher{toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "PAUSED"}}
+		s, repo := adSetService(heldRow(t), model.ProviderMetaAds, d)
+		repo.replaceErrs = []error{errLandedButAmbiguous}
+		repo.readErrAfterFirst = errors.New("db down")
+		_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "ACTIVE"))
+		if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "WAS resumed on Meta") || !strings.Contains(msg, "could not be confirmed") {
+			t.Fatalf("err = %q", msg)
+		}
+	})
 }

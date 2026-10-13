@@ -32,6 +32,8 @@ type adSetDispatcher struct {
 	// beforeWrite hook first and, if the hook fails, returns that failure without "sending".
 	sends     bool
 	hookCalls int
+	// sent counts writes the fake treated as sent: the hook (if any) passed and toggle answered.
+	sent int
 }
 
 func (d *adSetDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -52,6 +54,7 @@ func (d *adSetDispatcher) ToggleMetaAdSetStatus(ctx context.Context, _ string, _
 		if err := beforeWrite(ctx); err != nil {
 			return nil, fmt.Errorf("nothing was sent: %w", err)
 		}
+		d.sent++
 	}
 	return d.toggle, d.toggleErr
 }
@@ -74,6 +77,27 @@ type adSetRepo struct {
 	// that call through).
 	replaceErrs []error
 	replaces    int
+	// readErrAfterFirst, when set, fails every GetCampaign after the service's initial load —
+	// the reconciliation reads.
+	readErrAfterFirst error
+	reads             int
+}
+
+// errLandedButAmbiguous, as a replaceErrs entry, APPLIES that write and then reports its commit
+// as ambiguous — the case where Postgres committed but the acknowledgement was lost.
+var errLandedButAmbiguous = errors.New("test: landed, then an ambiguous commit")
+
+// ambiguousCommit is what the repo returns for a commit error that did NOT land.
+func ambiguousCommit() error {
+	return fmt.Errorf("replace campaign: commit: %w: connection reset", domain.ErrWriteOutcomeUnknown)
+}
+
+func (r *adSetRepo) GetCampaign(ctx context.Context, projectID, briefID, campaignID string) (*model.Campaign, error) {
+	r.reads++
+	if r.reads > 1 && r.readErrAfterFirst != nil {
+		return nil, r.readErrAfterFirst
+	}
+	return r.toggleCampaignRepo.GetCampaign(ctx, projectID, briefID, campaignID)
 }
 
 // ReplaceCampaign also carries the written Result into the stored row, so a test can read the
@@ -83,10 +107,20 @@ func (r *adSetRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expe
 	if len(r.replaceErrs) > 0 {
 		err := r.replaceErrs[0]
 		r.replaceErrs = r.replaceErrs[1:]
-		if err != nil {
+		if err != nil && !errors.Is(err, errLandedButAmbiguous) {
 			return nil, err
 		}
+		if err != nil {
+			if _, aerr := r.apply(ctx, c, expectedVersion, tok, idx); aerr != nil {
+				return nil, aerr
+			}
+			return nil, ambiguousCommit()
+		}
 	}
+	return r.apply(ctx, c, expectedVersion, tok, idx)
+}
+
+func (r *adSetRepo) apply(ctx context.Context, c *model.Campaign, expectedVersion int64, tok domain.CampaignLockToken, idx domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	out, err := r.toggleCampaignRepo.ReplaceCampaign(ctx, c, expectedVersion, tok, idx)
 	if err != nil {
 		return nil, err

@@ -1518,6 +1518,16 @@ up. Gating on `status='building'` instead makes the condition that decides the o
 statement that performs it, and makes the call idempotent under retry: a row already `failed`,
 already `built`, or gone matches nothing and returns `nil` rather than an error.
 
+## `ReplaceCampaign`'s commit error is ambiguous (PR #309)
+
+A failed `tx.Commit` in `ReplaceCampaign` is returned wrapping `domain.ErrWriteOutcomeUnknown`:
+PostgreSQL may have committed before the acknowledgement was lost, the hazard
+`reconcileAmbiguousAudienceCommit` handles for audiences. Errors before the commit (begin, the
+guarded UPDATE, the 404/412 classification, the outbox insert) are definite rollbacks and never
+carry it. The Meta ad-set lever reconciles on it; every other caller's handling is unchanged.
+`TestLiveReplaceCampaignCommitErrorIsMarkedAmbiguous` forces a commit failure with a deferred
+constraint trigger scoped to its own row.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one

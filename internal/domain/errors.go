@@ -92,6 +92,12 @@ var (
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
 
+	// ErrWriteOutcomeUnknown marks a write whose COMMIT returned an error. A commit error does not
+	// prove the server rolled back — PostgreSQL may have committed before the acknowledgement was
+	// lost — so the write may or may not have landed and the caller must reconcile before acting
+	// on either answer. Every error before the commit is a definite rollback and never carries it.
+	ErrWriteOutcomeUnknown = errors.New("the write's commit failed, so whether it landed is unknown")
+
 	// ErrToggleUnsupported indicates the campaign's platform has no status-toggle
 	// capability wired (no dispatcher, or the dispatcher is not a StatusToggler).
 	// The platform is never contacted. Maps to 400. Lives here (not in the service

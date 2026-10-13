@@ -2119,7 +2119,9 @@ persists one thing: the deliberate-pause record of the campaign's RECORDED ad se
 `ReplaceCampaign` on the claim holder's connection). A PAUSE records it through the dispatcher's
 `beforeWrite` hook before the write is sent (so an UNCONFIRMED pause stays on record) or after
 `ALREADY_IN_STATE`, and withdraws it if the write definitely changed nothing; only a CONFIRMED
-resume clears it. When it is written the ETag is the new version; otherwise a 200's ETag is the
+resume clears it. Every record write goes through `writeMetaAdSetRecord`, which reconciles a
+commit marked `domain.ErrWriteOutcomeUnknown` (one guarded rewrite on a fresh connection plus a
+re-read) and, while a pause record may have landed, always lets the pause be sent. When it is written the ETag is the new version; otherwise a 200's ETag is the
 unchanged version, checked with `VerifyClaimedVersion` after an APPLIED write. Hand-added ad sets
 and adopted rows record nothing. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See

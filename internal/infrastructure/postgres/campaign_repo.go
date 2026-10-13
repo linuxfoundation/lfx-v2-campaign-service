@@ -984,7 +984,9 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: %w", eerr)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return nil, fmt.Errorf("replace campaign: commit: %w", cerr)
+		// Ambiguous, not a rollback: see domain.ErrWriteOutcomeUnknown (and the audience repo's
+		// reconcileAmbiguousAudienceCommit for the same hazard).
+		return nil, fmt.Errorf("replace campaign: commit: %w: %w", domain.ErrWriteOutcomeUnknown, cerr)
 	}
 	return updated, nil
 }

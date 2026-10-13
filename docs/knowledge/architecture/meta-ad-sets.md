@@ -153,9 +153,25 @@ write lock):
 | PAUSED → APPLIED | stays set; `VerifyClaimedVersion` at the new version |
 | PAUSED → ALREADY_IN_STATE (e.g. the campaign pause already paused it) | SET after the answer; a failed row write is 503/409 saying the ad set is already paused but the pause was not recorded |
 | PAUSED → **UNCONFIRMED** | **stays set** — unknown is treated as paused, so a later campaign resume never silently re-activates an ad set the user may have paused; the usual 503 and 30 s lock cooldown |
-| PAUSED → REJECTED / NOT_SENT (definite) | withdrawn (best effort; a failed withdrawal is logged and leaves it set — the fail-safe direction, visible as `deliberately_paused`) |
+| PAUSED → REJECTED / NOT_SENT (definite) | withdrawn; if the withdrawal cannot be established the answer is a 503 saying the ad set may be shown deliberately paused while active (resume it here to clear), never "nothing was changed" |
 | ACTIVE → APPLIED or ALREADY_IN_STATE | CLEARED (the `ReplaceCampaign` compare-and-swap is the row check); a failed clear is 503/409 saying the ad set WAS resumed but a campaign resume will still leave it paused |
 | ACTIVE → **UNCONFIRMED** or any failure | **stays set** — the ad set may still be paused; keeping it held never spends unasked |
+
+**Ambiguous commits (PR #309).** `ReplaceCampaign` marks a failed COMMIT with
+`domain.ErrWriteOutcomeUnknown` — PostgreSQL may have committed before the acknowledgement was
+lost (the hazard `reconcileAmbiguousAudienceCommit` handles for audiences). Every record write
+goes through `writeMetaAdSetRecord`, which never reads that as "not written": it repeats the same
+version-guarded write once on a fresh pool connection, under a detached deadline. Success means
+the first attempt rolled back and the record is now written; `ErrPreconditionFailed` (the guarded
+UPDATE waits on the row lock of any transaction still resolving) means the first attempt landed,
+accepted only when a fresh read shows exactly the next version with the intended record; anything
+else is "unknown". The state that must never arise is a pause on record over an ad set that was
+never paused (`deliberately_paused` while it serves), so a pause whose record may have landed is
+ALWAYS sent — pausing never spends: landed or rewritten → the normal path; unknown → the pause is
+still sent, then the record is settled from a fresh read (a 503 "could not be confirmed" if even
+that fails, with the ad set paused on Meta, so it cannot serve despite the record). Only a
+DEFINITE rollback (any error without the sentinel) suppresses the pause. A withdrawal and a
+clear-on-resume are reconciled the same way.
 
 **Concurrency.** The record and the campaign toggle are serialised by `ClaimCampaignVersion`: a
 campaign resume racing a pause in flight is refused (409, nothing sent), one on the ETag read
