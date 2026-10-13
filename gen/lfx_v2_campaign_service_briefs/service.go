@@ -1592,6 +1592,10 @@ type PlatformResult struct {
 	// the email (HubSpot) channel, and only once the portal that created it is
 	// known.
 	HubspotURL *string
+	// Best-effort steps of a successful create that did not apply, in
+	// operator-readable sentences. For the email channel this reports a hero image
+	// that could not be added; the draft exists but has no hero banner.
+	Warnings []string
 }
 
 // RemoveKeywordTargetingPayload is the payload type of the

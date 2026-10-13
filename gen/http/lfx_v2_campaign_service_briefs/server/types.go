@@ -4091,6 +4091,10 @@ type PlatformResultResponseBody struct {
 	// the email (HubSpot) channel, and only once the portal that created it is
 	// known.
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
+	// Best-effort steps of a successful create that did not apply, in
+	// operator-readable sentences. For the email channel this reports a hero image
+	// that could not be added; the draft exists but has no hero banner.
+	Warnings []string `form:"warnings,omitempty" json:"warnings,omitempty" xml:"warnings,omitempty"`
 }
 
 // WizardSourceEmailResponseBody is used to define fields on response body

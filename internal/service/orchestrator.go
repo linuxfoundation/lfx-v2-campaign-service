@@ -1249,6 +1249,10 @@ type platformResult struct {
 	// campaign's own persisted Result blob (see hubspotURLFromResult) — nothing
 	// upstream of the campaign row carries it.
 	HubspotURL string `json:"hubspot_url,omitempty"`
+	// Warnings lists best-effort steps of a SUCCESSFUL dispatch that did not apply (for the email
+	// channel, a hero image that could not be re-hosted). Read back from the campaign's Result
+	// blob like HubspotURL; empty for every other platform.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // hubspotURLFromResult reads the deep link a HubSpot dispatch stashed in the
@@ -1266,6 +1270,21 @@ func hubspotURLFromResult(result json.RawMessage) string {
 		return ""
 	}
 	return probe.HubspotURL
+}
+
+// hubspotWarningsFromResult reads the warnings a HubSpot dispatch stashed in the campaign's
+// Result blob. Any other platform's blob has no "warnings" key and decodes to nil.
+func hubspotWarningsFromResult(result json.RawMessage) []string {
+	if len(result) == 0 {
+		return nil
+	}
+	var probe struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(result, &probe); err != nil {
+		return nil
+	}
+	return probe.Warnings
 }
 
 // Start creates a queued job for the brief and launches dispatch asynchronously,
@@ -1705,6 +1724,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		res.OK = true
 		res.CampaignID = existing.PlatformCampaignID
 		res.HubspotURL = hubspotURLFromResult(existing.Result)
+		res.Warnings = hubspotWarningsFromResult(existing.Result)
 		return res
 	case lerr == nil:
 		// The latest campaign is unfinished, so claim ITS slot version, new-version request
@@ -1764,6 +1784,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			res.OK = true
 			res.CampaignID = existing.PlatformCampaignID
 			res.HubspotURL = hubspotURLFromResult(existing.Result)
+			res.Warnings = hubspotWarningsFromResult(existing.Result)
 			return res
 		}
 		// A retained partial ORPHAN is distinguishable from a claim held by a still-
@@ -2090,6 +2111,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID
 	res.HubspotURL = hubspotURLFromResult(campaign.Result)
+	res.Warnings = hubspotWarningsFromResult(campaign.Result)
 	return res
 }
 

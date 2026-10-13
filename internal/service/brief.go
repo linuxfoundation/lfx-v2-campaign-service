@@ -1896,12 +1896,13 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 		// The stored result is the orchestrator's per-platform outcome array; decode
 		// it into the typed response shape so the OpenAPI contract is honored.
 		var stored []struct {
-			Platform   string `json:"platform"`
-			OK         bool   `json:"ok"`
-			CampaignID string `json:"campaign_id"`
-			Error      string `json:"error"`
-			Skipped    bool   `json:"skipped"`
-			HubspotURL string `json:"hubspot_url"`
+			Platform   string   `json:"platform"`
+			OK         bool     `json:"ok"`
+			CampaignID string   `json:"campaign_id"`
+			Error      string   `json:"error"`
+			Skipped    bool     `json:"skipped"`
+			HubspotURL string   `json:"hubspot_url"`
+			Warnings   []string `json:"warnings"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -1929,6 +1930,9 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			if r.HubspotURL != "" {
 				u := r.HubspotURL
 				pr.HubspotURL = &u
+			}
+			if len(r.Warnings) > 0 {
+				pr.Warnings = append([]string(nil), r.Warnings...)
 			}
 			switch {
 			case r.Skipped && !r.OK:

@@ -4250,3 +4250,13 @@ keyed portal+id: an id is unique only within its portal, so a foreign-portal or 
 with the same number must neither suppress an attributable row nor escape the unattributable
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
+
+### HubSpot hero failures are reported, not silent
+
+`uploadHeroImage` re-hosts the scraped hero in the portal file manager and stays best-effort: a failure leaves
+the draft without a hero section instead of failing the dispatch. It now also returns an operator-facing
+warning, built from `heroFailureReason`'s fixed vocabulary (format email cannot use, not an image, download
+failed, too large, refused by the network guard, missing files permission, otherwise generic) and never from
+the error text, which can carry upstream content. `Dispatch` stores the warnings in the campaign's Result blob
+(`warnings`), the orchestrator reads them back with `hubspotWarningsFromResult` next to `hubspotURLFromResult`,
+and `GetJob` returns them as `PlatformResult.warnings`. A campaign that asked for no hero reports none.
