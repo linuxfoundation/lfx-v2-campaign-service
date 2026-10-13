@@ -564,9 +564,12 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	// The Microsoft dispatcher reads stored assets too (microsoftConfig.imageAssetId, a
 	// campaign image extension — LFXV2-2665), under the same concrete-pointer guard.
 	microsoftDispatcher := dispatch.NewMicrosoftDispatcher(repo, enc)
+	// LinkedIn too (linkedInConfig.variants[].imageAssetId, Images API thumbnails).
+	linkedinDispatcher := dispatch.NewLinkedInDispatcher(repo, enc)
 	if creatives != nil {
 		metaDispatcher.SetCreativeAssetRepo(creatives)
 		microsoftDispatcher.SetCreativeAssetRepo(creatives)
+		linkedinDispatcher.SetCreativeAssetRepo(creatives)
 	}
 	// The AGGREGATE asset budget is bound unconditionally, not under the `creatives != nil`
 	// guard above. The two are independent: that guard exists because a nil concrete pointer
@@ -587,9 +590,10 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 		twitterDispatcher.SetCreativeAssetRepo(creatives)
 	}
 	twitterDispatcher.SetAssetReserver(assets)
+	linkedinDispatcher.SetAssetReserver(assets)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
-		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
+		model.ProviderLinkedInAds:  linkedinDispatcher,
 		model.ProviderMetaAds:      metaDispatcher,
 		model.ProviderTwitterAds:   twitterDispatcher,
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
@@ -614,7 +618,7 @@ func (c *Container) bindStatsJobLease(dispatchers map[model.Provider]service.Pla
 }
 
 // bindCreativeAssetSharing wires the stored-creative-asset paths that span more than one
-// component (LFXV2-2665), on BOTH live paths: the Meta and Microsoft dispatchers and the
+// component (LFXV2-2665), on BOTH live paths: the Meta, Microsoft and LinkedIn dispatchers and the
 // signed-asset route share the container's single AssetReserver (registerDispatchers' own
 // reserver is replaced, so the bound is one budget rather than two), the Reddit dispatcher gets the store and the
 // signer behind redditConfig.imageAssetId, and the signed-asset route gets the store.
@@ -629,6 +633,9 @@ func (c *Container) bindCreativeAssetSharing(dispatchers map[model.Provider]serv
 		}
 		if msd, ok := dispatchers[model.ProviderMicrosoftAds].(*dispatch.MicrosoftDispatcher); ok {
 			msd.SetAssetReserver(c.assetReserver)
+		}
+		if ld, ok := dispatchers[model.ProviderLinkedInAds].(*dispatch.LinkedInDispatcher); ok {
+			ld.SetAssetReserver(c.assetReserver)
 		}
 	}
 	if creatives == nil {

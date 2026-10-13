@@ -814,3 +814,15 @@ Scope is validated before any request: canonical ids (`ValidateAudienceCampaignI
 bound; no query tunneling here).
 
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
+
+## Stored creative images (`images.go`)
+
+`CreativeVariant.ImageAssetID` names a stored image supplied in `CampaignInput.Images`. It is
+mutually exclusive with `ImageURN`. `CreateCampaign` validates the image up front with
+`ValidateImage` (PNG/JPEG, at most `MaxImageBytes` = 5,000,000, per-orientation single image ad
+bounds). After the campaign is ensured and before the first dark post, it uploads each distinct
+image once through the Images API: initializeUpload, then the PUT, both never retried, then a
+bounded wait for AVAILABLE (`WithImagePolling`). The upload PUT carries the bearer token, so it
+is sent only to https `linkedin.com` hosts. The minted URNs go to `CampaignResult.ImageURNs`.
+An image failure returns the partial result with zero creatives. See
+[LinkedIn Creative Image Assets](../architecture/linkedin-creative-assets.md).
