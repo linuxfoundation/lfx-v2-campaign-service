@@ -13,8 +13,9 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// AddNegativeKeywords adds campaign-level negative keywords to one live campaign
-// (LFXV2-2665). Microsoft Advertising only today; any other platform is a 400.
+// AddNegativeKeywords adds negative keywords to one live campaign (LFXV2-2665): Microsoft
+// Advertising at campaign level, Reddit in the ad group's excluded keywords, X as negated line-item
+// keyword criteria. Any other platform is a 400.
 //
 // It follows ApplyKeywordActions rather than the toggle or budget write, for the reason that
 // handler documents: it PERSISTS NOTHING. The negatives live upstream and are mirrored in no
@@ -33,10 +34,10 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 	}
 	// Refused BEFORE the orchestrator: no dispatcher of another platform is ever asked.
 	// The orchestrator's capability assertion is the second line, for a direct caller.
-	if existing.Platform != model.ProviderMicrosoftAds {
+	if !negativeKeywordPlatform(existing.Platform) {
 		return nil, &briefs.BadRequestError{
 			Code:    "400",
-			Message: "negative keywords can be added to Microsoft Advertising campaigns only",
+			Message: "negative keywords can be added to Microsoft Advertising, Reddit and X campaigns only",
 		}
 	}
 	// Goa enforces MinLength(1) for HTTP callers; repeated for a direct caller.
@@ -51,7 +52,19 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 		keywords = append(keywords, model.NegativeKeyword{Text: k.Text, MatchType: k.MatchType})
 	}
 
-	outcomes, aerr := orch.AddNegativeKeywords(ctx, p.ProjectID, existing.Platform, existing, keywords)
+	// PRESENCE, not value, decides a non-Reddit refusal: an explicit "" collapses to the same ""
+	// as an absent field once converted, so the adapters alone would accept {"revision": ""} on
+	// Microsoft and X, which the contract says refuse any revision (PR #321 review). Reddit takes
+	// the value, and its adapter refuses a blank one as an invalid batch.
+	revision := ""
+	if p.Revision != nil {
+		if existing.Platform != model.ProviderRedditAds {
+			return nil, &briefs.BadRequestError{Code: "400", Message: "revision applies to Reddit campaigns only — omit it, even empty, for Microsoft Advertising and X"}
+		}
+		revision = *p.Revision
+	}
+
+	outcomes, aerr := orch.AddNegativeKeywords(ctx, p.ProjectID, existing.Platform, existing, keywords, revision)
 	if aerr != nil {
 		return nil, s.classifyNegativeKeywordError(ctx, p, existing.Platform, aerr)
 	}
@@ -78,6 +91,32 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 	return &briefs.NegativeKeywords{CampaignID: p.CampaignID, Results: results, AppliedCount: applied}, nil
 }
 
+// negativeKeywordPlatform reports whether add-negative-keywords serves the platform.
+func negativeKeywordPlatform(platform model.Provider) bool {
+	switch platform {
+	case model.ProviderMicrosoftAds, model.ProviderRedditAds, model.ProviderTwitterAds:
+		return true
+	}
+	return false
+}
+
+// negativeKeywordPlatformLabel names the platform in a caller-facing message.
+func negativeKeywordPlatformLabel(platform model.Provider) string {
+	if keywordTargetingPlatform(platform) {
+		return keywordTargetingPlatformLabel(platform)
+	}
+	return keywordPlatformLabel(platform)
+}
+
+// negativeKeywordConnectionUnusableMessage is the 409 for an unusable connection, naming the
+// platform's own stored fields where a sibling lever already words them.
+func negativeKeywordConnectionUnusableMessage(platform model.Provider) string {
+	if keywordTargetingPlatform(platform) {
+		return "the stored " + keywordTargetingPlatformLabel(platform) + " connection cannot be used as configured: check that it is active, that its stored credential is complete, and that an ad account is selected"
+	}
+	return keywordConnectionUnusableMessage(platform)
+}
+
 // classifyNegativeKeywordError maps an orchestrator failure onto this service's error set. The
 // arms, their order and their reasons are classifyKeywordActionError's; only the wording names
 // negative keywords. Adapter text is logged, never returned.
@@ -86,14 +125,25 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 	var unconfirmed interface{ Unconfirmed() bool }
 	switch {
 	case errors.Is(aerr, domain.ErrNegativeKeywordsUnsupported):
-		return &briefs.BadRequestError{Code: "400", Message: "negative keywords are not supported for this campaign's platform"}
+		return &briefs.BadRequestError{Code: "400", Message: "negative keywords are not supported, or not enabled in this deployment, for this campaign's platform"}
 	case errors.Is(aerr, domain.ErrNegativeKeywordInvalid):
-		slog.WarnContext(ctx, "negative keyword batch rejected before the platform was contacted; nothing was added",
+		slog.WarnContext(ctx, "negative keyword batch rejected before the platform was mutated; nothing was added",
 			append(logFields, "error", safeErrSummary(aerr))...)
 		return &briefs.BadRequestError{
-			Code:    "400",
-			Message: "the negative keywords are not valid: send 1 to 60, each Exact or Phrase, at most 100 characters of letters, digits, spaces and & ' - . with no two punctuation characters together, and each keyword at most once",
+			Code: "400",
+			Message: "the negative keywords are not valid: send 1 to 60 (1 to 20 on X), each at most 100 characters of letters, digits, spaces and & ' - . with no two punctuation characters together, each keyword at most once, " +
+				"with a match type the platform offers (Microsoft Advertising: Exact or Phrase; X: Broad, Phrase or Exact; Reddit: Broad) — and on Reddit the revision get-keyword-targeting returned, which the other platforms refuse",
 		}
+	case errors.Is(aerr, domain.ErrKeywordTargetingChanged):
+		return &briefs.ConflictError{Code: "409", Message: "the ad group's targeting changed since it was read — nothing was added; read the keyword targeting again and resend with its revision"}
+	case errors.Is(aerr, domain.ErrNegativeKeywordLimit):
+		slog.WarnContext(ctx, "negative keywords refused: the platform's limit would be exceeded; nothing was added",
+			append(logFields, "error", safeErrSummary(aerr))...)
+		return &briefs.ConflictError{Code: "409", Message: "these negative keywords would take the ad group over the platform's limit on excluded keywords — nothing was added"}
+	case errors.Is(aerr, domain.ErrKeywordTargetingUnaddressable):
+		slog.WarnContext(ctx, "negative keywords blocked: the campaign's ad group or line item cannot be addressed",
+			append(logFields, "error", safeErrSummary(aerr))...)
+		return &briefs.ConflictError{Code: "409", Message: "the campaign's ad group or line item cannot be addressed: this service has no record of it, the platform no longer holds it or reports it under another campaign, or its targeting could not be read — nothing was added"}
 	case errors.Is(aerr, ErrCampaignNotProvisioned), errors.Is(aerr, domain.ErrCampaignNotProvisioned):
 		return &briefs.ConflictError{
 			Code:    "409",
@@ -127,11 +177,11 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 	case errors.Is(aerr, domain.ErrNotFound):
 		slog.WarnContext(ctx, "negative keywords blocked: no connection configured for this project and provider",
 			"project_id", p.ProjectID, "platform", platform)
-		return &briefs.NotFoundError{Code: "404", Message: "no " + keywordPlatformLabel(platform) + " connection is configured for this project"}
+		return &briefs.NotFoundError{Code: "404", Message: "no " + negativeKeywordPlatformLabel(platform) + " connection is configured for this project"}
 	case errors.Is(aerr, domain.ErrConnectionNotUsable):
 		slog.WarnContext(ctx, "connection is not usable for negative keywords",
 			"project_id", p.ProjectID, "platform", platform, "reason", unusableConnectionReason(aerr))
-		return &briefs.ConflictError{Code: "409", Message: keywordConnectionUnusableMessage(platform)}
+		return &briefs.ConflictError{Code: "409", Message: negativeKeywordConnectionUnusableMessage(platform)}
 	case errors.As(aerr, &unconfirmed) && unconfirmed.Unconfirmed():
 		slog.WarnContext(ctx, "negative keywords outcome is UNCONFIRMED (the platform may or may not reflect the change)",
 			append(logFields, "error", safeErrSummary(aerr))...)

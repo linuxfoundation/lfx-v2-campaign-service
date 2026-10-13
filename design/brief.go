@@ -975,12 +975,18 @@ var KeywordActions = Type("keyword-actions", func() {
 
 // ─── Negative keywords on a live campaign (LFXV2-2665) ───
 
-// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry. Microsoft
-// Advertising: "The supported values for a negative keyword are Exact and Phrase."
-// (https://learn.microsoft.com/en-us/advertising/campaign-management-service/negativekeyword).
-// Broad is not a negative match type on the platform, so it is not offered here to be refused.
+// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry, across the three
+// platforms that take one (LFXV2-2665). Each platform accepts a subset and refuses the rest with
+// 400 before it is contacted:
+//   - Microsoft Advertising: Exact, Phrase — "The supported values for a negative keyword are
+//     Exact and Phrase." (https://learn.microsoft.com/en-us/advertising/campaign-management-service/negativekeyword).
+//   - X: Broad, Phrase, Exact — a targeting criterion of type BROAD_KEYWORD, PHRASE_KEYWORD or
+//     EXACT_KEYWORD with operator_type NE (https://docs.x.com/x-ads-api/campaign-management).
+//   - Reddit: Broad only — the ad group's targeting.excluded_keywords is a plain array of
+//     strings with no match type, so Broad stands for "the platform's own, unqualified match" and
+//     Exact or Phrase would promise a matching mode Reddit does not offer.
 func negativeKeywordMatchTypeEnum() {
-	Enum("Exact", "Phrase")
+	Enum("Exact", "Phrase", "Broad")
 }
 
 // negativeKeywordOutcomeEnum adds ALREADY_PRESENT to the per-item outcomes: Microsoft answers
@@ -1007,7 +1013,7 @@ var NegativeKeywordInput = Type("negative-keyword-input", func() {
 		Pattern(`^[\p{L}\p{M}\p{N} &'.\-]+$`)
 		Example("free download")
 	})
-	Attribute("match_type", String, "How the negative keyword is compared with a search query. Exact or Phrase.", func() {
+	Attribute("match_type", String, "How the negative keyword is compared with a search query. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type). Any other value for the platform is 400.", func() {
 		negativeKeywordMatchTypeEnum()
 		Example("Phrase")
 	})
@@ -1018,9 +1024,9 @@ var NegativeKeywordInput = Type("negative-keyword-input", func() {
 var NegativeKeywordResult = Type("negative-keyword-result", func() {
 	Attribute("text", String, "The negative keyword text as sent to the platform (trimmed, whitespace collapsed)", func() { Example("free download") })
 	Attribute("match_type", String, "The match type as sent to the platform", negativeKeywordMatchTypeEnum)
-	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
-	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added. Absent for every other outcome.", func() { Example("8475612390") })
-	Attribute("error_code", String, "The platform's machine-readable error code for a FAILED keyword, when it named one.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
+	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft) or ad group / line item (Reddit / X) already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
+	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added: Microsoft's NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where an excluded keyword has no id, and for every outcome other than APPLIED.", func() { Example("8475612390") })
+	Attribute("error_code", String, "Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable error code, when it named one. Reddit and X: NOT_SENT (the request carrying it was never sent) or REJECTED (the platform refused it); their own text is never returned.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
 	Required("text", "match_type", "outcome")
 })
 
@@ -2187,24 +2193,38 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("add-negative-keywords", func() {
-		Description("Add campaign-level negative keywords to one live campaign. Microsoft Advertising only " +
-			"(AddNegativeKeywordsToEntities, EntityType Campaign); a campaign on any other platform is refused " +
-			"with 400 before anything is contacted. " +
+		Description("Add negative keywords to one live campaign (LFXV2-2665). Three platforms, each at its own level: " +
+			"Microsoft Advertising at CAMPAIGN level (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in " +
+			"the excluded_keywords of the ONE ad group this service created (a whole-targeting PATCH, behind " +
+			"REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off is 400 before Reddit is contacted); X as one negated " +
+			"keyword targeting criterion (operator_type NE) per keyword on the ONE line item this service created. " +
+			"A campaign on any other platform is refused with 400 before anything is contacted. " +
+			"Match types per platform: Microsoft Exact or Phrase; X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); " +
+			"Reddit Broad only, because Reddit's excluded keywords carry no match type. Any other is 400. " +
 			"A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching " +
-			"queries — so it carries the keyword actions' guard set, all before the platform is contacted: the " +
-			"batch's syntax, the campaign's provisioning, and the campaign's ad account against the project's " +
-			"current connection (a campaign that does not record its ad account is refused, never assumed). " +
+			"queries, so it only narrows delivery — and it carries the keyword levers' guard set, all before the " +
+			"platform is mutated: the batch's syntax, the campaign's provisioning, the campaign's ad account against " +
+			"the project's current connection (a campaign that does not record its ad account is refused, never " +
+			"assumed), and on Reddit and X a READ proving the ad group / line item is live and reported under THIS " +
+			"campaign. Reddit also requires `revision`, the fingerprint get-keyword-targeting returned, and refuses " +
+			"(409) when the ad group's targeting has changed since, and a blank one is 400; Microsoft and X refuse a present " +
+			"revision, even an empty one (400). " +
 			"Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes " +
 			"no If-Match and returns no ETag. " +
-			"NOT ATOMIC: Microsoft adds each negative independently, so the 200 carries one result per requested " +
-			"keyword, in request order, each with its own outcome. A negative the campaign already has is " +
-			"ALREADY_PRESENT, a success. " +
-			"**400** for a malformed batch (empty or over 60, a text over 100 characters or outside the allowed " +
-			"characters, consecutive punctuation, a match type other than Exact or Phrase, the same keyword " +
-			"twice) or an unsupported platform. A malformed batch is 400 even when the campaign is also " +
-			"unprovisioned. " +
-			"**409** when refused before the platform is contacted: unprovisioned, a different ad account, an " +
-			"unrecorded ad account (re-dispatch), or an unusable connection. " +
+			"Every write is sent ONCE and never retried on a 429. The 200 carries one result per requested keyword, " +
+			"in request order, each with its own outcome. A negative already there is ALREADY_PRESENT, a success, " +
+			"and is not sent again. Microsoft adds each negative independently; Reddit's one PATCH carries every new " +
+			"one, so they share its outcome (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch with " +
+			"any ALREADY_PRESENT item always answers per item; X sends one POST per keyword, at most 20 per " +
+			"request (X's one-write-per-second account pacing), each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. " +
+			"**400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters or outside " +
+			"the allowed characters, consecutive punctuation, a match type the platform does not offer, the same " +
+			"keyword twice, a missing or misplaced revision), an unsupported platform, or Reddit writes switched off. " +
+			"A malformed batch is 400 even when the campaign is also unprovisioned. " +
+			"**409** when refused before anything is written: unprovisioned, a different ad account, an unrecorded " +
+			"ad account (re-dispatch), an unusable connection, an ad group / line item this service did not record or " +
+			"the platform no longer reports under this campaign, a stale Reddit revision, or a Reddit ad group whose " +
+			"excluded keywords would exceed Reddit's 2,000. " +
 			"**503** only when the platform answered nothing per keyword. The MESSAGE separates a DEFINITE " +
 			"failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a rate limit, an " +
 			"unreadable answer — verify the campaign's negative keywords before retrying).")
@@ -2216,12 +2236,20 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// One explicit example for the same reason apply-keyword-actions has one: Goa's
 			// fabricated sample repeats the element example, which this endpoint refuses as a
 			// duplicate.
-			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add, at campaign level.", func() {
+			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add: at campaign level on Microsoft Advertising, on the campaign's one ad group on Reddit, on its one line item on X.", func() {
 				MinLength(1)
 				MaxLength(60)
+				// Broad, because the generated request example also carries `revision`, which only
+				// Reddit takes, and Reddit offers Broad only (PR #321 review).
 				Example([]map[string]any{
-					{"text": "free download", "match_type": "Phrase"},
+					{"text": "free download", "match_type": "Broad"},
 				})
+			})
+			// Reddit's compare-and-set token, exactly as get-keyword-targeting returned it. Never sent
+			// upstream; only compared with a fresh read's fingerprint.
+			Attribute("revision", String, "Reddit only, and required there: the revision get-keyword-targeting returned; an empty or blank one is 400. The add is refused (409) when the ad group's targeting no longer has that fingerprint. Microsoft Advertising and X refuse the field (400) whenever it is present, even empty.", func() {
+				MaxLength(128)
+				Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c")
 			})
 			Required("project_id", "brief_id", "campaign_id", "negative_keywords")
 		})

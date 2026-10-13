@@ -146,8 +146,8 @@ func (d *MicrosoftDispatcher) ApplyKeywordActions(ctx context.Context, projectID
 // Same guard order as ApplyKeywordActions — batch, provisioning, provenance (fail closed),
 // account — all before Microsoft is contacted. There is no ownership read: the only id sent is
 // the campaign's own, taken from the row, so nothing the caller supplied can address another
-// campaign.
-func (d *MicrosoftDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+// campaign. revision is Reddit's compare-and-set token: refused here, as part of the batch.
+func (d *MicrosoftDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	const op = "add microsoft negative keywords"
 	in := make([]microsoft.NegativeKeyword, 0, len(keywords))
 	for _, k := range keywords {
@@ -156,6 +156,9 @@ func (d *MicrosoftDispatcher) AddNegativeKeywords(ctx context.Context, projectID
 	validated, err := microsoft.ValidateNegativeKeywords(in)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", domain.ErrNegativeKeywordInvalid, err)
+	}
+	if revision != "" {
+		return nil, fmt.Errorf("%w: revision applies to reddit only", domain.ErrNegativeKeywordInvalid)
 	}
 	if campaign == nil || strings.TrimSpace(campaign.PlatformCampaignID) == "" {
 		return nil, fmt.Errorf("%w: microsoft campaign has no platform campaign id, so there is no campaign to add negative keywords to", domain.ErrCampaignNotProvisioned)

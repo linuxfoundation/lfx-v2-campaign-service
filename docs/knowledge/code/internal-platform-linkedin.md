@@ -852,8 +852,10 @@ enum has no MEMBER_* value. An Analytics element carries only the demographic va
 attribution comes from the per-campaign request; each element must carry exactly one
 `pivotValue`, never a campaign URN. The answers are summed per value in `GetAudienceInsights`. At
 most `MaxAudienceCampaigns` (10) campaigns, so at most 50 requests, run `audienceConcurrency` (5)
-at a time through an `errgroup` whose first failure cancels the rest. `pivotValues` is named in
-`fields` explicitly, as LinkedIn's documented fields list shows.
+at a time through an `errgroup.WithContext` whose first failure cancels the in-flight requests;
+queued tasks check the context before sending, so they never reach LinkedIn. `pivotValues` is named
+in `fields` explicitly, as LinkedIn's documented fields list and its MEMBER_* samples show; the
+400 `monitor.go` records is for the legacy singular `pivotValue`.
 
 Decode is fail-closed: `identityjson.Check` on the raw body first (a repeated `elements` key
 would otherwise decode as an authoritative empty answer), `elements` as a pointer, counters as
