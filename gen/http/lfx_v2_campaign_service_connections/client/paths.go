@@ -259,6 +259,11 @@ func GetRedditAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) s
 	return fmt.Sprintf("/projects/%v/reddit-ads/audience", projectID)
 }
 
+// GetRedditAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-reddit-ads-keywords HTTP endpoint.
+func GetRedditAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/reddit-ads/keywords", projectID)
+}
+
 // ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-google-ads-campaign HTTP endpoint.
 func ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/google-ads/campaign-ref", projectID)

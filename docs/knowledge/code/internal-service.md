@@ -2073,6 +2073,17 @@ the same subset); then `Orchestrator.ReadRedditAudienceInsights`, which type-ass
 `account_currency`. Tests: `reddit_audience_test.go`, including
 `TestPublishedRedditAudienceExamplesArePossible` over every generated OpenAPI document.
 
+## Reddit keyword performance read (`connection_reddit_keywords.go`, LFXV2-2665)
+
+`GetRedditAdsKeywords` (`GET .../reddit-ads/keywords`): system scope refused (404), the audience
+read's window subset and message (`resolveRedditAudienceWindow`), then
+`Orchestrator.ReadRedditKeywordPerformance` — `RedditKeywordReader` type-asserted, `KeywordsEnabled()`
+before the scope lookup, empty scope → 200 empty without a read, `metricsCallTimeout`,
+`read_keywords`, nil result refused and nil rows normalised. Errors go through
+`classifyInsightsErrorFor` with `redditAdsKeywordInsights`; the existing
+`ErrKeywordReportScope*` arms give the 409s. Rows are `campaign_id`, optional `text`, counters and
+`ctr`, plus `row_count` and `truncated`. Tests: `reddit_keywords_test.go`.
+
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,

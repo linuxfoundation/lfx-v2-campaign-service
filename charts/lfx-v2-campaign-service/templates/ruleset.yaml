@@ -201,6 +201,9 @@ spec:
           # Reddit audience read (LFXV2-2665): the Reddit sibling of twitter-ads/audience, a
           # campaign_manager read scoped to the project's own campaigns on its own connection.
           - path: /projects/:projectId/reddit-ads/audience
+          # Reddit keyword performance read (LFXV2-2665): the KEYWORD breakdown on the same
+          # reporting contract as reddit-ads/audience, campaign_manager likewise.
+          - path: /projects/:projectId/reddit-ads/keywords
           # Meta, Reddit and X twins of the two campaign-ref lookups above (LFXV2-2665): the
           # same project-scoped read of this service's own tables, campaign_manager likewise.
           - path: /projects/:projectId/meta-ads/campaign-ref

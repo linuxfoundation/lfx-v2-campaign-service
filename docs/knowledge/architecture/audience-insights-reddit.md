@@ -47,7 +47,7 @@ blocks are Reddit's own.
   OR-ed or AND-ed; an AND would answer an empty report — read as no delivery — for a project that
   had plenty. Per-campaign requests trade request count for a scope this read can prove, and every
   row is still checked against the requested campaign.
-- **At most 8 campaigns** (`reddit.MaxAudienceCampaigns`), so a read is at most 24 requests — under
+- **At most 8 campaigns** (`reddit.MaxReportCampaigns`), so a read is at most 24 requests — under
   half the reporting quota, which the metrics read and account monitor share. More is
   `ErrAudienceScopeTooLarge` (409), refused before any request. At most 3 reports in flight, each
   walking at most 10 pages, inside the orchestrator's 20s `metricsCallTimeout`.
@@ -76,7 +76,7 @@ blocks are Reddit's own.
 | Design | `design/connection.go` `get-reddit-ads-audience`; `design/brief.go` `RedditAdsAudience`, `RedditAdsAudienceBucket`, `redditAudienceWindowEnum` |
 | Service | `internal/service/connection_reddit_audience.go` (`GetRedditAdsAudience`, window subset, `classifyInsightsErrorFor`); `Orchestrator.ReadRedditAudienceInsights` + `RedditAudienceReader` in `orchestrator.go` |
 | Dispatch | `internal/dispatch/reddit_audience.go` (`AudienceEnabled`, `ReadRedditAudienceInsights`, `redditScopeForAccount`) |
-| Platform | `internal/platform/reddit/audience.go` (`GetAudienceInsights`) |
+| Platform | `internal/platform/reddit/audience.go` (`GetAudienceInsights`) on the shared broken-down reader `report_breakdown.go`, which the [keyword performance read](keyword-performance-reddit.md) also uses |
 | Chart | `httproute.yaml` `(meta-ads|reddit-ads|twitter-ads)/audience`; `ruleset.yaml` entry; `parity_test.go` rows |
 
 ## Not verified

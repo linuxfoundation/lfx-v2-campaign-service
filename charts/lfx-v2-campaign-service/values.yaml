@@ -254,8 +254,9 @@ app:
     # than "true" is treated as off, so a typo fails closed.
     # Flip to "true" only after the shape is verified against a live Reddit ad
     # account; at that point the gate is removed and this key goes away.
-    # The same flag gates the Reddit audience read (reddit-ads/audience,
-    # LFXV2-2665), which runs on the same reporting operation with breakdowns.
+    # The same flag gates the Reddit audience and keyword performance reads
+    # (reddit-ads/audience, reddit-ads/keywords, LFXV2-2665), which run on the
+    # same reporting operation with breakdowns.
     REDDIT_METRICS_ENABLED:
       value: "false"
 

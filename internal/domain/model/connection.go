@@ -510,6 +510,27 @@ type RedditAudienceInsights struct {
 	Buckets []RedditAudienceBucket
 }
 
+// RedditKeywordRow is one (campaign, keyword) pair of the Reddit keyword performance read.
+// CampaignID is Reddit's campaign id; Text is Reddit's KEYWORD value verbatim, or "" when Reddit
+// reported an explicit null (published with no `text`). Read-only: Reddit reports no keyword id.
+type RedditKeywordRow struct {
+	CampaignID  string
+	Text        string
+	Impressions int64
+	Clicks      int64
+	// CostMicros is Reddit's SPEND (already microcurrency) in the ad account's own currency; no FX.
+	CostMicros int64
+	Ctr        float64
+}
+
+// RedditKeywordPerformance is the Reddit keyword read over the CALLING PROJECT'S OWN CAMPAIGNS:
+// the top rows by impressions, Truncated when more existed.
+type RedditKeywordPerformance struct {
+	Window    MetricsWindow
+	Rows      []RedditKeywordRow
+	Truncated bool
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string

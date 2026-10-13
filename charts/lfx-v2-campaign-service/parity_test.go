@@ -476,6 +476,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/reddit-ads/audience", true},
 		{"/projects/p1/reddit-ads/audience/x", false},
 		{"/projects/p1/reddit-ads/audiences", false},
+		// The Reddit keyword performance read (LFXV2-2665).
+		{"/projects/p1/reddit-ads/keywords", true},
+		{"/projects/p1/reddit-ads/keywords/x", false},
+		{"/projects/p1/twitter-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/audience", false},
 		// The Meta, Reddit and X twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},

@@ -249,6 +249,21 @@ type Service interface {
 	// counter. Disabled (400 not supported) unless REDDIT_METRICS_ENABLED is
 	// "true", like the Reddit metrics reads that share the reporting contract.
 	GetRedditAdsAudience(context.Context, *GetRedditAdsAudiencePayload) (res *RedditAdsAudience, err error)
+	// Read Reddit Ads keyword performance — the Reddit Ads API v3 report breakdown
+	// KEYWORD — for this project's own campaigns, live from POST
+	// /ad_accounts/{id}/reports on the connected ad account: one row per
+	// (campaign, keyword) with impressions, clicks, cost_micros and ctr, ranked by
+	// impressions and capped at 50 (`truncated`). Reddit reports the keyword TEXT
+	// only — no keyword id, match type or status — so the rows are READ-ONLY; act
+	// on a keyword through get-keyword-targeting / remove-keyword-targeting. Same
+	// trust boundary, limits and failure behaviour as get-reddit-ads-audience: the
+	// project's OWN connection only and its bound ad account only, one report per
+	// campaign filtered to it (campaign:id==<id>) with every row checked against
+	// it, at most 8 campaigns (more is 409), nothing persisted, 503 with no
+	// partial rows on any untrustworthy response. A project with no Reddit
+	// campaigns of its own receives empty `rows` and Reddit is not contacted.
+	// Disabled (400 not supported) unless REDDIT_METRICS_ENABLED is "true".
+	GetRedditAdsKeywords(context.Context, *GetRedditAdsKeywordsPayload) (res *RedditAdsKeywords, err error)
 	// Resolve one Google Ads campaign id to this service's own campaign and brief.
 	// A caller holding a keyword row has the PLATFORM's numeric campaign id; every
 	// mutation route here is keyed by this service's campaign UUID under its
@@ -579,7 +594,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [70]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-twitter-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [71]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-twitter-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "get-reddit-ads-keywords", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -1055,6 +1070,18 @@ type GetMicrosoftAdsPayload struct {
 // GetRedditAdsAudiencePayload is the payload type of the
 // lfx-v2-campaign-service-connections service get-reddit-ads-audience method.
 type GetRedditAdsAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Reporting window; defaults to last_30_days when omitted. yesterday and
+	// last_14_days are not available on Reddit.
+	Window *string
+}
+
+// GetRedditAdsKeywordsPayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords method.
+type GetRedditAdsKeywordsPayload struct {
 	// JWT token issued by Heimdall
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
@@ -2062,6 +2089,46 @@ type RedditAdsCredentials struct {
 	ClientSecret string
 	// OAuth refresh token
 	RefreshToken string
+}
+
+type RedditAdsKeyword struct {
+	// The Reddit campaign this keyword served under (Reddit's id; resolve it to
+	// this service's campaign with reddit-ads/campaign-ref)
+	CampaignID string
+	// Reddit's KEYWORD report value, verbatim ("The keyword for the ad."). ABSENT
+	// when Reddit reported an explicit null — delivery it attributed to no
+	// keyword, such as community or interest targeting. Not an identifier: Reddit
+	// reports no keyword id, so this row cannot address a keyword action; it has
+	// not been verified to equal the ad group's targeting entry byte for byte.
+	Text *string
+	// Impressions over the window
+	Impressions int64
+	// Clicks over the window
+	Clicks int64
+	// Spend over the window (Reddit's SPEND, already micro-units) in the ad
+	// account's own currency. This service performs no FX conversion and does not
+	// read the currency.
+	CostMicros int64
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr float64
+}
+
+// RedditAdsKeywords is the result type of the
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords method.
+type RedditAdsKeywords struct {
+	// The reporting window these counters cover, as UTC days (the Reddit campaign
+	// metrics read's range for the same window)
+	Window string
+	// One row per (campaign, keyword) across the campaigns this project owns,
+	// ordered by impressions descending, then campaign_id, then text (a text-less
+	// row last among equals), and capped at 50 — see `truncated`.
+	Rows []*RedditAdsKeyword
+	// How many rows are in `rows`.
+	RowCount int
+	// True when this project's campaigns have more (campaign, keyword) rows than
+	// were returned. The rows are the TOP ones by impressions — do not total them
+	// as the project's whole spend.
+	Truncated bool
 }
 
 // ResolveGoogleAdsCampaignPayload is the payload type of the

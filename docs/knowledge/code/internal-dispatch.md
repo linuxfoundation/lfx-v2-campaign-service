@@ -4268,3 +4268,12 @@ whole read (`ErrCampaignAccountMismatch`, 409). Only then the cached client's
 failure is returned unclassified (503). Tests: `reddit_audience_test.go` (mapping on the bound
 account, every refusal with zero upstream calls including the LF-system-only case, flag values,
 partial mismatch, matching/unknown provenance, 403 unclassified without the account id).
+
+## Reddit keyword performance read (LFXV2-2665)
+
+`RedditDispatcher` also implements `service.RedditKeywordReader` (`KeywordsEnabled`,
+`ReadRedditKeywordPerformance`). Both Reddit reads now share `redditReportsEnabled` (the gate) and
+`redditReportClient` (window, `resolveOwned`, bound account, `redditScopeForAccount`) in
+`reddit_audience.go`; `redditReportSentinels` picks each read's 409 sentinels (audience:
+`ErrAudienceScope*`; keywords: `ErrKeywordReportScope*`) and `classifyRedditReportError` re-tags
+the client's `ErrReportScope*`. Tests: `reddit_keywords_test.go`.
