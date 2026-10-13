@@ -4250,3 +4250,21 @@ keyed portal+id: an id is unique only within its portal, so a foreign-portal or 
 with the same number must neither suppress an attributable row nor escape the unattributable
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
+
+## Reddit audience read (`reddit_audience.go`, LFXV2-2665)
+
+`RedditDispatcher` implements `service.RedditAudienceReader` (`AudienceEnabled`,
+`ReadRedditAudienceInsights`). Order: `redditAudienceEnabled()` — `REDDIT_METRICS_ENABLED` must be
+exactly `"true"`, else `ErrKeywordInsightsUnsupported` (400) before any credential read, because the
+read runs on the metrics read's unexercised reporting contract; then `reddit.ValidateMetricsWindow`
+(`ErrMetricsWindowUnsupported`, 400); then `resolveRedditClientWithCreds(…, d.creds.resolveOwned)`
+— the project's OWN connection only, unlike the Meta/X audience reads' `resolveExisting`: no own
+connection is `ErrNotFound` (404) even when the LF system row exists; inactive / undecodable /
+incomplete / no account is `ErrConnectionNotUsable` (400); `reddit.ValidateAccountID` on the bound
+account; then `redditScopeForAccount`: every stored id must pass `reddit.ValidateCampaignID`
+(`ErrAudienceScopeInvalid`, 409) and ANY entry whose `redditCreationAccountID` differs refuses the
+whole read (`ErrCampaignAccountMismatch`, 409). Only then the cached client's
+`GetAudienceInsights`; its scope sentinels are re-tagged with the domain ones and every upstream
+failure is returned unclassified (503). Tests: `reddit_audience_test.go` (mapping on the bound
+account, every refusal with zero upstream calls including the LF-system-only case, flag values,
+partial mismatch, matching/unknown provenance, 403 unclassified without the account id).

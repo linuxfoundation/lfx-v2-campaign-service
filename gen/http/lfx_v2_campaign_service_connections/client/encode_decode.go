@@ -9807,6 +9807,216 @@ func DecodeGetMicrosoftAdsAudienceResponse(decoder func(*http.Response) goahttp.
 	}
 }
 
+// BuildGetRedditAdsAudienceRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-reddit-ads-audience" endpoint
+func (c *Client) BuildGetRedditAdsAudienceRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", "*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetRedditAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetRedditAdsAudienceRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections get-reddit-ads-audience server.
+func EncodeGetRedditAdsAudienceRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", "*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetRedditAdsAudienceResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections get-reddit-ads-audience endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeGetRedditAdsAudienceResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetRedditAdsAudienceResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (any, error) {
+		if restoreBody {
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer resp.Body.Close()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetRedditAdsAudienceResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudienceResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			res := NewGetRedditAdsAudienceRedditAdsAudienceOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetRedditAdsAudienceBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudienceBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			return nil, NewGetRedditAdsAudienceBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetRedditAdsAudienceConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudienceConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			return nil, NewGetRedditAdsAudienceConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetRedditAdsAudienceServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudienceServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			return nil, NewGetRedditAdsAudienceServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetRedditAdsAudienceInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudienceInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			return nil, NewGetRedditAdsAudienceInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetRedditAdsAudienceNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudienceNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			return nil, NewGetRedditAdsAudienceNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetRedditAdsAudiencePayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudiencePayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			return nil, NewGetRedditAdsAudiencePayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetRedditAdsAudienceUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			err = ValidateGetRedditAdsAudienceUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+			}
+			return nil, NewGetRedditAdsAudienceUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, _ := io.ReadAll(resp.Body)
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildResolveGoogleAdsCampaignRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "resolve-google-ads-campaign" endpoint
@@ -14169,6 +14379,23 @@ func unmarshalMicrosoftAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnec
 	res := &lfxv2campaignserviceconnections.MicrosoftAdsAudienceBucket{
 		AgeGroup:    *v.AgeGroup,
 		Gender:      *v.Gender,
+		Impressions: *v.Impressions,
+		Clicks:      *v.Clicks,
+		CostMicros:  *v.CostMicros,
+		Ctr:         *v.Ctr,
+	}
+
+	return res
+}
+
+// unmarshalRedditAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsRedditAdsAudienceBucket
+// builds a value of type
+// *lfxv2campaignserviceconnections.RedditAdsAudienceBucket from a value of
+// type *RedditAdsAudienceBucketResponseBody.
+func unmarshalRedditAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsRedditAdsAudienceBucket(v *RedditAdsAudienceBucketResponseBody) *lfxv2campaignserviceconnections.RedditAdsAudienceBucket {
+	res := &lfxv2campaignserviceconnections.RedditAdsAudienceBucket{
+		Dimension:   *v.Dimension,
+		Value:       v.Value,
 		Impressions: *v.Impressions,
 		Clicks:      *v.Clicks,
 		CostMicros:  *v.CostMicros,

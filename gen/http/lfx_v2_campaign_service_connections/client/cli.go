@@ -1670,6 +1670,41 @@ func BuildGetMicrosoftAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetMicro
 	return v, nil
 }
 
+// BuildGetRedditAdsAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-connections get-reddit-ads-audience endpoint from
+// CLI flags.
+func BuildGetRedditAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetRedditAdsAudienceProjectID string, lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow string, lfxV2CampaignServiceConnectionsGetRedditAdsAudienceBearerToken string) (*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload, error) {
+	var err error
+	var projectID string
+	{
+		projectID = lfxV2CampaignServiceConnectionsGetRedditAdsAudienceProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow != "" {
+			window = &lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow
+			if !(*window == "today" || *window == "last_7_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsAudienceBearerToken != "" {
+			bearerToken = &lfxV2CampaignServiceConnectionsGetRedditAdsAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildResolveGoogleAdsCampaignPayload builds the payload for the
 // lfx-v2-campaign-service-connections resolve-google-ads-campaign endpoint
 // from CLI flags.

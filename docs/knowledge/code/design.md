@@ -315,3 +315,12 @@ specs (v2 and v3, `gen/` and the kodata copy), where the defects lived. It check
 - no `lists_unavailable: true` appears beside a populated list.
 
 It fails if the walk finds no such example, so a renamed field cannot pass it vacuously.
+
+## Reddit audience read (LFXV2-2665)
+
+`get-reddit-ads-audience` (`design/connection.go`) returns `RedditAdsAudience`
+(`design/brief.go`): `window` (`redditAudienceWindowEnum` — the five windows the Reddit report client
+maps), `buckets` of `RedditAdsAudienceBucket` (`dimension` gender | country | community, optional
+`value` with the client's charset as `Pattern`, counters, `ctr`) and `bucket_count`. The bucket and
+envelope carry TYPE-LEVEL examples built from shared maps, as the Meta and X types do, so no
+published example is a response the endpoint cannot return.

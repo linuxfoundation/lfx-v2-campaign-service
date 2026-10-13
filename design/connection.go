@@ -1823,6 +1823,49 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("get-reddit-ads-audience", func() {
+		Description("Read Reddit Ads audience insights — gender, country and community (subreddit), the " +
+			"Reddit Ads API v3 report breakdowns GENDER, COUNTRY and COMMUNITY — for this project's own " +
+			"campaigns, live from POST /ad_accounts/{id}/reports on the connected ad account. Reddit offers " +
+			"no AGE breakdown, so there is no age dimension. Read from the project's OWN connection only " +
+			"(never the LF system account) and its bound ad account only, and scoped to the campaigns this " +
+			"service holds for the project: one report per campaign per breakdown, each filtered to that " +
+			"campaign (campaign:id==<id>) with every returned row checked against it. At most 8 campaigns " +
+			"(24 report requests against Reddit's documented 60-per-minute reporting quota); more is 409. " +
+			"A pure read-through; nothing is persisted. A project with no Reddit campaigns of its own receives " +
+			"an empty `buckets` array and Reddit is not contacted. All three breakdowns must load or the " +
+			"request fails (503): each covers the same traffic independently, and one presented without the " +
+			"others is a partial picture. Spend is in the account's own currency; no FX conversion is " +
+			"performed. There is no conversions counter. Disabled (400 not supported) unless " +
+			"REDDIT_METRICS_ENABLED is \"true\", like the Reddit metrics reads that share the reporting " +
+			"contract.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.", redditAudienceWindowEnum)
+			Required("project_id")
+		})
+		Result(RedditAdsAudience)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/reddit-ads/audience")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("resolve-google-ads-campaign", func() {
 		Description("Resolve one Google Ads campaign id to this service's own campaign and brief. " +
 			"A caller holding a keyword row has the PLATFORM's numeric campaign id; every mutation " +

@@ -2058,6 +2058,21 @@ days here, UTC days there), so the two reads' totals are not directly comparable
 `twitter_audience_wire_example_test.go` (`TestPublishedTwitterAudienceExamplesArePossible`) walks
 every generated OpenAPI document and fails on an X audience example no response could contain.
 
+## Reddit audience read (`connection_reddit_audience.go`, LFXV2-2665)
+
+`GetRedditAdsAudience` (`GET .../reddit-ads/audience`) is the Reddit sibling: system scope refused
+(404); `resolveRedditAudienceWindow` accepts `today`, `last_7_days`, `last_30_days` (default),
+`this_month`, `last_month` — the Reddit report client's mapped windows — and answers anything else
+with the fixed 400 `redditAudienceWindowMessage` (derived from the map; the design enum declares
+the same subset); then `Orchestrator.ReadRedditAudienceInsights`, which type-asserts
+`RedditAudienceReader`, asks its `AudienceEnabled()` BEFORE the scope lookup (so
+`REDDIT_METRICS_ENABLED` off is 400 even with no Reddit campaigns), and runs the shared
+`readScopedAudience`. Errors go through `classifyInsightsErrorFor` with the
+`redditAdsAudienceInsights` descriptor; no new arm was needed. Buckets are `dimension`
+(`gender` | `country` | `community`) + optional `value` (absent for Reddit's explicit null); no
+`account_currency`. Tests: `reddit_audience_test.go`, including
+`TestPublishedRedditAudienceExamplesArePossible` over every generated OpenAPI document.
+
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,

@@ -78,6 +78,10 @@ const (
 	// Default-off keeps that from reaching anyone until one live read confirms the shape, at
 	// which point the default flips and this constant goes away. RedditDispatcher.ReadMetrics
 	// carries the same statement at the gate itself; keep the two in step.
+	//
+	// It also gates the Reddit audience read (get-reddit-ads-audience, LFXV2-2665,
+	// RedditDispatcher.AudienceEnabled), which runs on the same reporting operation with
+	// GENDER/COUNTRY/COMMUNITY breakdowns added — more of the same unexercised contract.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
 
 	// EnvMicrosoftMetricsEnabled opts a deployment IN to Microsoft Advertising metrics

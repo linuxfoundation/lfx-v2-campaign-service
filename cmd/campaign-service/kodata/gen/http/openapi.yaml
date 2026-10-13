@@ -10839,6 +10839,101 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-reddit-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read Reddit Ads audience insights — gender, country and community (subreddit), the Reddit Ads API v3 report breakdowns GENDER, COUNTRY and COMMUNITY — for this project''s own campaigns, live from POST /ad_accounts/{id}/reports on the connected ad account. Reddit offers no AGE breakdown, so there is no age dimension. Read from the project''s OWN connection only (never the LF system account) and its bound ad account only, and scoped to the campaigns this service holds for the project: one report per campaign per breakdown, each filtered to that campaign (campaign:id==<id>) with every returned row checked against it. At most 8 campaigns (24 report requests against Reddit''s documented 60-per-minute reporting quota); more is 409. A pure read-through; nothing is persisted. A project with no Reddit campaigns of its own receives an empty `buckets` array and Reddit is not contacted. All three breakdowns must load or the request fails (503): each covers the same traffic independently, and one presented without the others is a partial picture. Spend is in the account''s own currency; no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless REDDIT_METRICS_ENABLED is "true", like the Reddit metrics reads that share the reporting contract.'
+            operationId: lfx-v2-campaign-service-connections#get-reddit-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.
+                  required: false
+                  type: string
+                  enum:
+                    - today
+                    - last_7_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+                - name: Authorization
+                  in: header
+                  description: JWT token issued by Heimdall
+                  required: false
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/RedditAdsAudience'
+                        required:
+                            - window
+                            - buckets
+                            - bucket_count
+                "400":
+                    description: Bad Request response.
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: Unauthorized response.
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: Not Found response.
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: Conflict response.
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: Request Entity Too Large response.
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: Internal Server Error response.
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: Service Unavailable response.
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/reddit-ads/campaign-ref:
         get:
             tags:
@@ -17299,25 +17394,25 @@ definitions:
             name:
                 type: string
                 description: Internal email name, as it appears in the HubSpot email list
-                example: Libero omnis ea ut consequatur nulla quod.
+                example: Ea ut consequatur nulla quod quisquam voluptatem.
             state:
                 type: string
                 description: HubSpot lifecycle state of the email (e.g. DRAFT, PUBLISHED). Archived emails are not returned at all — archival is a separate flag in HubSpot, not a state.
-                example: Aspernatur molestiae ab vel delectus.
+                example: Error eligendi eius aspernatur molestiae ab.
             subject:
                 type: string
                 description: Subject line
-                example: Voluptatem molestias iste quam consequuntur error eligendi.
+                example: Iste quam.
             updated_at:
                 type: string
                 description: Last-modified timestamp (ISO-8601)
-                example: Deserunt et voluptas.
+                example: Delectus voluptatem deserunt.
         example:
             id: "112233445566"
-            name: Quis veritatis praesentium architecto.
-            state: Architecto commodi ipsa dolor.
-            subject: Commodi ut nam debitis blanditiis ipsum.
-            updated_at: Quod accusantium.
+            name: Voluptas dolor.
+            state: Blanditiis ipsum voluptatem architecto.
+            subject: Veritatis praesentium architecto molestiae commodi ut nam.
+            updated_at: Ipsa dolor deserunt quod accusantium.
         required:
             - id
     MetaAdSet:
@@ -18467,6 +18562,125 @@ definitions:
         required:
             - code
             - message
+    RedditAdsAudience:
+        title: RedditAdsAudience
+        type: object
+        properties:
+            bucket_count:
+                type: integer
+                description: How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.
+                example: 3
+                format: int64
+            buckets:
+                type: array
+                items:
+                    $ref: '#/definitions/RedditAdsAudienceBucket'
+                description: Every bucket across the three breakdowns, discriminated by `dimension`. Ordered by dimension (gender, country, community), then impressions descending, then value (a value-less bucket last among equals).
+                example:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: gender
+                      impressions: 9000
+                      value: female
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: country
+                      impressions: 9000
+                      value: US
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: community
+                      impressions: 9000
+                      value: kubernetes
+            window:
+                type: string
+                description: The reporting window these counters cover, as UTC days (the Reddit campaign metrics read's range for the same window)
+                example: this_month
+                enum:
+                    - today
+                    - last_7_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+        example:
+            bucket_count: 3
+            buckets:
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: gender
+                  impressions: 9000
+                  value: female
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: country
+                  impressions: 9000
+                  value: US
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: community
+                  impressions: 9000
+                  value: kubernetes
+            window: last_30_days
+        required:
+            - window
+            - buckets
+            - bucket_count
+    RedditAdsAudienceBucket:
+        title: RedditAdsAudienceBucket
+        type: object
+        properties:
+            clicks:
+                type: integer
+                description: Clicks over the window
+                example: 742
+                format: int64
+            cost_micros:
+                type: integer
+                description: Spend over the window (Reddit's SPEND) in micro-units of the ad account's own currency. This service performs no FX conversion and does not read the currency.
+                example: 3120000
+                format: int64
+            ctr:
+                type: number
+                description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                example: 0.0578
+                format: double
+            dimension:
+                type: string
+                description: 'Which Reddit report breakdown this bucket belongs to: gender (GENDER), country (COUNTRY) or community (COMMUNITY, the subreddit)'
+                example: country
+                enum:
+                    - gender
+                    - country
+                    - community
+            impressions:
+                type: integer
+                description: Impressions over the window
+                example: 12840
+                format: int64
+            value:
+                type: string
+                description: 'Reddit''s breakdown value, verbatim (a gender, a country code or a subreddit name). ABSENT when Reddit reported an explicit null for this dimension: traffic Reddit did not attribute to any value, kept so the dimension''s buckets still total its traffic. A value outside a conservative charset fails the read rather than being returned.'
+                example: US
+                pattern: ^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$
+        example:
+            clicks: 270
+            cost_micros: 2700000
+            ctr: 0.03
+            dimension: community
+            impressions: 9000
+            value: kubernetes
+        required:
+            - dimension
+            - impressions
+            - clicks
+            - cost_micros
+            - ctr
     RedditAdsConnection:
         title: RedditAdsConnection
         type: object

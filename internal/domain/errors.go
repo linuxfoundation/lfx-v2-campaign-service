@@ -460,12 +460,13 @@ var (
 	// bound on the stats jobs one request creates and awaits); Microsoft's is
 	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
 	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
-	// counted over DISTINCT campaign ids. Refused before any upstream call and PERMANENT while the
+	// counted over DISTINCT campaign ids; Reddit's is reddit.MaxAudienceCampaigns (a local bound
+	// on the per-campaign reports one read issues against Reddit's 60-per-minute reporting quota). Refused before any upstream call and PERMANENT while the
 	// project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message is fixed,
 	// client-safe text: it reaches the HTTP body.
 	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
 
-	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft or X)
+	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft, Reddit or X)
 	// refused because a campaign in the project's scope has a stored platform id that is not a
 	// valid campaign id for that platform. Refused before any upstream call, PERMANENT until the
 	// row is corrected, for ErrKeywordReportScopeInvalid's reasons. The message is fixed,

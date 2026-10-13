@@ -945,6 +945,23 @@ type GetMicrosoftAdsAudienceResponseBody struct {
 	DataIncomplete *bool `form:"data_incomplete,omitempty" json:"data_incomplete,omitempty" xml:"data_incomplete,omitempty"`
 }
 
+// GetRedditAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body.
+type GetRedditAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as UTC days (the Reddit campaign
+	// metrics read's range for the same window)
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Every bucket across the three breakdowns, discriminated by `dimension`.
+	// Ordered by dimension (gender, country, community), then impressions
+	// descending, then value (a value-less bucket last among equals).
+	Buckets []*RedditAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -4622,6 +4639,79 @@ type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetRedditAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetRedditAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetRedditAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetRedditAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetRedditAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetRedditAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetRedditAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetRedditAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetRedditAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6184,6 +6274,30 @@ type MicrosoftAdsAudienceBucketResponseBody struct {
 	// does not know the currency.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// RedditAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type RedditAdsAudienceBucketResponseBody struct {
+	// Which Reddit report breakdown this bucket belongs to: gender (GENDER),
+	// country (COUNTRY) or community (COMMUNITY, the subreddit)
+	Dimension *string `form:"dimension,omitempty" json:"dimension,omitempty" xml:"dimension,omitempty"`
+	// Reddit's breakdown value, verbatim (a gender, a country code or a subreddit
+	// name). ABSENT when Reddit reported an explicit null for this dimension:
+	// traffic Reddit did not attribute to any value, kept so the dimension's
+	// buckets still total its traffic. A value outside a conservative charset
+	// fails the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window (Reddit's SPEND) in micro-units of the ad account's
+	// own currency. This service performs no FX conversion and does not read the
+	// currency.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
@@ -11021,6 +11135,110 @@ func NewGetMicrosoftAdsAudienceUnauthorized(body *GetMicrosoftAdsAudienceUnautho
 	return v
 }
 
+// NewGetRedditAdsAudienceRedditAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetRedditAdsAudienceRedditAdsAudienceOK(body *GetRedditAdsAudienceResponseBody) *lfxv2campaignserviceconnections.RedditAdsAudience {
+	v := &lfxv2campaignserviceconnections.RedditAdsAudience{
+		Window:      *body.Window,
+		BucketCount: *body.BucketCount,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.RedditAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalRedditAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsRedditAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// BadRequest error.
+func NewGetRedditAdsAudienceBadRequest(body *GetRedditAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceConflict builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-audience endpoint Conflict error.
+func NewGetRedditAdsAudienceConflict(body *GetRedditAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// ServiceUnavailable error.
+func NewGetRedditAdsAudienceServiceUnavailable(body *GetRedditAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// InternalServerError error.
+func NewGetRedditAdsAudienceInternalServerError(body *GetRedditAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceNotFound builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-audience endpoint NotFound error.
+func NewGetRedditAdsAudienceNotFound(body *GetRedditAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// PayloadTooLarge error.
+func NewGetRedditAdsAudiencePayloadTooLarge(body *GetRedditAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// Unauthorized error.
+func NewGetRedditAdsAudienceUnauthorized(body *GetRedditAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewResolveGoogleAdsCampaignPlatformCampaignResolutionOK builds a
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint result from a HTTP "OK" response.
@@ -13840,6 +14058,33 @@ func ValidateGetMicrosoftAdsAudienceResponseBody(body *GetMicrosoftAdsAudienceRe
 	}
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceResponseBody runs the validations defined on
+// Get-Reddit-Ads-AudienceResponseBody
+func ValidateGetRedditAdsAudienceResponseBody(body *GetRedditAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := ValidateRedditAdsAudienceBucketResponseBody(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
 	}
 	return
 }
@@ -18302,6 +18547,97 @@ func ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody(body *GetMicrosoftA
 	return
 }
 
+// ValidateGetRedditAdsAudienceBadRequestResponseBody runs the validations
+// defined on get-reddit-ads-audience_BadRequest_response_body
+func ValidateGetRedditAdsAudienceBadRequestResponseBody(body *GetRedditAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceConflictResponseBody runs the validations
+// defined on get-reddit-ads-audience_Conflict_response_body
+func ValidateGetRedditAdsAudienceConflictResponseBody(body *GetRedditAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on
+// get-reddit-ads-audience_ServiceUnavailable_response_body
+func ValidateGetRedditAdsAudienceServiceUnavailableResponseBody(body *GetRedditAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on
+// get-reddit-ads-audience_InternalServerError_response_body
+func ValidateGetRedditAdsAudienceInternalServerErrorResponseBody(body *GetRedditAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceNotFoundResponseBody runs the validations
+// defined on get-reddit-ads-audience_NotFound_response_body
+func ValidateGetRedditAdsAudienceNotFoundResponseBody(body *GetRedditAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudiencePayloadTooLargeResponseBody runs the validations
+// defined on get-reddit-ads-audience_PayloadTooLarge_response_body
+func ValidateGetRedditAdsAudiencePayloadTooLargeResponseBody(body *GetRedditAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on get-reddit-ads-audience_Unauthorized_response_body
+func ValidateGetRedditAdsAudienceUnauthorizedResponseBody(body *GetRedditAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateResolveGoogleAdsCampaignBadRequestResponseBody runs the validations
 // defined on resolve-google-ads-campaign_BadRequest_response_body
 func ValidateResolveGoogleAdsCampaignBadRequestResponseBody(body *ResolveGoogleAdsCampaignBadRequestResponseBody) (err error) {
@@ -20110,6 +20446,35 @@ func ValidateMicrosoftAdsAudienceBucketResponseBody(body *MicrosoftAdsAudienceBu
 	}
 	if body.Ctr == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	return
+}
+
+// ValidateRedditAdsAudienceBucketResponseBody runs the validations defined on
+// reddit-ads-audience-bucketResponseBody
+func ValidateRedditAdsAudienceBucketResponseBody(body *RedditAdsAudienceBucketResponseBody) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "gender" || *body.Dimension == "country" || *body.Dimension == "community") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"gender", "country", "community"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}$"))
 	}
 	return
 }
