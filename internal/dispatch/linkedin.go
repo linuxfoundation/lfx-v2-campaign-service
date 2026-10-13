@@ -711,9 +711,8 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 // several ad accounts across foundations (tlf and lf-events are two of them), so a project
 // naming another project's account is a real, reachable request and this is what refuses
 // it. The other ad platforms share one account today, where the same check is defensive —
-// see requireMetaManagedAccount. Do not take per-platform tenancy from
-// docs/architecture.md: both its "Account Tenancy" and "Current Platform Accounts" tables
-// still show the shared platforms as per-foundation, and both are stale.
+// see requireMetaManagedAccount. Per-platform tenancy is documented in docs/architecture.md
+// ("Account Tenancy" and "Current Platform Accounts"), which is the authority for it.
 //
 // The empty case is kept DISTINCT from the mismatch rather than folded into it. An empty
 // stored account means the operator has not finished setting the connection up, whose
