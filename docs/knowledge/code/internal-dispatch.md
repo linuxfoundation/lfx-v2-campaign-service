@@ -4250,3 +4250,22 @@ keyed portal+id: an id is unique only within its portal, so a foreign-portal or 
 with the same number must neither suppress an attributable row nor escape the unattributable
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
+
+## LinkedIn audience read (`linkedin_audience.go`, LFXV2-2665)
+
+`LinkedInDispatcher` implements `service.LinkedInAudienceReader` (`ReadLinkedInAudienceInsights`).
+Order: `linkedin.ValidateMetricsWindow` (→ `ErrMetricsWindowUnsupported`, 400) and
+`linkedInAudienceScopeIDs` (canonical ids via `linkedin.ValidateAudienceCampaignID` →
+`ErrAudienceScopeInvalid`; more than `linkedin.MaxAudienceCampaigns` distinct ids →
+`ErrAudienceScopeTooLarge`; both 409) BEFORE any credential is decrypted; then
+`resolveLinkedInCredentials(…, d.creds.resolveOwned)` — the project's OWN connection only, like the
+LinkedIn account monitor (no connection of its own → `ErrNotFound`, 404; inactive / undecodable /
+no token / no account → `ErrConnectionNotUsable`, 400); then `linkedInAudienceScopeForAccount`: ANY
+entry whose `linkedInCreationAccountID` differs from the bound account refuses the whole read
+(`ErrCampaignAccountMismatch`, 409). Only then the cached client's `GetAudienceInsights`, given the bound account so the request is
+confined to it by an `accounts` facet; its scope sentinels are re-tagged with the domain ones (a
+malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefect` errors go through
+`linkedinExpiry` (a 401 → `ErrCredentialsExpired`, 400), everything else is returned unclassified
+(503). Tests: `linkedin_audience_test.go` (every pivot mapped, LF fallback refused with zero upstream
+calls, foreign/legacy-URL/mixed provenance 409 with zero calls, unknown provenance proceeds, window
+and scope faults beat an inactive connection, 401 → expired, 5xx unclassified without its body).
