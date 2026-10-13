@@ -291,6 +291,10 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 			case perr == nil:
 				row, curVersion, intentRecorded = updated, updated.Version, true
 				return nil
+			case errors.Is(perr, errMetaAdSetClaimLost):
+				// The record's outcome is unknown and the claim is gone: nothing is sent.
+				intentErr = perr
+				return perr
 			case errors.Is(perr, errMetaAdSetRecordUnknown):
 				// The record may have landed. Suppressing the pause now could leave it on record
 				// over a live ad set, so the pause is SENT — pausing never spends — and the record
@@ -321,6 +325,11 @@ func (s *BriefService) ToggleMetaAdSetStatus(ctx context.Context, p *briefs.Togg
 			slog.WarnContext(ctx, "meta ad set status change is UNCONFIRMED (the platform may or may not reflect it)",
 				append(logFields, "pause_on_record", tracked && (intentRecorded || onRecord == p.AdSetID), "error", safeErrSummary(terr))...)
 			return nil, s.answerUnconfirmedAdSetWrite(ctx, campaignRepo, row, p.AdSetID, curVersion, &lockToken, recordUnknown, &releaseNow, logFields)
+		}
+		if errors.Is(intentErr, errMetaAdSetClaimLost) {
+			slog.ErrorContext(ctx, "meta ad set pause not sent: its record could not be reconciled and the campaign's claim was lost",
+				append(logFields, "error", intentErr)...)
+			return nil, errAdSetClaimLost()
 		}
 		if intentErr != nil {
 			// Recording the pause failed, so the write was never sent.
@@ -493,8 +502,25 @@ func landedMetaAdSetRecord(ctx context.Context, repo domain.CampaignRepository, 
 	return nil, fmt.Errorf("%w: the row at version %d does not carry the intended record (read error: %v)", errMetaAdSetRecordUnknown, version, err)
 }
 
+// errMetaAdSetClaimLost: the claim was given up to reconcile an unusable connection and could
+// not be re-taken (another writer took it in the gap, or the row moved past both versions). The
+// record's outcome is unknown AND this request no longer holds the campaign exclusively, so
+// nothing more may be written or sent: the request fails closed.
+var errMetaAdSetClaimLost = errors.New("the campaign's write claim was lost while reconciling the ad set's pause record")
+
 // reclaimAndWriteMetaAdSetRecord is step 2 of writeMetaAdSetRecord: release the unusable claim,
-// take it again, and settle the record on the new claim.
+// take it again, and settle the record on the new claim. Nothing continues without a SUCCESSFUL
+// re-claim — another writer may take the claim in the gap (a campaign resume could then act on a
+// row without the record), so a failed re-claim is errMetaAdSetClaimLost, never "unknown, carry
+// on".
+//
+// Once re-claimed, the answer is definite wherever it can be:
+//   - re-claimed at expectedVersion: the first attempt did NOT land. The write is made on the
+//     new claim; only ITS OWN ambiguous commit is "unknown" — any other failure is returned
+//     unchanged, a definite "not recorded";
+//   - re-claimed at expectedVersion+1: the first attempt landed if that row carries the record;
+//     if it does not, another writer moved the row and the first attempt did not land (had it
+//     landed, that writer would have moved it to +2) — a definite ErrPreconditionFailed.
 func (s *BriefService) reclaimAndWriteMetaAdSetRecord(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, adSetID string, expectedVersion int64, lockToken *domain.CampaignLockToken) (*model.Campaign, error) {
 	_ = repo.ReleaseCampaignLock(ctx, *lockToken)
 	*lockToken = domain.CampaignLockToken{}
@@ -502,10 +528,10 @@ func (s *BriefService) reclaimAndWriteMetaAdSetRecord(ctx context.Context, repo 
 	if err == nil {
 		*lockToken = tok
 		updated, werr := s.persistMetaAdSetRecord(ctx, repo, cur, adSetID, expectedVersion, tok)
-		if werr != nil {
-			return nil, fmt.Errorf("%w: write on the re-taken claim failed: %v", errMetaAdSetRecordUnknown, werr)
+		if werr != nil && errors.Is(werr, domain.ErrWriteOutcomeUnknown) {
+			return nil, fmt.Errorf("%w: write on the re-taken claim: %v", errMetaAdSetRecordUnknown, werr)
 		}
-		return updated, nil
+		return updated, werr
 	}
 	if errors.Is(err, domain.ErrPreconditionFailed) {
 		cur, tok, err = repo.ClaimCampaignVersion(ctx, row.ProjectID, row.BriefID, row.ID, expectedVersion+1)
@@ -514,15 +540,14 @@ func (s *BriefService) reclaimAndWriteMetaAdSetRecord(ctx context.Context, repo 
 			if model.MetaUserPausedAdSetID(cur.Result) == adSetID {
 				return cur, nil
 			}
-			return nil, fmt.Errorf("%w: the row at version %d does not carry the intended record", errMetaAdSetRecordUnknown, expectedVersion+1)
+			return nil, fmt.Errorf("the row moved to version %d without the record, so it was not recorded: %w", expectedVersion+1, domain.ErrPreconditionFailed)
 		}
 	}
-	return nil, fmt.Errorf("%w: the claim could not be re-taken: %v", errMetaAdSetRecordUnknown, err)
+	return nil, fmt.Errorf("%w: %v", errMetaAdSetClaimLost, err)
 }
 
 // locateMetaAdSetRow finds the row after a record write whose outcome is unknown: at base (it
-// did not land) or base+1 (it did, or another write did), read on the claim's connection — or,
-// when the claim had to be given up, on the pool, which then holds no connection of ours.
+// did not land) or base+1 (it did, or another write did), read on the claim's connection.
 func locateMetaAdSetRow(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, base int64, lockToken domain.CampaignLockToken) (*model.Campaign, error) {
 	var lastErr error
 	for _, v := range []int64{base, base + 1} {
@@ -589,6 +614,9 @@ func adSetRecordErr(err error, applied bool, verb string) error {
 	if errors.Is(err, domain.ErrPreconditionFailed) || errors.Is(err, domain.ErrNotFound) {
 		return &briefs.ConflictError{Code: "409", Message: what + ", but this campaign was modified or deleted by another request meanwhile, so the change was not recorded: " + consequence + " after reading the campaign"}
 	}
+	if errors.Is(err, errMetaAdSetClaimLost) {
+		return errAdSetClaimLost()
+	}
 	if errors.Is(err, errMetaAdSetRecordUnknown) {
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but whether that was recorded on the campaign could not be confirmed: read the ad sets (deliberately_paused); if it is not shown, " + consequence}
 	}
@@ -616,6 +644,12 @@ func (s *BriefService) answerUnconfirmedAdSetWrite(ctx context.Context, repo dom
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: "the ad set status change is unconfirmed — it may or may not have been applied on Meta — and whether its pause was recorded on the campaign could not be confirmed either: read the ad sets before retrying; if it is not shown as deliberately_paused, pause it here again before resuming the campaign"}
 	}
 	return errAdSetUnconfirmed()
+}
+
+// errAdSetClaimLost answers a request that lost the campaign's claim while reconciling the pause
+// record: nothing further was sent to Meta by it, but the record may or may not be on the row.
+func errAdSetClaimLost() error {
+	return &briefs.ConnServiceUnavailableError{Code: "503", Message: "the campaign's write lock was lost while recording the ad set's pause, so nothing further was sent to Meta; whether the pause is recorded on the campaign, and the ad set's status, are unconfirmed — read the ad sets before retrying (one shown deliberately_paused while it is active is cleared by resuming it here)"}
 }
 
 // errAdSetUnconfirmed is the fixed answer for a write whose outcome is unknown.

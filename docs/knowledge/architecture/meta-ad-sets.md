@@ -180,9 +180,18 @@ the trap `ReplaceCampaign`'s own connection reuse avoids. Each step is bounded b
 2. Any other failure means the claimed connection is unusable: the claim is handed back
    (`ReleaseCampaignLock`, which destroys a broken connection and frees its slot) and exclusive
    ownership is TAKEN AGAIN with `ClaimCampaignVersion` — a try-lock, as every writer takes it.
-   At the old version the first attempt rolled back and the write is made on the new claim; at
-   the next version it landed if that row carries the record. The request's deferred release,
-   cooldown and later writes follow the new claim.
+   Nothing continues without a SUCCESSFUL re-claim: another writer (a campaign resume, say) may
+   take the claim in the gap, so a failed re-claim FAILS CLOSED — nothing is sent to Meta and
+   nothing more is written, and the 503 says the record and the ad set's status are unconfirmed
+   and to re-read the ad sets. Once re-claimed the answer is definite wherever it can be:
+   - At the old version, the first attempt is proven not to have landed. The write is made on
+     the new claim, and only that write's own ambiguous commit counts as "unknown"; any other
+     failure is a definite "not recorded", and nothing is sent.
+   - At the next version, the first attempt landed if that row carries the record. If it does
+     not, another writer moved the row and the first attempt did not land (had it landed, that
+     writer would have moved it to +2). That is a definite 409 and nothing is sent.
+
+   The request's deferred release, cooldown and later writes follow the new claim.
 
 Anything else is "unknown". The state that must never arise is a pause on record over an ad set
 that was never paused (`deliberately_paused` while it serves), so a pause whose record may have
@@ -199,8 +208,9 @@ suppresses the pause. A withdrawal and a clear-on-resume are reconciled the same
 ONE-connection pool, `TestLiveMetaPauseRecordConfirmedRollbackSendsNothing`,
 `TestLiveMetaPauseRecordReconcilesWithoutASecondPooledConnection` (a real lost acknowledgement,
 after which pgx closes the claimed connection, so the claim is re-taken) and
-`TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim` cover the three
-outcomes.
+`TestLiveMetaPauseRecordRejectedOnTheReTakenClaimSendsNothing` cover these outcomes. The unit test
+`TestToggleMetaAdSetStatus_ConcurrentToggleInTheReclaimGapStopsThePause` runs a real campaign
+resume that takes the claim in the gap: the pause is not sent.
 
 **Concurrency.** The record and the campaign toggle are serialised by `ClaimCampaignVersion`: a
 campaign resume racing a pause in flight is refused (409, nothing sent), one on the ETag read

@@ -416,19 +416,6 @@ func TestToggleMetaAdSetStatus_UnusableClaimedConnectionReTakesTheClaim(t *testi
 	}
 }
 
-// The claim cannot be re-taken (another writer holds it): unknown, and the pause is still sent.
-func TestToggleMetaAdSetStatus_ClaimNotReTakenStillSendsThePause(t *testing.T) {
-	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
-	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
-	repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed")}
-	repo.reclaimErr = domain.ErrCampaignWriteInProgress
-	repo.verifyErr = errors.New("db down")
-	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
-	if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "could not be confirmed") || d.sent != 1 {
-		t.Fatalf("err %q, sent %d", msg, d.sent)
-	}
-}
-
 // ---- an UNCONFIRMED Meta answer after an unconfirmed record (PR #309) ------
 
 // adSetAndCampaignDispatcher adds the campaign toggle to the ad-set fake, recording whether the
@@ -443,8 +430,8 @@ func (d *adSetAndCampaignDispatcher) ToggleStatus(_ context.Context, _ string, _
 	return nil
 }
 
-// The record could not be confirmed before the pause was sent (both attempts rolled back, the
-// claim could not be re-taken), and Meta answers UNCONFIRMED. Unknown counts as paused, so the
+// The record could not be confirmed before the pause was sent (every attempt's commit was
+// ambiguous, though the claim was re-taken), and Meta answers UNCONFIRMED. Unknown counts as paused, so the
 // record is SETTLED before the 503 — and a later campaign resume keeps the ad set paused.
 func TestToggleMetaAdSetStatus_UnconfirmedPauseAfterAnUnconfirmedRecordSettlesIt(t *testing.T) {
 	for name, d := range map[string]*adSetAndCampaignDispatcher{
@@ -453,8 +440,10 @@ func TestToggleMetaAdSetStatus_UnconfirmedPauseAfterAnUnconfirmedRecordSettlesIt
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
-			repo.replaceErrs = []error{ambiguousCommit(), ambiguousCommit()}
-			repo.reclaimErr = domain.ErrCampaignWriteInProgress
+			// The first commit and its retry on the claimed connection are ambiguous; the claim is
+			// re-taken, and the write on it is ambiguous too: the record is "unknown", the claim
+			// is held, and the pause is sent.
+			repo.replaceErrs = []error{ambiguousCommit(), ambiguousCommit(), ambiguousCommit()}
 			res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
 			if res != nil || !isStatus(err, 503) || errMessage(err) != unconfirmedAdSetText || d.sent != 1 {
 				t.Fatalf("got %+v, %T %q, sent %d", res, err, errMessage(err), d.sent)
@@ -462,8 +451,6 @@ func TestToggleMetaAdSetStatus_UnconfirmedPauseAfterAnUnconfirmedRecordSettlesIt
 			if !held(repo) || repo.cooldowns != 1 {
 				t.Fatalf("held %v, cooldowns %d; the unconfirmed pause must be on record", held(repo), repo.cooldowns)
 			}
-			// The other writer that kept the claim from being re-taken has finished.
-			repo.reclaimErr = nil
 			etag := fmt.Sprint(repo.got.Version)
 			if _, terr := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
 				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &etag, Status: model.CampaignRunActive,
@@ -478,8 +465,7 @@ func TestToggleMetaAdSetStatus_UnconfirmedPauseAfterAnUnconfirmedRecordSettlesIt
 func TestToggleMetaAdSetStatus_UnconfirmedPauseWithAnUnsettleableRecordSaysSo(t *testing.T) {
 	d := &adSetDispatcher{sends: true, toggleErr: adSetUnconfirmedErr{msg: "timeout"}}
 	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
-	repo.replaceErrs = []error{ambiguousCommit(), ambiguousCommit()}
-	repo.reclaimErr = domain.ErrCampaignWriteInProgress
+	repo.replaceErrs = []error{ambiguousCommit(), ambiguousCommit(), ambiguousCommit()}
 	repo.verifyErr = errors.New("db down")
 	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
 	if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "unconfirmed") || !strings.Contains(msg, "whether its pause was recorded on the campaign could not be confirmed") || repo.cooldowns != 1 {
@@ -496,5 +482,119 @@ func TestToggleMetaAdSetStatus_ConfirmedRollbackOfTheRecordSendsNothing(t *testi
 	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
 	if !isStatus(err, 503) || !strings.Contains(errMessage(err), "nothing was changed on Meta") || d.sent != 0 || held(repo) || repo.replaces != 1 {
 		t.Fatalf("err %q, sent %d, held %v, writes %d", errMessage(err), d.sent, held(repo), repo.replaces)
+	}
+}
+
+// ---- the claim given up to reconcile (PR #309) -------------------------------
+
+const claimLostText = "the campaign's write lock was lost while recording the ad set's pause, so nothing further was sent to Meta"
+
+// The claim could not be re-taken after it was given up: fail CLOSED — the pause is not sent and
+// nothing more is written.
+func TestToggleMetaAdSetStatus_ClaimNotReTakenFailsClosed(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed")}
+	repo.reclaimErr = domain.ErrCampaignWriteInProgress
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); !isStatus(err, 503) || !strings.HasPrefix(msg, claimLostText) || d.sent != 0 || repo.replaces != 2 || repo.cooldowns != 0 {
+		t.Fatalf("err %q, sent %d, writes %d, cooldowns %d; want a fail-closed 503 and nothing sent", msg, d.sent, repo.replaces, repo.cooldowns)
+	}
+}
+
+// Re-claimed at the original version, the first attempt is PROVEN not to have landed, so a
+// non-ambiguous failure of the write on the new claim is definite: nothing is sent.
+func TestToggleMetaAdSetStatus_DefiniteFailureOnTheReTakenClaimSendsNothing(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed"), errors.New("replace campaign: commit rolled back by the server")}
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "nothing was changed on Meta") || d.sent != 0 || held(repo) {
+		t.Fatalf("err %q, sent %d, held %v", msg, d.sent, held(repo))
+	}
+}
+
+// Re-claimed only at the NEXT version, and that row carries no record: another writer moved the
+// row and the first attempt did not land — definite, nothing sent.
+func TestToggleMetaAdSetStatus_ReTakenAtTheNextVersionWithoutTheRecordSendsNothing(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed")}
+	repo.onRelease = func() {
+		// Another writer's change lands in the gap, without the record.
+		repo.dataMu.Lock()
+		repo.got.Version++
+		repo.dataMu.Unlock()
+	}
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); !isStatus(err, 409) || !strings.Contains(msg, "nothing was changed on Meta") || d.sent != 0 || held(repo) {
+		t.Fatalf("err %T %q, sent %d, held %v", err, msg, d.sent, held(repo))
+	}
+}
+
+// gapDispatcher: the ad-set fake plus a campaign toggle that parks inside the platform call (so
+// it HOLDS the claim) until released, recording whether its row held the ad set paused.
+type gapDispatcher struct {
+	adSetDispatcher
+	inToggle     chan struct{}
+	release      chan struct{}
+	campaignHeld []bool
+}
+
+func (d *gapDispatcher) ToggleStatus(_ context.Context, _ string, _ model.Provider, c *model.Campaign, _ string) error {
+	d.campaignHeld = append(d.campaignHeld, model.MetaAdSetHeldPaused(c.Result, "888"))
+	close(d.inToggle)
+	<-d.release
+	return nil
+}
+
+// A campaign resume takes the claim in the gap the reconciliation opened. The lever must not
+// carry on: it fails closed and the pause is never sent, while the resume proceeds on a row
+// without the record — so no pause can be lost under it.
+func TestToggleMetaAdSetStatus_ConcurrentToggleInTheReclaimGapStopsThePause(t *testing.T) {
+	d := &gapDispatcher{
+		adSetDispatcher: adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied}},
+		inToggle:        make(chan struct{}),
+		release:         make(chan struct{}),
+	}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	var releaseOnce sync.Once
+	releaseToggle := func() { releaseOnce.Do(func() { close(d.release) }) }
+	t.Cleanup(releaseToggle)
+	const wait = 5 * time.Second
+
+	resumed := make(chan error, 1)
+	repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed")}
+	repo.onRelease = func() {
+		go func() {
+			etag := "3"
+			_, err := s.ToggleCampaignStatus(context.Background(), &briefs.ToggleCampaignStatusPayload{
+				ProjectID: "cncf", BriefID: "b1", CampaignID: "c1", IfMatch: &etag, Status: model.CampaignRunActive,
+			})
+			resumed <- err
+		}()
+		select {
+		case <-d.inToggle:
+		case err := <-resumed:
+			t.Errorf("the campaign resume finished before taking the claim: %v", err)
+		case <-time.After(wait):
+			t.Error("the campaign resume never took the claim")
+		}
+	}
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); !isStatus(err, 503) || !strings.HasPrefix(msg, claimLostText) || d.sent != 0 {
+		t.Fatalf("err %q, sent %d; the pause must not be sent once another writer holds the claim", msg, d.sent)
+	}
+	releaseToggle()
+	select {
+	case rerr := <-resumed:
+		if rerr != nil {
+			t.Fatalf("campaign resume: %v", rerr)
+		}
+	case <-time.After(wait):
+		t.Fatal("the campaign resume did not finish")
+	}
+	if len(d.campaignHeld) != 1 || d.campaignHeld[0] || held(repo) {
+		t.Fatalf("resume saw held %v, row held %v; the resume ran on a row without the record and no pause was sent", d.campaignHeld, held(repo))
 	}
 }

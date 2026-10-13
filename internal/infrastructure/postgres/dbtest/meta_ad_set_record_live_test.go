@@ -209,10 +209,11 @@ func TestLiveMetaPauseRecordReconcilesWithoutASecondPooledConnection(t *testing.
 	claimReleased(ctx, t, campaigns, projectID, briefID, id)
 }
 
-// The record's first commit is ambiguous and every later one is rejected, on a ONE-connection
-// pool: the record can never be established. The fail-safe holds — the pause is still sent, the
-// answer is a 503 about the record — promptly, and the claim is released.
-func TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim(t *testing.T) {
+// The record's first commit is ambiguous (pgx then closes the claimed connection, so the claim
+// is released and re-taken), and the server REJECTS the write on the re-taken claim. Re-claimed
+// at the original version, the first attempt is proven not to have landed, so that rejection is
+// definite: the pause is NOT sent, nothing is on record, promptly, and the claim is released.
+func TestLiveMetaPauseRecordRejectedOnTheReTakenClaimSendsNothing(t *testing.T) {
 	shared := dbtest.Pool(t)
 	ctx := context.Background()
 	projectID, briefID, id, version := seedRecordedMetaCampaign(ctx, t, shared)
@@ -222,8 +223,12 @@ func TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim(t 
 
 	_, err := timedPause(ctx, t, s, projectID, briefID, id, version)
 	var unavailable *briefs.ConnServiceUnavailableError
-	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Message, "WAS paused on Meta") || d.sent != 1 {
-		t.Fatalf("err = %T %v, sent = %d; want the pause sent and a 503 about its record", err, err, d.sent)
+	if !errors.As(err, &unavailable) || !strings.Contains(unavailable.Message, "nothing was changed on Meta") || d.sent != 0 {
+		t.Fatalf("err = %T %v, sent = %d; want the not-recorded 503 and nothing sent", err, err, d.sent)
+	}
+	row, gerr := campaigns.GetCampaign(ctx, projectID, briefID, id)
+	if gerr != nil || model.MetaAdSetHeldPaused(row.Result, "888") {
+		t.Fatalf("row = %+v, %v; want no record", row, gerr)
 	}
 	claimReleased(ctx, t, campaigns, projectID, briefID, id)
 }

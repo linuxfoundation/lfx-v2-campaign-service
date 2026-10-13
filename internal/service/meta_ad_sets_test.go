@@ -81,6 +81,7 @@ type adSetRepo struct {
 	// attempt to re-take the claim.
 	reclaimErr error
 	claims     int
+	onRelease  func()
 	// replaceTokens records the claim token each ReplaceCampaign was made under.
 	replaceTokens []domain.CampaignLockToken
 }
@@ -96,12 +97,18 @@ func ambiguousCommit() error {
 
 // ReleaseCampaignLock treats the zero token as a no-op, as the real repository does: a
 // reconciliation that had to give its claim up and could not re-take it leaves a zero token for
-// the deferred release.
+// the deferred release. onRelease, when set, runs once just AFTER a real release — the gap in
+// which another writer can take the claim.
 func (r *adSetRepo) ReleaseCampaignLock(ctx context.Context, tok domain.CampaignLockToken) error {
 	if tok.CampaignID == "" {
 		return nil
 	}
-	return r.toggleCampaignRepo.ReleaseCampaignLock(ctx, tok)
+	err := r.toggleCampaignRepo.ReleaseCampaignLock(ctx, tok)
+	if f := r.onRelease; f != nil {
+		r.onRelease = nil
+		f()
+	}
+	return err
 }
 
 func (r *adSetRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
