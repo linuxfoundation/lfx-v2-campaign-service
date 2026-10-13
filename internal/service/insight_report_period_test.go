@@ -100,9 +100,9 @@ func TestReadKeywords_ServesASavedReportOnlyForItsOwnPeriod(t *testing.T) {
 	}
 }
 
-// TestReadAudience_ServesASavedReportOnlyForItsOwnPeriod is the audience kind's twin, plus the
-// collect path: a report PENDING across the boundary is collected (stored) but not served for the
-// new period, and its replacement is submitted on the same read.
+// TestReadAudience_ServesASavedReportOnlyForItsOwnPeriod is the audience kind's twin, plus a
+// report PENDING across the boundary: it is superseded before the collect step — never polled,
+// stored or served for the new period — and its replacement is submitted on the same read.
 func TestReadAudience_ServesASavedReportOnlyForItsOwnPeriod(t *testing.T) {
 	for _, tc := range periodCases {
 		t.Run(tc.name, func(t *testing.T) {

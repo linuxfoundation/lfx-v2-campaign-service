@@ -67,6 +67,11 @@ func samePeriod(start, end, wantStart, wantEnd time.Time) bool {
 	return sameReportDay(start, wantStart) && sameReportDay(end, wantEnd)
 }
 
+// maxSupersedeAttempts bounds how many stale pending reports one read will clear before giving up:
+// each lost compare-and-set re-reads the key, and a concurrent request that read before the date
+// change can record ANOTHER old-period report after we cleared one.
+const maxSupersedeAttempts = 3
+
 // supersedeOtherPeriodPending clears a PENDING report requested for another calendar period — a
 // today or this_month report still building when the UTC date changed — so it no longer blocks a
 // submission for the period the window means now. Without this the store's single pending slot
@@ -75,38 +80,55 @@ func samePeriod(start, end, wantStart, wantEnd time.Time) bool {
 // the old report finished or was abandoned (up to accountReportAbandonAfter).
 //
 // It uses the store's existing compare-and-set on the pending report id (fail), recording the
-// supersession as the key's last failure, so:
-//   - exactly one request clears a given stale report; a request that loses the CAS re-reads the
-//     pending half and adopts whatever is there now (typically the winner's replacement), so it does
-//     not submit a second one once that is recorded;
-//   - a late collection of the old report — by a request still holding the old snapshot — can no
-//     longer complete it (its pending id is gone), and even the copy that request serves from
-//     memory is dropped by discardOtherPeriod, because its dates are not the current period's.
+// supersession as the key's last failure:
+//   - applied: the slot is empty; refreshInsightReport submits the current period's report.
+//   - lost the CAS (the stale report was collected, failed or superseded meanwhile): the WHOLE
+//     snapshot is re-read and adopted — ready half included, so a replacement that already
+//     finished is served rather than resubmitted — and the pending half is re-validated: another
+//     old-period report (recorded by a request that read before the date change) is superseded in
+//     turn, at most maxSupersedeAttempts times.
+//   - a store error, a failed re-read, or the bound exhausted: an ERROR. The read must not go on
+//     with the stale snapshot — it would poll the obsolete report, submit nothing, and answer
+//     metrics_pending for a period nothing is building for — so it fails the way any other
+//     saved-report store failure fails it.
 //
-// Run BEFORE collectPendingInsightReport, so the stale report is not polled for nothing. The
-// replacement itself is submitted by refreshInsightReport, as for a key with nothing pending.
-func supersedeOtherPeriodPending[R any](callCtx, ctx context.Context, d insightReportDriver[R], snap *model.InsightReportSnapshot[R], wantStart, wantEnd, now time.Time) {
-	p := snap.Pending
-	if p == nil || samePeriod(p.WindowStart, p.WindowEnd, wantStart, wantEnd) {
-		return
-	}
+// A late collection of a superseded report can no longer complete it (its pending id is gone), and
+// a copy served from memory is still dropped by discardOtherPeriod. Run BEFORE
+// collectPendingInsightReport, so a stale report is never polled.
+func supersedeOtherPeriodPending[R any](callCtx, ctx context.Context, d insightReportDriver[R], snap *model.InsightReportSnapshot[R], wantStart, wantEnd, now time.Time) error {
 	key := snap.Key
-	reason := fmt.Sprintf("superseded: requested for %s..%s, but the window now means %s..%s",
-		p.WindowStart.UTC().Format("2006-01-02"), p.WindowEnd.UTC().Format("2006-01-02"),
-		wantStart.UTC().Format("2006-01-02"), wantEnd.UTC().Format("2006-01-02"))
-	applied, err := d.fail(callCtx, key, p.ReportID, reason, now)
-	if err != nil {
-		slog.WarnContext(ctx, d.read+": could not supersede a report pending for another period; will retry on a later read", "platform", key.Platform, "project_id", key.ProjectID, "error", err)
-		return
-	}
-	if applied {
-		snap.Pending = nil
-		return
-	}
-	// Lost the compare-and-set: the stale report was collected, failed or superseded meanwhile.
-	// Adopt the pending half as it is now; refreshInsightReport submits only if it is empty.
-	if latest, gerr := d.get(callCtx, key); gerr == nil {
-		snap.Pending = latest.Pending
+	for attempt := 1; ; attempt++ {
+		p := snap.Pending
+		if p == nil || samePeriod(p.WindowStart, p.WindowEnd, wantStart, wantEnd) {
+			return nil
+		}
+		if attempt > maxSupersedeAttempts {
+			return fmt.Errorf("%s %s: a report pending for another period was still in place after %d attempts to supersede it",
+				key.Platform, d.read, maxSupersedeAttempts)
+		}
+		reason := fmt.Sprintf("superseded: requested for %s..%s, but the window now means %s..%s",
+			p.WindowStart.UTC().Format("2006-01-02"), p.WindowEnd.UTC().Format("2006-01-02"),
+			wantStart.UTC().Format("2006-01-02"), wantEnd.UTC().Format("2006-01-02"))
+		applied, err := d.fail(callCtx, key, p.ReportID, reason, now)
+		if err != nil {
+			return fmt.Errorf("%s %s: supersede a report pending for another period: %w", key.Platform, d.read, err)
+		}
+		if applied {
+			snap.Pending = nil
+			return nil
+		}
+		latest, gerr := d.get(callCtx, key)
+		switch {
+		case errors.Is(gerr, domain.ErrNotFound):
+			snap.Ready, snap.Pending = nil, nil
+			return nil
+		case gerr != nil:
+			return fmt.Errorf("%s %s: re-read saved report after losing a supersede: %w", key.Platform, d.read, gerr)
+		}
+		// Adopt the whole snapshot as it now stands; the loop re-validates its pending half, and
+		// discardOtherPeriod (after collection) its ready half.
+		snap.Ready, snap.Pending = latest.Ready, latest.Pending
+		snap.LastFailure, snap.LastFailureAt = latest.LastFailure, latest.LastFailureAt
 	}
 }
 

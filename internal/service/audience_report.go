@@ -64,8 +64,9 @@ func (o *Orchestrator) audienceReportStore() domain.AudienceReportRepository {
 //  1. the project's campaign scope from the database; EMPTY answers an empty result with no
 //     store access and no upstream call;
 //  2. AudienceReportAccount: every trust-boundary refusal, before anything upstream;
-//  3. check a pending report once (store / drop / abandon);
-//     then drop a finished report for another calendar period (discardOtherPeriod);
+//  3. supersede a report pending for another calendar period first (never polled), then check
+//     a pending report for this period once (store / drop / abandon), then drop a finished
+//     report for another calendar period (discardOtherPeriod);
 //  4. submit when nothing is pending and the last finished report is missing, stale, or does not
 //     cover every campaign the project NOW owns — failing the read only on a permanent refusal;
 //  5. serve the last finished report only if it covers the current scope, its rows confined to
@@ -118,7 +119,9 @@ func (o *Orchestrator) ReadReportedAudience(ctx context.Context, projectID strin
 		return nil, perr
 	}
 	// A report still BUILDING for another calendar period must not block one for this period.
-	supersedeOtherPeriodPending(callCtx, ctx, driver, snap, wantStart, wantEnd, now)
+	if serr := supersedeOtherPeriodPending(callCtx, ctx, driver, snap, wantStart, wantEnd, now); serr != nil {
+		return nil, serr
+	}
 	collectPendingInsightReport(callCtx, ctx, driver, snap, now)
 	// A finished report for another calendar period (the window rolled over since it was
 	// requested) is neither fresh nor servable: see discardOtherPeriod.
