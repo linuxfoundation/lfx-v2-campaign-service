@@ -9823,6 +9823,97 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-linkedin-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read LinkedIn professional demographics — job function, seniority, industry, company size and country — for this project''s own campaigns, live from LinkedIn''s Ad Analytics API. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project''s OWN connection only (never the LF system account) and only the account that connection is bound to. One Ad Analytics statistics request per pivot (pivots CAMPAIGN plus the MEMBER_* pivot, filtered by the project''s campaign URNs and the bound account); every returned row must name one of those campaigns or the read fails, because the account is shared across foundations. A pure read-through; nothing is persisted. A project with no LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn is not contacted. All five pivots must load or the request fails (503). Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE (see `approximate`): LinkedIn drops values under 3 events, withholds values for ads reaching too few members, keeps only the top 100 values per creative per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No conversions. Not gated: LinkedIn has no metrics feature flag.'
+            operationId: lfx-v2-campaign-service-connections#get-linkedin-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on LinkedIn.
+                  required: false
+                  type: string
+                  enum:
+                    - today
+                    - last_7_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/LinkedinAdsAudience'
+                        required:
+                            - window
+                            - buckets
+                            - bucket_count
+                            - approximate
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: 'Conflict: Conflict'
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/meta-ads/audience:
         get:
             tags:
@@ -16508,6 +16599,122 @@ definitions:
                 label: Est corporis libero quis eum laudantium.
         required:
             - config
+    LinkedinAdsAudience:
+        title: LinkedinAdsAudience
+        type: object
+        properties:
+            approximate:
+                type: boolean
+                description: 'Always true: LinkedIn documents professional-demographic metrics as APPROXIMATE (privacy protection), privacy-thresholded (values under 3 events dropped, values for ads reaching too few members withheld, top 100 values per creative per day) and delayed 12-24 hours. Present every counter as an estimate, never as an exact measurement, and do not reconcile it against the campaign metrics read.'
+                example: true
+            bucket_count:
+                type: integer
+                description: How many buckets are in `buckets`, across all dimensions.
+                example: 2
+                format: int64
+            buckets:
+                type: array
+                items:
+                    $ref: '#/definitions/LinkedinAdsAudienceBucket'
+                description: 'Every bucket across the five pivots, discriminated by `dimension`. Ordered by dimension (job_function, seniority, industry, company_size, country), then impressions descending, then value. Each dimension covers the same traffic independently, so total within one dimension only — and even then the total is BELOW the campaigns'' own totals: LinkedIn drops values with fewer than 3 events, withholds values for ads reaching too few members, and returns only the top 100 values per creative per day.'
+                example:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: job_function
+                      impressions: 9000
+                      value: urn:li:function:8
+                    - clicks: 185
+                      cost_micros: 2100000
+                      ctr: 0.025
+                      dimension: country
+                      impressions: 7400
+                      value: urn:li:geo:103644278
+            window:
+                type: string
+                description: The reporting window these counters cover, as UTC calendar days (LinkedIn's Ad Analytics dateRange is UTC) — the same days the LinkedIn campaign metrics read uses for the same window name
+                example: today
+                enum:
+                    - today
+                    - last_7_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+        example:
+            approximate: true
+            bucket_count: 2
+            buckets:
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: job_function
+                  impressions: 9000
+                  value: urn:li:function:8
+                - clicks: 185
+                  cost_micros: 2100000
+                  ctr: 0.025
+                  dimension: country
+                  impressions: 7400
+                  value: urn:li:geo:103644278
+            window: last_30_days
+        required:
+            - window
+            - buckets
+            - bucket_count
+            - approximate
+    LinkedinAdsAudienceBucket:
+        title: LinkedinAdsAudienceBucket
+        type: object
+        properties:
+            clicks:
+                type: integer
+                description: Clicks over the window — APPROXIMATE
+                example: 270
+                format: int64
+            cost_micros:
+                type: integer
+                description: Spend over the window in micro-units of USD (LinkedIn's costInUsd times 10^6, the same unit the LinkedIn campaign metrics read reports) — APPROXIMATE, and per LinkedIn not adjusted for over-delivery on a demographic pivot.
+                example: 2700000
+                format: int64
+            ctr:
+                type: number
+                description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                example: 0.03
+                format: double
+            dimension:
+                type: string
+                description: 'Which LinkedIn Ad Analytics professional-demographic pivot this bucket belongs to: job_function (MEMBER_JOB_FUNCTION), seniority (MEMBER_SENIORITY), industry (MEMBER_INDUSTRY), company_size (MEMBER_COMPANY_SIZE) or country (MEMBER_COUNTRY_V2)'
+                example: country
+                enum:
+                    - job_function
+                    - seniority
+                    - industry
+                    - company_size
+                    - country
+            impressions:
+                type: integer
+                description: Impressions over the window — APPROXIMATE (LinkedIn's privacy approximation for professional demographics)
+                example: 9000
+                format: int64
+            value:
+                type: string
+                description: 'LinkedIn''s pivot value for this bucket, VERBATIM — a URN such as urn:li:function:8, urn:li:seniority:5, urn:li:industry:4 or urn:li:geo:103644278 (company_size values are passed through as LinkedIn reports them). NOT resolved to a name: LinkedIn resolves each URN type through its Standardized Data APIs (/functions, /seniorities, /industries, /geo), which this read does not call. A value outside a conservative charset fails the read rather than being returned.'
+                example: urn:li:function:8
+                pattern: ^[A-Za-z0-9][A-Za-z0-9:_.\-]{0,127}$
+        example:
+            clicks: 185
+            cost_micros: 2100000
+            ctr: 0.025
+            dimension: country
+            impressions: 7400
+            value: urn:li:geo:103644278
+        required:
+            - dimension
+            - value
+            - impressions
+            - clicks
+            - cost_micros
+            - ctr
     LinkedinAdsConnection:
         title: LinkedinAdsConnection
         type: object

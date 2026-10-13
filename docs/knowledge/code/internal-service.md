@@ -2119,3 +2119,19 @@ an APPLIED write. `classifyMetaAdSetError` maps every failure to fixed text; its
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 
+
+## LinkedIn audience read (`connection_linkedin_audience.go`, LFXV2-2665)
+
+`GetLinkedinAdsAudience` (`GET .../linkedin-ads/audience`) is the LinkedIn sibling, kept in its own
+file together with its capability (`LinkedInAudienceReader`) and
+`Orchestrator.ReadLinkedInAudienceInsights`, so `orchestrator.go` is untouched. Same order as the
+Meta read: system scope refused (404); `resolveLinkedInAudienceWindow` accepts only the LinkedIn
+metrics read's five windows (`today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`),
+defaults to `last_30_days` and answers anything else with the fixed 400
+`linkedInAudienceWindowMessage`; backend check; then the capability assertion (absent →
+`ErrKeywordInsightsUnsupported`, 400) and the shared `readScopedAudience` (empty scope → 200 empty,
+LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics flag. Errors go through
+`classifyInsightsErrorFor` with the `linkedInAdsAudienceInsights` descriptor; no new arm was needed
+(the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
+`true` on the wire. Tests: `linkedin_audience_test.go`. See
+[LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).
