@@ -226,6 +226,11 @@ type LinkedInDispatcher struct {
 	// rely on, verified against this client rather than inherited from them.
 	clients *clientCache
 	opts    []linkedin.Option
+	// creatives and assets resolve variants[].imageAssetId (linkedin_creative.go). Bound by
+	// registerDispatchers; nil in direct-construction tests, where an asset-backed variant
+	// fails pre-create and the reserver reserves nothing.
+	creatives creativeAssetReader
+	assets    *AssetReserver
 }
 
 // NewLinkedInDispatcher builds the adapter from the connection repo + encryptor.
@@ -297,6 +302,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Stored variant images are resolved and validated BEFORE anything is created; the
+	// reservation is held until the upload inside CreateCampaign is done.
+	images, releaseImages, err := d.resolveLinkedInImages(ctx, brief, &cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseImages()
 
 	// Build the runtime config from the connection (account/org) plus any richer
 	// bits the caller supplied in config (targeting profiles / exclusions the
@@ -348,6 +360,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		TargetingProfile: cfg.TargetingProfile,
 		Variants:         cfg.Variants,
 		AdAccountID:      adAccountID,
+		Images:           images,
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
