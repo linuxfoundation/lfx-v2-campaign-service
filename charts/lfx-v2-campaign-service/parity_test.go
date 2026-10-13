@@ -468,13 +468,15 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
-		// The Meta and X audience reads (LFXV2-2665); Reddit and LinkedIn have none.
+		// The Meta, X and LinkedIn audience reads (LFXV2-2665); Reddit has none.
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},
 		{"/projects/p1/twitter-ads/audience", true},
 		{"/projects/p1/twitter-ads/audience/x", false},
+		{"/projects/p1/linkedin-ads/audience", true},
+		{"/projects/p1/linkedin-ads/audience/x", false},
+		{"/projects/p1/linkedin-ads/audiences", false},
 		{"/projects/p1/reddit-ads/audience", false},
-		{"/projects/p1/linkedin-ads/audience", false},
 		// The Meta, Reddit and X twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref", true},
@@ -519,7 +521,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-hubspot/account-monitor/x", false},
 		// --- rejected: metrics/keywords on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
-		{"/projects/p1/linkedin-ads/audience", false},
+		{"/projects/p1/linkedin-ads/keywords", false},
 		{"/projects/p1/hubspot-ads/metrics", false},
 		// The branch is an exact alternative, not a prefix: nothing hangs off it.
 		{"/projects/p1/fetch-event-url/anything", false},

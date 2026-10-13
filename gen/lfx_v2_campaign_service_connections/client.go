@@ -62,6 +62,7 @@ type Client struct {
 	GetGoogleAdsAudienceEndpoint        goa.Endpoint
 	GetMetaAdsAudienceEndpoint          goa.Endpoint
 	GetTwitterAdsAudienceEndpoint       goa.Endpoint
+	GetLinkedinAdsAudienceEndpoint      goa.Endpoint
 	GetMicrosoftAdsKeywordsEndpoint     goa.Endpoint
 	GetMicrosoftAdsAudienceEndpoint     goa.Endpoint
 	ResolveGoogleAdsCampaignEndpoint    goa.Endpoint
@@ -88,7 +89,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-connections" service client
 // given the endpoints.
-func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, getMetaAdsAudience, getTwitterAdsAudience, getMicrosoftAdsKeywords, getMicrosoftAdsAudience, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, resolveMetaAdsCampaign, resolveRedditAdsCampaign, resolveTwitterAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listRedditAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount, monitorHubspotAccount goa.Endpoint) *Client {
+func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, testGoogleAds, setCredentialGoogleAds, createLinkedinAds, getLinkedinAds, updateLinkedinAds, deleteLinkedinAds, testLinkedinAds, setCredentialLinkedinAds, createMetaAds, getMetaAds, updateMetaAds, deleteMetaAds, testMetaAds, setCredentialMetaAds, createRedditAds, getRedditAds, updateRedditAds, deleteRedditAds, testRedditAds, setCredentialRedditAds, createTwitterAds, getTwitterAds, updateTwitterAds, deleteTwitterAds, testTwitterAds, setCredentialTwitterAds, createMicrosoftAds, getMicrosoftAds, updateMicrosoftAds, deleteMicrosoftAds, testMicrosoftAds, setCredentialMicrosoftAds, createHubspot, getHubspot, updateHubspot, deleteHubspot, testHubspot, setCredentialHubspot, listGoogleAdsAccounts, getGoogleAdsKeywords, getGoogleAdsAudience, getMetaAdsAudience, getTwitterAdsAudience, getLinkedinAdsAudience, getMicrosoftAdsKeywords, getMicrosoftAdsAudience, resolveGoogleAdsCampaign, resolveMicrosoftAdsCampaign, resolveMetaAdsCampaign, resolveRedditAdsCampaign, resolveTwitterAdsCampaign, listMetaAdsAccounts, listLinkedinAdsAccounts, listMicrosoftAdsAccounts, listTwitterAdsAccounts, listRedditAdsAccounts, listHubspotEmails, searchHubspotCampaigns, createHubspotCampaign, monitorGoogleAdsAccount, monitorLinkedinAdsAccount, monitorMetaAdsAccount, monitorRedditAdsAccount, monitorMicrosoftAdsAccount, monitorTwitterAdsAccount, monitorHubspotAccount goa.Endpoint) *Client {
 	return &Client{
 		CreateGoogleAdsEndpoint:             createGoogleAds,
 		GetGoogleAdsEndpoint:                getGoogleAds,
@@ -137,6 +138,7 @@ func NewClient(createGoogleAds, getGoogleAds, updateGoogleAds, deleteGoogleAds, 
 		GetGoogleAdsAudienceEndpoint:        getGoogleAdsAudience,
 		GetMetaAdsAudienceEndpoint:          getMetaAdsAudience,
 		GetTwitterAdsAudienceEndpoint:       getTwitterAdsAudience,
+		GetLinkedinAdsAudienceEndpoint:      getLinkedinAdsAudience,
 		GetMicrosoftAdsKeywordsEndpoint:     getMicrosoftAdsKeywords,
 		GetMicrosoftAdsAudienceEndpoint:     getMicrosoftAdsAudience,
 		ResolveGoogleAdsCampaignEndpoint:    resolveGoogleAdsCampaign,
@@ -1015,6 +1017,26 @@ func (c *Client) GetTwitterAdsAudience(ctx context.Context, p *GetTwitterAdsAudi
 		return
 	}
 	return ires.(*TwitterAdsAudience), nil
+}
+
+// GetLinkedinAdsAudience calls the "get-linkedin-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+// GetLinkedinAdsAudience may return the following errors:
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - error: internal error
+func (c *Client) GetLinkedinAdsAudience(ctx context.Context, p *GetLinkedinAdsAudiencePayload) (res *LinkedinAdsAudience, err error) {
+	var ires any
+	ires, err = c.GetLinkedinAdsAudienceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*LinkedinAdsAudience), nil
 }
 
 // GetMicrosoftAdsKeywords calls the "get-microsoft-ads-keywords" endpoint of

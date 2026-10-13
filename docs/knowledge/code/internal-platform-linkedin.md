@@ -782,4 +782,34 @@ is attributed to the connection row that owns it (`res.systemScoped(linkedinExpi
 Missing `accountID`/`org_id` is still checked explicitly, because verifying a pairing needs both
 ids present and the discovery resolver only requires the credential to be otherwise usable.
 
+## Audience read (`audience.go`, LFXV2-2665)
+
+`GetAudienceInsights(ctx, window, campaignIDs)` backs `get-linkedin-ads-audience` — see
+[LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md) for the endpoint,
+trust boundary and error mapping. It reuses this package's Ad Analytics plumbing rather than a
+second transport: `dateRangeForWindow` (so its windows are exactly the metrics read's, and
+`yesterday`/`last_14_days` are `ErrUnsupportedWindow`), `restLiDate`, `costInUsdToMicros`,
+`authorizedAttempt`, the redacted transport errors and `expiredCredentialsError` — through
+`getAdAnalyticsRaw`, a single-attempt GET that returns the bounded 2xx body (the account
+monitor's discipline: no 429 backoff inside a 20s read, no upstream body on `apiError`).
+
+One `q=statistics` request per pivot (`MEMBER_JOB_FUNCTION`, `MEMBER_SENIORITY`,
+`MEMBER_INDUSTRY`, `MEMBER_COMPANY_SIZE`, `MEMBER_COUNTRY_V2`), each `pivots=List(CAMPAIGN,…)`
+with a `campaigns` facet of the scoped URNs and **no `accounts` facet**. The CAMPAIGN pivot is
+what makes the tenant boundary checkable on the way back — each element's two `pivotValues`
+must hold exactly one in-scope `urn:li:sponsoredCampaign` (order not relied on). `pivotValues`
+is not named in `fields`: the account monitor's CAMPAIGN-pivot read already relies on it being
+returned with the pivot.
+
+Decode is fail-closed: `identityjson.Check` on the raw body first (a repeated `elements` key
+would otherwise decode as an authoritative empty answer), `elements` as a pointer, counters as
+`json.RawMessage` so an ABSENT key reads 0 while an explicit `null` is refused, integers only
+and non-negative, `costInUsd` only as a string, the demographic value held to a charset and —
+for the four pivots LinkedIn's URN-resolution table names — to its URN type, duplicates
+(campaign, value) refused, int64 overflow refused, a `next` paging link or a response at the
+documented 15,000-element ceiling refused. Errors never echo upstream values (lengths only).
+Scope is validated before any request: canonical ids (`ValidateAudienceCampaignID`,
+`^[1-9][0-9]{0,18}$`), duplicates collapsed, at most `MaxAudienceCampaigns` (50 — a local URL
+bound; no query tunneling here).
+
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
