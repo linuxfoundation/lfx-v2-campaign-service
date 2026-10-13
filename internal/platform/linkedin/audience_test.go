@@ -408,6 +408,12 @@ func TestGetAudienceInsights_FirstFailureCancelsInFlightAndQueued(t *testing.T) 
 	if got != nil {
 		t.Errorf("a failed read returned a partial result: %+v", got)
 	}
+	// The read must report the failure that CAUSED the cancellation — the 500 — not a sibling's
+	// cancellation or any other error.
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusInternalServerError {
+		t.Errorf("error = %v, want the failing request's *apiError with status 500", err)
+	}
 	if errors.Is(err, context.Canceled) {
 		t.Errorf("the read reported a sibling's cancellation instead of the failure that caused it: %v", err)
 	}
