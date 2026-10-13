@@ -11,3 +11,9 @@ TTL while off, started cleanly; every supplied value is now validated first and 
 reported together. (3) create-campaigns' description claimed the HubSpot A/B conflict was the only
 synchronous refusal; it now also lists the Reddit config-only 400s, as does the api-catalog row.
 See `architecture/signed-creative-asset-urls.md`.
+
+Follow-up (#317 review): the concept description and its index bullet, the `assetsign` package
+doc and the `reddit_asset.go` header still said the URL was minted inside the dispatch; they now
+say it is minted immediately before the Reddit post request. The create-campaigns description no
+longer implies the two dispatch-time refusals are the only synchronous ones — it names the
+request-shape 400s (such as `new_version` on an unsupported platform) alongside them.

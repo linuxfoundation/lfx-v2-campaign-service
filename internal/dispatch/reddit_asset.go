@@ -22,9 +22,11 @@ import (
 //
 // Reddit Ads API v3 takes a promoted-post image only as a public media_url it fetches and
 // re-hosts while the post is created (createPromotedPost). To use an image stored through
-// upload-creative-asset, the dispatch mints a short-lived HMAC-signed URL at which this service
-// serves that one asset (internal/assetsign, internal/service/signed_asset.go) and passes it as
-// the ImageURL the existing author-a-post path already consumes. Everything downstream — the
+// upload-creative-asset, this service serves that one asset at a short-lived HMAC-signed URL
+// (internal/assetsign, internal/service/signed_asset.go). The dispatch only CHECKS the asset; it
+// hands the client an ImageURLSource (lateAssetURL) that mints the URL immediately before the
+// promoted-post request, so nothing earlier in CreateCampaign can spend its lifetime. The URL then
+// takes the author-a-post path imageUrl takes. Everything downstream — the
 // failed/UNCONFIRMED/degraded classification and claim retention — is the path imageUrl has
 // always taken, untouched. The URL is never returned to an API client, never persisted (the
 // config snapshot is built from cfg, which keeps imageAssetId and never the minted URL), and

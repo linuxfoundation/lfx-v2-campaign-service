@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Signed Creative-Asset URLs for Reddit"
-description: "How a Reddit dispatch uses a stored creative asset: the service serves that one asset at a short-lived HMAC-signed public URL minted inside the dispatch and passed to Reddit as media_url, behind an anonymous GET/HEAD route that answers every rejection with one bare 404, off unless a signing key and https base URL are configured."
+description: "How a Reddit dispatch uses a stored creative asset: the service serves that one asset at a short-lived HMAC-signed public URL minted server-side immediately before the Reddit post request that passes it as media_url, behind an anonymous GET/HEAD route that answers every rejection with one bare 404, off unless a signing key and https base URL are configured."
 resource: "internal/assetsign/assetsign.go"
 ---
 
@@ -122,7 +122,8 @@ became anonymous-only, and that the route is forwarded.
 ## Residual risk (accepted)
 
 - Anyone holding a live URL can fetch **that one image** until it expires. Acceptable: tokens are
-  minted only server-side inside the dispatch and never returned to API clients, they expire in
+  minted only server-side, immediately before the Reddit post request, and never returned to API
+  clients; they expire in
   minutes, and Reddit publishes the image anyway.
 - Gateway or fetcher access logs may record the full URL. Same bound: one image, minutes.
 - The route reveals, to a holder of a valid URL only, whether the asset is still servable (200

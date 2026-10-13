@@ -7,8 +7,8 @@
 // Reddit Ads API v3 takes a promoted-post image only as a public URL it fetches and re-hosts
 // at post creation. A signed URL lets a Reddit dispatch use an image stored through
 // upload-creative-asset without making that store public: the URL names exactly one asset of
-// one brief of one project, is valid for minutes, and is minted only inside the dispatch —
-// never returned to an API client. The full security model is in
+// one brief of one project, is valid for minutes, and is minted only server-side, immediately
+// before the Reddit post request that hands it to Reddit — never returned to an API client. The full security model is in
 // docs/knowledge/architecture/signed-creative-asset-urls.md.
 //
 // # Token
