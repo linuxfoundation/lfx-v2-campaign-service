@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -32,6 +33,13 @@ type xNegStub struct {
 
 func newXNegStub(t *testing.T, lineItem, criteria string, replies map[string]kwtReply) *xNegStub {
 	t.Helper()
+	return newXNegStubSlow(t, lineItem, criteria, replies, nil)
+}
+
+// newXNegStubSlow is newXNegStub whose POST for a keyword in slow is answered only after that
+// delay — long enough for the caller's deadline to pass AFTER the request was sent.
+func newXNegStubSlow(t *testing.T, lineItem, criteria string, replies map[string]kwtReply, slow map[string]time.Duration) *xNegStub {
+	t.Helper()
 	s := &xNegStub{}
 	n := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +56,9 @@ func newXNegStub(t *testing.T, lineItem, criteria string, replies map[string]kwt
 			n++
 			id := fmt.Sprintf("neg%d", n)
 			s.mu.Unlock()
+			if d, ok := slow[q.Get("targeting_value")]; ok {
+				time.Sleep(d)
+			}
 			reply, ok := replies[q.Get("targeting_value")]
 			if !ok {
 				echo, _ := json.Marshal(map[string]any{"data": map[string]any{
@@ -169,6 +180,51 @@ func TestTwitter_AddNegativeKeywords_PerItemOutcomes(t *testing.T) {
 	// Sent once each: the 429 is not retried.
 	if n := len(s.sent()); n != 4 {
 		t.Errorf("POSTs = %d, want exactly 4 (a 429 is never retried)", n)
+	}
+}
+
+// NOT_SENT is a DEFINITE outcome: when the first keyword's POST is sent and then the deadline
+// passes (UNCONFIRMED), the rest are never sent, and those NOT_SENT results must be returned per
+// item rather than lost to a batch-wide unconfirmed error (PR #321 review).
+func TestTwitter_AddNegativeKeywords_NotSentIsDefinite(t *testing.T) {
+	s := newXNegStubSlow(t, xKWTLineItem, xCriteria, nil, map[string]time.Duration{"first": 1500 * time.Millisecond})
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	out, err := s.d.AddNegativeKeywords(ctx, "proj", model.ProviderTwitterAds, xBidCampaign(), []model.NegativeKeyword{broad("first"), broad("second"), broad("third")}, "")
+	if err != nil {
+		t.Fatalf("NOT_SENT items are known, so the batch must answer per item, got %v", err)
+	}
+	if len(out) != 3 || out[0].Outcome != model.KeywordOutcomeUnconfirmed ||
+		out[1].Outcome != model.KeywordOutcomeFailed || out[1].ErrorCode != model.KeywordTargetingErrNotSent ||
+		out[2].Outcome != model.KeywordOutcomeFailed || out[2].ErrorCode != model.KeywordTargetingErrNotSent {
+		t.Fatalf("outcomes = %+v, want [UNCONFIRMED, FAILED/NOT_SENT, FAILED/NOT_SENT]", out)
+	}
+	if n := len(s.sent()); n != 1 {
+		t.Fatalf("POSTs = %d, want only the first", n)
+	}
+}
+
+// Request duplicates, the already-present lookup and the echo check all use ONE simple-fold key:
+// Σ, σ and ς are one orbit, which strings.ToLower splits (PR #321 review).
+func TestTwitter_AddNegativeKeywords_UnicodeCaseFolding(t *testing.T) {
+	criteria := `{"data":[{"id":"n7","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"ΟΣ","operator_type":"NE","deleted":false}],"next_cursor":null}`
+	s := newXNegStub(t, xKWTLineItem, criteria, map[string]kwtReply{
+		// X echoes the new keyword with a final sigma folded differently: still this keyword.
+		"σς": {http.StatusOK, `{"data":{"id":"n8","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"ΣΣ","operator_type":"NE","deleted":false}}`},
+	})
+	out, err := addXNegatives(s, xBidCampaign(), "", broad("ος"), broad("σς"))
+	if err != nil {
+		t.Fatalf("AddNegativeKeywords: %v", err)
+	}
+	if out[0].Outcome != model.KeywordOutcomeAlreadyPresent || out[1].Outcome != model.KeywordOutcomeApplied || out[1].NegativeKeywordID != "n8" {
+		t.Fatalf("outcomes = %+v, want [ALREADY_PRESENT (ΟΣ held), APPLIED (ΣΣ echo accepted)]", out)
+	}
+	if posts := s.sent(); len(posts) != 1 {
+		t.Fatalf("POSTs = %v, want only the new keyword", posts)
+	}
+	dup := newXNegStub(t, xKWTLineItem, xCriteria, nil)
+	if _, err := addXNegatives(dup, xBidCampaign(), "", broad("ΟΣ"), broad("ος")); !errors.Is(err, domain.ErrNegativeKeywordInvalid) || len(dup.sent()) != 0 {
+		t.Fatalf("ΟΣ and ος are the same keyword and must be refused as a duplicate, got %v", err)
 	}
 }
 

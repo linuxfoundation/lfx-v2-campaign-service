@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 // ---------------------------------------------------------------------------
@@ -51,7 +53,8 @@ func (t TargetingCriterion) NegativeKeyword() bool {
 // createOutcomeAmbiguous classifies it UNCONFIRMED, as it does a transport failure, 3xx or 5xx
 // (IsOutcomeUnconfirmed). Any other 4xx is a definite refusal. A 2xx is success only when it
 // reports a live criterion with an id, under THIS line item, of the requested type, negated, for
-// this keyword (compared ignoring case); any other 2xx is UNCONFIRMED.
+// this keyword (compared with textfold, the key the dispatcher's already-present lookup uses); any
+// other 2xx is UNCONFIRMED.
 func (c *Client) CreateNegativeKeywordCriterion(ctx context.Context, lineItemID, targetingType, keyword string) (string, error) {
 	if _, _, err := c.lineItemPath(lineItemID); err != nil {
 		return "", err
@@ -98,7 +101,7 @@ func (c *Client) CreateNegativeKeywordCriterion(ctx context.Context, lineItemID,
 		return "", unconfirmed("acknowledged under another line item")
 	case tc.TargetingType != targetingType || tc.OperatorType != OperatorNE || tc.Deleted:
 		return "", unconfirmed("acknowledged as a criterion other than the negated keyword sent")
-	case !strings.EqualFold(tc.TargetingValue, keyword):
+	case !textfold.Equal(tc.TargetingValue, keyword):
 		return "", unconfirmed("acknowledged for another keyword")
 	}
 	return tc.ID, nil

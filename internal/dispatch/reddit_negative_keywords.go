@@ -39,9 +39,8 @@ import (
 // Then ONE PATCH, sent once and never retried on a 429, carries every new keyword, and a re-read
 // must show exactly the excluded list written and no other member moved; any doubt is UNCONFIRMED.
 // The new keywords share the PATCH's outcome — APPLIED, FAILED (REJECTED by Reddit, or NOT_SENT)
-// or UNCONFIRMED — and ALREADY_PRESENT ones keep theirs, so a batch with any ALREADY_PRESENT item
-// always answers per item; the call errors only when every item rode on a write that did not
-// apply cleanly.
+// or UNCONFIRMED — and ALREADY_PRESENT ones keep theirs. The call errors only when no item has a
+// definite outcome: every item rode on the write and its outcome is UNCONFIRMED.
 func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	const op = "add reddit negative keywords"
 	if !redditKeywordTargetingWritesEnabled() {
@@ -120,14 +119,12 @@ func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID st
 	// From here on the batch's ALREADY_PRESENT results are KNOWN, whatever happens to the write:
 	// those keywords were excluded before it was sent. So a failed or doubtful write does not
 	// discard them (PR #321 review) — settle gives every NEW keyword the write's outcome and
-	// returns per-item results, and the call errors only when no item has a definite outcome.
+	// returns per-item results. The call errors only when no item has a definite outcome: every
+	// item rode on the write and the write is UNCONFIRMED. A definite FAILED (REJECTED, NOT_SENT)
+	// is itself a known outcome, so it is answered per item as X answers it.
 	settle := func(outcome, code string, cause error) ([]model.NegativeKeywordOutcome, error) {
-		if len(add) == len(out) {
-			// Every item rode on the write: nothing is known apart from it.
-			if outcome == model.KeywordOutcomeUnconfirmed {
-				return nil, &unconfirmedKeywordLeverError{err: cause}
-			}
-			return nil, cause
+		if len(add) == len(out) && outcome == model.KeywordOutcomeUnconfirmed {
+			return nil, &unconfirmedKeywordLeverError{err: cause}
 		}
 		slog.WarnContext(ctx, "reddit negative keyword write did not apply cleanly; already-excluded keywords are reported, the new ones carry the write's outcome",
 			"project_id", projectID, "campaign_id", campaign.ID, "ad_group_id", adGroupID, "outcome", outcome, "error_code", code)

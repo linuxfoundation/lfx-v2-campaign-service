@@ -10,6 +10,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 // The platform-neutral negative-keyword match types of add-negative-keywords. Each adapter
@@ -44,7 +45,8 @@ func canonicalNegativeMatchType(in string) (string, bool) {
 //   - 1..max entries;
 //   - a text the shared rules refuse;
 //   - a match type outside allowed (any casing accepted for the ones inside);
-//   - the same (match type, case-folded text) twice — refused, not de-duplicated, because the
+//   - the same (match type, case-folded text) twice — folded with textfold.Key, the key every
+//     negative-keyword comparison uses — refused, not de-duplicated, because the
 //     outcomes are positional.
 func validateNegativeKeywordBatch(label string, keywords []model.NegativeKeyword, max int, allowed ...string) ([]model.NegativeKeyword, error) {
 	if len(keywords) == 0 || len(keywords) > max {
@@ -66,7 +68,7 @@ func validateNegativeKeywordBatch(label string, keywords []model.NegativeKeyword
 			return nil, fmt.Errorf("%w: %s: negative keyword %d has a match type the platform does not offer (want one of %s)",
 				domain.ErrNegativeKeywordInvalid, label, i, strings.Join(allowed, ", "))
 		}
-		key := mt + "\x00" + strings.ToLower(text)
+		key := mt + "\x00" + textfold.Key(text)
 		if seen[key] {
 			return nil, fmt.Errorf("%w: %s: negative keyword %d repeats an earlier entry with the same text and match type", domain.ErrNegativeKeywordInvalid, label, i)
 		}

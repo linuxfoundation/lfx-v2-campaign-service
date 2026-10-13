@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 // ---------------------------------------------------------------------------
@@ -264,7 +266,8 @@ func NormalizeNegativeKeywordText(raw string) (string, error) {
 //     two punctuation characters adjacent (see isNegativeKeywordPunct for the sources);
 //   - match type Exact or Phrase, any casing — "The supported values for a negative keyword are
 //     Exact and Phrase" (NegativeKeyword reference). Broad is refused, never mapped;
-//   - no (match type, case-folded text) pair twice. REFUSED rather than de-duplicated, because
+//   - no (match type, case-folded text) pair twice — folded with textfold.Key, the key every
+//     negative-keyword comparison uses. REFUSED rather than de-duplicated, because
 //     the outcomes are positional: dropping an entry would shift every later result off the
 //     request index the caller zips it with.
 func ValidateNegativeKeywords(in []NegativeKeyword) ([]NegativeKeyword, error) {
@@ -286,7 +289,7 @@ func ValidateNegativeKeywords(in []NegativeKeyword) ([]NegativeKeyword, error) {
 			return nil, fmt.Errorf("microsoft-ads: negative keyword %d has unsupported match type %q (want %s or %s)",
 				i, truncate(nk.MatchType, maxErrorBodyChars), MatchTypeExact, MatchTypePhrase)
 		}
-		key := matchType + "\x00" + strings.ToLower(text)
+		key := matchType + "\x00" + textfold.Key(text)
 		if _, dup := seen[key]; dup {
 			return nil, fmt.Errorf("microsoft-ads: negative keyword %d repeats an earlier entry with the same text and match type", i)
 		}

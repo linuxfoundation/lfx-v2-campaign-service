@@ -166,6 +166,7 @@ func TestReddit_AddNegativeKeywords_RefusalsWriteNothing(t *testing.T) {
 		{"phrase is not a reddit match type", redditBudgetCampaign(), body, rev, []model.NegativeKeyword{{Text: "free", MatchType: "Phrase"}}, domain.ErrNegativeKeywordInvalid, true},
 		{"disallowed character", redditBudgetCampaign(), body, rev, []model.NegativeKeyword{broad("a@b")}, domain.ErrNegativeKeywordInvalid, true},
 		{"duplicate ignoring case", redditBudgetCampaign(), body, rev, []model.NegativeKeyword{broad("Free"), broad("free")}, domain.ErrNegativeKeywordInvalid, true},
+		{"duplicate under unicode simple folding", redditBudgetCampaign(), body, rev, []model.NegativeKeyword{broad("ΟΣ"), broad("ος")}, domain.ErrNegativeKeywordInvalid, true},
 		{"revision missing", redditBudgetCampaign(), body, "", []model.NegativeKeyword{broad("free")}, domain.ErrNegativeKeywordInvalid, true},
 		{"provenance unknown", &model.Campaign{ID: "camp-1", Platform: model.ProviderRedditAds, PlatformCampaignID: "t3_c",
 			Result: json.RawMessage(`{"adGroupId":"t5_ag"}`)}, body, rev, []model.NegativeKeyword{broad("free")}, domain.ErrCampaignProvenanceUnknown, true},
@@ -226,12 +227,13 @@ func TestReddit_AddNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
 			}
 		})
 	}
-	t.Run("a definite 400 is not unconfirmed", func(t *testing.T) {
+	// A definite refusal is a KNOWN outcome, so it is answered per item (as X answers it) rather
+	// than as a batch-wide error; only an all-UNCONFIRMED batch is one (PR #321 review).
+	t.Run("a definite 400 is answered per item as REJECTED", func(t *testing.T) {
 		s := newRedditKWTStub(t, kwtReply{http.StatusBadRequest, `{"error":{}}`}, read)
-		_, err := addRedditNegatives(s, redditBudgetCampaign(), rev, broad("free"))
-		var u interface{ Unconfirmed() bool }
-		if err == nil || errors.As(err, &u) {
-			t.Fatalf("want a definite failure, got %T: %v", err, err)
+		out, err := addRedditNegatives(s, redditBudgetCampaign(), rev, broad("free"))
+		if err != nil || len(out) != 1 || out[0].Outcome != model.KeywordOutcomeFailed || out[0].ErrorCode != model.KeywordTargetingErrRejected {
+			t.Fatalf("want [FAILED/REJECTED], got %+v, %v", out, err)
 		}
 	})
 }

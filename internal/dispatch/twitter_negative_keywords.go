@@ -7,10 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
 
@@ -33,11 +33,12 @@ func twitterNegativeTargetingType(matchType string) string {
 }
 
 // twitterNegativeKey identifies a negative keyword criterion for the ALREADY_PRESENT check. The
-// value is case-folded because the create path accepts X's case-normalised echo (EqualFold): a
-// keyword X stored as "Free Download" must match a repeat request for "free download" rather than
-// be sent again as a duplicate criterion (PR #321 review).
+// value is folded with textfold.Key — the key the create path's echo check also uses — so a
+// keyword X stored as "Free Download" (or "ΟΣ") matches a repeat request for "free download" (or
+// "ος") rather than being sent again as a duplicate criterion (PR #321 review). strings.ToLower
+// would not: it keeps σ and ς apart, which simple case folding does not.
 func twitterNegativeKey(targetingType, value string) string {
-	return targetingType + "\x00" + strings.ToLower(value)
+	return targetingType + "\x00" + textfold.Key(value)
 }
 
 // AddNegativeKeywords implements service.NegativeKeywordAdder for X: one negated keyword
@@ -57,7 +58,8 @@ func twitterNegativeKey(targetingType, value string) string {
 // when it never left — the deadline ran out or the pacer wait was cut short; REJECTED when X
 // refused it) or UNCONFIRMED (a transport failure, 3xx, 5xx, 429, or a 2xx that does not report
 // the negated keyword sent). Adding a negative only narrows delivery, so unlike the removal there
-// is no re-read before each write. The call errors only when no item got a definite answer.
+// is no re-read before each write. The call errors (UNCONFIRMED) only when no item has a definite
+// outcome — NOT_SENT counts as definite.
 func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	const op = "add x negative keywords"
 	validated, err := validateNegativeKeywordBatch("x", keywords, maxTwitterNegativeKeywords, negativeMatchBroad, negativeMatchPhrase, negativeMatchExact)
@@ -87,7 +89,7 @@ func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID s
 
 	out := make([]model.NegativeKeywordOutcome, 0, len(validated))
 	definite := false
-	var lastUnconfirmed, lastDefinite error
+	var lastUnconfirmed error
 	for _, k := range validated {
 		o := model.NegativeKeywordOutcome{Text: k.Text, MatchType: k.MatchType}
 		targetingType := twitterNegativeTargetingType(k.MatchType)
@@ -98,7 +100,9 @@ func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID s
 			out = append(out, o)
 			continue
 		case ctx.Err() != nil:
+			// Not sent: a DEFINITE outcome — X holds nothing from this item.
 			o.Outcome, o.ErrorCode = model.KeywordOutcomeFailed, model.KeywordTargetingErrNotSent
+			definite = true
 			out = append(out, o)
 			continue
 		}
@@ -109,25 +113,22 @@ func (d *TwitterDispatcher) AddNegativeKeywords(ctx context.Context, projectID s
 			definite = true
 		case errors.Is(cerr, twitter.ErrWriteNotSent):
 			o.Outcome, o.ErrorCode = model.KeywordOutcomeFailed, model.KeywordTargetingErrNotSent
-			lastDefinite = cerr
+			definite = true
 		case twitter.IsOutcomeUnconfirmed(cerr):
 			o.Outcome = model.KeywordOutcomeUnconfirmed
 			lastUnconfirmed = cerr
 		default:
 			o.Outcome, o.ErrorCode = model.KeywordOutcomeFailed, model.KeywordTargetingErrRejected
-			lastDefinite = cerr
 			definite = true
 		}
 		out = append(out, o)
 	}
+	// Every item's outcome is definite (APPLIED, ALREADY_PRESENT, FAILED REJECTED or NOT_SENT)
+	// except UNCONFIRMED, so the per-item answer is returned whenever any item has one (PR #321
+	// review: a NOT_SENT item is known, and must not be lost to a batch-wide error). Only a batch
+	// whose every item is UNCONFIRMED — so lastUnconfirmed is set — is one error.
 	if !definite {
-		if lastUnconfirmed != nil {
-			return nil, &unconfirmedKeywordLeverError{err: fmt.Errorf("%s for line item %s: %w", op, lineItemID, lastUnconfirmed)}
-		}
-		if lastDefinite == nil {
-			lastDefinite = ctx.Err()
-		}
-		return nil, fmt.Errorf("%s for line item %s: no negative keyword was sent: %w", op, lineItemID, lastDefinite)
+		return nil, &unconfirmedKeywordLeverError{err: fmt.Errorf("%s for line item %s: %w", op, lineItemID, lastUnconfirmed)}
 	}
 	return out, nil
 }

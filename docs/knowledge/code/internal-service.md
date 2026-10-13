@@ -604,9 +604,15 @@ unusable-connection 409 messages name the campaign's platform (Google's wording 
 
 `AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
 is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
-persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft only; any other
-platform is 400 at the handler, and a Microsoft dispatcher without the capability is 400 via
-`Orchestrator.AddNegativeKeywords`'s type assertion on the new optional `NegativeKeywordAdder`.
+persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft Advertising,
+Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler, and a
+dispatcher without the capability is 400 via `Orchestrator.AddNegativeKeywords`'s type assertion on
+the optional `NegativeKeywordAdder`. The payload's optional `revision` (Reddit's compare-and-set
+token) is passed through untouched; each adapter validates it. Reddit/X-only refusals map to fixed
+messages: a stale revision (`ErrKeywordTargetingChanged`), the excluded-keyword cap
+(`ErrNegativeKeywordLimit`) and an unaddressable ad group / line item
+(`ErrKeywordTargetingUnaddressable`) are 409, and the 404 / unusable-connection 409 name the
+campaign's own platform.
 The orchestrator applies the same mutation timeout and the same outcome-count check
 (`unconfirmedOutcomeCountError`, whose message no longer claims every batch is atomic), and
 records the `negative_keywords` upstream op. `classifyNegativeKeywordError` mirrors the keyword

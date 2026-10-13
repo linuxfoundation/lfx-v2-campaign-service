@@ -320,6 +320,7 @@ func TestMicrosoft_AddNegativeKeywords_RefusedBeforeAnyCall(t *testing.T) {
 		{"over 100 characters", msKeywordCampaign(), []model.NegativeKeyword{{Text: strings.Repeat("a", 101), MatchType: "Exact"}}, "", domain.ErrNegativeKeywordInvalid},
 		{"malformed batch beats unprovisioned", unprovisioned, []model.NegativeKeyword{{Text: "a@b", MatchType: "Exact"}}, "", domain.ErrNegativeKeywordInvalid},
 		{"a reddit revision is refused", msKeywordCampaign(), good, "sha256:abc", domain.ErrNegativeKeywordInvalid},
+		{"duplicate under unicode simple folding", msKeywordCampaign(), []model.NegativeKeyword{{Text: "ΟΣ", MatchType: "Exact"}, {Text: "ος", MatchType: "Exact"}}, "", domain.ErrNegativeKeywordInvalid},
 		{"unprovisioned", unprovisioned, good, "", domain.ErrCampaignNotProvisioned},
 		{"provenance unknown fails closed", unknown, good, "", domain.ErrCampaignProvenanceUnknown},
 		{"account mismatch", foreign, good, "", domain.ErrCampaignAccountMismatch},
