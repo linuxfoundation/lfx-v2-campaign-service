@@ -207,11 +207,12 @@ type Service interface {
 	// LinkedIn's Ad Analytics API. Scoped to the campaigns this service holds for
 	// the project, NOT to the connected ad account, and read from the project's
 	// OWN connection only (never the LF system account) and only the account that
-	// connection is bound to. One Ad Analytics statistics request per pivot
-	// (pivots CAMPAIGN plus the MEMBER_* pivot, filtered by the project's campaign
-	// URNs and the bound account); every returned row must name one of those
-	// campaigns or the read fails, because the account is shared across
-	// foundations. A pure read-through; nothing is persisted. A project with no
+	// connection is bound to. LinkedIn serves MEMBER_* pivots only through its
+	// single-pivot Analytics finder, so the read issues one Ad Analytics request
+	// per (pivot, campaign), each filtered to that one campaign and the bound
+	// account, and sums the answers; at most 10 campaigns (50 requests), because
+	// the account is shared across foundations and the read must fit one request
+	// budget. A pure read-through; nothing is persisted. A project with no
 	// LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn
 	// is not contacted. All five pivots must load or the request fails (503).
 	// Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE
