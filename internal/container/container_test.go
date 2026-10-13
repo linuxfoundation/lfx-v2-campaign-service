@@ -1679,6 +1679,24 @@ func TestRegisterDispatchers_BindsMetaCreativeAssetRepo(t *testing.T) {
 		"a nil *CreativeAssetRepo must leave the dispatcher UNBOUND, not bound to a typed nil that panics on first asset-backed dispatch")
 }
 
+// TestRegisterDispatchers_BindsTwitterCreativeAssets pins the X dispatcher's creative-asset
+// wiring (LFXV2-2665) for the reason the Meta test above gives: deleting either bind compiles
+// and leaves every other test green, while every imageAssetId dispatch in production fails
+// pre-create with "the creative-asset store is not configured", or runs outside the shared
+// aggregate asset budget.
+func TestRegisterDispatchers_BindsTwitterCreativeAssets(t *testing.T) {
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
+	td, ok := m[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher)
+	require.True(t, ok, "the twitter entry must be a *dispatch.TwitterDispatcher")
+	assert.True(t, td.CreativeAssetRepoIsSet(), "registerDispatchers must bind the creative-asset repo onto the X dispatcher")
+	assert.True(t, td.AssetReserverIsSet(), "registerDispatchers must bind the shared asset budget onto the X dispatcher")
+
+	unbound := registerDispatchers(nil, nil, nil, nil, nil)
+	tu, ok := unbound[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher)
+	require.True(t, ok, "the twitter entry must be a *dispatch.TwitterDispatcher")
+	assert.False(t, tu.CreativeAssetRepoIsSet(), "a nil *CreativeAssetRepo must leave the X dispatcher UNBOUND, not bound to a typed nil")
+}
+
 // orderRecordingBriefSetter records the ORDER in which the live-wiring helper publishes each
 // dependency. The order is the property under test, so it is captured rather than the values.
 type orderRecordingBriefSetter struct {

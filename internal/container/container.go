@@ -539,13 +539,20 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	// whose nil case is already a documented no-op. Binding it here means every dispatcher the
 	// live and cold-start paths build shares ONE budget — which is the point, since the bound
 	// is across concurrent dispatches rather than within one.
-	metaDispatcher.SetAssetReserver(dispatch.NewAssetReserver(
-		dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait))
+	assetBudget := dispatch.NewAssetReserver(dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait)
+	metaDispatcher.SetAssetReserver(assetBudget)
+	// X attaches a stored creative asset to an authored tweet (LFXV2-2665): the same concrete-
+	// pointer guard, and the SAME budget, since the bound is across all concurrent dispatches.
+	twitterDispatcher := dispatch.NewTwitterDispatcher(repo, enc)
+	if creatives != nil {
+		twitterDispatcher.SetCreativeAssetRepo(creatives)
+	}
+	twitterDispatcher.SetAssetReserver(assetBudget)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
 		model.ProviderMetaAds:      metaDispatcher,
-		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
+		model.ProviderTwitterAds:   twitterDispatcher,
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
 		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
