@@ -496,7 +496,9 @@ A definite 400 becomes `ErrBidAmountInvalid` only via `bidAmountRefused`: the FU
 (`apiError.raw` — `Body` is cut at 400 chars) passes `identityjson`, decodes, its `status` equals
 the HTTP status, and EVERY input error names `/Campaign/unitCost/amount` with
 FIELD_VALUE_TOO_LOW/HIGH, CONDITIONAL_VALUE_TOO_LOW/HIGH or INVALID_VALUE_FOR_FIELD and
-echoing a `decimalValue` (required, not optional) equal to the sent amount. LinkedIn's text is never surfaced.
+echoing a `decimalValue` (required, not optional) EXACTLY equal to the sent amount — compared as
+rationals (`exactDecimal`, plain decimals only), never as float64, so `5.2500000000000001` is not
+`5.25`. LinkedIn's text is never surfaced.
 
 ## Metrics read
 

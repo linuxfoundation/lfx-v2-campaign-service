@@ -123,6 +123,10 @@ func TestUpdateCampaignUnitCost_Classification(t *testing.T) {
 		{"refusal with a non-amount code", 400, amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_IMMUTABLE_FOR_NON_DRAFT_CAMPAIGNS", "5.25"), false, false, 1},
 		{"envelope status disagrees with HTTP", 400, amountEnvelope(422, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), false, false, 1},
 		{"envelope echoes another value", 400, amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "9.99"), false, false, 1},
+		// The same float64 as 5.25, but NOT the amount sent: compared exactly, it is no proof.
+		{"envelope echoes a float-equal but different decimal", 400, amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.2500000000000001"), false, false, 1},
+		{"envelope echoes the same amount with trailing zeros", 400, amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.250"), true, false, 1},
+		{"envelope echoes an exponent spelling", 400, amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "525e-2"), false, false, 1},
 		{"envelope omits the echoed value", 400, strings.Replace(amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), `"value":{"decimalValue":"5.25"},`, ``, 1), false, false, 1},
 		{"envelope echoes a null decimalValue", 400, strings.Replace(amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), `"decimalValue":"5.25"`, `"decimalValue":null`, 1), false, false, 1},
 		{"envelope with a duplicated key", 400, strings.Replace(amountEnvelope(400, "/Campaign/unitCost/amount", "FIELD_VALUE_TOO_LOW", "5.25"), `"status":400,`, `"status":400,"status":400,`, 1), false, false, 1},
@@ -187,6 +191,21 @@ func TestValidateBidAmount_SubCentRefusalsAreDistinct(t *testing.T) {
 		wire, err := ValidateBidAmount(amount)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("ValidateBidAmount(%v) = %q, %v; want a refusal saying %q", amount, wire, err, want)
+		}
+	}
+}
+
+func TestExactDecimal(t *testing.T) {
+	five25, _ := exactDecimal("5.25")
+	for s, want := range map[string]int{"5.25": 0, "5.250": 0, "5.2500000000000001": 1, "5.24": -1} {
+		got, ok := exactDecimal(s)
+		if !ok || got.Cmp(five25) != want {
+			t.Errorf("exactDecimal(%q) cmp 5.25 = %v (ok=%v), want %d", s, got, ok, want)
+		}
+	}
+	for _, bad := range []string{"", "-5.25", "5.25e0", "21/4", " 5.25", "5.", ".5", "NaN"} {
+		if _, ok := exactDecimal(bad); ok {
+			t.Errorf("exactDecimal(%q) parsed; want refused", bad)
 		}
 	}
 }

@@ -55,3 +55,10 @@ Seventh #318 review round: the `resolve-linkedin-ads-campaign` 400 now states th
 ("a positive integer no greater than 9223372036854775807 … without a leading zero") instead of
 "at most 19 digits", which a 19-digit id past int64 also satisfied. The other LinkedIn-id refusals
 already state the 64-bit bound or are platform-neutral (adoption's 400).
+
+Eighth #318 review round: the bid rejection classifier compares the echoed `decimalValue` with the
+amount sent EXACTLY (`big.Rat` via `exactDecimal`, plain decimals only) instead of as float64, so
+`5.2500000000000001` no longer counts as an echo of `5.25`. No other amount comparison in the PR
+was float-based: `UpdateCampaignUnitCost` compares canonical wire strings, the readback parses
+amounts into exact micro-units, and `ValidateBidAmount`'s check is against the request's own
+float64 (the API body is a JSON number, so that float IS the requested value).

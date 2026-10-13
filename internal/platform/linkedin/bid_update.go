@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
+	"regexp"
 	"strconv"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
@@ -232,7 +234,8 @@ var amountErrorCodes = map[string]bool{
 //     this body describes this response;
 //   - there is at least one input error, and EVERY one names /Campaign/unitCost/amount with an
 //     amount code — an envelope that also blames another field is not an amount refusal;
-//   - EVERY input error echoes `input.value.decimalValue`, and it is the value sent.
+//   - EVERY input error echoes `input.value.decimalValue`, and it is EXACTLY the value sent
+//     (compared as rationals by exactDecimal, never as float64).
 //
 // The message text is never consulted.
 func bidAmountRefused(ae *apiError, wire string) bool {
@@ -250,8 +253,8 @@ func bidAmountRefused(ae *apiError, wire string) bool {
 	if len(all) == 0 {
 		return false
 	}
-	sent, err := strconv.ParseFloat(wire, 64)
-	if err != nil {
+	sent, ok := exactDecimal(wire)
+	if !ok {
 		return false
 	}
 	for _, ie := range all {
@@ -265,10 +268,27 @@ func bidAmountRefused(ae *apiError, wire string) bool {
 		if v == nil || v.DecimalValue == nil {
 			return false
 		}
-		echoed, perr := strconv.ParseFloat(*v.DecimalValue, 64)
-		if perr != nil || echoed != sent {
+		// EXACT decimal comparison, never float64: "5.2500000000000001" parses to the same
+		// float as "5.25" but is not the amount sent, so it is not proof the refusal was ours.
+		echoed, ok := exactDecimal(*v.DecimalValue)
+		if !ok || echoed.Cmp(sent) != 0 {
 			return false
 		}
 	}
 	return true
+}
+
+// plainDecimalRE is the only spelling an echoed amount is compared in: digits with an optional
+// fraction — no sign, exponent or "a/b" ratio, which big.Rat.SetString would otherwise accept.
+var plainDecimalRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+// exactDecimal parses a plain decimal string into an exact rational; ok is false for anything
+// else. Comparing two amounts through it is exact — "5.25" and "5.250" are equal, while
+// "5.2500000000000001" (the same float64 as 5.25) is not.
+func exactDecimal(s string) (*big.Rat, bool) {
+	if !plainDecimalRE.MatchString(s) {
+		return nil, false
+	}
+	r, ok := new(big.Rat).SetString(s)
+	return r, ok
 }
