@@ -165,7 +165,7 @@ func newMSImageDispatcher(t *testing.T, api *msImageAPI, assets creativeAssetRea
 			_, _ = io.WriteString(w, `{"AdIds":[987],"PartialErrors":[]}`)
 		case "AdExtensionsAssociations/Query":
 			if attached {
-				_, _ = io.WriteString(w, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":7771,"Type":"ImageAdExtension"},"EntityId":321}]}]}`)
+				_, _ = io.WriteString(w, `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":7771,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":321}]}]}`)
 				return
 			}
 			_, _ = io.WriteString(w, `{"AdExtensionAssociationCollection":[null]}`)
