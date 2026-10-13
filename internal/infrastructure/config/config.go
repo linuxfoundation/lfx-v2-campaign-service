@@ -60,6 +60,13 @@ type Config struct {
 	AIAPIKey   string
 	AIModel    string
 
+	// Signed creative-asset URL settings (LFXV2-2665), validated by assetsign.New in the
+	// container. Optional as a pair: either unset turns the feature off. The key is a secret
+	// and is masked by String().
+	CreativeAssetURLSigningKey string
+	CreativeAssetPublicBaseURL string
+	CreativeAssetURLTTL        string
+
 	// IndexerServiceToken is the SERVICE credential the index relay stamps onto replayed
 	// messages. Outbox rows store no token — the table is retained for audit, so a per-request
 	// JWT written there would persist as a live credential — and the indexer requires a
@@ -177,6 +184,10 @@ func LoadConfig() *Config {
 		AIProxyURL: os.Getenv(constants.EnvAIProxyURL),
 		AIAPIKey:   os.Getenv(constants.EnvAIAPIKey),
 		AIModel:    os.Getenv(constants.EnvAIModel),
+
+		CreativeAssetURLSigningKey: os.Getenv(constants.EnvCreativeAssetURLSigningKey),
+		CreativeAssetPublicBaseURL: os.Getenv(constants.EnvCreativeAssetPublicBaseURL),
+		CreativeAssetURLTTL:        os.Getenv(constants.EnvCreativeAssetURLTTL),
 
 		IndexerServiceToken:     os.Getenv(constants.EnvIndexerServiceToken),
 		DatabaseURL:             os.Getenv(constants.EnvDatabaseURL),
@@ -321,6 +332,7 @@ func (c *Config) String() string {
 	return fmt.Sprintf(
 		"&{Debug:%v Host:%q Port:%q JWKSUrl:%q Audience:%q Issuer:%q NATSUrl:%q DatabaseURL:%q "+
 			"CredentialEncryptionKey:%q AIProxyURL:%q AIModel:%q AIAPIKey:%q "+
+			"CreativeAssetURLSigningKey:%q CreativeAssetPublicBaseURL:%q CreativeAssetURLTTL:%q "+
 			"PGHost:%q PGPort:%q PGUser:%q PGDatabase:%q PGEngine:%q}",
 		c.Debug,
 		c.Host,
@@ -348,6 +360,11 @@ func (c *Config) String() string {
 		redactAIProxyURL(strings.TrimSpace(c.AIProxyURL)),
 		strings.TrimSpace(c.AIModel),
 		redactSecret(strings.TrimSpace(c.AIAPIKey)),
+		// The signing key is masked like every other secret; the base URL is printed with any
+		// userinfo removed (assetsign.New refuses userinfo anyway) and the TTL is not secret.
+		redactSecret(strings.TrimSpace(c.CreativeAssetURLSigningKey)),
+		redactURLUserinfo(strings.TrimSpace(c.CreativeAssetPublicBaseURL)),
+		strings.TrimSpace(c.CreativeAssetURLTTL),
 		c.PGHost,
 		c.PGPort,
 		c.PGUser,
