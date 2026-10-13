@@ -47,7 +47,12 @@ type Service interface {
 	// Reddit at a short-lived signed URL when that feature is configured. An X
 	// (Twitter) campaign may also reference the asset as the image of its authored
 	// tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is
-	// likewise resolved at dispatch.
+	// likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig
+	// variant names one by imageAssetId, and at dispatch it is uploaded once
+	// through LinkedIn's Images API (an organization-owned image URN) and used as
+	// that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes
+	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
+	// 360x640 to 2430x4320 (vertical) pixels.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// Create campaigns across the selected platforms (async -> job). Two kinds of
 	// request are refused synchronously, before any job exists. (1) An email
