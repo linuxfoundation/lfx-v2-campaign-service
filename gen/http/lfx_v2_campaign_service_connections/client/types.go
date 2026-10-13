@@ -876,6 +876,33 @@ type GetTwitterAdsAudienceResponseBody struct {
 	AllCountersNull *bool `form:"all_counters_null,omitempty" json:"all_counters_null,omitempty" xml:"all_counters_null,omitempty"`
 }
 
+// GetLinkedinAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body.
+type GetLinkedinAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as UTC calendar days (LinkedIn's
+	// Ad Analytics dateRange is UTC) — the same days the LinkedIn campaign metrics
+	// read uses for the same window name
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Every bucket across the five pivots, discriminated by `dimension`. Ordered
+	// by dimension (job_function, seniority, industry, company_size, country),
+	// then impressions descending, then value. Each dimension covers the same
+	// traffic independently, so total within one dimension only — and even then
+	// the total is BELOW the campaigns' own totals: LinkedIn drops values with
+	// fewer than 3 events, withholds values for ads reaching too few members, and
+	// returns only the top 100 values per creative per day.
+	Buckets []*LinkedinAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`, across all dimensions.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+	// Always true: LinkedIn documents professional-demographic metrics as
+	// APPROXIMATE (privacy protection), privacy-thresholded (values under 3 events
+	// dropped, values for ads reaching too few members withheld, top 100 values
+	// per creative per day) and delayed 12-24 hours. Present every counter as an
+	// estimate, never as an exact measurement, and do not reconcile it against the
+	// campaign metrics read.
+	Approximate *bool `form:"approximate,omitempty" json:"approximate,omitempty" xml:"approximate,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -4476,6 +4503,79 @@ type GetTwitterAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetLinkedinAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetLinkedinAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetLinkedinAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetLinkedinAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetLinkedinAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetLinkedinAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetLinkedinAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetLinkedinAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetLinkedinAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5986,6 +6086,36 @@ type TwitterAdsAudienceBucketResponseBody struct {
 	// Billed charge over the window (X's billed_charge_local_micro) in micro-units
 	// of the ad account's currency (see account_currency). This service performs
 	// no FX conversion.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// LinkedinAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsAudienceBucketResponseBody struct {
+	// Which LinkedIn Ad Analytics professional-demographic pivot this bucket
+	// belongs to: job_function (MEMBER_JOB_FUNCTION), seniority
+	// (MEMBER_SENIORITY), industry (MEMBER_INDUSTRY), company_size
+	// (MEMBER_COMPANY_SIZE) or country (MEMBER_COUNTRY_V2)
+	Dimension *string `form:"dimension,omitempty" json:"dimension,omitempty" xml:"dimension,omitempty"`
+	// LinkedIn's pivot value for this bucket, VERBATIM — a URN such as
+	// urn:li:function:8, urn:li:seniority:5, urn:li:industry:4 or
+	// urn:li:geo:103644278 (company_size values are passed through as LinkedIn
+	// reports them). NOT resolved to a name: LinkedIn resolves each URN type
+	// through its Standardized Data APIs (/functions, /seniorities, /industries,
+	// /geo), which this read does not call. A value outside a conservative charset
+	// fails the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window — APPROXIMATE (LinkedIn's privacy approximation
+	// for professional demographics)
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window — APPROXIMATE
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window in micro-units of USD (LinkedIn's costInUsd times
+	// 10^6, the same unit the LinkedIn campaign metrics read reports) —
+	// APPROXIMATE, and per LinkedIn not adjusted for over-delivery on a
+	// demographic pivot.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
@@ -10801,6 +10931,113 @@ func NewGetTwitterAdsAudienceUnauthorized(body *GetTwitterAdsAudienceUnauthorize
 	return v
 }
 
+// NewGetLinkedinAdsAudienceLinkedinAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetLinkedinAdsAudienceLinkedinAdsAudienceOK(body *GetLinkedinAdsAudienceResponseBody) *lfxv2campaignserviceconnections.LinkedinAdsAudience {
+	v := &lfxv2campaignserviceconnections.LinkedinAdsAudience{
+		Window:      *body.Window,
+		BucketCount: *body.BucketCount,
+		Approximate: *body.Approximate,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.LinkedinAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalLinkedinAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsLinkedinAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint BadRequest error.
+func NewGetLinkedinAdsAudienceBadRequest(body *GetLinkedinAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceConflict builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint Conflict error.
+func NewGetLinkedinAdsAudienceConflict(body *GetLinkedinAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint ServiceUnavailable error.
+func NewGetLinkedinAdsAudienceServiceUnavailable(body *GetLinkedinAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint InternalServerError error.
+func NewGetLinkedinAdsAudienceInternalServerError(body *GetLinkedinAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceNotFound builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint NotFound error.
+func NewGetLinkedinAdsAudienceNotFound(body *GetLinkedinAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint PayloadTooLarge error.
+func NewGetLinkedinAdsAudiencePayloadTooLarge(body *GetLinkedinAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint Unauthorized error.
+func NewGetLinkedinAdsAudienceUnauthorized(body *GetLinkedinAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK builds a
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint result from a HTTP "OK" response.
@@ -13762,6 +13999,36 @@ func ValidateGetTwitterAdsAudienceResponseBody(body *GetTwitterAdsAudienceRespon
 	}
 	if body.AccountCurrency != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_currency", *body.AccountCurrency, "^[A-Z]{3}$"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceResponseBody runs the validations defined on
+// GetLinkedinAdsAudienceResponseBody
+func ValidateGetLinkedinAdsAudienceResponseBody(body *GetLinkedinAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.Approximate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("approximate", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := validateLinkedinAdsAudienceBucketResponseBody(e, "body.buckets[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
 	}
 	return
 }
@@ -18091,6 +18358,95 @@ func ValidateGetTwitterAdsAudienceUnauthorizedResponseBody(body *GetTwitterAdsAu
 	return
 }
 
+// ValidateGetLinkedinAdsAudienceBadRequestResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceBadRequestResponseBody
+func ValidateGetLinkedinAdsAudienceBadRequestResponseBody(body *GetLinkedinAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceConflictResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceConflictResponseBody
+func ValidateGetLinkedinAdsAudienceConflictResponseBody(body *GetLinkedinAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on GetLinkedinAdsAudienceServiceUnavailableResponseBody
+func ValidateGetLinkedinAdsAudienceServiceUnavailableResponseBody(body *GetLinkedinAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on GetLinkedinAdsAudienceInternalServerErrorResponseBody
+func ValidateGetLinkedinAdsAudienceInternalServerErrorResponseBody(body *GetLinkedinAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceNotFoundResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceNotFoundResponseBody
+func ValidateGetLinkedinAdsAudienceNotFoundResponseBody(body *GetLinkedinAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudiencePayloadTooLargeResponseBody runs the
+// validations defined on GetLinkedinAdsAudiencePayloadTooLargeResponseBody
+func ValidateGetLinkedinAdsAudiencePayloadTooLargeResponseBody(body *GetLinkedinAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceUnauthorizedResponseBody
+func ValidateGetLinkedinAdsAudienceUnauthorizedResponseBody(body *GetLinkedinAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody runs the validations
 // defined on GetMicrosoftAdsKeywordsBadRequestResponseBody
 func ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) (err error) {
@@ -20063,6 +20419,71 @@ func validateTwitterAdsAudienceBucketResponseBody(body *TwitterAdsAudienceBucket
 	}
 	if body.Value != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern(path+".value", *body.Value, "^[A-Za-z0-9](?:[A-Za-z0-9 _+.\\-]{0,62}[A-Za-z0-9+])?$"))
+	}
+	return
+}
+
+// ValidateLinkedinAdsAudienceBucketResponseBody runs the validations defined
+// on linkedin-ads-audience-bucket
+func ValidateLinkedinAdsAudienceBucketResponseBody(body *LinkedinAdsAudienceBucketResponseBody) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", "body"))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "job_function" || *body.Dimension == "seniority" || *body.Dimension == "industry" || *body.Dimension == "company_size" || *body.Dimension == "country") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"job_function", "seniority", "industry", "company_size", "country"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9:_.\\-]{0,127}$"))
+	}
+	return
+}
+
+// validateLinkedinAdsAudienceBucketResponseBody checks
+// linkedin-ads-audience-bucket and reports errors using the path supplied by
+// its caller
+func validateLinkedinAdsAudienceBucketResponseBody(body *LinkedinAdsAudienceBucketResponseBody, path string) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", path))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", path))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", path))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", path))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", path))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", path))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "job_function" || *body.Dimension == "seniority" || *body.Dimension == "industry" || *body.Dimension == "company_size" || *body.Dimension == "country") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".dimension", *body.Dimension, []any{"job_function", "seniority", "industry", "company_size", "country"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9:_.\\-]{0,127}$"))
 	}
 	return
 }
