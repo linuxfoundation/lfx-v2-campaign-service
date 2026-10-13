@@ -193,6 +193,12 @@ the trap `ReplaceCampaign`'s own connection reuse avoids. Each step is bounded b
 
    The request's deferred release, cooldown and later writes follow the new claim.
 
+   When the claim is lost while recording AFTER Meta's confirmed answer (the record of an
+   ALREADY_IN_STATE pause, or the clear after a resume), the 503 states the confirmed status
+   outcome and reports only the record as unconfirmed, telling the caller to re-read
+   `deliberately_paused`. It is not the pre-write answer, which says the status is unconfirmed
+   and nothing was sent.
+
 Anything else is "unknown". The state that must never arise is a pause on record over an ad set
 that was never paused (`deliberately_paused` while it serves), so a pause whose record may have
 landed is ALWAYS sent — pausing never spends: landed or rewritten → the normal path; unknown → the

@@ -619,3 +619,39 @@ func TestMetaAdSetRecord_RefusesToRunWithoutTheClaim(t *testing.T) {
 		t.Fatalf("writes %d, reads %d, held %v; nothing may run without the claim", repo.replaces, repo.verifies, held(repo))
 	}
 }
+
+// The claim is lost while recording AFTER Meta's confirmed answer: the status outcome is reported
+// as confirmed and only the record as unconfirmed — never the pre-write claim-loss answer, which
+// says the status is unconfirmed and nothing was sent.
+func TestToggleMetaAdSetStatus_ClaimLostAfterAConfirmedOutcomeReportsOnlyTheRecord(t *testing.T) {
+	for name, tc := range map[string]struct {
+		row    func(*testing.T) *model.Campaign
+		status string
+		res    *model.MetaAdSetStatusResult
+		want   []string
+	}{
+		"pause already in state": {func(*testing.T) *model.Campaign { return recordedMetaRow() }, "PAUSED",
+			&model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetAlreadyInState, PreviousStatus: "PAUSED"},
+			[]string{"the ad set is already paused on Meta", "could not be confirmed", "pause it here again"}},
+		"resume applied": {heldRow, "ACTIVE",
+			&model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "PAUSED"},
+			[]string{"the ad set WAS resumed on Meta", "could not be confirmed", "resume it here again to clear it"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &adSetDispatcher{toggle: tc.res}
+			s, repo := adSetService(tc.row(t), model.ProviderMetaAds, d)
+			repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed")}
+			repo.reclaimErr = domain.ErrCampaignWriteInProgress
+			_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", tc.status))
+			msg := errMessage(err)
+			if !isStatus(err, 503) || strings.HasPrefix(msg, claimLostText) || strings.Contains(msg, "status are unconfirmed") {
+				t.Fatalf("err %T %q; want the confirmed status with only the record unconfirmed", err, msg)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(msg, w) {
+					t.Fatalf("message %q lacks %q", msg, w)
+				}
+			}
+		})
+	}
+}

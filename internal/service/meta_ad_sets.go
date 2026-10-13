@@ -626,7 +626,14 @@ func adSetRecordErr(err error, applied bool, verb string) error {
 		return &briefs.ConflictError{Code: "409", Message: what + ", but this campaign was modified or deleted by another request meanwhile, so the change was not recorded: " + consequence + " after reading the campaign"}
 	}
 	if errors.Is(err, errMetaAdSetClaimLost) {
-		return errAdSetClaimLost()
+		// Meta's outcome is CONFIRMED here (this runs only after APPLIED / ALREADY_IN_STATE); only
+		// the record is in doubt. Not the pre-write claim-loss answer, which says the status is
+		// unconfirmed and that nothing was sent.
+		recheck := "if it is not shown, pause it here again"
+		if verb == "resumed" {
+			recheck = "if it is still shown, resume it here again to clear it"
+		}
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but this request lost the campaign's write lock while recording that, so whether the deliberate-pause record is on the campaign could not be confirmed: read the ad sets (deliberately_paused) before retrying; " + recheck}
 	}
 	if errors.Is(err, errMetaAdSetRecordUnknown) {
 		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but whether that was recorded on the campaign could not be confirmed: read the ad sets (deliberately_paused); if it is not shown, " + consequence}
