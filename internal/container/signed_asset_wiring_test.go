@@ -27,6 +27,11 @@ func TestNewContainer_RejectsUnusableSignedAssetConfig(t *testing.T) {
 		"short key":   {CreativeAssetURLSigningKey: base64.StdEncoding.EncodeToString([]byte("short")), CreativeAssetPublicBaseURL: "https://lfx-api.example.org"},
 		"http base":   {CreativeAssetURLSigningKey: goodSigningKey, CreativeAssetPublicBaseURL: "http://lfx-api.example.org"},
 		"ttl too big": {CreativeAssetURLSigningKey: goodSigningKey, CreativeAssetPublicBaseURL: "https://lfx-api.example.org", CreativeAssetURLTTL: "2h"},
+		// Partial combinations (#310 review): a supplied value is validated even while the
+		// feature is off for want of its other half.
+		"short key, no base": {CreativeAssetURLSigningKey: base64.StdEncoding.EncodeToString([]byte("short"))},
+		"http base, no key":  {CreativeAssetPublicBaseURL: "http://lfx-api.example.org"},
+		"ttl too big, off":   {CreativeAssetURLTTL: "61m"},
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {

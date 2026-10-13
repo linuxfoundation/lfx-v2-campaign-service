@@ -24,7 +24,13 @@ asset's bytes at a short-lived, HMAC-signed URL and passes the URL as `media_url
 2. **Dispatch** (`internal/dispatch/reddit_asset.go`) — the same rules again, then
    `GetAssetSize(project, brief, asset)` proves the asset exists **for this brief** under an
    active brief (foreign, missing, or empty → pre-create failure, claim released, no Reddit call).
-   It mints the URL and hands it to the existing author-a-post path as `ImageURL`. All downstream
+   It also checks the ids can be carried in a signed URL (`assetsign.ValidateIDs`). It does **not**
+   mint the URL: it passes `reddit.CampaignInput.ImageURLSource`, which the client calls
+   **immediately before the promoted-post request** that hands the URL to Reddit — after account
+   verification, the token exchange and any `Retry-After` wait. Minting in Dispatch (the #310
+   original) let a throttled account check spend a short TTL before Reddit fetched, ending in a
+   404 and a `created_degraded` campaign with no ad. A source failure at that point is still
+   pre-create (nothing exists yet), and the URL is otherwise used exactly like `imageUrl`. All downstream
    behaviour — failed / UNCONFIRMED / `created_degraded` classification and claim retention — is
    the `imageUrl` path, unchanged. `cfg` is not rewritten, so the persisted config snapshot keeps
    `imageAssetId` and never the URL. Reddit error text that echoes `media_url` is scrubbed of the
@@ -51,7 +57,10 @@ sig = base64url_nopad(HMAC-SHA256(key, "lfx-v2-campaign-service/creative-asset-u
   prove it is used); the MAC is computed even when the expiry is already bad.
 - **Expiry**: `exp` must be in the future and at most `MaxTTL` (60 min) away — a validly signed
   URL claiming a later expiry is refused, so a leaked key cannot mint long-lived URLs this
-  service honours. Default TTL 10 min; configurable within 1–60 min.
+  service honours. Default TTL 10 min; configurable within 5–60 min. The 5-minute floor is
+  what the URL must outlive: the promoted-post request it is minted for (the Reddit client's
+  30 s timeout), Reddit's own fetch inside that request, and clock skew between the minting and
+  serving pods.
 - The signature is in the **query**, not the path, on purpose: the Reddit client's error
   redaction (`redactURL`) keeps scheme, host and path but drops the query, and otelhttp v0.69
   records `url.path` only.
@@ -94,10 +103,12 @@ sig = base64url_nopad(HMAC-SHA256(key, "lfx-v2-campaign-service/creative-asset-u
 | --- | --- | --- |
 | `CREATIVE_ASSET_URL_SIGNING_KEY` | Secret `lfx-v2-campaign-service-secrets` key `creative-asset-url-signing-key` (optional ref) | standard base64, ≥ 32 bytes |
 | `CREATIVE_ASSET_PUBLIC_BASE_URL` | chart value (empty by default) | `https` origin only: host, no userinfo/path/query/fragment |
-| `CREATIVE_ASSET_URL_TTL` | chart value `10m` | Go duration, 1m–60m |
+| `CREATIVE_ASSET_URL_TTL` | chart value `10m` | Go duration, 5m–60m |
 
-Either of the first two unset → feature **off** (route 404s, `imageAssetId` refused with 400). Any
-value set but unusable → the container refuses to start (`assetsign.New`), because a security
+Every value that is SET is validated first — even when the other half is missing and the feature
+would be off — and all unusable values are reported together. Then: either of the first two unset
+→ feature **off** (route 404s, `imageAssetId` refused with 400). Any value set but unusable → the
+container refuses to start (`assetsign.New`), because a security
 control that silently degrades on a typo is worse than a failed rollout. `Config.String()` masks
 the key.
 
@@ -125,6 +136,11 @@ became anonymous-only, and that the route is forwarded.
 - `internal/assetsign/assetsign_test.go` — round trip, each field tampered, fields swapped or
   absorbed, expired / at-expiry / beyond `MaxTTL`, wrong key, malformed signatures,
   constant-time compare used, config validation (short key, http base, path/query/userinfo, TTL bounds).
+  Every partial combination of the three settings (#310 review), and all errors reported together.
+- `internal/platform/reddit/image_url_source_test.go` — the late URL is obtained after account
+  verification and before the post; a source failure is pre-create with no mutation.
+- `TestRedditAsset_MintedAfterAccountCheckSurvivesASlowPrePostStep` — an hour-long pre-post
+  step no longer expires the URL; its expiry is measured from after the account check.
 - `cmd/campaign-service/signed_asset_mount_test.go` — headers and bytes, HEAD, reservation
   released, every rejection an identical bodyless 404, store untouched for unverified requests,
   ownership re-check, feature-off 404, budget-exhausted 503.

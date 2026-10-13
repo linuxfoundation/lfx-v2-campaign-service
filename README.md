@@ -356,14 +356,16 @@ fetches, so the service serves the stored bytes at a short-lived HMAC-signed URL
 anonymous by design) and hands that URL to Reddit (LFXV2-2665). Optional as a
 PAIR: with either of the first two unset the feature is OFF — the route returns
 404 and a Reddit config naming `imageAssetId` is refused with a 400. A value that
-is set but unusable stops the pod at startup.
+is set but unusable stops the pod at startup — each supplied value is validated even
+while the other half is still missing.
 
 - `CREATIVE_ASSET_URL_SIGNING_KEY` — **secret**; standard base64 of at least 32
   random bytes (`openssl rand -base64 32`). In-cluster it comes from
   `creative-asset-url-signing-key` on the ExternalSecret-managed secret.
 - `CREATIVE_ASSET_PUBLIC_BASE_URL` — the `https` origin of the public gateway
   Reddit can reach (e.g. `https://lfx-api.<domain>`); no path, query or userinfo.
-- `CREATIVE_ASSET_URL_TTL` — optional Go duration, default `10m`, allowed `1m`..`60m`.
+- `CREATIVE_ASSET_URL_TTL` — optional Go duration, default `10m`, allowed `5m`..`60m`
+  (the floor covers the promoted-post request plus Reddit's fetch and clock skew).
 
 See `docs/knowledge/architecture/signed-creative-asset-urls.md` for the security model.
 

@@ -252,6 +252,22 @@ func TestNewConfiguration(t *testing.T) {
 		{name: "ttl too short", key: testKey(1), base: "https://lfx-api.example.org", ttl: "10s", wantErr: true},
 		{name: "ttl garbage", key: testKey(1), base: "https://lfx-api.example.org", ttl: "soon", wantErr: true},
 		{name: "ttl max", key: testKey(1), base: "https://lfx-api.example.org", ttl: "60m"},
+		{name: "ttl min", key: testKey(1), base: "https://lfx-api.example.org", ttl: "5m"},
+		{name: "ttl below the 5m floor", key: testKey(1), base: "https://lfx-api.example.org", ttl: "4m59s", wantErr: true},
+		{name: "ttl 1m (the old floor) is now refused", key: testKey(1), base: "https://lfx-api.example.org", ttl: "1m", wantErr: true},
+		// Partial combinations (#310 review): every SUPPLIED value is validated even when the
+		// feature would be off because its other half is missing.
+		{name: "malformed key, no base", key: "not base64!!", wantErr: true},
+		{name: "short key, no base", key: short, wantErr: true},
+		{name: "no key, http base", base: "http://lfx-api.example.org", wantErr: true},
+		{name: "no key, base with path", base: "https://lfx-api.example.org/x", wantErr: true},
+		{name: "no key, base with userinfo", base: "https://u:p@lfx-api.example.org", wantErr: true},
+		{name: "ttl too long, both unset", ttl: "61m", wantErr: true},
+		{name: "ttl too short, both unset", ttl: "1m", wantErr: true},
+		{name: "ttl garbage, key only", key: testKey(1), ttl: "soon", wantErr: true},
+		{name: "valid key, no base, valid ttl is off", key: testKey(1), ttl: "10m", wantOff: true},
+		{name: "no key, valid base, valid ttl is off", base: "https://lfx-api.example.org", ttl: "10m", wantOff: true},
+		{name: "valid ttl alone is off", ttl: "30m", wantOff: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -272,5 +288,34 @@ func TestNewConfiguration(t *testing.T) {
 				t.Fatalf("signer enabled = %v, want off = %v", s != nil, tc.wantOff)
 			}
 		})
+	}
+}
+
+// Every unusable value is reported at once, not just the first, so an operator fixing a broken
+// rollout does not discover them one restart at a time.
+func TestNewReportsEveryUnusableValue(t *testing.T) {
+	_, err := New("not base64!!", "http://lfx-api.example.org", "2h")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"signing key", "https", "TTL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestValidateIDs(t *testing.T) {
+	if err := ValidateIDs(testProject, testBrief, testAsset); err != nil {
+		t.Fatalf("valid ids refused: %v", err)
+	}
+	for name, in := range map[string][3]string{
+		"project": {"a/b", testBrief, testAsset},
+		"brief":   {testProject, "x", testAsset},
+		"asset":   {testProject, testBrief, "x"},
+	} {
+		if ValidateIDs(in[0], in[1], in[2]) == nil {
+			t.Errorf("%s: invalid id accepted", name)
+		}
 	}
 }

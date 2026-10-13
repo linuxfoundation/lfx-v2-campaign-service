@@ -441,7 +441,7 @@ app:
     # (/_campaigns/creative-assets/..., anonymous by design — see ruleset.yaml) and passes it
     # to Reddit. Optional as a PAIR: with the key or the base URL unset the feature is OFF (the
     # route 404s and a Reddit config naming imageAssetId is refused with a 400). A value that
-    # is SET but unusable fails startup.
+    # is SET but unusable fails startup, even while its other half is still unset.
     #
     # Rollout prerequisite: ExternalSecret / secret sync must provision
     # `creative-asset-url-signing-key` (standard base64 of >= 32 random bytes, e.g.
@@ -458,7 +458,8 @@ app:
     # https origin only (no path/query); empty keeps the feature off. e.g. https://lfx-api.<domain>
     CREATIVE_ASSET_PUBLIC_BASE_URL:
       value: ''
-    # Lifetime of a minted URL (Go duration, 1m..60m). Reddit fetches during the post create.
+    # Lifetime of a minted URL (Go duration, 5m..60m). Minted just before the promoted-post
+    # request; the 5m floor covers that request, Reddit's fetch and clock skew.
     CREATIVE_ASSET_URL_TTL:
       value: "10m"
 
