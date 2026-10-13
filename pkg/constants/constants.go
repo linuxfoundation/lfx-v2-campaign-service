@@ -94,10 +94,12 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
-	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to REMOVING keywords from a
-	// Reddit ad group's targeting (remove-keyword-targeting, LFXV2-2665). Only the exact value
-	// "true" enables it; unset or any other value fails closed and the endpoint answers 400 "not
-	// supported", the shape the metrics gates above use. The keyword-targeting READ is not gated.
+	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to BOTH Reddit ad-group targeting
+	// writes (LFXV2-2665): REMOVING keywords (remove-keyword-targeting) and ADDING negative keywords
+	// to excluded_keywords (add-negative-keywords) — the same whole-targeting PATCH, so one switch.
+	// Only the exact value "true" enables them; unset or any other value fails closed and both
+	// endpoints answer 400 "not supported", the shape the metrics gates above use. The
+	// keyword-targeting READ is not gated.
 	//
 	// Reddit has no per-keyword write: the ad group's targeting object is replaced as a whole on
 	// PATCH (per secondary references to the v3 OpenAPI document, which could not be fetched from

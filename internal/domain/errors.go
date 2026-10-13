@@ -513,6 +513,12 @@ var (
 	// unsupported match type, or the same keyword twice. A permanent input fault → 400.
 	ErrNegativeKeywordInvalid = errors.New("the negative keyword batch is not valid")
 
+	// ErrNegativeKeywordLimit indicates a negative-keyword add that the platform's own cap on the
+	// target would refuse given what it already holds (LFXV2-2665: Reddit's 2,000 excluded
+	// keywords per ad group). Decided from a READ before any write, so nothing was changed; a
+	// state fault, not a malformed request, so mapped to 409.
+	ErrNegativeKeywordLimit = errors.New("the negative keywords would exceed the platform's limit")
+
 	// ErrKeywordTargetingUnsupported indicates the platform has no keyword-TARGETING read or
 	// removal wired (LFXV2-2665: Reddit and X only), or that the capability is switched off for
 	// this deployment. The platform is never contacted; mapped to 400.
