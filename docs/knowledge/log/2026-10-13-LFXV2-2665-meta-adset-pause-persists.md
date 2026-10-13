@@ -12,3 +12,4 @@ sets and adopted rows record nothing, as before. When the record changes, the le
 version and returns the new ETag. `list-meta-ad-sets` gains `deliberately_paused`. This replaces
 the open product question in
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+- PR #309 review: the toggle-meta-ad-set-status contract no longer promises an ETag "also after a 503" — Goa maps the ETag header on the 200 only, so it now says an error carries no ETag and some 503 paths may still have bumped the version: re-read the campaign before retrying. The pause-marker lifecycle comment now also names withdrawal after a definitely rejected or unsent pause.

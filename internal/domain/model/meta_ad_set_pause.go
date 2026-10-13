@@ -19,8 +19,9 @@ import (
 //   - MetaResultUserPausedAdSetKey is NOT a CampaignResult field. It records a DELIBERATE pause of
 //     that ad set made through toggle-meta-ad-set-status (LFXV2-2665, product decision
 //     2026-10-13): while it names the recorded ad set, a campaign ACTIVATE leaves that ad set
-//     PAUSED instead of cascading ACTIVE onto it. It is written only by the ad-set lever and
-//     removed only by a CONFIRMED resume through that lever. It lives in the existing JSON
+//     PAUSED instead of cascading ACTIVE onto it. It is written only by the ad-set lever, and
+//     removed by a CONFIRMED resume through that lever or — for a marker the lever wrote just
+//     before a pause — withdrawn when that pause is definitely rejected or was never sent. It lives in the existing JSON
 //     column rather than a new one because it is Meta-only and the shared campaigns table has
 //     no other ad-set notion (the reasoning dispatch.metaAdSetID records for the ad set id).
 //     A re-dispatch writes a fresh Result, and with it a fresh ad set, so the flag cannot

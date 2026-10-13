@@ -458,9 +458,12 @@ type Service interface {
 	// any other ad set — and anything on an ADOPTED campaign, which records no ad
 	// set — records nothing, since the campaign cascade never re-activates it.
 	// When the record is written the campaign row's version is bumped and the
-	// returned ETag is the new one (also after a 503, so re-read the campaign
-	// before retrying); otherwise the ETag is the row's UNCHANGED version (as when
-	// a created_degraded campaign is paused). If recording fails before the write,
+	// returned ETag (200 only) is the new one. An ERROR response carries no ETag,
+	// yet some 503 paths can still have bumped the version (a record written
+	// before an UNCONFIRMED write, or one withdrawn after a definite refusal), so
+	// after any error re-read the campaign for its current ETag before retrying;
+	// otherwise the ETag is the row's UNCHANGED version (as when a
+	// created_degraded campaign is paused). If recording fails before the write,
 	// nothing is sent (503, or 409 if the row changed); if it fails after Meta's
 	// definite answer, the 503/409 says what Meta now holds and that the record
 	// was not updated. Any platform but Meta is 400.
