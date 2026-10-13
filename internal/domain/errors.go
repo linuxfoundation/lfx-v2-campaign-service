@@ -95,10 +95,14 @@ var (
 	// ErrWriteOutcomeUnknown marks a write whose COMMIT acknowledgement was LOST — a broken
 	// connection, an I/O error, or the context ending while the answer was awaited — so
 	// PostgreSQL may have committed and the caller must reconcile before acting on either answer.
-	// It is NOT every COMMIT error: a COMMIT the server answered with an error (a *pgconn.PgError
-	// such as a deferred constraint or trigger raising, or pgx.ErrTxCommitRollback) is a confirmed
-	// rollback and carries no sentinel (see the postgres repository's classifyCommitErr). Every
-	// error before the commit is a definite rollback and never carries it either.
+	// A PgError whose SQLSTATE itself leaves the outcome open carries it too: 08007
+	// transaction_resolution_unknown, 40003 statement_completion_unknown, the rest of the
+	// connection-exception class 08, and 57P01/57P02 (the server shutting down around the
+	// COMMIT). It is NOT every COMMIT error: any other error the server answered the COMMIT with
+	// (a *pgconn.PgError such as a deferred constraint or trigger raising, or
+	// pgx.ErrTxCommitRollback) is a confirmed rollback and carries no sentinel (see the postgres
+	// repository's classifyCommitErr). Every error before the commit is a definite rollback and
+	// never carries it either.
 	ErrWriteOutcomeUnknown = errors.New("the write's commit failed, so whether it landed is unknown")
 
 	// ErrToggleUnsupported indicates the campaign's platform has no status-toggle

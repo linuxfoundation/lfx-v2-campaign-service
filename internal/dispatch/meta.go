@@ -861,7 +861,15 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 		// set re-activated in Ads Manager, leaves it over an ACTIVE ad set, and holding activation
 		// would then switch on the ads and the campaign over a serving ad set. So Meta is READ
 		// first, before anything is written (fail closed).
-		if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, res.accountID); herr != nil {
+		// The account the held ad set must be reported under: the connection's selection, or —
+		// when that selection was cleared after the pause — the account the campaign was CREATED
+		// under, exactly as the toggle itself supports a cleared selection (verifyMetaAccountMatch
+		// above already proved the two agree whenever both are present).
+		heldAccount := strings.TrimSpace(res.accountID)
+		if heldAccount == "" {
+			heldAccount = metaCreationAccountID(campaign)
+		}
+		if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, heldAccount); herr != nil {
 			return herr
 		}
 		slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
@@ -901,6 +909,11 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 //     preceded it, so nothing was written, and nothing is activated.
 func verifyMetaHeldAdSetPaused(ctx context.Context, client *meta.Client, campaign *model.Campaign, adSetID, accountID string) error {
 	const op = "verify the held meta ad set before activating its campaign"
+	if normalizeMetaAccountID(accountID) == "" {
+		// Neither the connection nor the row names the account, so the ad set's identity cannot
+		// be proven: fail closed (nothing written, nothing activated).
+		return fmt.Errorf("%s: neither the connection nor the campaign records an ad account to check ad set %s against; nothing was changed", op, adSetID)
+	}
 	state, err := client.GetAdSetState(ctx, adSetID)
 	if err != nil {
 		return fmt.Errorf("%s: %v (nothing was changed)", op, err)

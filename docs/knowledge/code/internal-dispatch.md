@@ -2135,7 +2135,8 @@ ordinary errors. `ReadMetaAdSets` marks `DeliberatelyPaused` on the recorded ad 
 row holds a deliberate pause of it, and `ToggleStatus` ACTIVATE on such a row calls
 `ActivateCampaignHoldingAdSet` (ads and campaign activated, the ad set left PAUSED) instead of
 the full cascade (LFXV2-2665 decision, 2026-10-13). It first READS the held ad set
-(`verifyMetaHeldAdSetPaused`): only a configured PAUSED/DELETED/ARCHIVED one proceeds. ACTIVE is
+(`verifyMetaHeldAdSetPaused`) under the connection's account, or the campaign's creation account
+when the selection was cleared: only a configured PAUSED/DELETED/ARCHIVED one proceeds. ACTIVE is
 `domain.ErrMetaHeldAdSetActive` (409) and an unreadable one an ordinary error, and nothing is
 written on either. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).

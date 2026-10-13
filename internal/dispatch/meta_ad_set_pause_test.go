@@ -335,3 +335,44 @@ func TestMeta_ToggleStatus_UnheldActivationDoesNotReadTheAdSet(t *testing.T) {
 		}
 	}
 }
+
+// A held resume after the connection's account selection was CLEARED: the held ad set is checked
+// against the account the campaign was created under (its recorded provenance), as the toggle
+// itself supports a cleared selection — not refused for a mismatch against "". With neither
+// account known, it fails closed and nothing is activated.
+func TestMeta_ToggleStatus_HeldActivationWithAClearedAccountSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		result   string
+		proceeds bool
+	}{
+		{"explicit AccountID", `{"CampaignID":"23847290","AdSetID":"999","AccountID":"act_777"}`, true},
+		{"url act= fallback", `{"CampaignID":"23847290","AdSetID":"999","MetaURL":"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=777"}`, true},
+		{"no provenance at all", `{"CampaignID":"23847290","AdSetID":"999"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, seen := cascadeServerWithAdSet(t, meta.StatusPaused)
+			conn := activeMetaConn(goodMetaCreds)
+			conn.AccountID = "" // the account selection was cleared via PUT
+			d := NewMetaDispatcher(
+				fakeConnReader{conn: conn}, identityEncryptor{},
+				meta.WithBaseURL(srv.URL), meta.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
+			)
+			row := pausedOnRecord(t, &model.Campaign{PlatformCampaignID: "23847290", Result: json.RawMessage(tc.result)}, "999")
+			err := d.ToggleStatus(context.Background(), "proj", model.ProviderMetaAds, row, model.CampaignRunActive)
+			posts := postsByPath(seen())
+			if tc.proceeds {
+				if err != nil {
+					t.Fatalf("a cleared selection must not block the held resume of a campaign with provenance: %v", err)
+				}
+				if _, touched := posts["/999"]; touched || posts["/23847290"] != meta.StatusActive {
+					t.Fatalf("posts = %+v; want the campaign activated and the held ad set left alone", posts)
+				}
+				return
+			}
+			if err == nil || len(posts) != 0 {
+				t.Fatalf("err = %v, posts = %+v; with no account to check against it must fail closed", err, posts)
+			}
+		})
+	}
+}

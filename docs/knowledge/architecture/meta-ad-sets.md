@@ -151,6 +151,9 @@ campaign is ACTIVE:
 - Unreadable, reported under another campaign or account, or an unrecognised status: the
   toggle's 503 "the campaign was not modified". Only a read preceded it, and nothing is activated.
 
+The ad set must be reported under the connection's account or, when that selection was cleared
+after the pause, the account the campaign was created under (its recorded provenance), as the
+toggle itself supports a cleared selection. With neither known it fails closed.
 Without a record nothing extra is read (`TestMeta_ToggleStatus_HeldActivationReadsTheAdSetFirst`,
 `…UnheldActivationDoesNotReadTheAdSet`).
 
@@ -181,7 +184,8 @@ write lock):
 
 **Ambiguous commits (PR #309).** `ReplaceCampaign` tells two COMMIT failures apart. If the
 SERVER answers the COMMIT with an error (a `*pgconn.PgError`, such as a deferred trigger raising,
-or `pgx.ErrTxCommitRollback`), the rollback is CONFIRMED: a definite failure, so nothing is on
+or `pgx.ErrTxCommitRollback`) whose SQLSTATE does not itself leave the outcome open (08007, 40003,
+class 08, 57P01/57P02 do), the rollback is CONFIRMED: a definite failure, so nothing is on
 record and the pause is not sent. If the acknowledgement is LOST (a broken connection, an I/O
 error, the deadline passing while the answer is awaited), PostgreSQL may have committed; only
 that case is marked `domain.ErrWriteOutcomeUnknown` (the hazard `reconcileAmbiguousAudienceCommit`
