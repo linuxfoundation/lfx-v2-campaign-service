@@ -1524,7 +1524,9 @@ A failed `tx.Commit` in `ReplaceCampaign` is returned wrapping `domain.ErrWriteO
 PostgreSQL may have committed before the acknowledgement was lost, the hazard
 `reconcileAmbiguousAudienceCommit` handles for audiences. Errors before the commit (begin, the
 guarded UPDATE, the 404/412 classification, the outbox insert) are definite rollbacks and never
-carry it. The Meta ad-set lever reconciles on it; every other caller's handling is unchanged.
+carry it. The Meta ad-set lever reconciles on it — on the claimed connection, or after
+releasing and re-taking the claim — never through a second pooled connection beside the claim;
+every other caller's handling is unchanged.
 `TestLiveReplaceCampaignCommitErrorIsMarkedAmbiguous` forces a commit failure with a deferred
 constraint trigger scoped to its own row.
 

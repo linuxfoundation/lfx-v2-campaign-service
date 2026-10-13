@@ -324,7 +324,7 @@ func TestToggleMetaAdSetStatus_UnreconcilableRecordStillSendsThePause(t *testing
 	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
 	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
 	repo.replaceErrs = []error{errLandedButAmbiguous}
-	repo.readErrAfterFirst = errors.New("db down")
+	repo.verifyErr = errors.New("db down")
 	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
 	if msg := errMessage(err); res != nil || !isStatus(err, 503) || !strings.Contains(msg, "WAS paused on Meta") || !strings.Contains(msg, "could not be confirmed") {
 		t.Fatalf("got %+v, %T %q", res, err, msg)
@@ -351,7 +351,7 @@ func TestToggleMetaAdSetStatus_UnwithdrawableRecordIsReportedLoudly(t *testing.T
 	d := &adSetDispatcher{sends: true, toggleErr: errors.New("meta refused the write")}
 	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
 	repo.replaceErrs = []error{errLandedButAmbiguous}
-	repo.readErrAfterFirst = errors.New("db down")
+	repo.verifyErr = errors.New("db down")
 	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
 	if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "could not be withdrawn") || strings.Contains(msg, "nothing was changed") {
 		t.Fatalf("err = %q", msg)
@@ -385,10 +385,46 @@ func TestToggleMetaAdSetStatus_AmbiguousClearOnResume(t *testing.T) {
 		d := &adSetDispatcher{toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "PAUSED"}}
 		s, repo := adSetService(heldRow(t), model.ProviderMetaAds, d)
 		repo.replaceErrs = []error{errLandedButAmbiguous}
-		repo.readErrAfterFirst = errors.New("db down")
+		repo.verifyErr = errors.New("db down")
 		_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "ACTIVE"))
 		if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "WAS resumed on Meta") || !strings.Contains(msg, "could not be confirmed") {
 			t.Fatalf("err = %q", msg)
 		}
 	})
+}
+
+// The claimed connection is unusable after the ambiguous commit: the claim is handed back and
+// taken again (never a second pooled connection beside it), and the record is written on it.
+func TestToggleMetaAdSetStatus_UnusableClaimedConnectionReTakesTheClaim(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed")}
+	res, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if err != nil || *res.Etag != `"4"` || d.sent != 1 || !held(repo) || repo.replaces != 3 {
+		t.Fatalf("got %+v, %v; sent %d, held %v, writes %d", res, err, d.sent, held(repo), repo.replaces)
+	}
+	// The record was written by the reconciliation itself, on a claim taken AGAIN — not by a
+	// later settlement under the original (unusable) claim.
+	if repo.claims != 2 || repo.replaceTokens[2].CampaignID == "" || repo.replaceTokens[2].Handle() == repo.replaceTokens[0].Handle() {
+		t.Fatalf("claims %d; third write under %+v, first under %+v — want it under a new claim", repo.claims, repo.replaceTokens[2], repo.replaceTokens[0])
+	}
+	// The re-taken claim was released: a new claim succeeds.
+	if _, tok, cerr := repo.ClaimCampaignVersion(context.Background(), "cncf", "b1", "c1", 4); cerr != nil {
+		t.Fatalf("claim after the call: %v", cerr)
+	} else {
+		_ = repo.ReleaseCampaignLock(context.Background(), tok)
+	}
+}
+
+// The claim cannot be re-taken (another writer holds it): unknown, and the pause is still sent.
+func TestToggleMetaAdSetStatus_ClaimNotReTakenStillSendsThePause(t *testing.T) {
+	d := &adSetDispatcher{sends: true, toggle: &model.MetaAdSetStatusResult{AdSetID: "888", Outcome: model.MetaAdSetApplied, PreviousStatus: "ACTIVE"}}
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, d)
+	repo.replaceErrs = []error{ambiguousCommit(), errors.New("conn closed")}
+	repo.reclaimErr = domain.ErrCampaignWriteInProgress
+	repo.verifyErr = errors.New("db down")
+	_, err := s.ToggleMetaAdSetStatus(context.Background(), togglePayload("3", "888", "PAUSED"))
+	if msg := errMessage(err); !isStatus(err, 503) || !strings.Contains(msg, "could not be confirmed") || d.sent != 1 {
+		t.Fatalf("err %q, sent %d", msg, d.sent)
+	}
 }

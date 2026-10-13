@@ -162,18 +162,34 @@ write lock):
 **Ambiguous commits (PR #309).** `ReplaceCampaign` marks a failed COMMIT with
 `domain.ErrWriteOutcomeUnknown` — PostgreSQL may have committed before the acknowledgement was
 lost (the hazard `reconcileAmbiguousAudienceCommit` handles for audiences). Every record write
-goes through `writeMetaAdSetRecord`, which never reads that as "not written": it repeats the same
-version-guarded write once on a fresh pool connection, under a detached deadline. Success means
-the first attempt rolled back and the record is now written; `ErrPreconditionFailed` (the guarded
-UPDATE waits on the row lock of any transaction still resolving) means the first attempt landed,
-accepted only when a fresh read shows exactly the next version with the intended record; anything
-else is "unknown". The state that must never arise is a pause on record over an ad set that was
-never paused (`deliberately_paused` while it serves), so a pause whose record may have landed is
-ALWAYS sent — pausing never spends: landed or rewritten → the normal path; unknown → the pause is
-still sent, then the record is settled from a fresh read (a 503 "could not be confirmed" if even
-that fails, with the ad set paused on Meta, so it cannot serve despite the record). Only a
-DEFINITE rollback (any error without the sentinel) suppresses the pause. A withdrawal and a
-clear-on-resume are reconciled the same way.
+goes through `writeMetaAdSetRecord`, which never reads that as "not written". It reconciles ON THE
+CLAIMED CONNECTION, never a second pooled one beside it — the claim pins its connection for the
+whole request, so a fresh one would starve on a saturated pool (certain with `pool_max_conns=1`),
+the trap `ReplaceCampaign`'s own connection reuse avoids. Each step is bounded by
+`persistResultTimeout`:
+
+1. The same version-guarded write is repeated on the claimed connection — which doubles as the
+   usability check. Success means the first attempt rolled back and the record is now written;
+   `ErrPreconditionFailed` (a guarded UPDATE waits on the row lock of a transaction still
+   resolving) means it landed, accepted only when `VerifyClaimedVersion` on the claimed
+   connection shows exactly the next version with the intended record.
+2. Any other failure means the claimed connection is unusable: the claim is handed back
+   (`ReleaseCampaignLock`, which destroys a broken connection and frees its slot) and exclusive
+   ownership is TAKEN AGAIN with `ClaimCampaignVersion` — a try-lock, as every writer takes it.
+   At the old version the first attempt rolled back and the write is made on the new claim; at
+   the next version it landed if that row carries the record. The request's deferred release,
+   cooldown and later writes follow the new claim.
+
+Anything else is "unknown". The state that must never arise is a pause on record over an ad set
+that was never paused (`deliberately_paused` while it serves), so a pause whose record may have
+landed is ALWAYS sent — pausing never spends: landed or rewritten → the normal path; unknown → the
+pause is still sent, then the record is settled from a read at the old or next version on the
+claim's connection (a 503 "could not be confirmed" if even that fails, with the ad set paused on
+Meta, so it cannot serve despite the record). Only a DEFINITE rollback (any error without the
+sentinel) suppresses the pause. A withdrawal and a clear-on-resume are reconciled the same way.
+`TestLiveMetaPauseRecordReconcilesOnTheClaimedConnection` and
+`TestLiveMetaPauseRecordUnsettleableStillSendsThePauseAndReleasesTheClaim` run both outcomes on a
+ONE-connection pool.
 
 **Concurrency.** The record and the campaign toggle are serialised by `ClaimCampaignVersion`: a
 campaign resume racing a pause in flight is refused (409, nothing sent), one on the ETag read

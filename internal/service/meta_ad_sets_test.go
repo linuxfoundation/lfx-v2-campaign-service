@@ -77,10 +77,12 @@ type adSetRepo struct {
 	// that call through).
 	replaceErrs []error
 	replaces    int
-	// readErrAfterFirst, when set, fails every GetCampaign after the service's initial load —
-	// the reconciliation reads.
-	readErrAfterFirst error
-	reads             int
+	// reclaimErr, when set, refuses every claim after the request's first — the reconciliation's
+	// attempt to re-take the claim.
+	reclaimErr error
+	claims     int
+	// replaceTokens records the claim token each ReplaceCampaign was made under.
+	replaceTokens []domain.CampaignLockToken
 }
 
 // errLandedButAmbiguous, as a replaceErrs entry, APPLIES that write and then reports its commit
@@ -92,18 +94,29 @@ func ambiguousCommit() error {
 	return fmt.Errorf("replace campaign: commit: %w: connection reset", domain.ErrWriteOutcomeUnknown)
 }
 
-func (r *adSetRepo) GetCampaign(ctx context.Context, projectID, briefID, campaignID string) (*model.Campaign, error) {
-	r.reads++
-	if r.reads > 1 && r.readErrAfterFirst != nil {
-		return nil, r.readErrAfterFirst
+// ReleaseCampaignLock treats the zero token as a no-op, as the real repository does: a
+// reconciliation that had to give its claim up and could not re-take it leaves a zero token for
+// the deferred release.
+func (r *adSetRepo) ReleaseCampaignLock(ctx context.Context, tok domain.CampaignLockToken) error {
+	if tok.CampaignID == "" {
+		return nil
 	}
-	return r.toggleCampaignRepo.GetCampaign(ctx, projectID, briefID, campaignID)
+	return r.toggleCampaignRepo.ReleaseCampaignLock(ctx, tok)
+}
+
+func (r *adSetRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	r.claims++
+	if r.claims > 1 && r.reclaimErr != nil {
+		return nil, domain.CampaignLockToken{}, r.reclaimErr
+	}
+	return r.toggleCampaignRepo.ClaimCampaignVersion(ctx, projectID, briefID, campaignID, expectedVersion)
 }
 
 // ReplaceCampaign also carries the written Result into the stored row, so a test can read the
 // deliberate-pause record back the way the next request would.
 func (r *adSetRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, tok domain.CampaignLockToken, idx domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	r.replaces++
+	r.replaceTokens = append(r.replaceTokens, tok)
 	if len(r.replaceErrs) > 0 {
 		err := r.replaceErrs[0]
 		r.replaceErrs = r.replaceErrs[1:]
