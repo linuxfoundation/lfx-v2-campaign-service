@@ -73,10 +73,10 @@ reaches), not project-scoped ones.
   reachable request. The other ad platforms share a single account today, so
   their stored `account_id` IS the shared account and a legitimate request
   matches it — the guard is carried there against a future split, and never
-  fires meanwhile. `docs/architecture.md` still lists Meta/Reddit/X as
-  per-foundation in BOTH its "Account Tenancy" and "Current Platform
-  Accounts" tables; both are stale against how the accounts are actually run
-  and neither is the authority for this.
+  fires meanwhile. `docs/architecture.md`'s "Account Tenancy" and "Current
+  Platform Accounts" tables are the authority for which platforms are shared
+  and which run an account per foundation; issue #243 corrected both
+  (2026-10-13), which had listed Meta/Reddit/X as per-foundation.
 
   LinkedIn keeps the empty stored account DISTINCT from a mismatch
   (`ErrAccountNotSelected` vs `ErrAccountNotManagedByConnection`) because its
@@ -203,8 +203,13 @@ defects, since fixed:
    already `Float64` — the totals field is now `Float64` too, matching the
    BFF's plain float sum in `aggregateTotals`.
 
-LinkedIn has not yet had the same class of check (missing platform-query
-scope filters) run against it.
+**LinkedIn does not have the Google-class defect.** Its campaign list,
+`fetchAccountCampaignList` in `internal/platform/linkedin/monitor.go`, already
+scopes the finder to `search=(status:(values:List(ACTIVE,PAUSED)))`, so it
+never returns the account's archived or removed history. What has NOT been
+done for LinkedIn is a full Reddit-style audit (below) of the rest of the read
+against the BFF — window, endpoint and rule-input classes — so treat that as
+outstanding rather than as a clean bill.
 
 **Reddit has (2026-10-05, LFXV2-2665 Track M3).** Outcome: no Google-class
 scope defect. The read's only campaign filter — `configured_status` ACTIVE

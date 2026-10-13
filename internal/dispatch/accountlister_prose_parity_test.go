@@ -110,8 +110,8 @@ func repoFile(t *testing.T, rel string) string {
 // `go test ./...` without helm on PATH.
 //
 // Compiling it is the point. Asking whether a slug appears ANYWHERE in the template is not a
-// test that the provider's discovery route exists: the same slug appears in the /metrics
-// alternation and in the explanatory comments, so a substring check survives the deletion of
+// test that the provider's discovery route exists: the same slug appears in other
+// alternations (audience, campaign-ref, account-monitor) and in the explanatory comments, so a substring check survives the deletion of
 // the /accounts path it claims to pin.
 func routeRegexp(t *testing.T) *regexp.Regexp {
 	t.Helper()
@@ -251,8 +251,9 @@ func TestAccountListerProseMatchesTheInterface(t *testing.T) {
 	//
 	// COMPILE the matchers and probe a CONCRETE /accounts path per provider rather than
 	// asking whether the slug appears somewhere in the file. A substring check does not
-	// verify the discovery route exists: every slug already occurs elsewhere — in the
-	// per-provider `/metrics` alternation and in the surrounding prose comments — so
+	// verify the discovery route exists: slugs already occur elsewhere — in other
+	// alternations (audience, campaign-ref, account-monitor) and in the surrounding prose
+	// comments — so
 	// deleting a provider from the `connection-(...)` discovery branch still satisfies
 	// Contains, and the check passes while the endpoint is unreachable. Mutation-verified:
 	// removing twitter-ads' /accounts from the route AND the RuleSet together left this

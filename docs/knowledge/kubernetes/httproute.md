@@ -17,16 +17,22 @@ The service serves its API under `/projects/{projectId}/…` (the approved contr
 every endpoint is nested under a project and gated on that project's
 `campaign_manager` relation). `project-service` owns `PathPrefix: /projects/`, and
 the token that distinguishes a campaign-service path (`connection-*`, `briefs`,
-`jobs`, the `{provider}/metrics` segment, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref`, `(meta-ads|twitter-ads)/audience`, `(meta-ads|reddit-ads|twitter-ads)/campaign-ref`, `hubspot`,
+`jobs`, `google-ads/keywords|audience|campaign-ref`, `microsoft-ads/keywords|audience|campaign-ref`, `(meta-ads|twitter-ads)/audience`, `(meta-ads|reddit-ads|twitter-ads)/campaign-ref`, `hubspot`,
 `audience-builder`)
 sits *after* the variable `{projectId}` — which a `PathPrefix`/`Exact` match cannot
 reach past.
 
-**The `{provider}/metrics` segment is admitted but unimplemented.** The regex and the
-RuleSet both carry it for all five ad providers, and no `design/` file declares the
-route, so those paths forward to a service that does not serve them. Recorded rather
-than removed because implementing the route and withdrawing the matchers are opposite
-decisions; see the Monitoring warning in `docs/api-catalog.md`.
+**There is no `{provider}/metrics` segment.** The regex used to admit
+`(google-ads|linkedin-ads|meta-ads|reddit-ads|twitter-ads)/metrics`, and the RuleSet
+authorized the same five paths, but no `design/` file has ever declared the route, so
+those requests were forwarded to a service that 404s them. The alternative was removed
+from the regex and the five RuleSet entries together (2026-10-13), and `parity_test.go`
+pins all five as REJECTED by both matchers, so re-adding the segment on one side — or on
+both without a handler — is a deliberate edit rather than drift. Metrics are served per
+campaign and per brief (under `briefs/`) and per account (`connection-*/account-monitor`);
+see the Monitoring section of `docs/api-catalog.md`. `parity_test` still cannot by itself
+tell a served path from an unserved one — it compares the regex to the RuleSet and reads
+neither `design/` nor `gen/` — so a new alternative must be checked against `design/` by hand.
 
 **The `connection-*` family is spelled out as TWO alternation branches**, not one. All
 seven providers share `/test` and `/set-credential`; what differs is the extra ruled
@@ -88,7 +94,11 @@ route works on the platform gateway (v3.1.0+), but the render alone doesn't prov
 after deploy, verify the HTTPRoute's `Accepted` status condition is `True`.
 
 A second rule routes the reserved `/campaigns`, `/campaigns/`, and `/_campaigns/`
-placeholder prefixes (OpenAPI docs + not-yet-built endpoints).
+placeholder prefixes (OpenAPI docs + not-yet-built endpoints). The `/_campaigns/` prefix also
+forwards the public signed creative-asset route,
+`/_campaigns/creative-assets/{projectId}/{briefId}/{assetId}` (LFXV2-2665), which Reddit fetches
+anonymously; it needs no branch of its own, and the RuleSet's anonymous
+`signed-creative-asset:get` rule is what admits it.
 
 ## Heimdall parity
 
@@ -109,8 +119,8 @@ couples the assertion to the matchers' own content: it enumerates concrete examp
 paths from the route regex's AST (via `regexp/syntax`, one witness per alternation
 leaf) and requires each to be authorized by a RuleSet entry, and builds a witness
 from every RuleSet pattern and requires the route to forward it. This is what
-catches a ONE-SIDED matcher edit — e.g. adding `tiktok-ads/metrics` to only the
-route regex yields the witness `/projects/x/tiktok-ads/metrics`, which matches the
+catches a ONE-SIDED matcher edit — e.g. adding `tiktok-ads/campaign-ref` to only the
+route regex yields the witness `/projects/x/tiktok-ads/campaign-ref`, which matches the
 route but no rule, failing the build. Heimdall is default-deny (a request matching
 no rule is REJECTED), so such drift makes the routed endpoint UNREACHABLE through
 the gateway — not an unauthenticated bypass; the parity test catches it before it

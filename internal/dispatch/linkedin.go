@@ -226,6 +226,11 @@ type LinkedInDispatcher struct {
 	// rely on, verified against this client rather than inherited from them.
 	clients *clientCache
 	opts    []linkedin.Option
+	// creatives and assets resolve variants[].imageAssetId (linkedin_creative.go). Bound by
+	// registerDispatchers; nil in direct-construction tests, where an asset-backed variant
+	// fails pre-create and the reserver reserves nothing.
+	creatives creativeAssetReader
+	assets    *AssetReserver
 }
 
 // NewLinkedInDispatcher builds the adapter from the connection repo + encryptor.
@@ -297,6 +302,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Stored variant images are resolved and validated BEFORE anything is created; the
+	// reservation is held until the upload inside CreateCampaign is done.
+	images, releaseImages, err := d.resolveLinkedInImages(ctx, brief, &cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseImages()
 
 	// Build the runtime config from the connection (account/org) plus any richer
 	// bits the caller supplied in config (targeting profiles / exclusions the
@@ -348,6 +360,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		TargetingProfile: cfg.TargetingProfile,
 		Variants:         cfg.Variants,
 		AdAccountID:      adAccountID,
+		Images:           images,
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
@@ -711,9 +724,8 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 // several ad accounts across foundations (tlf and lf-events are two of them), so a project
 // naming another project's account is a real, reachable request and this is what refuses
 // it. The other ad platforms share one account today, where the same check is defensive —
-// see requireMetaManagedAccount. Do not take per-platform tenancy from
-// docs/architecture.md: both its "Account Tenancy" and "Current Platform Accounts" tables
-// still show the shared platforms as per-foundation, and both are stale.
+// see requireMetaManagedAccount. Per-platform tenancy is documented in docs/architecture.md
+// ("Account Tenancy" and "Current Platform Accounts"), which is the authority for it.
 //
 // The empty case is kept DISTINCT from the mismatch rather than folded into it. An empty
 // stored account means the operator has not finished setting the connection up, whose

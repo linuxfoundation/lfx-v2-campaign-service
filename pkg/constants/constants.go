@@ -145,6 +145,20 @@ const (
 	EnvAIAPIKey   = "AI_API_KEY"
 	EnvAIModel    = "AI_MODEL"
 
+	// Signed creative-asset URLs (LFXV2-2665): how a Reddit dispatch hands Reddit a stored
+	// creative asset, which Reddit only accepts as a public URL it fetches. Optional as a
+	// PAIR: with the key or the base URL unset the feature is OFF — the serving route answers
+	// 404 and a Reddit dispatch that references a stored asset is refused before any upstream
+	// call. A value that is SET but unusable (key under 32 bytes or not base64, base URL not
+	// https or not a bare origin, TTL outside 1m..60m) fails startup. See
+	// docs/knowledge/architecture/signed-creative-asset-urls.md.
+	// The key is a SECRET (standard base64, >= 32 bytes) sourced from the chart's Secret.
+	EnvCreativeAssetURLSigningKey = "CREATIVE_ASSET_URL_SIGNING_KEY"
+	// The public https origin Reddit can reach this service at (the gateway host).
+	EnvCreativeAssetPublicBaseURL = "CREATIVE_ASSET_PUBLIC_BASE_URL"
+	// How long a minted URL is valid; a Go duration, default 10m, hard max 60m.
+	EnvCreativeAssetURLTTL = "CREATIVE_ASSET_URL_TTL"
+
 	// Snowflake (read-only) settings, used ONLY to resolve an event's past editions when
 	// building an audience. All are OPTIONAL: with none set, audience building still works
 	// and produces a country-only audience, recording the narrower scope in its summary.
