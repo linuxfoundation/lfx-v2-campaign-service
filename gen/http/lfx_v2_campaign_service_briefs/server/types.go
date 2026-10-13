@@ -4094,6 +4094,18 @@ type MetaAdSetResponseBody struct {
 	// campaign row recorded at dispatch). Always false on an adopted campaign,
 	// which records no ad set.
 	Recorded bool `form:"recorded" json:"recorded" xml:"recorded"`
+	// true when this is the `recorded` ad set and the campaign row holds a
+	// DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the
+	// campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only
+	// resuming it through toggle-meta-ad-set-status clears this. It is this
+	// service's record, not Meta's — `status` is what Meta reports. After a pause
+	// whose outcome was UNCONFIRMED it is normally true (unknown is treated as
+	// paused), but this is NOT guaranteed: when that 503 said the pause's record
+	// could not be confirmed, or that the write lock was lost, it may be false —
+	// re-read it, and if it is false pause the ad set again before resuming the
+	// campaign; never assume it from the 503 alone. Always false on an adopted
+	// campaign.
+	DeliberatelyPaused bool `form:"deliberately_paused" json:"deliberately_paused" xml:"deliberately_paused"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.

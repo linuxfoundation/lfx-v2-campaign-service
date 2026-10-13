@@ -92,6 +92,19 @@ var (
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
 
+	// ErrWriteOutcomeUnknown marks a write whose COMMIT acknowledgement was LOST — a broken
+	// connection, an I/O error, or the context ending while the answer was awaited — so
+	// PostgreSQL may have committed and the caller must reconcile before acting on either answer.
+	// A PgError whose SQLSTATE itself leaves the outcome open carries it too: 08007
+	// transaction_resolution_unknown, 40003 statement_completion_unknown, the rest of the
+	// connection-exception class 08, and 57P01/57P02 (the server shutting down around the
+	// COMMIT). It is NOT every COMMIT error: any other error the server answered the COMMIT with
+	// (a *pgconn.PgError such as a deferred constraint or trigger raising, or
+	// pgx.ErrTxCommitRollback) is a confirmed rollback and carries no sentinel (see the postgres
+	// repository's classifyCommitErr). Every error before the commit is a definite rollback and
+	// never carries it either.
+	ErrWriteOutcomeUnknown = errors.New("the write's commit failed, so whether it landed is unknown")
+
 	// ErrToggleUnsupported indicates the campaign's platform has no status-toggle
 	// capability wired (no dispatcher, or the dispatcher is not a StatusToggler).
 	// The platform is never contacted. Maps to 400. Lives here (not in the service
@@ -584,6 +597,13 @@ var (
 	// set's targeting, so it will not switch its delivery on. Pausing any of the campaign's ad
 	// sets stays allowed. Decided before any write; mapped to 409.
 	ErrMetaAdSetNotRecorded = errors.New("only the ad set this service created for the campaign can be activated here")
+
+	// ErrMetaHeldAdSetActive refuses a Meta campaign ACTIVATE whose recorded ad set the row holds
+	// as deliberately paused while Meta reports that ad set ACTIVE (its pause was never applied, or
+	// it was re-activated elsewhere). Activating the campaign then would let the "deliberately
+	// paused" ad set serve, so nothing is written; mapped to 409. The operator pauses the ad set,
+	// or clears the record by resuming it, through toggle-meta-ad-set-status first.
+	ErrMetaHeldAdSetActive = errors.New("the campaign's deliberately paused ad set is ACTIVE on Meta")
 
 	// ErrStoredPlatformIDInvalid indicates the campaign row's stored platform campaign id is not a
 	// valid id for its platform, so nothing under it can be addressed. Decided locally — the

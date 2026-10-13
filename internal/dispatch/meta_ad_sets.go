@@ -86,6 +86,7 @@ func (d *MetaDispatcher) ReadMetaAdSets(ctx context.Context, projectID string, p
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 	recorded := metaAdSetID(campaign)
+	heldPaused := model.MetaUserPausedAdSetID(campaign.Result)
 	out := &model.MetaAdSets{
 		CampaignID:         campaign.ID,
 		PlatformCampaignID: sets.CampaignID,
@@ -101,6 +102,9 @@ func (d *MetaDispatcher) ReadMetaAdSets(ctx context.Context, projectID string, p
 			Impressions: as.Impressions, Clicks: as.Clicks, CostMicros: as.CostMicros, Ctr: as.Ctr,
 			Recorded: recorded != "" && as.ID == recorded,
 		}
+		// The row's record, not Meta's: the recorded ad set a pause through the ad-set lever is on
+		// record for, which a campaign ACTIVATE leaves PAUSED (see ToggleStatus).
+		m.DeliberatelyPaused = m.Recorded && heldPaused == as.ID
 		var minor *int64
 		switch {
 		case as.DailyMinor != nil:
@@ -136,10 +140,14 @@ func (d *MetaDispatcher) ReadMetaAdSets(ctx context.Context, projectID string, p
 //     ACTIVE/PAUSED is unverifiable (503). A read failure — Graph 100/33 included — is
 //     unverifiable (503); nothing has been written.
 //  5. Already at the requested status: ALREADY_IN_STATE, and NOTHING is sent.
-//  6. ONE POST /{id} {status}, never repeated (meta.Client.UpdateAdSetStatusOnce), classified by
+//  6. beforeWrite, when non-nil, runs ONCE, here — after every guard above and only when a write
+//     is about to be sent. It is how the service records a deliberate pause BEFORE the write
+//     whose outcome may be unknown. If it fails, nothing is sent and the error is an ordinary one
+//     (nothing changed on Meta).
+//  7. ONE POST /{id} {status}, never repeated (meta.Client.UpdateAdSetStatusOnce), classified by
 //     meta.ClassifyAdSetWrite: APPLIED → nil error; UNCONFIRMED → unconfirmedToggleError; NOT_SENT
 //     and REJECTED → an ordinary error (nothing changed).
-func (d *MetaDispatcher) ToggleMetaAdSetStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, adSetID, status string) (*model.MetaAdSetStatusResult, error) {
+func (d *MetaDispatcher) ToggleMetaAdSetStatus(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, adSetID, status string, beforeWrite service.MetaAdSetBeforeWrite) (*model.MetaAdSetStatusResult, error) {
 	const op = "toggle meta ad set status"
 	if err := meta.ValidateAdSetID(adSetID); err != nil {
 		return nil, fmt.Errorf("%s: %w", op, errors.Join(domain.ErrMetaAdSetInvalid, err))
@@ -194,6 +202,11 @@ func (d *MetaDispatcher) ToggleMetaAdSetStatus(ctx context.Context, projectID st
 		return &model.MetaAdSetStatusResult{AdSetID: adSetID, Outcome: model.MetaAdSetAlreadyInState, PreviousStatus: state.Status}, nil
 	}
 
+	if beforeWrite != nil {
+		if herr := beforeWrite(ctx); herr != nil {
+			return nil, fmt.Errorf("%s: recording the change before the write failed, so nothing was sent: %w", op, herr)
+		}
+	}
 	werr := client.UpdateAdSetStatusOnce(ctx, adSetID, metaStatus)
 	switch meta.ClassifyAdSetWrite(werr) {
 	case meta.AdSetWriteApplied:

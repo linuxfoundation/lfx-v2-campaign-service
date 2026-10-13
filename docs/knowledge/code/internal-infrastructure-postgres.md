@@ -1518,6 +1518,27 @@ up. Gating on `status='building'` instead makes the condition that decides the o
 statement that performs it, and makes the call idempotent under retry: a row already `failed`,
 already `built`, or gone matches nothing and returns `nil` rather than an error.
 
+## `ReplaceCampaign`'s commit errors: confirmed rollback vs lost acknowledgement (PR #309)
+
+`classifyCommitErr` splits a failed `tx.Commit` in `ReplaceCampaign` in two. If the server
+answered with an error (a `*pgconn.PgError`, such as a deferred constraint or trigger raising, or
+`pgx.ErrTxCommitRollback`), the rollback is confirmed: a definite error with no sentinel. The
+exception is a PgError whose SQLSTATE itself leaves the outcome open (`commitOutcomeUnknownState`):
+08007 `transaction_resolution_unknown`, 40003 `statement_completion_unknown`, the rest of the
+connection-exception class 08 (it describes the connection, not the transaction), and 57P01/57P02
+(the server shutting down around the COMMIT). Those count as unknown, since erring that way costs
+a reconciliation and never a wrong answer. `TestClassifyCommitErr` pins the table. Any other failure (a
+broken connection, an I/O error, the context ending while the answer is awaited) means the
+acknowledgement was lost and the server may have committed; that is wrapped in
+`domain.ErrWriteOutcomeUnknown`, the hazard `reconcileAmbiguousAudienceCommit` handles for
+audiences. Errors before the commit (begin, the guarded UPDATE, the 404/412 classification, the
+outbox insert) are definite rollbacks and never carry it. The Meta ad-set lever reconciles on the
+sentinel, on the claimed connection or after releasing and re-taking the claim, never through a
+second pooled connection beside the claim. Every other caller's handling is unchanged.
+`TestLiveReplaceCampaignCommitErrorClasses` pins both classes with deferred triggers scoped to its
+own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
+lost acknowledgement.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one

@@ -90,7 +90,8 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   value, so omitting the projection would risk a 503 on every read.
 - **Cancellation.** The first failing request cancels the read's context: requests in flight are
   cancelled, tasks still queued behind the limiter check the context and never reach LinkedIn,
-  and no partial result is returned. `TestGetAudienceInsights_FirstFailureCancelsInFlightAndQueued`
+  and no partial result is returned; the error is the failing request's own (`*apiError`, 500 in
+  the test), never a sibling's cancellation. `TestGetAudienceInsights_FirstFailureCancelsInFlightAndQueued`
   pins all three with two campaigns (10 requests, 5 queued).
 - **What the response can and cannot prove.** Checked: every element carries exactly ONE
   `pivotValue`, of the requested pivot's URN type, and never a `urn:li:sponsoredCampaign` (a CAMPAIGN
