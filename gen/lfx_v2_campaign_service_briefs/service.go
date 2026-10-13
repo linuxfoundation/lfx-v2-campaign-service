@@ -38,7 +38,11 @@ type Service interface {
 	// then the asset id is returned. Re-uploading identical bytes to the same
 	// brief returns the existing asset (idempotent). This does not touch any ad
 	// platform; the account-scoped Meta image_hash is resolved later, at campaign
-	// dispatch.
+	// dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft
+	// Advertising campaign names one by microsoftConfig.imageAssetId, and at
+	// dispatch it is uploaded to the ad account's media library (an account-scoped
+	// MediaId) and attached to the campaign as an image ad extension; Microsoft
+	// accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// Create campaigns across the selected platforms (async -> job). One request
 	// shape is refused synchronously, before any job exists: an email campaign

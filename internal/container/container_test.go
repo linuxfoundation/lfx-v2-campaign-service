@@ -1679,6 +1679,23 @@ func TestRegisterDispatchers_BindsMetaCreativeAssetRepo(t *testing.T) {
 		"a nil *CreativeAssetRepo must leave the dispatcher UNBOUND, not bound to a typed nil that panics on first asset-backed dispatch")
 }
 
+// TestRegisterDispatchers_BindsMicrosoftCreativeAssets pins the same wiring for the Microsoft
+// dispatcher (microsoftConfig.imageAssetId, LFXV2-2665): dropping either bind compiles and
+// leaves every direct-construction test green while every image-backed Microsoft dispatch
+// fails pre-create with "the creative-asset store is not configured".
+func TestRegisterDispatchers_BindsMicrosoftCreativeAssets(t *testing.T) {
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
+	md, ok := m[model.ProviderMicrosoftAds].(*dispatch.MicrosoftDispatcher)
+	require.True(t, ok, "the microsoft entry must be a *dispatch.MicrosoftDispatcher")
+	assert.True(t, md.CreativeAssetRepoIsSet(), "registerDispatchers must bind the creative-asset repo onto the Microsoft dispatcher")
+	assert.True(t, md.AssetReserverIsSet(), "registerDispatchers must bind the shared asset budget onto the Microsoft dispatcher")
+
+	unbound := registerDispatchers(nil, nil, nil, nil, nil)
+	mu, ok := unbound[model.ProviderMicrosoftAds].(*dispatch.MicrosoftDispatcher)
+	require.True(t, ok)
+	assert.False(t, mu.CreativeAssetRepoIsSet(), "a nil *CreativeAssetRepo must leave the Microsoft dispatcher UNBOUND")
+}
+
 // orderRecordingBriefSetter records the ORDER in which the live-wiring helper publishes each
 // dependency. The order is the property under test, so it is captured rather than the values.
 type orderRecordingBriefSetter struct {
