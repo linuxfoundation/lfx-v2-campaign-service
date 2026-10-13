@@ -230,6 +230,13 @@ type Client struct {
 	tzMu  sync.Mutex
 	tzLoc *time.Location
 	tzAt  time.Time
+
+	// Creative image upload (media.go). uploadBaseURL is the X API v2 origin that serves media
+	// upload (WithMediaUploadBaseURL); mediaChunkSize and mediaPollCap are production constants
+	// that only in-package tests change.
+	uploadBaseURL  string
+	mediaChunkSize int
+	mediaPollCap   time.Duration
 }
 
 // Option customizes a Client at construction time.
@@ -313,6 +320,10 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		statsFileCompressedCap:   defaultStatsFileCompressedCap,
 		statsFileDecompressedCap: defaultStatsFileDecompressedCap,
 		audiencePollInterval:     defaultAudiencePollInterval,
+
+		uploadBaseURL:  DefaultMediaUploadBaseURL,
+		mediaChunkSize: defaultMediaChunkSize,
+		mediaPollCap:   defaultMediaPollCap,
 	}
 	for _, o := range opts {
 		o(c)
@@ -3100,6 +3111,11 @@ type CampaignInput struct {
 	AsUserID        string
 	RegistrationURL string
 	HSToken         string
+	// Image, when non-nil, is attached to the AUTHORED tweet as its media (media.go). It
+	// requires TweetText and no TweetID: an existing tweet's media cannot be changed, and
+	// silently promoting it without the requested image would spend on a creative nobody
+	// approved, so that combination is refused before any request.
+	Image *ImageInput
 }
 
 // CampaignResult is the outcome of a campaign creation attempt, including a
@@ -3125,6 +3141,10 @@ type CampaignResult struct {
 	// TweetID. Empty when TweetID was used, when no creative input was supplied
 	// at all, or when authoring did not confirm an id (see PromotedTweetWarning).
 	AuthoredTweetID string
+	// MediaKey is the Media Library media_key of the creative image attached to the authored
+	// tweet (Image), recorded so the persisted result names the library entry a later dispatch
+	// of the same bytes reuses. Empty when no image was requested.
+	MediaKey        string
 	PromotedTweetID string
 	// PromotedTweetWarning is non-empty when the promoted-tweet association could
 	// not be confirmed (POST failed, or returned a malformed/empty response). The
@@ -3325,6 +3345,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		composedTweetText = text
 	}
+	// A creative image rides on the AUTHORED tweet only. Refused here, before any request, when
+	// no tweet will be authored — an explicit TweetID wins over TweetText, and an existing
+	// tweet's media cannot be changed — rather than dropped, because the campaign would then
+	// serve without the image the caller asked for.
+	if in.Image != nil {
+		if composedTweetText == "" {
+			return nil, fmt.Errorf("invalid creative image: an image is attached only to an authored tweet, so it requires tweetText and no tweetId")
+		}
+		if err := validateImageInput(in.Image); err != nil {
+			return nil, err
+		}
+	}
 
 	// Validate required account config before any mutating call. account_id and
 	// funding_instrument_id are both required by the X Ads campaign-create
@@ -3366,6 +3398,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	// Step 1: verify account (non-fatal).
 	c.verifyAccount(ctx, &steps)
+
+	// Step 1b: the creative image, BEFORE anything billable exists (media.go). A failure here
+	// is (nil, err): no campaign, line item or tweet has been created, and a library entry this
+	// call managed to add is found by name on the retry rather than added twice.
+	var mediaKey string
+	if in.Image != nil {
+		key, err := c.ensureImageMedia(ctx, in.Image, &steps)
+		if err != nil {
+			return nil, err
+		}
+		mediaKey = key
+	}
 
 	// Step 2: create campaign (PAUSED), reusing by name.
 	campaignID, err := c.findCampaignByName(ctx, campaignName)
@@ -3418,6 +3462,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				Platform:     "twitter-ads",
 				CampaignName: campaignName,
 				AccountID:    c.account.AccountID,
+				MediaKey:     mediaKey,
 				TwitterURL:   AdsManagerURL,
 				Steps:        steps,
 			}
@@ -3473,6 +3518,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			LineItemName:    lineItemName,
 			LineItemID:      lineItemID,
 			AuthoredTweetID: authoredTweetID,
+			MediaKey:        mediaKey,
 			// Reused must be set on partial results too, not just the final success —
 			// a downstream error AFTER a campaign/line-item reuse still carries the
 			// config-drift signal (the closure reads the current campaignReused/
@@ -3620,7 +3666,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			if err := c.pace(ctx); err != nil {
 				return partialResult(), fmt.Errorf("x tweet authoring aborted (%s / %s): %w", campaignStatus(), lineItemStatus(), err)
 			}
-			resp, authorErr := c.createNullcastTweet(ctx, composedTweetText, asUserID)
+			resp, authorErr := c.createNullcastTweet(ctx, composedTweetText, asUserID, mediaKey)
 			switch {
 			case authorErr != nil && createOutcomeAmbiguous(authorErr):
 				// An AMBIGUOUS failure may follow a committed tweet publish — a blind
@@ -3753,6 +3799,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		LineItemName:         lineItemName,
 		LineItemID:           lineItemID,
 		AuthoredTweetID:      authoredTweetID,
+		MediaKey:             mediaKey,
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
@@ -4047,13 +4094,18 @@ func (c *Client) resolvePromotableUser(ctx context.Context, pinned string) (stri
 // timeline. It does not classify its own error/response; the caller applies
 // the same ambiguous/definite/duplicate handling used for the promoted_tweets
 // POST.
-func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID string) (*apiResponse, error) {
+func (c *Client) createNullcastTweet(ctx context.Context, text, asUserID, mediaKey string) (*apiResponse, error) {
 	params := map[string]string{
 		"text":     text,
 		"nullcast": "true",
 	}
 	if asUserID != "" {
 		params["as_user_id"] = asUserID
+	}
+	// media_keys attaches the creative image; the key is a Media Library entry this call
+	// confirmed or created (media.go), which is what X requires of it.
+	if mediaKey != "" {
+		params["media_keys"] = mediaKey
 	}
 	// idempotent=FALSE, as it is for all three of the other creates — none of this
 	// client's create endpoints is declared retry-safe. Campaign and line-item creates
