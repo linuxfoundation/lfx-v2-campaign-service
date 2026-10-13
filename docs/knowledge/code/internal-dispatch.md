@@ -2129,10 +2129,18 @@ recorded one, before any request; a non-canonical stored campaign id is
 `ErrStoredPlatformIDInvalid` on both paths; then it reads the ad set
 (`GetAdSetState`), refuses another campaign's or account's ad set
 (`ErrMetaAdSetNotInCampaign`) and DELETED/ARCHIVED (`ErrMetaAdSetUnwritable`), answers
-`ALREADY_IN_STATE` with no write, and otherwise sends ONE `UpdateAdSetStatusOnce`, classified by
+`ALREADY_IN_STATE` with no write, and otherwise runs the service's `beforeWrite` hook (if any; a failure sends nothing) and sends ONE `UpdateAdSetStatusOnce`, classified by
 `meta.ClassifyAdSetWrite`: unconfirmed → `unconfirmedToggleError`; not-sent and rejected →
-ordinary errors. See [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
-Tests: `meta_ad_sets_test.go`.
+ordinary errors. `ReadMetaAdSets` marks `DeliberatelyPaused` on the recorded ad set when the
+row holds a deliberate pause of it, and `ToggleStatus` ACTIVATE on such a row calls
+`ActivateCampaignHoldingAdSet` (ads and campaign activated, the ad set left PAUSED) instead of
+the full cascade (LFXV2-2665 decision, 2026-10-13). It first READS the held ad set
+(`verifyMetaHeldAdSetPaused`) under the connection's account, or the campaign's creation account
+when the selection was cleared: only a configured PAUSED/DELETED/ARCHIVED one proceeds. ACTIVE is
+`domain.ErrMetaHeldAdSetActive` (409) and an unreadable one an ordinary error, and nothing is
+written on either. See
+[Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+Tests: `meta_ad_sets_test.go`, `meta_ad_set_pause_test.go`.
 
 `noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
 a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.

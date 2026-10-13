@@ -154,7 +154,16 @@ type Service interface {
 	// 'paused' would spend the reconciliation marker to record a run state the
 	// platform already holds authoritatively. Resuming such a campaign is refused
 	// outright (409). Read the pause's effect from the ad platform, not from this
-	// row.
+	// row. META: ACTIVE cascades to the campaign's recorded ad set and its ads,
+	// EXCEPT that a recorded ad set deliberately paused through
+	// toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left
+	// PAUSED — its ads and the campaign are still activated. That record is this
+	// service's, not Meta's, so the held ad set is READ first (GET
+	// /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written
+	// unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an
+	// ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the
+	// record, through toggle-meta-ad-set-status first), and an unreadable one is
+	// 503 with the campaign not modified.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Change how much a campaign may spend, on its ad platform, then persist the
 	// new amount. A MUTATION on a live paid campaign, dispatched to the platform
@@ -475,12 +484,30 @@ type Service interface {
 	// 409; a problem with the LF system connection, stored-credential decryption
 	// or this service itself is 500. If the write was APPLIED but the campaign row
 	// changed or was deleted concurrently, the answer is 409 stating that the ad
-	// set's status WAS changed on Meta. The ad set's status is NOT stored on the
-	// campaign row, so the returned ETag is the row's UNCHANGED version (as when a
-	// created_degraded campaign is paused). NOTE: toggle-campaign-status cascades
-	// an ACTIVATE to the recorded ad set, so a campaign ACTIVATE re-activates the
-	// recorded ad set; a deliberate ad-set pause does not survive a campaign
-	// pause/resume. Any platform but Meta is 400.
+	// set's status WAS changed on Meta. A DELIBERATE PAUSE OF THE RECORDED AD SET
+	// SURVIVES A CAMPAIGN PAUSE/RESUME: pausing the ad set this service created
+	// records the pause on the campaign row, and toggle-campaign-status ACTIVE
+	// then activates the campaign and its ads but leaves that ad set PAUSED; only
+	// a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The
+	// record is written BEFORE the pause is sent, so a pause whose outcome is
+	// UNCONFIRMED normally stays on record (unknown is treated as paused), and it
+	// is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume
+	// does not clear it. The record is NOT guaranteed after every 503: when the
+	// 503 says the record could not be confirmed, or that the write lock was lost,
+	// re-read list-meta-ad-sets and do not assume `deliberately_paused` — pause
+	// the ad set again if it is not shown. list-meta-ad-sets reports it as
+	// `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED
+	// campaign, which records no ad set — records nothing, since the campaign
+	// cascade never re-activates it. When the record is written the campaign row's
+	// version is bumped and the returned ETag (200 only) is the new one. An ERROR
+	// response carries no ETag, yet some 503 paths can still have bumped the
+	// version (a record written before an UNCONFIRMED write, or one withdrawn
+	// after a definite refusal), so after any error re-read the campaign for its
+	// current ETag before retrying; otherwise the ETag is the row's UNCHANGED
+	// version (as when a created_degraded campaign is paused). If recording fails
+	// before the write, nothing is sent (503, or 409 if the row changed); if it
+	// fails after Meta's definite answer, the 503/409 says what Meta now holds and
+	// that the record was not updated. Any platform but Meta is 400.
 	ToggleMetaAdSetStatus(context.Context, *ToggleMetaAdSetStatusPayload) (res *MetaAdSetStatusChange, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
@@ -1544,6 +1571,18 @@ type MetaAdSet struct {
 	// campaign row recorded at dispatch). Always false on an adopted campaign,
 	// which records no ad set.
 	Recorded bool
+	// true when this is the `recorded` ad set and the campaign row holds a
+	// DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the
+	// campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only
+	// resuming it through toggle-meta-ad-set-status clears this. It is this
+	// service's record, not Meta's — `status` is what Meta reports. After a pause
+	// whose outcome was UNCONFIRMED it is normally true (unknown is treated as
+	// paused), but this is NOT guaranteed: when that 503 said the pause's record
+	// could not be confirmed, or that the write lock was lost, it may be false —
+	// re-read it, and if it is false pause the ad set again before resuming the
+	// campaign; never assume it from the 503 alone. Always false on an adopted
+	// campaign.
+	DeliberatelyPaused bool
 }
 
 // MetaAdSetStatusChange is the result type of the
@@ -1562,8 +1601,11 @@ type MetaAdSetStatusChange struct {
 	// write whose outcome is unknown is never a 200: it is a 503 saying the change
 	// is unconfirmed.)
 	Outcome string
-	// ETag header value: the campaign row's version, UNCHANGED — an ad set's
-	// status is not stored on the campaign row, so this write does not bump it.
+	// ETag header value: the campaign row's version after this call. It CHANGES
+	// when the call records or clears the deliberate pause of the campaign's
+	// recorded ad set (a PAUSE of it, or a confirmed resume of it while paused on
+	// record); otherwise it is UNCHANGED — the ad set's status itself is not
+	// stored on the campaign row.
 	Etag *string
 }
 
