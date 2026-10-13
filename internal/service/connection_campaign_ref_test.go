@@ -15,7 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// ─── Meta, Reddit and X campaign resolution (LFXV2-2665) ───
+// ─── Meta, Reddit, X and LinkedIn campaign resolution (LFXV2-2665) ───
 //
 // The three routes share resolvePlatformCampaignRef with the Google and Microsoft ones; what
 // each adds is the platform the route fixes and that platform's id rule. Every behaviour the
@@ -51,6 +51,13 @@ var campaignRefRoutes = []campaignRefRoute{
 		malformed: []string{"", "a_b", "a-b", "a/b", " 8wxyz", "8wxyz ", strings.Repeat("a", 65)},
 		resolve: func(s *ConnectionService, projectID, id string) (*conn.PlatformCampaignResolution, error) {
 			return s.ResolveTwitterAdsCampaign(context.Background(), &conn.ResolveTwitterAdsCampaignPayload{ProjectID: projectID, PlatformCampaignID: id})
+		},
+	},
+	{
+		name: "linkedin", platform: model.ProviderLinkedInAds, validID: "868353296",
+		malformed: []string{"", "0", "0868", "-1", "12a", " 868", "868 ", "urn:li:sponsoredCampaign:868", strings.Repeat("9", 20)},
+		resolve: func(s *ConnectionService, projectID, id string) (*conn.PlatformCampaignResolution, error) {
+			return s.ResolveLinkedinAdsCampaign(context.Background(), &conn.ResolveLinkedinAdsCampaignPayload{ProjectID: projectID, PlatformCampaignID: id})
 		},
 	},
 }

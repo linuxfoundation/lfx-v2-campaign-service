@@ -8334,6 +8334,159 @@ func EncodeResolveTwitterAdsCampaignError(encoder func(context.Context, http.Res
 	}
 }
 
+// EncodeResolveLinkedinAdsCampaignResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-linkedin-ads-campaign endpoint.
+func EncodeResolveLinkedinAdsCampaignResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.PlatformCampaignResolution)
+		enc := encoder(ctx, w)
+		body := NewResolveLinkedinAdsCampaignResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeResolveLinkedinAdsCampaignRequest returns a decoder for requests sent
+// to the lfx-v2-campaign-service-connections resolve-linkedin-ads-campaign
+// endpoint.
+func DecodeResolveLinkedinAdsCampaignRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload
+		var (
+			projectID          string
+			platformCampaignID string
+			bearerToken        *string
+			err                error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		platformCampaignID = r.URL.Query().Get("platform_campaign_id")
+		if platformCampaignID == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "query string"))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,18}$"))
+		if utf8.RuneCountInString(platformCampaignID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 19, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewResolveLinkedinAdsCampaignPayload(projectID, platformCampaignID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeResolveLinkedinAdsCampaignError returns an encoder for errors returned
+// by the resolve-linkedin-ads-campaign lfx-v2-campaign-service-connections
+// endpoint.
+func EncodeResolveLinkedinAdsCampaignError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeListMetaAdsAccountsResponse returns an encoder for responses returned
 // by the lfx-v2-campaign-service-connections list-meta-ads-accounts endpoint.
 func EncodeListMetaAdsAccountsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {

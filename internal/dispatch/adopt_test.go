@@ -15,6 +15,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
@@ -30,6 +31,7 @@ var (
 	_ service.CampaignAdopter = (*MetaDispatcher)(nil)
 	_ service.CampaignAdopter = (*RedditDispatcher)(nil)
 	_ service.CampaignAdopter = (*TwitterDispatcher)(nil)
+	_ service.CampaignAdopter = (*LinkedInDispatcher)(nil)
 )
 
 // adopterUnderTest is what each platform's dispatcher must be for these tests: an adopter, and
@@ -120,7 +122,8 @@ func adopterCases() []adopterCase {
 	metaConn := activeMetaConn(goodMetaCreds)
 	redditConn := activeRedditConn(goodRedditCreds)
 	xConn := activeTwitterConn(goodTwitterCreds)
-	for _, c := range []*model.Connection{msConn, metaConn, redditConn, xConn} {
+	liConn := activeLinkedInConn(goodLinkedInCreds)
+	for _, c := range []*model.Connection{msConn, metaConn, redditConn, xConn, liConn} {
 		c.ID, c.Version = "conn-"+string(c.Provider), 1
 	}
 	return []adopterCase{
@@ -186,6 +189,24 @@ func adopterCases() []adopterCase {
 			account:         `{"data":{"id":"acc1"}}`,
 			creationAccount: twitterCreationAccountID, wantAccount: "acc1", wantName: "KubeCon — Awareness",
 		},
+		{
+			// LinkedIn (LFXV2-2665): the read is account-scoped, but the campaign also echoes its
+			// `account` URN, so a foreign one is checked; a 404 is confirmed by the account read.
+			provider: model.ProviderLinkedInAds, conn: liConn,
+			build: func(repo connReader, base string) adopterUnderTest {
+				return NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(base))
+			},
+			isLookup: func(r *http.Request) bool {
+				return r.Method == http.MethodGet && r.URL.Path == "/adAccounts/123456789/adCampaigns/777"
+			},
+			validID:         "777",
+			malformed:       []string{"0", "0777", "abc", " 777", "urn:li:sponsoredCampaign:777", "12345678901234567890"},
+			found:           `{"id":777,"account":"urn:li:sponsoredAccount:123456789","name":"KubeCon — Conversions","status":"PAUSED","costType":"CPC","optimizationTargetType":"NONE"}`,
+			foreign:         `{"id":777,"account":"urn:li:sponsoredAccount:999","name":"KubeCon — Conversions","status":"PAUSED"}`,
+			absent:          [2]any{http.StatusNotFound, `{"status":404}`},
+			account:         `{"id":123456789}`,
+			creationAccount: linkedInCreationAccountID, wantAccount: "123456789", wantName: "KubeCon — Conversions",
+		},
 	}
 }
 
@@ -250,13 +271,15 @@ func TestAdopters_FoundCampaignIsBoundWithProvenanceOnly(t *testing.T) {
 				t.Errorf("PAUSE sent %q, want exactly one campaign-level mutation", mutations)
 			}
 
-			// The BID lever lives on a child entity on all four platforms (ad group, ad set,
-			// line item), which an adopted row never records: refused before any request, and
-			// the refusal names adoption.
+			// The BID lever lives on a child entity on all four bid-capable platforms (ad group,
+			// ad set, line item), which an adopted row never records: refused before any request,
+			// and the refusal names adoption.
 			before = len(stub.apiRequests())
-			berr := d.(service.BidWriter).WriteBid(context.Background(), "cncf", tc.provider, row, model.BidChange{Amount: 1, Type: model.BidTypeCPC})
-			if !errors.Is(berr, domain.ErrBidUnwritable) || !strings.Contains(berr.Error(), "ADOPTED") {
-				t.Errorf("WriteBid on an adopted row = %v, want ErrBidUnwritable naming adoption", berr)
+			if bw, ok := d.(service.BidWriter); ok { // LinkedIn has no bid lever yet
+				berr := bw.WriteBid(context.Background(), "cncf", tc.provider, row, model.BidChange{Amount: 1, Type: model.BidTypeCPC})
+				if !errors.Is(berr, domain.ErrBidUnwritable) || !strings.Contains(berr.Error(), "ADOPTED") {
+					t.Errorf("WriteBid on an adopted row = %v, want ErrBidUnwritable naming adoption", berr)
+				}
 			}
 			// Meta keeps the BUDGET on the ad set too, so its budget lever is refused the same way;
 			// Microsoft, Reddit and X budget the campaign itself and are not refused here.

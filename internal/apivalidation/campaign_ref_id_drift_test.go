@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	connsrv "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/server"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
@@ -42,6 +43,17 @@ func TestCampaignRefIDPatterns_MatchPlatformValidators(t *testing.T) {
 		for _, id := range cases {
 			if designOK, platformOK := decodeOK(id), reddit.ValidateCampaignID(id) == nil; designOK != platformOK {
 				t.Errorf("id %q: design accepts=%v, reddit.ValidateCampaignID accepts=%v", id, designOK, platformOK)
+			}
+		}
+	})
+	t.Run("linkedin", func(t *testing.T) {
+		decodeOK := campaignRefDecoderChecker(t, "/linkedin-ads/campaign-ref",
+			connsrv.MountResolveLinkedinAdsCampaignHandler, connsrv.DecodeResolveLinkedinAdsCampaignRequest)
+		cases := []string{"868353296", "1", "0", "01", "", "12a", " 1", "1 ", "-1", "urn:li:sponsoredCampaign:1",
+			strings.Repeat("9", 19), strings.Repeat("9", 20)}
+		for _, id := range cases {
+			if designOK, platformOK := decodeOK(id), linkedin.ValidateCampaignID(id) == nil; designOK != platformOK {
+				t.Errorf("id %q: design accepts=%v, linkedin.ValidateCampaignID accepts=%v", id, designOK, platformOK)
 			}
 		}
 	})

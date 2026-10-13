@@ -3339,6 +3339,9 @@ untouched by all of it — refusing to pause is refusing to stop spend.
 
 ### Microsoft, Meta, Reddit and X adopters (LFXV2-2665)
 
+(LinkedIn joined them later in LFXV2-2665 — see
+[LinkedIn settings and adoption](#linkedin-settings-and-adoption-lfxv2-2665).)
+
 `MicrosoftDispatcher`, `MetaDispatcher`, `RedditDispatcher` and `TwitterDispatcher` implement
 `LookupCampaign` (`microsoft_adopt.go`, `meta_adopt.go`, `reddit_adopt.go`, `twitter_adopt.go`),
 which is all it took to take them off the `ErrAdoptionUnsupported` path — the orchestrator gate is a
@@ -4250,3 +4253,34 @@ keyed portal+id: an id is unique only within its portal, so a foreign-portal or 
 with the same number must neither suppress an attributable row nor escape the unattributable
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
+
+## LinkedIn settings and adoption (LFXV2-2665)
+
+`linkedin_settings.go` and `linkedin_adopt.go` give `LinkedInDispatcher` two of the capabilities
+every other non-Google ad platform had: `SettingsReader` and `CampaignAdopter` (compile-time
+asserted beside the siblings'; LinkedIn joins the shared adopter table in `adopt_test.go` and the
+settings wiring test). Both read the campaign through ONE
+client call, `linkedin.Client.GetCampaignSettings` — `GET adAccounts/{acct}/adCampaigns/{id}`,
+identity-checked, with a 404 proven absent only by a confirming ad-account read (see
+[internal/platform/linkedin](internal-platform-linkedin.md)).
+
+- **Settings** (`ReadSettings`): provenance fails closed first (unknown → 409, mismatch → 409, no
+  request), then one read. COMPARES `budget_amount`/`budget_type` (exactly one of `dailyBudget`/
+  `totalBudget` in USD, read as exact micro-units and rendered by `settingsMicrosToUnits`; both,
+  neither — e.g. a campaign under a group's DYNAMIC budget — non-USD or unreadable → `unknown`),
+  `campaign_name`, `start_date` (through `compareNudgedStart`, since `toMs` nudges a begun start)
+  and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
+  `cost_type`, `unit_cost`, `objective_type`. An `account` URN naming another account →
+  `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
+- **Adopt** (`LookupCampaign`): `linkedin.ValidateCampaignID` (digits, no leading zero, ≤19) →
+  `ErrInvalidPlatformCampaignID`; `resolveLinkedInCredentials` with `resolveOwnedForAdoption`
+  (never the LF system row); an unaddressable account id → `adoptionAccountIDUnusable`; one read;
+  a terminal status is absent; a foreign `account` → `adoptionAccountMismatch`. The Result is
+  `linkedin.AdoptedCampaignResult` — account, id, name, Campaign Manager link and **`adopted:
+  true`**. LinkedIn records no child ids for a toggle to miss (it DISCOVERS creatives), so that
+  flag (`linkedInAdopted`) is what `ToggleStatus` refuses ACTIVATE on (`ErrCampaignNotProvisioned`,
+  naming adoption, before any request) and what makes PAUSE flip the campaign ALONE
+  (`UpdateCampaignStatus`), never its creatives. Budget is allowed on adopted rows (the
+  campaign's own field; a shared group budget leaves the campaign with none, which `WriteBudget`
+  already refuses).
+

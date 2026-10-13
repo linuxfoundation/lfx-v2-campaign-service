@@ -55,33 +55,36 @@ type Service interface {
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
 	// project's connection, and nothing is created upstream. Supported platforms:
-	// google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other
-	// platform answers 400. The read is one get-campaign-by-id under the project's
-	// OWN connection (never the shared LF system account), plus, on Reddit and X
-	// only, one read of that connection's ad account after a campaign 404, and the
-	// campaign must belong to that connection's ad account. Returns 404 only when
-	// the platform PROVES it holds no such campaign (a deleted, removed or
-	// archived campaign counts as absent), 503 when the campaign could not be
-	// verified (the platform was unreachable or throttled, answered with something
-	// untrustworthy, or gave a not-found that could equally be an access, auth or
-	// account problem - its existence is unknown), 409 when this brief already has
-	// a live campaign on that platform / that campaign is already bound to another
-	// brief (in any project, since several foundations share one upstream ad
-	// account) / the platform reports the campaign under a different ad account
-	// than the project's connection / the campaign is of a type that platform's
-	// slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost
-	// approval during the read / the project has no ad-platform connection of its
-	// own, and 400 when the platform has no adoption capability wired or
-	// platform_campaign_id is malformed for that platform (checked before any
-	// connection work). An adopted campaign records only the campaign itself (id,
-	// name, account), never its children. The metrics read and the settings
-	// readback (on the platforms that support them), delete and pause work on it;
-	// activation is refused on every platform because adoption does not verify the
-	// targeting the activate guard requires; the bid lever is refused on
-	// Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line
-	// item the row does not record); the budget lever is refused on Meta (its
-	// budget lives on the ad set) and works on Microsoft, Reddit and X, where the
-	// budget is the campaign's own.
+	// google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and
+	// linkedin-ads; every other platform answers 400. The read is one
+	// get-campaign-by-id under the project's OWN connection (never the shared LF
+	// system account), plus, on Reddit, X and LinkedIn only, one read of that
+	// connection's ad account after a campaign 404, and the campaign must belong
+	// to that connection's ad account. Returns 404 only when the platform PROVES
+	// it holds no such campaign (a deleted, removed or archived campaign counts as
+	// absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when
+	// the campaign could not be verified (the platform was unreachable or
+	// throttled, answered with something untrustworthy, or gave a not-found that
+	// could equally be an access, auth or account problem - its existence is
+	// unknown), 409 when this brief already has a live campaign on that platform /
+	// that campaign is already bound to another brief (in any project, since
+	// several foundations share one upstream ad account) / the platform reports
+	// the campaign under a different ad account than the project's connection /
+	// the campaign is of a type that platform's slot cannot hold (Microsoft adopts
+	// Search campaigns only) / the brief lost approval during the read / the
+	// project has no ad-platform connection of its own, and 400 when the platform
+	// has no adoption capability wired or platform_campaign_id is malformed for
+	// that platform (checked before any connection work). An adopted campaign
+	// records only the campaign itself (id, name, account), never its children.
+	// The metrics read and the settings readback (on the platforms that support
+	// them), delete and pause work on it; activation is refused on every platform
+	// because adoption does not verify the targeting the activate guard requires;
+	// the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on
+	// an ad group, ad set or line item the row does not record); the budget lever
+	// is refused on Meta (its budget lives on the ad set) and works on Microsoft,
+	// Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn
+	// PAUSE on an adopted campaign addresses the campaign alone, never its
+	// creatives.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
@@ -105,14 +108,14 @@ type Service interface {
 	// describe a campaign's configuration. A setting that could not be read on
 	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
 	// zero and never counted as a match. Support is per-platform: Google Ads,
-	// Microsoft Advertising, Meta, Reddit and X (Twitter) Ads are wired, and a
-	// campaign on any other platform returns 400. The field set is per-platform
-	// too — each platform reports only the settings it can answer honestly,
-	// normalised to the units its create path wrote (Microsoft carries no flight
-	// dates, so reports none) — and on every platform the provenance rules are the
-	// same: a campaign that does not record the account it was created under, or
-	// that belongs to a different account than the connection now resolves to, is
-	// refused 409 before anything is read.
+	// Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired,
+	// and a campaign on any other platform returns 400. The field set is
+	// per-platform too — each platform reports only the settings it can answer
+	// honestly, normalised to the units its create path wrote (Microsoft carries
+	// no flight dates, so reports none) — and on every platform the provenance
+	// rules are the same: a campaign that does not record the account it was
+	// created under, or that belongs to a different account than the connection
+	// now resolves to, is refused 409 before anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -857,7 +860,14 @@ type CampaignSettingsField struct {
 	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
 	// forward past UTC midnight (because the requested day had already begun at
 	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
+	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
+	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
+	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
+	// `unit_cost` (the bid amount) and `objective_type` are upstream-only; a
+	// campaign reporting both a daily and a total budget, neither (as under a
+	// campaign group's shared budget), or a non-USD amount reads both budget
+	// fields `unknown`. The vocabulary is per-platform and may grow, so a consumer
 	// must render an unrecognised field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when

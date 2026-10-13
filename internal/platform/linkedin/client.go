@@ -258,6 +258,10 @@ type CampaignResult struct {
 	CreativeCount int      `json:"creativeCount"`
 	LinkedInURL   string   `json:"linkedInUrl"`
 	Steps         []string `json:"steps"`
+	// Adopted marks a row bound by adoption (LFXV2-2665) rather than created here. LinkedIn
+	// records no child ids to be missing — the toggle DISCOVERS creatives — so this flag is
+	// what refuses ACTIVATE on such a row. Omitted on created rows.
+	Adopted bool `json:"adopted,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

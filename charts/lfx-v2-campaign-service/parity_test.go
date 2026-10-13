@@ -475,12 +475,13 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/twitter-ads/audience/x", false},
 		{"/projects/p1/reddit-ads/audience", false},
 		{"/projects/p1/linkedin-ads/audience", false},
-		// The Meta, Reddit and X twins (LFXV2-2665).
+		// The Meta, Reddit, X and LinkedIn twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref", true},
 		{"/projects/p1/twitter-ads/campaign-ref", true},
+		{"/projects/p1/linkedin-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref/x", false},
-		{"/projects/p1/linkedin-ads/campaign-ref", false},
+		{"/projects/p1/linkedin-ads/campaign-ref/x", false},
 		{"/projects/p1/hubspot-ads/campaign-ref", false},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it

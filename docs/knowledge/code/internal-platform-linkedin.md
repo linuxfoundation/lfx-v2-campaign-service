@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback and adoption, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -447,6 +447,31 @@ EXPORTED, which is what makes "every caller goes through `ValidateBudgetAmount`"
 needing enforcement. The call returns **no body**, so the 2xx
 itself is the confirmation; `IsOutcomeUnconfirmed` still separates a maybe-applied 5xx from a
 definite 4xx.
+
+## Campaign read and adoption (`campaign_settings.go`, LFXV2-2665)
+
+Sources: LinkedIn Marketing API "Create and Manage Campaigns" (li-lms-2026-09,
+https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaigns),
+"Create and Manage
+Campaign Groups"
+(https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaign-groups)
+and the error-handling guide
+(https://learn.microsoft.com/en-us/linkedin/shared/api-guide/concepts/error-handling), all
+consulted 2026-10-13.
+
+`GetCampaignSettings(ctx, id)` is ONE `GET adAccounts/{acct}/adCampaigns/{id}` through
+`doEntityGET` (single-entity, no Rest.li FINDER header, raw body kept). The body must pass
+`identityjson.Check`, decode cleanly and echo the requested id; the `account` and `campaignGroup`
+URNs must parse, and `status` must be one of the eight documented values — else the read is
+unverifiable. Amounts (`unitCost`, `dailyBudget`, `totalBudget`) are parsed EXACTLY into
+micro-units by `parseDecimalMicros` (string or number; sign, exponent or >6 significant decimals
+→ unparseable, never rounded). `runSchedule` epoch-ms → UTC instants. A **404 is (nil, nil) only
+after `confirmAccountReadable`** answers 2xx naming the connection's account — LinkedIn documents
+404 for restricted Ads access too. `Terminal()` is CANCELED/PENDING_DELETION/REMOVED (ARCHIVED and
+COMPLETED can be revived). `ValidateCampaignID` (`^[1-9][0-9]{0,18}$`) is exactly the
+`resolve-linkedin-ads-campaign` Pattern (pinned by `internal/apivalidation`).
+`AdoptedCampaignResult` builds the adopted row's blob, whose new `CampaignResult.Adopted` flag is
+what the dispatcher's toggle and bid lever read.
 
 ## Metrics read
 
