@@ -51,7 +51,7 @@ func TestValidateBidAmount(t *testing.T) {
 			t.Errorf("ValidateBidAmount(%v) = %q, %v; want %q", tc.amount, got, err, tc.wire)
 		}
 	}
-	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1), 1_000_000.01, 2.345, 0.001, 0.004, 5e-9, 1e-12} {
+	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1), 1_000_000.01, 2.345, 0.001, 0.004, 5e-9, 1e-12, 2.340000001, 2.3400000001, 0.010000001} {
 		_, err := ValidateBidAmount(bad)
 		if !errors.Is(err, ErrBidAmountInvalid) {
 			t.Errorf("ValidateBidAmount(%v) = %v, want ErrBidAmountInvalid", bad, err)
@@ -178,6 +178,9 @@ func TestValidateBidAmount_SubCentRefusalsAreDistinct(t *testing.T) {
 		5e-9:  "rounds to zero",
 		2.345: "not a whole number of cents",
 		0.015: "not a whole number of cents",
+		// Inside the old 1e-6-cent tolerance, which rounded these to "2.34" and "1.00".
+		2.340000001:  "not a whole number of cents",
+		1.0000000001: "not a whole number of cents",
 	} {
 		wire, err := ValidateBidAmount(amount)
 		if err == nil || !strings.Contains(err.Error(), want) {

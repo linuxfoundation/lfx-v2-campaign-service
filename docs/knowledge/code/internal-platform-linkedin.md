@@ -465,8 +465,9 @@ consulted 2026-10-13.
 `identityjson.Check`, decode cleanly and echo the requested id; the `account` and `campaignGroup`
 URNs must parse, and `status` must be one of the eight documented values — else the read is
 unverifiable. Amounts (`unitCost`, `dailyBudget`, `totalBudget`) are parsed EXACTLY into
-micro-units by `parseDecimalMicros` (string or number; sign, exponent or >6 significant decimals
-→ unparseable, never rounded). `runSchedule` epoch-ms → UTC instants. A **404 is (nil, nil) only
+micro-units by `parseDecimalMicros` (string or number; sign, exponent, >6 significant decimals
+or a value past int64 micro-units → unparseable, never rounded or wrapped); a budget object
+PRESENT without an amount marks the budget unparseable. `runSchedule` epoch-ms → UTC instants. A **404 is (nil, nil) only
 after `confirmAccountReadable`** answers 2xx naming the connection's account — LinkedIn documents
 404 for restricted Ads access too. `Terminal()` is CANCELED/PENDING_DELETION/REMOVED (ARCHIVED and
 COMPLETED can be revived). `ValidateCampaignID` (`^[1-9][0-9]{0,18}$`) is exactly the
@@ -482,7 +483,8 @@ mode" (MAX_* is auto-bidding, TARGET_COST_PER_* target cost, CAP_COST_AND_* cost
 defaults to NONE and 0 — manual, and "if unitCost is 0, the campaign does not deliver"; whether
 LinkedIn instead applies an objective-based automated default is unverified live, so the dispatcher
 decides on the REPORTED value. `ValidateBidAmount` returns the USD wire string at whole cents
-(a sub-cent amount is refused, never rounded; ≤ 1,000,000). `UpdateCampaignUnitCost` re-runs it,
+(the two-decimal wire form parsed back must EQUAL the requested float — no tolerance — so a
+sub-cent amount is refused, never rounded; ≤ 1,000,000). `UpdateCampaignUnitCost` re-runs it,
 then sends one PARTIAL_UPDATE `$set unitCost {amount, USD}` under `withSendOnce`, the context
 opt-out that stops `doRequest` retrying a PARTIAL_UPDATE 429 — so a throttle returns as the 429
 itself, which `createOutcomeAmbiguous` classifies unconfirmed (the budget write keeps its retry).

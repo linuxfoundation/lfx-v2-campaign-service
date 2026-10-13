@@ -271,18 +271,20 @@ type Service interface {
 	// per-click bid in the platform's own UI. A LinkedIn campaign this service
 	// creates sends no optimizationTargetType, which LinkedIn documents as
 	// defaulting to NONE (manual), so it is expected to pass — but the guard
-	// decides on what LinkedIn REPORTS, never on that expectation. The amount is
-	// in the AD ACCOUNT's own currency, not USD, and this service neither knows
-	// nor converts it. Microsoft Advertising, Reddit, Meta, X and LinkedIn today:
-	// a campaign on any other platform is refused with 400. **409** when the
-	// change is refused BEFORE the platform is written, so nothing has changed:
-	// the campaign is unprovisioned; it belongs to a different ad account than the
-	// project's connection now resolves to, or does not record which ad account it
-	// was created under; its bid strategy is automated, a target, or unreported;
-	// or the bid could not be addressed (no recorded ad group, ad set or line
-	// item, one reporting another campaign or deleted, or one bidding in a unit
-	// other than `bid_type`). None is retryable. **400** for a request fault: a
-	// non-positive, non-finite or out-of-range bid, an unknown bid type, a
+	// decides on what LinkedIn REPORTS, never on that expectation. On every
+	// adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not
+	// USD, and this service neither knows nor converts it; the LinkedIn adapter
+	// writes USD and refuses (409) a campaign whose bid is in any other or an
+	// unreported currency. Microsoft Advertising, Reddit, Meta, X and LinkedIn
+	// today: a campaign on any other platform is refused with 400. **409** when
+	// the change is refused BEFORE the platform is written, so nothing has
+	// changed: the campaign is unprovisioned; it belongs to a different ad account
+	// than the project's connection now resolves to, or does not record which ad
+	// account it was created under; its bid strategy is automated, a target, or
+	// unreported; or the bid could not be addressed (no recorded ad group, ad set
+	// or line item, one reporting another campaign or deleted, or one bidding in a
+	// unit other than `bid_type`). None is retryable. **400** for a request fault:
+	// a non-positive, non-finite or out-of-range bid, an unknown bid type, a
 	// platform with no bid-write capability wired, or a bid the campaign's
 	// platform refuses on its own minimum or maximum — the response names what it
 	// was. **503** when the platform could not be reached or did not confirm —

@@ -58,9 +58,13 @@ func (d *LinkedInDispatcher) LookupCampaign(ctx context.Context, projectID strin
 		}
 		return nil, fmt.Errorf("look up linkedin campaign: %w", err)
 	}
-	if settings == nil || settings.Terminal() {
+	if settings == nil {
 		return nil, nil
 	}
+	// IDENTITY BEFORE STATE: the echoed account is validated before any status is interpreted,
+	// so a foreign (or unreported) campaign is the 409 mismatch even when it reports a terminal
+	// status, never an "absent" read off another account's record.
+	//
 	// `account` is a REQUIRED campaign field, so an unreported one is an unestablished fact and is
 	// refused like a foreign one (409) — the bid lever's rule. The path scopes the read, but
 	// adoption binds the campaign for good, so the answer's own account must confirm it.
@@ -70,6 +74,9 @@ func (d *LinkedInDispatcher) LookupCampaign(ctx context.Context, projectID strin
 	}
 	if settings.AccountID != accountID {
 		return nil, adoptionAccountMismatch(platform, settings.CampaignID, settings.AccountID, accountID)
+	}
+	if settings.Terminal() {
+		return nil, nil
 	}
 	if settings.Name == nil || strings.TrimSpace(*settings.Name) == "" {
 		return nil, fmt.Errorf("look up linkedin campaign %s: the campaign was returned without a usable name", platformCampaignID)

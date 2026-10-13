@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -194,6 +195,11 @@ func parseDecimalMicros(raw json.RawMessage) (*int64, bool) {
 	if err != nil {
 		return nil, true
 	}
+	// decimalRE admits a 13-digit whole part, which does not fit int64 micro-units above
+	// 9,223,372,036,854.775807: refused as unreadable BEFORE multiplying, never wrapped negative.
+	if w > (math.MaxInt64-f)/1_000_000 {
+		return nil, true
+	}
 	v := w*1_000_000 + f
 	return &v, false
 }
@@ -297,7 +303,9 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	if b := wire.DailyBudget; b != nil {
 		var bad bool
 		out.DailyBudgetMicros, bad = parseDecimalMicros(b.Amount)
-		out.BudgetUnparseable = out.BudgetUnparseable || bad
+		// A PRESENT budget object with no amount is unreadable, not absent: read as absent, a
+		// campaign reporting both budgets would pass as an unambiguous single-budget one.
+		out.BudgetUnparseable = out.BudgetUnparseable || bad || out.DailyBudgetMicros == nil
 		if b.CurrencyCode != nil {
 			out.BudgetCurrency = *b.CurrencyCode
 		}
@@ -305,7 +313,7 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	if b := wire.TotalBudget; b != nil {
 		var bad bool
 		out.TotalBudgetMicros, bad = parseDecimalMicros(b.Amount)
-		out.BudgetUnparseable = out.BudgetUnparseable || bad
+		out.BudgetUnparseable = out.BudgetUnparseable || bad || out.TotalBudgetMicros == nil
 		if out.BudgetCurrency == "" && b.CurrencyCode != nil {
 			out.BudgetCurrency = *b.CurrencyCode
 		}

@@ -4277,7 +4277,7 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidUnwritable`, campaign id
   shape, amount (`linkedin.ValidateBidAmount`: whole cents, ≤ 1,000,000 → else 400), credentials +
   account match, ONE read, then guards — the reported `account` must be present and the
-  connection's, not terminal (CANCELED/PENDING_DELETION/REMOVED), `ManualCPC()` (costType CPC with
+  connection's, a reported status that is not terminal (CANCELED/PENDING_DELETION/REMOVED; an unreported status is refused too), `ManualCPC()` (costType CPC with
   optimizationTargetType NONE or ENHANCED_CONVERSION — LinkedIn's two manual modes; MAX_*,
   TARGET_COST_PER_*, CAP_COST_AND_*, CPM/CPV and anything unreported are refused), a legible
   `unitCost` in USD. Then one `UpdateCampaignUnitCost`, sent ONCE: unconfirmed first

@@ -94,6 +94,8 @@ func TestLinkedIn_ReadSettings_BudgetIsComparedOnlyWhenItsShapeIsUnambiguous(t *
 		"neither (shared group budget)": replace(`"dailyBudget":{"amount":"100.00","currencyCode":"USD"},`, ``),
 		"not USD":                       replace(`"amount":"100.00","currencyCode":"USD"`, `"amount":"100.00","currencyCode":"EUR"`),
 		"sub-micro amount":              replace(`"100.00"`, `"100.0000001"`),
+		"total present with a null amount": replace(`"dailyBudget":{"amount":"100.00","currencyCode":"USD"}`,
+			`"dailyBudget":{"amount":"100.00","currencyCode":"USD"},"totalBudget":{"amount":null,"currencyCode":"USD"}`),
 	}
 	for name, m := range cases {
 		t.Run(name, func(t *testing.T) {

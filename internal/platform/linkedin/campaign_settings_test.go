@@ -104,6 +104,10 @@ func TestParseDecimalMicros_IsExactOrAbsent(t *testing.T) {
 		{`12.5`, 12_500_000, true, false},
 		{`"10.1234567"`, 0, false, true}, // beyond micro precision: refused, never rounded
 		{`"-1"`, 0, false, true},
+		{`"9223372036854.775807"`, 9_223_372_036_854_775_807, true, false}, // the int64 ceiling, exactly
+		{`"9223372036854.775808"`, 0, false, true},                         // one micro past it
+		{`"9999999999999.999999"`, 0, false, true},                         // would wrap negative
+		{`"9999999999999.5"`, 0, false, true},
 		{`"1e3"`, 0, false, true},
 		{`" 5"`, 0, false, true},
 		{`true`, 0, false, true},
@@ -240,5 +244,26 @@ func TestAdoptedCampaignResult_RecordsProvenanceOnly(t *testing.T) {
 	}
 	if !strings.Contains(blob["linkedInUrl"].(string), "/accounts/509430019/campaigns/777") {
 		t.Errorf("linkedInUrl = %v", blob["linkedInUrl"])
+	}
+}
+
+// A budget object that is PRESENT without an amount is unreadable, never absent: read as absent, a
+// campaign reporting both budgets would pass as an unambiguous single-budget one.
+func TestGetCampaignSettings_PresentBudgetWithoutAmountIsUnreadable(t *testing.T) {
+	for name, total := range map[string]string{
+		"null amount":    `{"amount":null,"currencyCode":"USD"}`,
+		"missing amount": `{"currencyCode":"USD"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, c := newLeverStub(t)
+			s.campaignBody = `{"id":777,"dailyBudget":{"amount":"5.00","currencyCode":"USD"},"totalBudget":` + total + `}`
+			got, err := c.GetCampaignSettings(context.Background(), "777")
+			if err != nil {
+				t.Fatalf("GetCampaignSettings: %v", err)
+			}
+			if !got.BudgetUnparseable {
+				t.Errorf("a present totalBudget without an amount must mark the budget unreadable: %+v", got)
+			}
+		})
 	}
 }

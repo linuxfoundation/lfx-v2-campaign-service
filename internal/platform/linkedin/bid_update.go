@@ -109,18 +109,18 @@ func ValidateBidAmount(amount float64) (string, error) {
 			strconv.FormatFloat(amount, 'f', -1, 64), strconv.FormatFloat(linkedinMaxBid, 'f', -1, 64))}
 	}
 	cents := math.Round(amount * 100)
-	// ROUNDS-TO-ZERO FIRST, deliberately before the whole-cent check: that check has an absolute
-	// tolerance (1e-6 cents), so on its own it would PASS an amount under 1e-8 — whose distance
-	// from zero cents is inside the tolerance — and the wire would be "0.00". Ordered here, every
-	// amount under half a cent gets this sentence and the check below sees only cents >= 1.
 	if cents < 1 {
 		return "", &bidAmountError{msg: "the bid rounds to zero; the smallest bid this service sets on LinkedIn is 0.01"}
 	}
-	if math.Abs(amount*100-cents) > 1e-6 {
+	// WHOLE CENTS, EXACTLY: the canonical two-decimal wire form, parsed back, must be the very
+	// float requested. No tolerance — 2.340000001 is refused, not sent as "2.34" while the row
+	// persists 2.340000001.
+	wire := strconv.FormatFloat(cents/100, 'f', 2, 64)
+	if back, err := strconv.ParseFloat(wire, 64); err != nil || back != amount {
 		return "", &bidAmountError{msg: fmt.Sprintf("the bid %s is not a whole number of cents; LinkedIn bids are set in the account currency to two decimal places",
 			strconv.FormatFloat(amount, 'f', -1, 64))}
 	}
-	return strconv.FormatFloat(cents/100, 'f', 2, 64), nil
+	return wire, nil
 }
 
 // sendOnceKey marks a request context whose mutation must not be retried in-call.

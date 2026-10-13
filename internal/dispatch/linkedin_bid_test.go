@@ -82,6 +82,7 @@ func TestLinkedIn_WriteBid_GuardsRefuseWithoutWriting(t *testing.T) {
 		{"unreported account", liCampaignJSON(replace(`"account":"urn:li:sponsoredAccount:123456789",`, ``)), domain.ErrBidUnwritable},
 		{"another account", liCampaignJSON(replace("sponsoredAccount:123456789", "sponsoredAccount:999")), domain.ErrCampaignAccountMismatch},
 		{"removed upstream", liCampaignJSON(replace(`"status":"ACTIVE"`, `"status":"REMOVED"`)), domain.ErrBidUnwritable},
+		{"unreported status", liCampaignJSON(replace(`"status":"ACTIVE",`, ``)), domain.ErrBidUnwritable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

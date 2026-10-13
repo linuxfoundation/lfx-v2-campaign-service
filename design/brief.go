@@ -2046,8 +2046,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"the platform's own UI. A LinkedIn campaign this service creates sends no optimizationTargetType, " +
 			"which LinkedIn documents as defaulting to NONE (manual), so it is expected to pass — but the " +
 			"guard decides on what LinkedIn REPORTS, never on that expectation. " +
-			"The amount is in the AD ACCOUNT's own currency, not USD, and this service neither knows nor " +
-			"converts it. " +
+			"On every adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not USD, and " +
+			"this service neither knows nor converts it; the LinkedIn adapter writes USD and refuses " +
+			"(409) a campaign whose bid is in any other or an unreported currency. " +
 			"Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other platform is " +
 			"refused with 400. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: the " +

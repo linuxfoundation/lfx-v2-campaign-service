@@ -96,7 +96,13 @@ func (d *LinkedInDispatcher) WriteBid(ctx context.Context, projectID string, pla
 		return fmt.Errorf("write linkedin campaign bid: campaign %s is reported under ad account %s, not the connection's account %s: %w",
 			campaignID, current.AccountID, accountID, domain.ErrCampaignAccountMismatch)
 	}
-	// GUARD 2 — NOT TERMINAL. A canceled or deleted campaign can never serve again.
+	// GUARD 2 — NOT TERMINAL. A canceled or deleted campaign can never serve again. `status` is a
+	// required field, so an unreported one leaves that unestablished and is refused like every
+	// other unreported fact here.
+	if current.Status == nil {
+		return fmt.Errorf("write linkedin campaign bid: campaign %s did not report its status, so it cannot be established that it can still serve: %w",
+			campaignID, domain.ErrBidUnwritable)
+	}
 	if current.Terminal() {
 		return fmt.Errorf("write linkedin campaign bid: campaign %s is %s upstream and can never serve again: %w",
 			campaignID, *current.Status, domain.ErrBidUnwritable)

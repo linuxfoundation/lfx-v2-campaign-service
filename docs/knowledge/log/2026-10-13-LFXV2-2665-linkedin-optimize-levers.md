@@ -20,3 +20,10 @@ PR #318 review: adoption now refuses a campaign whose `account` LinkedIn did not
 `ErrCampaignAccountMismatch`), matching the bid lever, instead of trusting the path scope alone;
 and `ValidateBidAmount` checks "rounds to zero" BEFORE the whole-cent check — the latter's
 absolute tolerance would otherwise pass an amount under 1e-8 as a "0.00" wire.
+
+Second #318 review round: `parseDecimalMicros` refuses an amount past int64 micro-units instead of
+wrapping it negative; a budget object present without an amount marks the budget unreadable;
+adoption validates the echoed account BEFORE interpreting a terminal status; the bid lever refuses
+an unreported status; `ValidateBidAmount` requires the two-decimal wire form to equal the requested
+float exactly (no tolerance); and the bid endpoint description scopes "not USD" to the non-LinkedIn
+adapters.

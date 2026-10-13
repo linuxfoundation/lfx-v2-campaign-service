@@ -486,3 +486,33 @@ func TestLinkedInAdopter_UnreportedAccountIsAMismatchNotABinding(t *testing.T) {
 		t.Error("an unreported account must not read as absent")
 	}
 }
+
+// IDENTITY BEFORE STATE: a LinkedIn answer naming a foreign (or no) account is the 409 mismatch
+// even when it also reports a terminal status — never an "absent" read off another account's record.
+func TestLinkedInAdopter_ForeignTerminalCampaignIsAMismatchNotAnAbsence(t *testing.T) {
+	var tc adopterCase
+	for _, c := range adopterCases() {
+		if c.provider == model.ProviderLinkedInAds {
+			tc = c
+		}
+	}
+	for name, body := range map[string]string{
+		"foreign":    strings.Replace(tc.foreign, `"PAUSED"`, `"REMOVED"`, 1),
+		"unreported": strings.Replace(strings.Replace(tc.found, `"account":"urn:li:sponsoredAccount:123456789",`, ``, 1), `"PAUSED"`, `"CANCELED"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, stub, _ := newAdopter(t, tc)
+			stub.set(http.StatusOK, body)
+			ref, err := d.LookupCampaign(context.Background(), "cncf", tc.provider, tc.validID)
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) || ref != nil {
+				t.Fatalf("got %+v, %v; want ErrCampaignAccountMismatch", ref, err)
+			}
+		})
+	}
+	// A terminal campaign that IS the connection's stays an answered absence.
+	d, stub, _ := newAdopter(t, tc)
+	stub.set(http.StatusOK, strings.Replace(tc.found, `"PAUSED"`, `"REMOVED"`, 1))
+	if ref, err := d.LookupCampaign(context.Background(), "cncf", tc.provider, tc.validID); err != nil || ref != nil {
+		t.Fatalf("own terminal campaign: got %+v, %v; want (nil, nil)", ref, err)
+	}
+}
