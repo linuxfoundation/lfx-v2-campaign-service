@@ -291,6 +291,14 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			var unparseable bool
 			dailyMinor := parseMinorUnits(d.DailyBudget, &unparseable)
 			lifetimeMinor := parseMinorUnits(d.LifetimeBudget, &unparseable)
+			// A NEGATIVE budget parses but is not a budget, and it is not "no budget" either:
+			// read as non-positive it would send the campaign to the ad-set fallback, which
+			// could then pace it on amounts the campaign's own (unreadable) budget overrides.
+			// It is unreadable, like an unparseable one (PR #316 review).
+			if (dailyMinor != nil && *dailyMinor < 0) || (lifetimeMinor != nil && *lifetimeMinor < 0) {
+				unparseable = true
+				dailyMinor, lifetimeMinor = nil, nil
+			}
 			out = append(out, metaCampaignListEntry{
 				ID:            d.ID,
 				Name:          d.Name,

@@ -52,50 +52,91 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 		// from every one of its four returns, so it was never taken: a budget-less Meta campaign
 		// got pacingPct 0 and the "underspending" label, exactly as Google's did.
 		pacingPct, computable := metaPacingPct(m, days, now)
+		expected, _ := metaExpectedSpend(m, days, now)
 		if !computable {
 			row := unknownPacingRow(m)
 			out = append(out, row)
-			items = append(items, metaActionItems(row.Metrics, 0, row.PacingLabel, days)...)
+			items = append(items, metaActionItems(row.Metrics, 0, row.PacingLabel, expected)...)
 			continue
 		}
 
 		label := pacingLabelFor(pacingPct)
 		row := model.AccountMonitorRow{Metrics: m, PacingPct: pacingPct, PacingLabel: label}
 		out = append(out, row)
-		items = append(items, metaActionItems(m, pacingPct, label, days)...)
+		items = append(items, metaActionItems(m, pacingPct, label, expected)...)
 	}
 
 	sortByPriority(items)
 	return out, items
 }
 
-// metaPacingPct computes the pacing percentage: schedule-based when a total budget and a start
-// time are both known, else against a flat dailyBudget*days expectation.
+// metaPacingPct computes the pacing percentage, spend over metaExpectedSpend.
+func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
+	expected, ok := metaExpectedSpend(m, days, now)
+	if !ok {
+		return 0, false
+	}
+	return math.Round(m.Spend / expected * 100), true
+}
+
+// metaExpectedSpend is the spend the campaign's plan expects over the requested window:
+// schedule-based when a total budget and a start time are both known, else a flat
+// dailyBudget*days expectation. ok=false (expected 0) when nothing can be expected.
 //
 // The second return says whether the figure is COMPUTABLE. It used to be an `unknown` flag that
 // no return path ever set, so the caller's guard on it was dead and a campaign with neither
 // budget reached the ladder carrying 0 — reported as underspending. Now the no-budget path says
 // so, and the caller reports PacingUnknown.
-func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
+//
+// THE LIFETIME BRANCH PACES THE REQUESTED WINDOW, not the flight to date (PR #316 review). m.Spend
+// is the Insights spend over the last `days` days only (fetchAccountCampaignInsights' time_range),
+// so the expectation must cover the same span: the lifetime budget spread evenly over the flight,
+// times the days of the window the flight actually ran on. It used to be the expectation since
+// the flight STARTED — a 9,000 / 90-day campaign on day 60 read with days=7 compared ~700 of
+// window spend against ~5,900 of flight-to-date plan and reported 12%, a false underspend on
+// every lifetime campaign past its first week. This is LinkedIn's linkedinPacingPct proration
+// (budget / flight days × window days), in calendar days: the window is the `days` UTC days
+// ending today inclusive (the Insights range), and EndDate is a day the flight still runs on, so
+// the flight ends when that day does. An open-ended flight runs through today. A window the
+// flight does not overlap (it has not started, or ended before the window) is not computable: a
+// zero spend there is correct, not underspending.
+func metaExpectedSpend(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
 	start := parseMonitorDate(m.StartDate)
 	end := parseMonitorDate(m.EndDate)
 	if m.TotalBudget > 0 && !start.IsZero() {
-		flightEnd := now
+		utcNow := now.UTC()
+		today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+		windowStart := today.AddDate(0, 0, -(days - 1))
+		windowEnd := today.AddDate(0, 0, 1) // exclusive: today is in the window
+		flightEnd := windowEnd
 		if !end.IsZero() {
-			flightEnd = end
+			flightEnd = end.AddDate(0, 0, 1)
 		}
-		totalFlightDays := maxFloat(1, math.Ceil(flightEnd.Sub(start).Hours()/24))
-		elapsedDays := maxFloat(1, math.Ceil(now.Sub(start).Hours()/24))
-		expected := m.TotalBudget / totalFlightDays * math.Min(elapsedDays, totalFlightDays)
+		if !flightEnd.After(start) {
+			return 0, false
+		}
+		totalFlightDays := math.Round(flightEnd.Sub(start).Hours() / 24)
+		effStart, effEnd := start, flightEnd
+		if windowStart.After(effStart) {
+			effStart = windowStart
+		}
+		if windowEnd.Before(effEnd) {
+			effEnd = windowEnd
+		}
+		if !effEnd.After(effStart) {
+			return 0, false
+		}
+		windowDays := math.Round(effEnd.Sub(effStart).Hours() / 24)
+		expected := m.TotalBudget / totalFlightDays * windowDays
 		if expected > 0 {
-			return math.Round(m.Spend / expected * 100), true
+			return expected, true
 		}
 		return 0, false
 	}
 	if m.BudgetDay > 0 {
 		expected := m.BudgetDay * float64(days)
 		if expected > 0 {
-			return math.Round(m.Spend / expected * 100), true
+			return expected, true
 		}
 	}
 	return 0, false
@@ -107,7 +148,9 @@ func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (flo
 // carried on the row, so the text says "in account currency", as the X monitor's xMoney does.
 func metaMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
 
-func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int) []model.AccountMonitorActionItem {
+// expected is metaExpectedSpend's figure for the window — the denominator the underspending text
+// reports, so the text and the percentage describe the same span.
+func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, expected float64) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	add := func(priority model.MonitorPriority, issue, action string) {
 		items = append(items, model.AccountMonitorActionItem{
@@ -132,15 +175,10 @@ func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label mo
 			"Verify Meta Pixel / Conversions API is firing; check landing page and CTA alignment")
 	}
 	if label == model.MonitorPacingUnderspending && m.Status == "ACTIVE" {
-		// m.TotalBudget is 0 whenever pacingPct was computed from the flat BudgetDay*days
-		// branch (metaPacingPct) instead of the schedule-based one — using it unconditionally
-		// as the denominator produced a self-contradicting "X of 0.00" message for every
-		// daily-budget-funded campaign. Fall back to the same budgetDay*days expectation
-		// metaPacingPct itself used to derive pacingPct in that branch.
-		denominator := m.TotalBudget
-		if denominator <= 0 {
-			denominator = m.BudgetDay * float64(days)
-		}
+		// The denominator is the window's expected spend, the same figure pacingPct was computed
+		// from. It used to be m.TotalBudget — the WHOLE lifetime budget, while pacingPct (and the
+		// spend) cover only the window — and before that "of 0.00" for a daily-funded campaign.
+		denominator := expected
 		add(model.MonitorPriorityMed,
 			fmt.Sprintf("Underspending: %.0f%% of budget used (%s of %s)", pacingPct, metaMoney(m.Spend), metaMoney(denominator)),
 			"Broaden audience targeting or increase bid cap to improve delivery")

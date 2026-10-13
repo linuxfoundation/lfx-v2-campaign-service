@@ -751,9 +751,13 @@ the active ad sets' window: when they all share one it becomes the row's flight 
 budget is paced on it); when they disagree, or one's `start_time` is absent/null/malformed or its
 `end_time` null/malformed, the lifetime budget stays unknown — an absent `end_time` is an
 open-ended flight, and an open-ended window differs from a bounded one with the same start. Daily pacing (budget x days) does not read the flight, so a daily campaign
-keeps its budget either way. `rules/monitor_meta.go`'s pacing needed no change (an unknown budget
-is 0/0, which `metaPacingPct` already reports as not computable); its action-item text now prints
-money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`.
+keeps its budget either way. An unknown budget is 0/0, which `metaPacingPct` already reports as not
+computable. A negative campaign-level budget is unreadable (`FetchFailed`), never "no budget" sent
+to the ad-set fallback. `rules/monitor_meta.go` changed in two ways: its action-item text prints
+money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`; and lifetime
+pacing (`metaExpectedSpend`) prorates the budget over the flight (end date inclusive) and expects
+only the requested window's flight days — spend covers only that window, so the old
+flight-to-date expectation reported every lifetime campaign past its first week as underspending.
 
 See [internal/platform/meta](../../../internal/platform/meta).
 

@@ -201,9 +201,14 @@ zero-decimal currencies); a currency outside the supported map leaves budgets un
 The FLIGHT is on the ad set too, so the same read supplies it: when every active ad set
 shares one `start_time`/`end_time` window it becomes the row's flight and a lifetime budget is
 paced on it; differing or unreadable windows leave a lifetime budget `pacing_unknown` (daily
-pacing does not read the flight). The rules' pacing is unchanged — an unknown budget arrives as
-0/0, which it already reports as not computable — but Meta's action-item text now prints money as
-"N.NN in account currency", like X's, instead of `$`, since a yen or won amount is not dollars. See
+pacing does not read the flight). An unknown budget arrives as 0/0, which the rules already report
+as not computable, and a negative campaign-level budget is unreadable rather than "no budget".
+Meta's action-item text now prints money as "N.NN in account currency", like X's, instead of `$`.
+**Lifetime pacing paces the window** (CBO and ABO alike): spend is the last `days` only, so the
+expectation is now the lifetime budget spread over the flight (end date inclusive) times the
+window's flight days — LinkedIn's proration — instead of the plan since the flight started, which
+read a 9,000 / 90-day campaign on day 60 with `days=7` at ~12% when it was on plan. A window the
+flight does not overlap is `pacing_unknown`. See
 [2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md](../log/2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md).
 
 ## Correctness bugs found during local differential verification

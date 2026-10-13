@@ -383,3 +383,26 @@ func TestListAccountCampaigns_ABOBudget_BadEffectiveStatusIsLocal(t *testing.T) 
 		})
 	}
 }
+
+// A negative campaign-level budget is unreadable, not "no budget": it marks the row FetchFailed
+// and never sends the campaign to the ad-set fallback (PR #316 review).
+func TestListAccountCampaigns_NegativeCampaignBudgetIsUnreadable(t *testing.T) {
+	for _, field := range []string{`"daily_budget":"-500"`, `"lifetime_budget":"-90000"`} {
+		t.Run(field, func(t *testing.T) {
+			rows, rec := listMonitorRows(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, field))},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+				adSets:    []string{monitorList(monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"4000"`))},
+			})
+			r := rows["111"]
+			if !r.FetchFailed {
+				t.Errorf("row = %+v, want FetchFailed for a negative campaign budget", r)
+			}
+			assertBudgets(t, r, 0, 0)
+			if got := adSetRequests(rec); len(got) != 0 {
+				t.Errorf("a negative campaign budget sent the campaign to the ad-set fallback: %v", got)
+			}
+		})
+	}
+}
