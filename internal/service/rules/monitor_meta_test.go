@@ -115,7 +115,7 @@ func TestMetaActionItems(t *testing.T) {
 	t.Run("active underspending funded by BudgetDay uses budgetDay*days as the denominator", func(t *testing.T) {
 		// Pins a round-22 review fix: the message used to hardcode m.TotalBudget as the
 		// denominator, which is 0 for a campaign funded by BudgetDay instead — producing a
-		// self-contradicting "$X.XX of $0.00" message.
+		// self-contradicting "X.XX of 0.00" message.
 		row := base
 		row.Status = "ACTIVE"
 		row.BudgetDay = 10
@@ -126,14 +126,39 @@ func TestMetaActionItems(t *testing.T) {
 		for _, it := range items {
 			if strContains(it.Issue, "Underspending") {
 				found = true
-				if !strContains(it.Issue, "$300.00") {
-					t.Errorf("issue = %q, want it to report $300.00 (budgetDay=10 * days=30), not $0.00", it.Issue)
+				if !strContains(it.Issue, "of 300.00 in account currency") {
+					t.Errorf("issue = %q, want it to report 300.00 in account currency (budgetDay=10 * days=30), not 0.00", it.Issue)
 				}
 			}
 		}
 		if !found {
 			t.Fatalf("no Underspending issue found in %+v", items)
 		}
+	})
+	t.Run("money in action-item text is in account currency, never dollars", func(t *testing.T) {
+		// Meta reports spend and budgets in the AD ACCOUNT's currency; a JPY or KRW account's
+		// amounts used to be printed with "$" (PR #316 review).
+		row := base
+		row.Status = "ACTIVE"
+		row.BudgetDay = 3000
+		row.Spend = 9000
+		row.Clicks = 100
+		row.Conversions = floatPtr(0)
+		items := metaActionItems(row, 10, model.MonitorPacingUnderspending, 30)
+		zero := base
+		zero.Status = "ACTIVE"
+		zero.Impressions, zero.Spend = 0, 0
+		items = append(items, metaActionItems(zero, 0, model.MonitorPacingNormal, 30)...)
+		if len(items) < 3 {
+			t.Fatalf("want the conversions, underspending and no-delivery items, got %+v", items)
+		}
+		for _, it := range items {
+			if strContains(it.Issue, "$") {
+				t.Errorf("issue %q prints a dollar sign for an account-currency amount", it.Issue)
+			}
+		}
+		mustContainIssue(t, items, "9000.00 in account currency spent", model.MonitorPriorityMed)
+		mustContainIssue(t, items, "(9000.00 in account currency of 90000.00 in account currency)", model.MonitorPriorityMed)
 	})
 	t.Run("active constrained is MED", func(t *testing.T) {
 		row := base

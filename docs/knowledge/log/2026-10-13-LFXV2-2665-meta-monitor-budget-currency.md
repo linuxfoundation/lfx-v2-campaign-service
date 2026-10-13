@@ -17,3 +17,10 @@ currency" / "enter at most 2 decimal places"), via a decimal check immune to flo
 error. The encoder is shared, so the create path refuses the same amounts. No API, design, gen or
 migration change; `rules/monitor_meta.go` unchanged. See `architecture/account-monitor-endpoints.md`
 and `code/internal-platform-meta.md`.
+
+PR #316 review follow-up: the ad-set read also takes `start_time`/`end_time`, because
+`CreateCampaign` writes the flight on the ad set and a lifetime ABO campaign had no dates to pace
+against. The active ad sets' shared window becomes the row's flight; differing or unreadable
+windows leave a lifetime budget unknown (daily pacing is unaffected). Meta's action-item text now
+prints money as "N.NN in account currency" (`metaMoney`) rather than `$`, since spend and budgets
+are in the ad account's currency.

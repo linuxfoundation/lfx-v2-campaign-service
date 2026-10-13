@@ -112,18 +112,21 @@ func TestListAccountCampaigns_ABOBudget_SumsActiveAdSets(t *testing.T) {
 			monitorAdSetRow("9002", "111", "ACTIVE", `"daily_budget":"2500","lifetime_budget":"0"`),
 			monitorAdSetRow("9003", "111", "PAUSED", `"daily_budget":"99900"`),
 			monitorAdSetRow("9004", "111", "CAMPAIGN_PAUSED", `"daily_budget":"99900"`),
-			monitorAdSetRow("9005", "222", "ACTIVE", `"lifetime_budget":"300000"`),
+			monitorAdSetRow("9005", "222", "ACTIVE", `"lifetime_budget":"300000","start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-31T23:59:59+0000"`),
 			monitorAdSetRow("9006", "333", "ACTIVE", ""),
 		}, ",") + `],"paging":{}}`},
 	})
 	assertBudgets(t, rows["111"], 35, 0)
 	assertBudgets(t, rows["222"], 0, 3000)
+	if r := rows["222"]; r.StartDate != "2026-10-01" || r.EndDate != "2026-10-31" {
+		t.Errorf("lifetime ABO campaign flight = %q..%q, want the ad set's 2026-10-01..2026-10-31", r.StartDate, r.EndDate)
+	}
 	assertBudgets(t, rows["333"], 70, 0) // CBO: the campaign's own budget, untouched
 	got := adSetRequests(rec)
 	if len(got) != 1 {
 		t.Fatalf("want exactly ONE account-level ad-set read, got %v", got)
 	}
-	if !strings.HasPrefix(got[0], "/act_123/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status&limit=500") {
+	if !strings.HasPrefix(got[0], "/act_123/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500") {
 		t.Errorf("ad-set read = %s, want the account-level edge with the budget fields", got[0])
 	}
 	if strings.Contains(got[0], "tok-secret-abc") {
@@ -299,5 +302,57 @@ func TestListAccountCampaigns_DuplicateCurrencyKeyIsAnError(t *testing.T) {
 	})
 	if _, err := newMonitorClient(srv).ListAccountCampaigns(context.Background(), "act_123", 30); err == nil {
 		t.Fatal("a currency body with a duplicated key was accepted")
+	}
+}
+
+// A lifetime budget is paced against its flight, and CreateCampaign writes the flight on the AD
+// SET — the campaign-list row has no dates for it (PR #316 review). The active ad sets' shared
+// window becomes the row's flight; disagreeing or unreadable windows leave the lifetime budget
+// unknown rather than paced against the wrong schedule. Daily pacing does not read the flight,
+// so a daily campaign keeps its budget either way.
+func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
+	const (
+		oct     = `"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-31T23:59:59+0000"`
+		nov     = `"start_time":"2026-11-01T09:00:00-0700","end_time":"2026-11-30T23:59:59+0000"`
+		openEnd = `"start_time":"2026-10-01T09:00:00-0700"`
+	)
+	life := func(window string) string { return `"lifetime_budget":"100000",` + window }
+	daily := func(window string) string { return `"daily_budget":"1000",` + window }
+	for _, tc := range []struct {
+		name                string
+		adSets              []string
+		wantDaily, wantLife float64
+		wantStart, wantEnd  string
+	}{
+		{"one lifetime ad set gives its flight", []string{life(oct)}, 0, 1000, "2026-10-01", "2026-10-31"},
+		{"lifetime ad sets sharing one window are summed on it", []string{life(oct), life(oct)}, 0, 2000, "2026-10-01", "2026-10-31"},
+		{"an open-ended flight keeps an empty end", []string{life(openEnd)}, 0, 1000, "2026-10-01", ""},
+		{"lifetime ad sets with differing windows are unknown", []string{life(oct), life(nov)}, 0, 0, "", ""},
+		{"a lifetime ad set with no start_time is unknown", []string{`"lifetime_budget":"100000","end_time":"2026-10-31T23:59:59+0000"`}, 0, 0, "", ""},
+		{"a null start_time is unknown", []string{life(`"start_time":null`)}, 0, 0, "", ""},
+		{"a null end_time is unknown", []string{life(`"start_time":"2026-10-01T09:00:00-0700","end_time":null`)}, 0, 0, "", ""},
+		{"a malformed start_time is unknown", []string{life(`"start_time":"0000-00-00T00:00:00-0700"`)}, 0, 0, "", ""},
+		{"daily ad sets sharing a window show it", []string{daily(oct), daily(oct)}, 20, 0, "2026-10-01", "2026-10-31"},
+		{"daily ad sets with differing windows keep their budget", []string{daily(oct), daily(nov)}, 20, 0, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rowsJSON := make([]string, 0, len(tc.adSets))
+			for i, b := range tc.adSets {
+				rowsJSON = append(rowsJSON, monitorAdSetRow(fmt.Sprintf("%d", 9001+i), "111", "ACTIVE", b))
+			}
+			// The campaign-list row carries no dates, as for a campaign CreateCampaign made.
+			campaign := `{"id":"111","name":"Campaign 111","status":"ACTIVE"}`
+			rows, _ := listMonitorRows(t, monitorFixture{
+				campaigns: []string{monitorList(campaign)},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+				adSets:    []string{monitorList(rowsJSON...)},
+			})
+			r := rows["111"]
+			assertBudgets(t, r, tc.wantDaily, tc.wantLife)
+			if r.StartDate != tc.wantStart || r.EndDate != tc.wantEnd {
+				t.Errorf("flight = %q..%q, want %q..%q", r.StartDate, r.EndDate, tc.wantStart, tc.wantEnd)
+			}
+		})
 	}
 }

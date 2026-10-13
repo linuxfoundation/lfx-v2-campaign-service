@@ -187,7 +187,7 @@ A fifth and sixth, both pacing-correctness bugs inherited from the BFF and fixed
 every campaign this service creates had no budget, read `pacing_unknown`, and could never
 raise an under- or overspend item. When an admitted campaign has neither campaign-level
 budget, the read now makes ONE account-level paged call,
-`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status`,
+`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time`,
 and sums the `ACTIVE` ad sets' budgets per campaign (a paused ad set, or one under a paused
 campaign, is excluded; a CBO campaign keeps its own budget). It fails closed: daily and
 lifetime ad sets mixed under one campaign, an active ad set with no budget or an explicit
@@ -198,8 +198,12 @@ the endpoint. **Account currency**: the BFF divided every minor-unit budget by 1
 JPY/KRW budget read 100x too small (and its campaign as wildly overspending). One
 `?fields=currency` read per request now supplies the offset the create path uses (1 for
 zero-decimal currencies); a currency outside the supported map leaves budgets unknown.
-`rules/monitor_meta.go` is unchanged — an unknown budget arrives as 0/0, which it already
-reports as not computable. See
+The FLIGHT is on the ad set too, so the same read supplies it: when every active ad set
+shares one `start_time`/`end_time` window it becomes the row's flight and a lifetime budget is
+paced on it; differing or unreadable windows leave a lifetime budget `pacing_unknown` (daily
+pacing does not read the flight). The rules' pacing is unchanged — an unknown budget arrives as
+0/0, which it already reports as not computable — but Meta's action-item text now prints money as
+"N.NN in account currency", like X's, instead of `$`, since a yen or won amount is not dollars. See
 [2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md](../log/2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md).
 
 ## Correctness bugs found during local differential verification

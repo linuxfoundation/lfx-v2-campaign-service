@@ -188,8 +188,21 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			// Mixed pacing models under one campaign: no single expectation is honest.
 		case t.dailyMinor > 0:
 			rows[i].DailyBudget = float64(t.dailyMinor) / float64(offset)
+			// Daily pacing (budget x days) does not read the flight, but the row should still
+			// show the ad sets' flight when they agree on one.
+			if t.windowSet && !t.windowUnknown {
+				rows[i].StartDate, rows[i].EndDate = t.start, t.end
+			}
 		case t.lifetimeMinor > 0:
-			rows[i].LifetimeBudget = float64(t.lifetimeMinor) / float64(offset)
+			// A lifetime budget is paced against its flight, and CreateCampaign writes the
+			// flight (start_time/end_time) on the AD SET, not the campaign — the campaign-list
+			// dates are empty for it. The ad sets' shared window is used; if they disagree, or
+			// any active one's window is unreadable, no single flight is honest and the
+			// budget is left unknown rather than paced against the wrong schedule.
+			if t.windowSet && !t.windowUnknown {
+				rows[i].LifetimeBudget = float64(t.lifetimeMinor) / float64(offset)
+				rows[i].StartDate, rows[i].EndDate = t.start, t.end
+			}
 		}
 	}
 	return rows, nil
@@ -443,10 +456,54 @@ func dateOnly(s string) string {
 // currency's minor units. unknown marks a campaign at least one of whose active ad sets could
 // not be read as exactly one positive budget — its total is then not a statement about the
 // campaign and is never used.
+//
+// start/end are the flight (YYYY-MM-DD) every budgeted active ad set shares; windowSet says one
+// was seen, windowUnknown that one was unreadable (absent/null/malformed start_time, malformed or
+// null end_time) or that two active ad sets disagree. An absent end_time is an open-ended flight
+// ("" end). The window is tracked apart from `unknown`: it decides only lifetime pacing.
 type adSetBudgetTotal struct {
 	dailyMinor    int64
 	lifetimeMinor int64
 	unknown       bool
+
+	start, end    string
+	windowSet     bool
+	windowUnknown bool
+}
+
+// addWindow folds one active ad set's flight into the campaign's shared window.
+func (t *adSetBudgetTotal) addWindow(start, end string, ok bool) {
+	switch {
+	case !ok:
+		t.windowUnknown = true
+	case !t.windowSet:
+		t.start, t.end, t.windowSet = start, end, true
+	case t.start != start || t.end != end:
+		t.windowUnknown = true
+	}
+}
+
+// adSetWindow reads an ad set's start_time/end_time into date-only form. ok=false when the
+// start is absent, null or malformed, or the end is null or malformed; an ABSENT end is "".
+func adSetWindow(startRaw, endRaw json.RawMessage) (start, end string, ok bool) {
+	timeField := func(raw json.RawMessage) (v string, present, valid bool) {
+		raw = bytes.TrimSpace(raw)
+		if len(raw) == 0 {
+			return "", false, true
+		}
+		var s string
+		if bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &s) != nil {
+			return "", true, false
+		}
+		d := dateOnly(s)
+		return d, true, d != ""
+	}
+	start, startPresent, startValid := timeField(startRaw)
+	end, _, endValid := timeField(endRaw)
+	if !startPresent || !startValid || !endValid {
+		return "", "", false
+	}
+	return start, end, true
 }
 
 // adSetBudgetsUnreadableError marks an ad-set budget read that reached Meta and was answered,
@@ -472,17 +529,22 @@ type adSetBudgetWire struct {
 	EffectiveStatus *string         `json:"effective_status"`
 	DailyBudget     json.RawMessage `json:"daily_budget"`
 	LifetimeBudget  json.RawMessage `json:"lifetime_budget"`
+	StartTime       json.RawMessage `json:"start_time"`
+	EndTime         json.RawMessage `json:"end_time"`
 }
 
 // fetchAccountAdSetBudgets reads every ad set on the account with ONE account-level paged call,
 //
-//	GET /{accountID}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status&limit=500
+//	GET /{accountID}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500
 //
 // and sums the budgets of the ACTIVE ones (effective_status == ACTIVE: an ad set that is paused
 // itself, or under a paused campaign, is not spending and its budget is not part of what the
 // campaign is expected to spend) per campaign_id. `id` is requested beyond the four fields the
 // sum needs because it is the only proof a row is not a repeat — a duplicated row would double
-// a budget.
+// a budget. start_time/end_time are requested because CreateCampaign writes the FLIGHT on the ad
+// set too, and a lifetime budget is paced against it: the active ad sets' shared window becomes
+// the row's flight, and a campaign whose active ad sets disagree on it (or report an unreadable
+// one) has no honest flight, so its lifetime budget stays unknown (see adSetBudgetTotal).
 //
 // The walk is bounded by monitorAdSetMaxPages; a `paging.next` on the last allowed page is an
 // adSetBudgetsUnreadableError, never a partial sum. Every 2xx body passes identityjson.Check as
@@ -501,7 +563,7 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 	for page := 0; page < monitorAdSetMaxPages; page++ {
 		// Built from the opaque cursor, never from Meta's absolute paging.next URL, which
 		// carries the access token as a query parameter.
-		path := "/" + accountID + "/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status&limit=" + strconv.Itoa(monitorAdSetPageSize)
+		path := "/" + accountID + "/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=" + strconv.Itoa(monitorAdSetPageSize)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
@@ -549,6 +611,7 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 			if *w.EffectiveStatus != StatusActive {
 				continue
 			}
+			t.addWindow(adSetWindow(w.StartTime, w.EndTime))
 			daily, dailyOK := adSetBudgetField(w.DailyBudget)
 			lifetime, lifetimeOK := adSetBudgetField(w.LifetimeBudget)
 			switch {

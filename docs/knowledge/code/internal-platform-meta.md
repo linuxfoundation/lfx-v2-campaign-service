@@ -735,7 +735,7 @@ gone. A currency outside the supported map leaves every budget 0 (pacing unknown
 `CreateCampaign` puts the budget on the AD SET, so a campaign this service created reports no
 campaign-level budget and used to be `PacingUnknown` forever. When any admitted, non-failed
 campaign has neither a positive `daily_budget` nor `lifetime_budget`, `fetchAccountAdSetBudgets`
-makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status&limit=500`
+makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500`
 (`id` is the duplicate-row proof), bounded at `monitorAdSetMaxPages` (20) × 500, every body through
 `identityjson.Check` before decoding, and sums `effective_status == ACTIVE` ad sets per campaign.
 A CBO campaign keeps its own budget. Per-ad-set defects (explicit `null`, non-string, fractional or
@@ -744,8 +744,15 @@ only that campaign unknown; a mixed daily/lifetime sum is unknown; an untrustwor
 whole — page cap hit, identity-check failure, no `data`, an unattributable or repeated row, an
 unfollowable cursor — is `adSetBudgetsUnreadableError` and leaves every campaign that needed it
 unknown (never a partial sum) while the monitor read still succeeds. A failed REQUEST (transport,
-Graph error) fails the monitor like its sibling reads. `rules/monitor_meta.go` needed no change:
-an unknown budget is 0/0, which `metaPacingPct` already reports as not computable.
+Graph error) fails the monitor like its sibling reads. **Flight from the ad sets**: `CreateCampaign` writes `start_time`/`end_time` on the AD SET too, so
+the campaign-list row has no dates and a lifetime budget could not be paced. The same read takes
+the active ad sets' window: when they all share one it becomes the row's flight (and a lifetime
+budget is paced on it); when they disagree, or one's `start_time` is absent/null/malformed or its
+`end_time` null/malformed, the lifetime budget stays unknown — an absent `end_time` is an
+open-ended flight. Daily pacing (budget x days) does not read the flight, so a daily campaign
+keeps its budget either way. `rules/monitor_meta.go`'s pacing needed no change (an unknown budget
+is 0/0, which `metaPacingPct` already reports as not computable); its action-item text now prints
+money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`.
 
 See [internal/platform/meta](../../../internal/platform/meta).
 

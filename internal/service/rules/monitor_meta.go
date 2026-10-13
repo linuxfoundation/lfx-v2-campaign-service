@@ -101,6 +101,12 @@ func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (flo
 	return 0, false
 }
 
+// metaMoney renders an amount for action-item text. Meta reports spend and budgets in the AD
+// ACCOUNT's currency (JPY, KRW, EUR … as well as USD) and this service performs no FX
+// conversion, so a "$" would misstate a yen or won amount as dollars. The currency CODE is not
+// carried on the row, so the text says "in account currency", as the X monitor's xMoney does.
+func metaMoney(v float64) string { return fmt.Sprintf("%.2f in account currency", v) }
+
 func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label model.MonitorPacingLabel, days int) []model.AccountMonitorActionItem {
 	var items []model.AccountMonitorActionItem
 	add := func(priority model.MonitorPriority, issue, action string) {
@@ -112,7 +118,7 @@ func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label mo
 
 	if m.Status == "ACTIVE" && m.Impressions == 0 && m.Spend == 0 {
 		add(model.MonitorPriorityHigh,
-			"Campaign active but no delivery — 0 impressions and $0 spent",
+			"Campaign active but no delivery — 0 impressions and nothing spent",
 			"Check ad set targeting, budget, and creative approval status in Meta Ads Manager")
 	}
 	if m.Ctr < metaLowCtrPct && m.Impressions > metaMinImpressions {
@@ -122,13 +128,13 @@ func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label mo
 	}
 	if m.Clicks > metaClicksNoConversions && m.Conversions != nil && *m.Conversions == 0 {
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("%d clicks ($%.2f spent) but 0 conversions", m.Clicks, m.Spend),
+			fmt.Sprintf("%d clicks (%s spent) but 0 conversions", m.Clicks, metaMoney(m.Spend)),
 			"Verify Meta Pixel / Conversions API is firing; check landing page and CTA alignment")
 	}
 	if label == model.MonitorPacingUnderspending && m.Status == "ACTIVE" {
 		// m.TotalBudget is 0 whenever pacingPct was computed from the flat BudgetDay*days
 		// branch (metaPacingPct) instead of the schedule-based one — using it unconditionally
-		// as the denominator produced a self-contradicting "$X of $0.00" message for every
+		// as the denominator produced a self-contradicting "X of 0.00" message for every
 		// daily-budget-funded campaign. Fall back to the same budgetDay*days expectation
 		// metaPacingPct itself used to derive pacingPct in that branch.
 		denominator := m.TotalBudget
@@ -136,7 +142,7 @@ func metaActionItems(m model.AccountCampaignMetrics, pacingPct float64, label mo
 			denominator = m.BudgetDay * float64(days)
 		}
 		add(model.MonitorPriorityMed,
-			fmt.Sprintf("Underspending: %.0f%% of budget used ($%.2f of $%.2f)", pacingPct, m.Spend, denominator),
+			fmt.Sprintf("Underspending: %.0f%% of budget used (%s of %s)", pacingPct, metaMoney(m.Spend), metaMoney(denominator)),
 			"Broaden audience targeting or increase bid cap to improve delivery")
 	}
 	if (label == model.MonitorPacingConstrained || label == model.MonitorPacingOverspending) && m.Status == "ACTIVE" {
