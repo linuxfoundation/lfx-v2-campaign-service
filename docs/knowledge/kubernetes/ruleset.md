@@ -13,11 +13,19 @@ See [charts/lfx-v2-campaign-service/templates/ruleset.yaml](../../../charts/lfx-
 
 ## Rules
 
-Rendered only when `heimdall.enabled`. Three rules, one per routed path group (the
+Rendered only when `heimdall.enabled`. Four rules, one per routed path group (the
 chart↔route parity invariant — see [httproute.md](httproute.md)):
 
 1. **`openapi:get`** — `/_campaigns/openapi.*` docs are publicly readable
    (`oidc` + `anonymous_authenticator` → `allow_all` → `create_jwt`).
+2. **`signed-creative-asset:get`** (LFXV2-2665) — the ONE explicitly anonymous rule:
+   GET/HEAD only on exactly `/_campaigns/creative-assets/:projectId/:briefId/:assetId`
+   (`anonymous_authenticator` → `allow_all` → `create_jwt`, no `oidc`, no wildcard). Reddit
+   fetches a stored creative asset there with no LFX credential; the HMAC signature in the
+   query is the authorization, verified by the service. Heimdall prefers this named-capture
+   route over the placeholder's `/_campaigns/**`. See
+   [signed-creative-asset-urls.md](../architecture/signed-creative-asset-urls.md);
+   `signed_asset_rule_test.go` pins its scope and that no other rule is anonymous-only.
 2. **`project-api`** — every project-nested endpoint (`connection-*` — including three
    provider-specific sub-path families that are ruled by their own entries rather than by
    the shared `connection-*` family: `/accounts` on each provider whose dispatcher
@@ -57,8 +65,8 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    scoped to `project:{uid}` where `{uid}` is resolved from the URL-captured
    `:projectId` slug (see "Slug-to-UID resolution" below). A single rule covers
    all families because they share the identical authorization.
-3. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
-   and non-openapi `/_campaigns/*` paths are routed through Heimdall but are not
+4. **`campaigns-placeholder:deny`** — the reserved `/campaigns`, `/campaigns/*`,
+   and every other `/_campaigns/*` path (not openapi, not the signed asset route) are routed through Heimdall but are not
    real endpoints yet, so they **fail closed** with `deny_all`.
 
 ## Authenticator pairing
