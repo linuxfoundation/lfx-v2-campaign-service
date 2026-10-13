@@ -40,9 +40,12 @@ the claim is released and nothing exists upstream:
 3. Anything over `linkedin.MaxImageBytes` (5,000,000) is refused on its `byte_size`, before the
    blob is loaded. LinkedIn's [single image ad spec](https://www.linkedin.com/help/lms/answer/a426534)
    says "5 MB"; the decimal reading is used so nothing LinkedIn could count as larger is sent.
-4. The total of the distinct assets is charged ONCE against the shared `AssetReserver`
-   (`registerDispatchers` hands one reserver to every dispatcher that holds asset bytes). It is held until
-   the dispatch returns and released by the resolver itself on any failure or panic.
+4. The total of the distinct assets is charged ONCE against the shared `AssetReserver`. On
+   both live paths `bindCreativeAssetSharing` re-points the LinkedIn dispatcher at the
+   container's ONE reserver, the one the Meta, Microsoft and X dispatches and the signed-asset
+   route also charge. `registerDispatchers`' own reserver would be a second budget. A container
+   test pins the identity, not just "a reserver is set". The reservation is held until the
+   dispatch returns and released by the resolver itself on any failure or panic.
 5. `GetAsset` loads the bytes; empty bytes are refused rather than creating an image-less ad.
 6. `linkedin.ValidateImage` checks PNG or JPEG, header format matching the stored MIME type,
    fewer than 36,152,320 pixels (Images API), and the spec's per-orientation bounds: horizontal
@@ -65,8 +68,14 @@ run after the campaign is ensured and before the first dark post:
 3. `GET /rest/images/{urn}` until `AVAILABLE`, at a 2 s interval within ONE 45 s wait shared by
    all images (the whole dispatch has a 2-minute budget). The Images API has no synchronous
    upload, and a post created before its image is processed is not shown to members.
-   `PROCESSING_FAILED` or a non-429 4xx stops at once. A 429, 5xx or transport failure is retried
-   at the next tick.
+   ONE context carries the wait, and every status GET and every sleep runs under it, so a slow
+   reply cannot carry the phase past it. An AVAILABLE reply for an earlier image cannot either.
+   `PROCESSING_FAILED` or a non-429 4xx stops at once. A 429, a 5xx, a transport failure or a
+   pre-send dial failure (DNS, connection refused) is retried at the next tick. A pre-send
+   failure on initializeUpload or the PUT stays definite, because nothing was sent. Only the
+   documented statuses (`AVAILABLE`, `PROCESSING`, `PROCESSING_FAILED`, `WAITING_UPLOAD`) are
+   ever reported. Any other value reads `unknown`, so an unexpected upstream string never reaches
+   a step.
 
 **Scopes.** `/rest/images` accepts `rw_ads`, `w_member_social`, `w_organization_social` or
 `w_power_creators`. An organization-owned image needs ADMIN or DSC permission on that page. The

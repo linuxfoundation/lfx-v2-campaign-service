@@ -24,3 +24,14 @@ Microsoft, Reddit and X as a consumer of stored assets.
 - Docs: `upload-creative-asset` description, `docs/api-catalog.md`, the new
   [LinkedIn Creative Image Assets](../architecture/linkedin-creative-assets.md) concept, and
   `internal/platform/linkedin`.
+- PR #315 review fixes:
+  - **Shared wait.** One context now bounds the whole availability phase, covering every status
+    GET and every sleep. Before, the deadline was checked only between polls, so a slow GET
+    (each has its own 30 s timeout) or an AVAILABLE reply could run past it.
+  - **Status values.** Only documented image statuses are reported; anything else reads
+    `unknown`, so no upstream string reaches a step.
+  - **Pre-send failures.** These are now a typed, redacted error. A status GET retries one at
+    the next tick; on initializeUpload or the PUT it stays definite.
+  - **Shared reserver.** `bindCreativeAssetSharing` now re-points the LinkedIn dispatcher at
+    the container's shared `AssetReserver`, as it already did for Meta and Microsoft. A test
+    checks that it is the same reserver instance.

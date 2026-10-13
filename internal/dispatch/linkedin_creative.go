@@ -60,6 +60,12 @@ func (d *LinkedInDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives 
 // AssetReserverIsSet reports whether the aggregate asset budget was bound.
 func (d *LinkedInDispatcher) AssetReserverIsSet() bool { return d.assets != nil }
 
+// SharesAssetReserver reports whether this dispatcher charges exactly a. Exported for the
+// container test that proves LinkedIn is on the container's ONE budget rather than a second one.
+func (d *LinkedInDispatcher) SharesAssetReserver(a *AssetReserver) bool {
+	return a != nil && d.assets == a
+}
+
 // resolveLinkedInImages loads and validates every stored image cfg's variants name, returning
 // nil when none does. On success each variant's ImageAssetID is replaced with the canonical
 // uuid (so the snapshot never stores a caller spelling), and the returned release func owns ONE

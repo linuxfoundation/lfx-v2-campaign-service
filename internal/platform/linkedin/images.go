@@ -274,39 +274,76 @@ func (c *Client) uploadImage(ctx context.Context, owner string, img ImageUpload)
 // (PROCESSING_FAILED, a non-429 4xx, an expired credential) stops at once. Only GETs are sent,
 // so a failure here is never outcome-ambiguous: no post references the image.
 func (c *Client) awaitImagesAvailable(ctx context.Context, order []string, urns map[string]string) error {
-	// Wall-clock, not c.now: the injected clock exists to pin campaign SCHEDULES, and a frozen
-	// one would make this bound never expire.
-	deadline := time.Now().Add(c.imageAvailabilityWait)
+	// ONE context bounds the whole phase — every status GET and every sleep — so the shared wait
+	// is a real ceiling. A deadline checked only between polls let a slow GET (each has its own
+	// 30 s attempt timeout) or an AVAILABLE reply for an earlier image carry the phase past it.
+	pollCtx, cancel := context.WithTimeout(ctx, c.imageAvailabilityWait)
+	defer cancel()
 	for _, assetID := range order {
 		urn := urns[assetID]
 		path := "images/" + encodeURNForPath(urn)
 		last := "unknown"
-	poll:
 		for {
-			raw, err := c.imageRequest(ctx, http.MethodGet, c.baseURL+"/"+path, "images/{urn}", nil, "", true)
+			if pollCtx.Err() != nil {
+				return c.availabilityWaitError(ctx, urn, assetID, last)
+			}
+			raw, err := c.imageRequest(pollCtx, http.MethodGet, c.baseURL+"/"+path, "images/{urn}", nil, "", true)
 			if err == nil {
 				var st imageStatusResponse
-				if json.Unmarshal(raw, &st) == nil && st.Status != "" {
-					last = st.Status
+				if json.Unmarshal(raw, &st) == nil {
+					last = knownImageStatus(st.Status)
 				}
-				switch last {
-				case "AVAILABLE":
-					break poll
-				case "PROCESSING_FAILED":
+				if last == "AVAILABLE" {
+					break
+				}
+				if last == "PROCESSING_FAILED" {
 					return &imageUploadError{err: fmt.Errorf("image %s for asset %s failed LinkedIn processing (PROCESSING_FAILED)", urn, assetID)}
 				}
+			} else if pollCtx.Err() != nil {
+				// The request was cut off by the shared wait (or the caller): report the wait,
+				// not the truncated request.
+				return c.availabilityWaitError(ctx, urn, assetID, last)
 			} else if !imagePollTransient(err) {
 				return &imageUploadError{err: fmt.Errorf("image %s for asset %s: status check failed: %w", urn, assetID, err)}
 			}
-			if !time.Now().Before(deadline) {
-				return &imageUploadError{err: fmt.Errorf("image %s for asset %s was not AVAILABLE within %s (last status %s)", urn, assetID, c.imageAvailabilityWait, last)}
-			}
-			if err := sleepCtx(ctx, c.imagePollInterval); err != nil {
-				return &imageUploadError{err: fmt.Errorf("image %s for asset %s: waiting for availability: %w", urn, assetID, err)}
+			if sleepCtx(pollCtx, c.imagePollInterval) != nil {
+				return c.availabilityWaitError(ctx, urn, assetID, last)
 			}
 		}
 	}
 	return nil
+}
+
+// availabilityWaitError reports an image that did not become AVAILABLE before the shared wait
+// (or the caller's context) ended. last is always a value from knownImageStatus.
+func (c *Client) availabilityWaitError(ctx context.Context, urn, assetID, last string) error {
+	if err := ctx.Err(); err != nil {
+		return &imageUploadError{err: fmt.Errorf("image %s for asset %s: waiting for availability: %w", urn, assetID, err)}
+	}
+	return &imageUploadError{err: fmt.Errorf("image %s for asset %s was not AVAILABLE within %s (last status %s)", urn, assetID, c.imageAvailabilityWait, last)}
+}
+
+// knownImageStatus returns s when it is one of the Images API's documented MediaStatus values,
+// and "unknown" otherwise. The status reaches Steps and logs, so an unexpected upstream string
+// is never echoed — the same status-only policy as every other error here.
+func knownImageStatus(s string) string {
+	switch s {
+	case "AVAILABLE", "PROCESSING", "PROCESSING_FAILED", "WAITING_UPLOAD":
+		return s
+	default:
+		return "unknown"
+	}
+}
+
+// preSendError is a request that never left this process: DNS failure, connection refused, no
+// route. It is redacted (no URL) and typed so the status poll can retry it, while
+// createOutcomeAmbiguous — which does not recognise it — keeps a pre-send POST or PUT definite.
+type preSendError struct {
+	Method, Path string
+}
+
+func (e *preSendError) Error() string {
+	return fmt.Sprintf("linkedin %s %s: connection failed before sending", e.Method, e.Path)
 }
 
 // imagePollTransient reports whether a status GET failure may succeed on a later tick.
@@ -314,6 +351,10 @@ func imagePollTransient(err error) bool {
 	var ae *apiError
 	if errors.As(err, &ae) {
 		return ae.StatusCode == http.StatusTooManyRequests || ae.StatusCode >= 500
+	}
+	var pe *preSendError
+	if errors.As(err, &pe) {
+		return true
 	}
 	var te *transportError
 	return errors.As(err, &te)
@@ -364,7 +405,7 @@ func (c *Client) imageRequest(ctx context.Context, method, rawURL, label string,
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		if isPreSendDialError(err) {
-			return nil, fmt.Errorf("linkedin %s %s: connection failed before sending", method, label)
+			return nil, &preSendError{Method: method, Path: label}
 		}
 		return nil, &transportError{Method: method, Path: label, Err: errors.New("request failed in flight")}
 	}

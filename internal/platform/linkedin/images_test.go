@@ -14,10 +14,13 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -121,6 +124,7 @@ type imageAPI struct {
 	pollStatus []string
 	pollErrs   []int // per GET: a non-zero entry answers that HTTP status instead
 	pollCalls  int
+	pollDelay  time.Duration // set before use: every status GET sleeps this long first
 }
 
 func newImageAPI(t *testing.T) *imageAPI {
@@ -131,6 +135,12 @@ func newImageAPI(t *testing.T) *imageAPI {
 }
 
 func (a *imageAPI) serve(w http.ResponseWriter, r *http.Request) {
+	if a.pollDelay > 0 && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/images/") {
+		select {
+		case <-time.After(a.pollDelay):
+		case <-r.Context().Done():
+		}
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	body, _ := io.ReadAll(r.Body)
@@ -545,4 +555,102 @@ func assertNoLeak(t *testing.T, err error, res *CampaignResult) {
 			t.Errorf("error/steps leak %q: %s", bad, all)
 		}
 	}
+}
+
+// TestCreateCampaign_StoredImage_SlowPollsStayWithinTheSharedWait: every status GET is slow and
+// answers AVAILABLE. Two images must still be bounded by the ONE shared wait — a deadline checked
+// only between polls let each slow GET (and an AVAILABLE reply) run past it.
+func TestCreateCampaign_StoredImage_SlowPollsStayWithinTheSharedWait(t *testing.T) {
+	api := newImageAPI(t)
+	api.pollDelay = 300 * time.Millisecond
+	in := imageCampaignInput(
+		map[string]ImageUpload{"a": {Data: testPNG(t, 1200, 627), MimeType: "image/png"}, "b": {Data: testPNG(t, 1200, 627), MimeType: "image/png"}},
+		CreativeVariant{IntroText: "I", Headline: "H", ImageAssetID: "a"},
+		CreativeVariant{IntroText: "I", Headline: "H", ImageAssetID: "b"})
+	start := time.Now()
+	_, err := api.client(WithImagePolling(time.Millisecond, 100*time.Millisecond)).CreateCampaign(context.Background(), in)
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "not AVAILABLE within") {
+		t.Fatalf("err = %v, want the shared wait to expire", err)
+	}
+	if len(api.posts) != 0 {
+		t.Error("no dark post may be created when the availability wait expired")
+	}
+	if elapsed > 250*time.Millisecond {
+		t.Errorf("availability phase took %s; the shared 100ms wait must bound the slow GETs too", elapsed)
+	}
+}
+
+// TestCreateCampaign_StoredImage_UnexpectedStatusIsNotEchoed: an undocumented status value is
+// reported as "unknown", never copied into the error or Steps.
+func TestCreateCampaign_StoredImage_UnexpectedStatusIsNotEchoed(t *testing.T) {
+	api := newImageAPI(t)
+	api.pollStatus = []string{imgLeakText}
+	in := imageCampaignInput(map[string]ImageUpload{"a": {Data: testPNG(t, 1200, 627), MimeType: "image/png"}},
+		CreativeVariant{IntroText: "I", Headline: "H", ImageAssetID: "a"})
+	res, err := api.client(WithImagePolling(time.Millisecond, 30*time.Millisecond)).CreateCampaign(context.Background(), in)
+	if err == nil || res == nil {
+		t.Fatal("want a partial result and an error")
+	}
+	if !strings.Contains(err.Error(), "last status unknown") {
+		t.Errorf("err = %v, want the unexpected status reported as unknown", err)
+	}
+	assertNoLeak(t, err, res)
+}
+
+// refuseFirstTransport fails the first request matching match with a PRE-SEND dial error
+// (connection refused), then delegates.
+type refuseFirstTransport struct {
+	mu      sync.Mutex
+	match   func(*http.Request) bool
+	refused int
+}
+
+func (rt *refuseFirstTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rt.mu.Lock()
+	if rt.refused == 0 && rt.match(r) {
+		rt.refused++
+		rt.mu.Unlock()
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
+	}
+	rt.mu.Unlock()
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// TestCreateCampaign_StoredImage_PreSendFailures: a pre-send failure on a status GET is retried
+// at the next tick, while one on initializeUpload stays a definite NOT uploaded.
+func TestCreateCampaign_StoredImage_PreSendFailures(t *testing.T) {
+	in := func(t *testing.T) CampaignInput {
+		return imageCampaignInput(map[string]ImageUpload{"a": {Data: testPNG(t, 1200, 627), MimeType: "image/png"}},
+			CreativeVariant{IntroText: "I", Headline: "H", ImageAssetID: "a"})
+	}
+	t.Run("status GET is retried", func(t *testing.T) {
+		api := newImageAPI(t)
+		rt := &refuseFirstTransport{match: func(r *http.Request) bool {
+			return r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/images/")
+		}}
+		res, err := api.client(WithHTTPClient(&http.Client{Transport: rt})).CreateCampaign(context.Background(), in(t))
+		if err != nil {
+			t.Fatalf("CreateCampaign: %v; a pre-send poll failure must be retried", err)
+		}
+		if rt.refused != 1 || res.CreativeCount != 1 {
+			t.Errorf("refused=%d creatives=%d, want 1 and 1", rt.refused, res.CreativeCount)
+		}
+	})
+	t.Run("initializeUpload is definite", func(t *testing.T) {
+		api := newImageAPI(t)
+		rt := &refuseFirstTransport{match: func(r *http.Request) bool {
+			return r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/images")
+		}}
+		res, err := api.client(WithHTTPClient(&http.Client{Transport: rt})).CreateCampaign(context.Background(), in(t))
+		if err == nil || res == nil {
+			t.Fatal("want a partial result and an error")
+		}
+		if IsOutcomeUnconfirmed(err) || !strings.Contains(strings.Join(res.Steps, "\n"), "NOT uploaded") {
+			t.Errorf("a pre-send initializeUpload failure sent nothing; it must be definite (err %v, steps %v)", err, res.Steps)
+		}
+		if api.count("POST /images") != 0 {
+			t.Error("the refused initializeUpload must not have reached the server")
+		}
+	})
 }
