@@ -79,9 +79,12 @@ create has no confirmed campaign to attach to. The calls:
 
 Every 2xx body must actually answer before it counts. Each rule below fails closed:
 
-- **Lookup.** `AdExtensionAssociationCollection` must be present as an array. `[]`, `[null]`
-  and empty slots mean none. An omitted field, `null` or a non-array is a failed lookup, and
-  nothing is uploaded. Associations with no `AdExtension`, or with an explicit `Type` other than
+- **Lookup.** `AdExtensionAssociationCollection` must be present as an array holding exactly
+  ONE collection, because Microsoft returns one per requested entity id and one id is sent.
+  `[]` answered for nobody, and two or more answered for something not asked, so both are a
+  failed lookup. Inside that one collection, a null slot (`[null]`) or a null or empty
+  `AdExtensionAssociations` means none. An omitted field, `null` or a non-array is also a
+  failed lookup, and nothing is uploaded. Associations with no `AdExtension`, or with an explicit `Type` other than
   `ImageAdExtension`, are skipped. An image association that reaches the entity check counts only
   when its `EntityId` is this campaign and its `AssociationType` is `Campaign`; otherwise it
   fails the lookup and is never treated as AlreadyAttached. Every image association is checked
@@ -92,6 +95,13 @@ Every 2xx body must actually answer before it counts. Each rule below fails clos
   identity stay UNCONFIRMED, because they explain nothing.
 - **Association success.** A `PartialErrors` array that is present but carries no codes (for
   example `[null]`) is UNCONFIRMED, not success.
+- **Error index.** Each mutating call sends ONE item, at index 0. A coded `BatchError` is
+  evidence of a definite rejection only when its `Index` is 0 and no coded entry names anything
+  else. For `NestedPartialErrors` the collection's `Index` is the one used; the nested indices
+  name list items inside that extension. An absent, nonzero or out-of-range index contradicts
+  the 2xx and is UNCONFIRMED. This follows the keyword levers' `attribute()`, which treats an
+  absent index as unattributable. The tallies cover the whole wire array, so a foreign entry
+  past the 16-entry window still counts.
 - **Raw-body integrity.** Every image-extension response body passes `identityjson.Check`
   before it is decoded. That rejects malformed UTF-8, unpaired surrogates, and keys declared
   twice, including under the case fold. Without it, a duplicate key could mark a field present

@@ -289,8 +289,8 @@ type addMediaRequest struct {
 // addMediaResponse decodes PartialErrors beside MediaIds: a null id slot that a PartialError
 // explains is a DEFINITE rejection, and only an unexplained one is errNoID/UNCONFIRMED.
 type addMediaResponse struct {
-	MediaIds      boundedNumberIDs  `json:"MediaIds"`
-	PartialErrors boundedErrorItems `json:"PartialErrors"`
+	MediaIds      boundedNumberIDs `json:"MediaIds"`
+	PartialErrors imageErrors      `json:"PartialErrors"`
 }
 
 type msImageAdExtension struct {
@@ -312,7 +312,7 @@ type addAdExtensionsResponse struct {
 	// NestedPartialErrors is BatchErrorCollection[]: a failure can sit at the collection level
 	// OR inside a collection's own BatchErrors, so the nested decoder geo.go uses is used here
 	// too, and both levels are classified.
-	NestedPartialErrors boundedNestedErrorItems `json:"NestedPartialErrors"`
+	NestedPartialErrors imageNestedErrors `json:"NestedPartialErrors"`
 }
 
 type adExtensionIDToEntityID struct {
@@ -331,7 +331,7 @@ type setAdExtensionsAssociationsRequest struct {
 // failed, while `{}` or a top-level null never answered, and must not read as a confirmed
 // association.
 type setAdExtensionsAssociationsResponse struct {
-	PartialErrors    boundedErrorItems `json:"PartialErrors"`
+	PartialErrors    imageErrors `json:"PartialErrors"`
 	sawPartialErrors bool
 }
 
@@ -446,9 +446,12 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 		case !resp.sawPartialErrors:
 			// A 2xx that never said whether the item failed: not a confirmation.
 			err = fmt.Errorf("AdExtensionsAssociations/Set response omitted PartialErrors: %w", errNoID)
-		case resp.PartialErrors.AnyErrors:
+		case resp.PartialErrors.rejectsOurItem():
 			err = fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
-		case len(resp.PartialErrors.Items) > 0:
+		case resp.PartialErrors.AnyErrors:
+			// Coded, but not (only) about index 0 — the one item sent: a contradictory 2xx.
+			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors name an item other than the one sent (%s): %w", partialErrorCodes(resp.PartialErrors.Items), errNoID)
+		case len(resp.PartialErrors.Items) > 0 || resp.PartialErrors.Truncated:
 			// Present but malformed (`[null]`, `[{}]`): entries that carry no code neither confirm
 			// nor reject, so it is not the empty-error success — mirrors putUpdateOutcome.
 			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors present but carried no error codes: %w", errNoID)
@@ -489,6 +492,14 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 	}
 	if !resp.sawCollection {
 		return "", fmt.Errorf("AdExtensionsAssociations/Query response omitted AdExtensionAssociationCollection: %w", errNoID)
+	}
+	// "For each entity identifier specified in the request, an AdExtensionAssociationCollection is
+	// returned", and exactly one id is sent — so exactly one collection answers for this campaign.
+	// `[]` answered for nobody and two answered for something not asked; neither may read as
+	// "none". The documented "none" shapes live INSIDE the one collection: a null slot, a null or
+	// empty AdExtensionAssociations.
+	if n := len(resp.AdExtensionAssociationCollection); n != 1 {
+		return "", fmt.Errorf("AdExtensionsAssociations/Query returned %d collections for 1 requested campaign: %w", n, errNoID)
 	}
 	// EVERY image association is validated before any is trusted: returning at the first valid
 	// one would leave a later misattributed or unusable entry unchecked, and a mixed response
@@ -550,12 +561,12 @@ func adExtensionIdentity(body []byte) (string, error) {
 	// placeholders explain nothing, so a null identity with only those stays UNCONFIRMED: calling
 	// it definite would invite a retry that creates a second extension.
 	nested := resp.NestedPartialErrors
-	evidence := nested.AnyErrors
-	incomplete := nested.Truncated || nestedTruncated(nested.Items) || len(nested.Items) > 0
+	evidence := nested.rejectsOurItem()
+	incomplete := nested.AnyErrors || nested.Truncated || nestedTruncated(nested.Items) || len(nested.Items) > 0
 	switch {
 	case id == "" && evidence:
 		return "", fmt.Errorf("%w: %s", errPartialFailure, nestedErrorCodes(nested.Items))
-	case id != "" && (evidence || incomplete):
+	case id != "" && incomplete:
 		return id, fmt.Errorf("extension %s was returned alongside nested error entries (%s): %w", id, nestedErrorCodes(nested.Items), errNoID)
 	case id == "":
 		return "", fmt.Errorf("AdExtensionIdentities %w", errNoID)
@@ -598,8 +609,125 @@ func mediaIdentity(body []byte) (string, error) {
 			return id, nil
 		}
 	}
-	if resp.PartialErrors.AnyErrors {
+	if resp.PartialErrors.rejectsOurItem() {
 		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
 	}
 	return "", fmt.Errorf("MediaIds %w", errNoID)
+}
+
+// ---- index-attributed error arrays ---------------------------------------------
+//
+// Every mutating call in this file sends exactly ONE item, so a BatchError is evidence about that
+// item only when its Index is 0. An entry with an absent index, or any other index, is about
+// something this request did not send: the 2xx contradicts itself, and the outcome is UNCONFIRMED
+// rather than a definite rejection. An absent index is treated as unattributable, as the keyword
+// levers' attribute() does — conflating it with 0 would pin an unexplained error on our item.
+
+// imageErrorItem is one BatchError with its Index.
+type imageErrorItem struct {
+	Index     *int            `json:"Index"`
+	Code      json.RawMessage `json:"Code"`
+	ErrorCode json.RawMessage `json:"ErrorCode"`
+}
+
+// imageErrors is a flat BatchError array decoded with whole-wire tallies. Items keeps the first
+// maxDecodedErrorItems entries (codes only, for messages); AnyErrors, Ours and Foreign count the
+// WHOLE array, so evidence beyond the retention window still counts.
+type imageErrors struct {
+	Items     []msErrorItem
+	Truncated bool
+	// AnyErrors: some entry carries an actual code.
+	AnyErrors bool
+	// Ours / Foreign count coded entries whose Index is 0 / is absent or anything else.
+	Ours, Foreign int
+}
+
+// rejectsOurItem reports a DEFINITE rejection of the one item sent: coded evidence at Index 0,
+// and no coded entry about anything else.
+func (e imageErrors) rejectsOurItem() bool { return e.Ours > 0 && e.Foreign == 0 }
+
+func (e *imageErrors) UnmarshalJSON(data []byte) error {
+	return streamArray(data, func(dec *json.Decoder) error {
+		var it imageErrorItem
+		if err := dec.Decode(&it); err != nil {
+			return err
+		}
+		if rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode) {
+			e.AnyErrors = true
+			if it.Index != nil && *it.Index == 0 {
+				e.Ours++
+			} else {
+				e.Foreign++
+			}
+		}
+		if len(e.Items) < maxDecodedErrorItems {
+			e.Items = append(e.Items, msErrorItem{Code: it.Code, ErrorCode: it.ErrorCode})
+		} else {
+			e.Truncated = true
+		}
+		return nil
+	})
+}
+
+// imageNestedErrors is NestedPartialErrors (BatchErrorCollection[]) with the same tallies. A
+// collection is attributed by ITS Index — the extension it describes; the nested BatchErrors'
+// indices name list items INSIDE that extension, so they count as evidence about whichever
+// extension the collection names.
+type imageNestedErrors struct {
+	Items         []msNestedErrorCollection
+	Truncated     bool
+	AnyErrors     bool
+	Ours, Foreign int
+}
+
+func (e imageNestedErrors) rejectsOurItem() bool { return e.Ours > 0 && e.Foreign == 0 }
+
+func (e *imageNestedErrors) UnmarshalJSON(data []byte) error {
+	return streamArray(data, func(dec *json.Decoder) error {
+		var it struct {
+			Index       *int              `json:"Index"`
+			Code        json.RawMessage   `json:"Code"`
+			ErrorCode   json.RawMessage   `json:"ErrorCode"`
+			BatchErrors boundedErrorItems `json:"BatchErrors"`
+		}
+		if err := dec.Decode(&it); err != nil {
+			return err
+		}
+		if rawCodePresent(it.Code) || rawCodePresent(it.ErrorCode) || it.BatchErrors.AnyErrors {
+			e.AnyErrors = true
+			if it.Index != nil && *it.Index == 0 {
+				e.Ours++
+			} else {
+				e.Foreign++
+			}
+		}
+		if len(e.Items) < maxDecodedErrorItems {
+			e.Items = append(e.Items, msNestedErrorCollection{Code: it.Code, ErrorCode: it.ErrorCode, BatchErrors: it.BatchErrors})
+		} else {
+			e.Truncated = true
+		}
+		return nil
+	})
+}
+
+// streamArray walks a JSON array (or null) element by element, so a large body is never
+// materialised in full.
+func streamArray(data []byte, each func(*json.Decoder) error) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil {
+		return nil
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '[' {
+		return fmt.Errorf("expected a JSON array of errors")
+	}
+	for dec.More() {
+		if err := each(dec); err != nil {
+			return err
+		}
+	}
+	return nil
 }

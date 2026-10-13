@@ -295,9 +295,9 @@ func TestAttachCampaignImage_StepFailuresAreClassified(t *testing.T) {
 		{"media 502 is unconfirmed", "Media", 502, `{"Message":"` + upstreamSecret + `"}`, true, "", "", "Media"},
 		{"media 2xx without id is unconfirmed", "Media", 200, `{"MediaIds":[null]}`, true, "", "", "Media"},
 		{"media 429 is unconfirmed and not retried", "Media", 429, `{}`, true, "", "", "Media"},
-		{"extension partial error is definite", "AdExtensions", 200, `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Code":3000,"ErrorCode":"CampaignServiceInvalidImage","Message":"` + upstreamSecret + `"}]}`, false, "5551", "", "AdExtensions"},
+		{"extension partial error is definite", "AdExtensions", 200, `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":0,"Code":3000,"ErrorCode":"CampaignServiceInvalidImage","Message":"` + upstreamSecret + `"}]}`, false, "5551", "", "AdExtensions"},
 		{"extension 500 is unconfirmed", "AdExtensions", 500, `{}`, true, "5551", "", "AdExtensions"},
-		{"association partial error is definite", "AdExtensionsAssociations/Set", 200, `{"PartialErrors":[{"Code":3001,"ErrorCode":"X","Message":"` + upstreamSecret + `"}]}`, false, "5551", "7771", "AdExtensionsAssociations/Set"},
+		{"association partial error is definite", "AdExtensionsAssociations/Set", 200, `{"PartialErrors":[{"Index":0,"Code":3001,"ErrorCode":"X","Message":"` + upstreamSecret + `"}]}`, false, "5551", "7771", "AdExtensionsAssociations/Set"},
 		{"association 503 is unconfirmed", "AdExtensionsAssociations/Set", 503, `{}`, true, "5551", "7771", "AdExtensionsAssociations/Set"},
 		{"association unreadable 2xx is unconfirmed", "AdExtensionsAssociations/Set", 200, `nope`, true, "5551", "7771", "AdExtensionsAssociations/Set"},
 	}
@@ -393,7 +393,7 @@ func runAttachWith(t *testing.T, path string, status int, body string) (*ImageAt
 func TestAttachCampaignImage_NestedBatchErrors(t *testing.T) {
 	t.Run("null identity + nested rejection is definite", func(t *testing.T) {
 		r, _, err := runAttachWith(t, "AdExtensions", 200,
-			`{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Code":null,"BatchErrors":[{"Code":3001,"ErrorCode":"CampaignServiceInvalidImage","Index":0}]}]}`)
+			`{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":0,"Code":null,"BatchErrors":[{"Code":3001,"ErrorCode":"CampaignServiceInvalidImage","Index":0}]}]}`)
 		if err == nil || IsOutcomeUnconfirmed(err) || !errors.Is(err, errPartialFailure) {
 			t.Fatalf("want a definite rejection, got %v", err)
 		}
@@ -421,7 +421,7 @@ func TestAttachCampaignImage_NestedBatchErrors(t *testing.T) {
 	})
 	t.Run("collection-level code with null identity is definite", func(t *testing.T) {
 		_, _, err := runAttachWith(t, "AdExtensions", 200,
-			`{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Code":3000,"ErrorCode":"Y","BatchErrors":null}]}`)
+			`{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":0,"Code":3000,"ErrorCode":"Y","BatchErrors":null}]}`)
 		if err == nil || IsOutcomeUnconfirmed(err) {
 			t.Fatalf("want definite, got %v", err)
 		}
@@ -436,6 +436,9 @@ func TestAttachCampaignImage_LookupMustAnswer(t *testing.T) {
 		"collection null":       `{"AdExtensionAssociationCollection":null}`,
 		"collection not array":  `{"AdExtensionAssociationCollection":{}}`,
 		"top-level null":        `null`,
+		"zero collections":      `{"AdExtensionAssociationCollection":[]}`,
+		"two collections":       `{"AdExtensionAssociationCollection":[null,null]}`,
+		"two empty collections": `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[]},{"AdExtensionAssociations":[]}]}`,
 		"other entity":          `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":4441,"Type":"ImageAdExtension"},"AssociationType":"Campaign","EntityId":999}]}]}`,
 		"entity id missing":     `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":4441,"Type":"ImageAdExtension"},"AssociationType":"Campaign"}]}]}`,
 		"ad group association":  `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[{"AdExtension":{"Id":4441,"Type":"ImageAdExtension"},"AssociationType":"AdGroup","EntityId":321}]}]}`,
@@ -458,7 +461,6 @@ func TestAttachCampaignImage_LookupMustAnswer(t *testing.T) {
 		})
 	}
 	for name, body := range map[string]string{
-		"empty array":    `{"AdExtensionAssociationCollection":[]}`,
 		"null slot":      `{"AdExtensionAssociationCollection":[null]}`,
 		"empty slot":     `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":null}]}`,
 		"no partial key": `{"AdExtensionAssociationCollection":[{"AdExtensionAssociations":[]}]}`,
@@ -529,7 +531,7 @@ func nestedSlots(n, realAt int) string {
 	for i := range parts {
 		parts[i] = "null"
 		if i == realAt {
-			parts[i] = `{"BatchErrors":[{"Code":3001,"ErrorCode":"CampaignServiceInvalidImage","Index":0}]}`
+			parts[i] = `{"Index":0,"BatchErrors":[{"Code":3001,"ErrorCode":"CampaignServiceInvalidImage","Index":0}]}`
 		}
 	}
 	return `{"AdExtensionIdentities":[null],"NestedPartialErrors":[` + strings.Join(parts, ",") + `]}`
@@ -545,9 +547,9 @@ func TestAttachCampaignImage_TruncationAloneIsNotDefinite(t *testing.T) {
 		{"a few null slots", nestedSlots(3, -1), false},
 		{"real error beyond the retained window", nestedSlots(maxDecodedErrorItems+4, maxDecodedErrorItems+2), true},
 		{"real error retained", nestedSlots(3, 1), true},
-		{"inner BatchErrors over the cap, real error beyond it", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"BatchErrors":[` +
+		{"inner BatchErrors over the cap, real error beyond it", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":0,"BatchErrors":[` +
 			strings.Repeat("null,", maxDecodedErrorItems+2) + `{"Code":3001}]}]}`, true},
-		{"inner BatchErrors over the cap, nulls only", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"BatchErrors":[` +
+		{"inner BatchErrors over the cap, nulls only", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":0,"BatchErrors":[` +
 			strings.TrimSuffix(strings.Repeat("null,", maxDecodedErrorItems+3), ",") + `]}]}`, false},
 	}
 	for _, tc := range cases {
@@ -628,7 +630,7 @@ func TestAttachCampaignImage_MediaEvidenceBeyondRetention(t *testing.T) {
 		body     string
 		definite bool
 	}{
-		{"real error past the window", `{"MediaIds":[null],"PartialErrors":[` + nulls + `{"Code":3001,"ErrorCode":"InvalidMedia"}]}`, true},
+		{"real error past the window", `{"MediaIds":[null],"PartialErrors":[` + nulls + `{"Index":0,"Code":3001,"ErrorCode":"InvalidMedia"}]}`, true},
 		{"null placeholders only", `{"MediaIds":[null],"PartialErrors":[` + strings.TrimSuffix(nulls, ",") + `]}`, false},
 	}
 	for _, tc := range cases {
@@ -701,6 +703,41 @@ func TestAttachCampaignImage_MediaIDBesideErrorIsNotSuccess(t *testing.T) {
 		t.Run("clean "+name, func(t *testing.T) {
 			if _, _, err := runAttachWith(t, "Media", 200, body); err != nil {
 				t.Fatalf("an id with no error entries is success, got %v", err)
+			}
+		})
+	}
+}
+
+// ---- index attribution (#312 late review) -----------------------------------
+
+// Each mutating call sends ONE item (index 0). A coded error naming any other index — or none —
+// contradicts the 2xx, so it is UNCONFIRMED, never a definite "NOT attached".
+func TestAttachCampaignImage_ErrorIndexAttribution(t *testing.T) {
+	cases := []struct {
+		name, path, body string
+		definite         bool
+	}{
+		{"association index 1", "AdExtensionsAssociations/Set", `{"PartialErrors":[{"Index":1,"Code":3001}]}`, false},
+		{"association index absent", "AdExtensionsAssociations/Set", `{"PartialErrors":[{"Code":3001}]}`, false},
+		{"association index 0 and 1", "AdExtensionsAssociations/Set", `{"PartialErrors":[{"Index":0,"Code":3001},{"Index":1,"Code":3002}]}`, false},
+		{"association index 0", "AdExtensionsAssociations/Set", `{"PartialErrors":[{"Index":0,"Code":3001}]}`, true},
+		{"media index 1", "Media", `{"MediaIds":[null],"PartialErrors":[{"Index":1,"Code":3001}]}`, false},
+		{"media index -1", "Media", `{"MediaIds":[null],"PartialErrors":[{"Index":-1,"Code":3001}]}`, false},
+		{"media index 0", "Media", `{"MediaIds":[null],"PartialErrors":[{"Index":0,"Code":3001}]}`, true},
+		{"extension collection index 1", "AdExtensions", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":1,"Code":3001}]}`, false},
+		{"extension collection index absent, nested coded", "AdExtensions", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"BatchErrors":[{"Index":0,"Code":3001}]}]}`, false},
+		{"extension collection index 0", "AdExtensions", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":0,"Code":3001}]}`, true},
+		{"foreign error past the retention window", "AdExtensionsAssociations/Set", `{"PartialErrors":[` +
+			strings.Repeat(`{"Index":0,"Code":3001},`, maxDecodedErrorItems+1) + `{"Index":5,"Code":3002}]}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runAttachWith(t, tc.path, 200, tc.body)
+			if err == nil {
+				t.Fatal("a coded error is never success")
+			}
+			if got := !IsOutcomeUnconfirmed(err); got != tc.definite {
+				t.Errorf("definite = %v, want %v (%v)", got, tc.definite, err)
 			}
 		})
 	}
