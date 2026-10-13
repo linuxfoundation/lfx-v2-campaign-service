@@ -598,3 +598,24 @@ func TestToggleMetaAdSetStatus_ConcurrentToggleInTheReclaimGapStopsThePause(t *t
 		t.Fatalf("resume saw held %v, row held %v; the resume ran on a row without the record and no pause was sent", d.campaignHeld, held(repo))
 	}
 }
+
+// Without a claim — the zero token a lost re-claim leaves — no record write and no settlement read
+// may run: either would go through a lock-free pooled connection and bypass the writer that now
+// holds the claim. Both refuse with errMetaAdSetClaimLost and touch nothing.
+func TestMetaAdSetRecord_RefusesToRunWithoutTheClaim(t *testing.T) {
+	s, repo := adSetService(recordedMetaRow(), model.ProviderMetaAds, &adSetDispatcher{})
+	row := recordedMetaRow()
+	zero := domain.CampaignLockToken{}
+	if _, err := s.settleMetaAdSetRecord(context.Background(), repo, row, "888", 3, &zero); !errors.Is(err, errMetaAdSetClaimLost) {
+		t.Fatalf("settle without a claim: %v; want errMetaAdSetClaimLost", err)
+	}
+	if _, err := s.writeMetaAdSetRecord(context.Background(), repo, row, "888", 3, &zero); !errors.Is(err, errMetaAdSetClaimLost) {
+		t.Fatalf("write without a claim: %v; want errMetaAdSetClaimLost", err)
+	}
+	if err := s.withdrawMetaAdSetRecord(context.Background(), repo, row, 3, &zero, true, "888"); !errors.Is(err, errMetaAdSetClaimLost) {
+		t.Fatalf("withdraw without a claim: %v; want errMetaAdSetClaimLost", err)
+	}
+	if repo.replaces != 0 || repo.verifies != 0 || held(repo) {
+		t.Fatalf("writes %d, reads %d, held %v; nothing may run without the claim", repo.replaces, repo.verifies, held(repo))
+	}
+}

@@ -92,10 +92,13 @@ var (
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
 
-	// ErrWriteOutcomeUnknown marks a write whose COMMIT returned an error. A commit error does not
-	// prove the server rolled back — PostgreSQL may have committed before the acknowledgement was
-	// lost — so the write may or may not have landed and the caller must reconcile before acting
-	// on either answer. Every error before the commit is a definite rollback and never carries it.
+	// ErrWriteOutcomeUnknown marks a write whose COMMIT acknowledgement was LOST — a broken
+	// connection, an I/O error, or the context ending while the answer was awaited — so
+	// PostgreSQL may have committed and the caller must reconcile before acting on either answer.
+	// It is NOT every COMMIT error: a COMMIT the server answered with an error (a *pgconn.PgError
+	// such as a deferred constraint or trigger raising, or pgx.ErrTxCommitRollback) is a confirmed
+	// rollback and carries no sentinel (see the postgres repository's classifyCommitErr). Every
+	// error before the commit is a definite rollback and never carries it either.
 	ErrWriteOutcomeUnknown = errors.New("the write's commit failed, so whether it landed is unknown")
 
 	// ErrToggleUnsupported indicates the campaign's platform has no status-toggle

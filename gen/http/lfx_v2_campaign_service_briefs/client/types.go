@@ -4080,9 +4080,13 @@ type MetaAdSetResponseBody struct {
 	// DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the
 	// campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only
 	// resuming it through toggle-meta-ad-set-status clears this. It is this
-	// service's record, not Meta's — `status` is what Meta reports. Also true
-	// after a pause whose outcome was UNCONFIRMED (unknown is treated as paused).
-	// Always false on an adopted campaign.
+	// service's record, not Meta's — `status` is what Meta reports. After a pause
+	// whose outcome was UNCONFIRMED it is normally true (unknown is treated as
+	// paused), but this is NOT guaranteed: when that 503 said the pause's record
+	// could not be confirmed, or that the write lock was lost, it may be false —
+	// re-read it, and if it is false pause the ad set again before resuming the
+	// campaign; never assume it from the 503 alone. Always false on an adopted
+	// campaign.
 	DeliberatelyPaused *bool `form:"deliberately_paused,omitempty" json:"deliberately_paused,omitempty" xml:"deliberately_paused,omitempty"`
 }
 

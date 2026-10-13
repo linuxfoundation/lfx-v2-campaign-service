@@ -82,6 +82,7 @@ type adSetRepo struct {
 	reclaimErr error
 	claims     int
 	onRelease  func()
+	verifies   int
 	// replaceTokens records the claim token each ReplaceCampaign was made under.
 	replaceTokens []domain.CampaignLockToken
 }
@@ -152,6 +153,7 @@ func (r *adSetRepo) apply(ctx context.Context, c *model.Campaign, expectedVersio
 }
 
 func (r *adSetRepo) VerifyClaimedVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64, tok domain.CampaignLockToken) (*model.Campaign, error) {
+	r.verifies++
 	if r.verifyErr != nil {
 		return nil, r.verifyErr
 	}

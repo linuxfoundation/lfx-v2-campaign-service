@@ -154,7 +154,7 @@ write lock):
 | PAUSED, write about to be sent | SET first, through the dispatcher's `beforeWrite` hook (after every guard and the pre-write read); if that row write fails nothing is sent — 503 "nothing was changed on Meta", or 409 if the row changed |
 | PAUSED → APPLIED | stays set; `VerifyClaimedVersion` at the new version |
 | PAUSED → ALREADY_IN_STATE (e.g. the campaign pause already paused it) | SET after the answer; a failed row write is 503/409 saying the ad set is already paused but the pause was not recorded |
-| PAUSED → **UNCONFIRMED** | **stays set** — unknown is treated as paused, so a later campaign resume never silently re-activates an ad set the user may have paused; the usual 503 and 30 s lock cooldown |
+| PAUSED → **UNCONFIRMED** | **stays set** (settled before the 503 if its own write was unconfirmed) — unknown is treated as paused, so a later campaign resume does not re-activate an ad set the user may have paused; the usual 503 and 30 s lock cooldown. NOT guaranteed when that 503 says the record could not be confirmed, or the write lock was lost: clients re-read `deliberately_paused` rather than assume it |
 | PAUSED → REJECTED / NOT_SENT (definite) | withdrawn; if the withdrawal cannot be established the answer is a 503 saying the ad set may be shown deliberately paused while active (resume it here to clear), never "nothing was changed" |
 | ACTIVE → APPLIED or ALREADY_IN_STATE | CLEARED (the `ReplaceCampaign` compare-and-swap is the row check); a failed clear is 503/409 saying the ad set WAS resumed but a campaign resume will still leave it paused |
 | ACTIVE → **UNCONFIRMED** or any failure | **stays set** — the ad set may still be paused; keeping it held never spends unasked |

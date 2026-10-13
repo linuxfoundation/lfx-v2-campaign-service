@@ -430,6 +430,11 @@ func persistCtxFor(ctx context.Context) (context.Context, context.CancelFunc) {
 // it), gated on expectedVersion, on the claim holder's connection, co-indexed like every other
 // campaign write. It returns the row as written (its version bumped).
 func (s *BriefService) persistMetaAdSetRecord(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, adSetID string, expectedVersion int64, lockToken domain.CampaignLockToken) (*model.Campaign, error) {
+	if lockToken.CampaignID == "" {
+		// Never write without holding the campaign's claim: the zero token makes ReplaceCampaign
+		// use a pooled connection with no lock, which would bypass another writer's claim.
+		return nil, fmt.Errorf("%w: refusing to write the record without holding the claim", errMetaAdSetClaimLost)
+	}
 	result, err := model.WithMetaUserPausedAdSet(row.Result, adSetID)
 	if err != nil {
 		return nil, err
@@ -461,7 +466,8 @@ var errMetaAdSetRecordUnknown = errors.New("whether the ad set's deliberate-paus
 //     exclusive ownership is TAKEN AGAIN the way every writer takes it (ClaimCampaignVersion,
 //     a try-lock, so it never waits): at expectedVersion the first attempt rolled back and the
 //     write is made on the new claim; at expectedVersion+1 it landed if that row carries the
-//     record. *lockToken is replaced by the new claim (or zeroed if none could be taken), so the
+//     record. *lockToken is replaced by the new claim (or zeroed if none could be taken — and then
+//     every record write and settlement read refuses to run, errMetaAdSetClaimLost), so the
 //     caller's deferred release, cooldown and later writes follow it.
 //
 // Anything else is errMetaAdSetRecordUnknown. The repeat is a database write, never the Meta
@@ -549,6 +555,11 @@ func (s *BriefService) reclaimAndWriteMetaAdSetRecord(ctx context.Context, repo 
 // locateMetaAdSetRow finds the row after a record write whose outcome is unknown: at base (it
 // did not land) or base+1 (it did, or another write did), read on the claim's connection.
 func locateMetaAdSetRow(ctx context.Context, repo domain.CampaignRepository, row *model.Campaign, base int64, lockToken domain.CampaignLockToken) (*model.Campaign, error) {
+	if lockToken.CampaignID == "" {
+		// Settlement acts only under this request's claim; without it another writer may own the
+		// row, so nothing is read or written on its behalf.
+		return nil, fmt.Errorf("%w: refusing to settle the record without holding the claim", errMetaAdSetClaimLost)
+	}
 	var lastErr error
 	for _, v := range []int64{base, base + 1} {
 		cur, err := repo.VerifyClaimedVersion(ctx, row.ProjectID, row.BriefID, row.ID, v, lockToken)

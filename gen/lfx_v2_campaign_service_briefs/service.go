@@ -462,21 +462,24 @@ type Service interface {
 	// then activates the campaign and its ads but leaves that ad set PAUSED; only
 	// a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The
 	// record is written BEFORE the pause is sent, so a pause whose outcome is
-	// UNCONFIRMED stays on record (unknown is treated as paused), and it is
-	// withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume does
-	// not clear it. list-meta-ad-sets reports it as `deliberately_paused`. Pausing
-	// any other ad set — and anything on an ADOPTED campaign, which records no ad
-	// set — records nothing, since the campaign cascade never re-activates it.
-	// When the record is written the campaign row's version is bumped and the
-	// returned ETag (200 only) is the new one. An ERROR response carries no ETag,
-	// yet some 503 paths can still have bumped the version (a record written
-	// before an UNCONFIRMED write, or one withdrawn after a definite refusal), so
-	// after any error re-read the campaign for its current ETag before retrying;
-	// otherwise the ETag is the row's UNCHANGED version (as when a
-	// created_degraded campaign is paused). If recording fails before the write,
-	// nothing is sent (503, or 409 if the row changed); if it fails after Meta's
-	// definite answer, the 503/409 says what Meta now holds and that the record
-	// was not updated. Any platform but Meta is 400.
+	// UNCONFIRMED normally stays on record (unknown is treated as paused), and it
+	// is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume
+	// does not clear it. The record is NOT guaranteed after every 503: when the
+	// 503 says the record could not be confirmed, or that the write lock was lost,
+	// re-read list-meta-ad-sets and do not assume `deliberately_paused` — pause
+	// the ad set again if it is not shown. list-meta-ad-sets reports it as
+	// `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED
+	// campaign, which records no ad set — records nothing, since the campaign
+	// cascade never re-activates it. When the record is written the campaign row's
+	// version is bumped and the returned ETag (200 only) is the new one. An ERROR
+	// response carries no ETag, yet some 503 paths can still have bumped the
+	// version (a record written before an UNCONFIRMED write, or one withdrawn
+	// after a definite refusal), so after any error re-read the campaign for its
+	// current ETag before retrying; otherwise the ETag is the row's UNCHANGED
+	// version (as when a created_degraded campaign is paused). If recording fails
+	// before the write, nothing is sent (503, or 409 if the row changed); if it
+	// fails after Meta's definite answer, the 503/409 says what Meta now holds and
+	// that the record was not updated. Any platform but Meta is 400.
 	ToggleMetaAdSetStatus(context.Context, *ToggleMetaAdSetStatusPayload) (res *MetaAdSetStatusChange, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
@@ -1538,9 +1541,13 @@ type MetaAdSet struct {
 	// DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the
 	// campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only
 	// resuming it through toggle-meta-ad-set-status clears this. It is this
-	// service's record, not Meta's — `status` is what Meta reports. Also true
-	// after a pause whose outcome was UNCONFIRMED (unknown is treated as paused).
-	// Always false on an adopted campaign.
+	// service's record, not Meta's — `status` is what Meta reports. After a pause
+	// whose outcome was UNCONFIRMED it is normally true (unknown is treated as
+	// paused), but this is NOT guaranteed: when that 503 said the pause's record
+	// could not be confirmed, or that the write lock was lost, it may be false —
+	// re-read it, and if it is false pause the ad set again before resuming the
+	// campaign; never assume it from the 503 alone. Always false on an adopted
+	// campaign.
 	DeliberatelyPaused bool
 }
 
