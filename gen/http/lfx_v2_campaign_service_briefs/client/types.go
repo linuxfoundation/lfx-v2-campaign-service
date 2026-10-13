@@ -115,8 +115,14 @@ type ApplyKeywordActionsRequestBody struct {
 // "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
 // HTTP request body.
 type AddNegativeKeywordsRequestBody struct {
-	// The negative keywords to add, at campaign level.
+	// The negative keywords to add: at campaign level on Microsoft Advertising, on
+	// the campaign's one ad group on Reddit, on its one line item on X.
 	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords" json:"negative_keywords" xml:"negative_keywords"`
+	// Reddit only, and required there: the revision get-keyword-targeting
+	// returned; an empty or blank one is 400. The add is refused (409) when the ad
+	// group's targeting no longer has that fingerprint. Microsoft Advertising and
+	// X refuse the field (400) whenever it is present, even empty.
+	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 
 // RemoveKeywordTargetingRequestBody is the type of the
@@ -3987,16 +3993,19 @@ type NegativeKeywordResultResponseBody struct {
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
 	// The match type as sent to the platform
 	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign already had
-	// it, so the requested state holds; FAILED — definitely not added (see
-	// error_code); UNCONFIRMED — may have been added, verify in the ad platform
-	// before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
+	// or ad group / line item (Reddit / X) already had it, so the requested state
+	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
+	// have been added, verify in the ad platform before retrying.
 	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
-	// The platform's id for a negative keyword this request added. Absent for
-	// every other outcome.
+	// The platform's id for a negative keyword this request added: Microsoft's
+	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
+	// an excluded keyword has no id, and for every outcome other than APPLIED.
 	NegativeKeywordID *string `form:"negative_keyword_id,omitempty" json:"negative_keyword_id,omitempty" xml:"negative_keyword_id,omitempty"`
-	// The platform's machine-readable error code for a FAILED keyword, when it
-	// named one.
+	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
+	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
+	// it was never sent) or REJECTED (the platform refused it); their own text is
+	// never returned.
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
@@ -4207,7 +4216,10 @@ type NegativeKeywordInputRequestBody struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
 	// 100 characters.
 	Text string `form:"text" json:"text" xml:"text"`
-	// How the negative keyword is compared with a search query. Exact or Phrase.
+	// How the negative keyword is compared with a search query. Microsoft
+	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
+	// (Reddit's excluded keywords carry no match type). Any other value for the
+	// platform is 400.
 	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
 }
 
@@ -4353,7 +4365,9 @@ func NewApplyKeywordActionsRequestBody(p *lfxv2campaignservicebriefs.ApplyKeywor
 // payload of the "add-negative-keywords" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
 func NewAddNegativeKeywordsRequestBody(p *lfxv2campaignservicebriefs.AddNegativeKeywordsPayload) *AddNegativeKeywordsRequestBody {
-	body := &AddNegativeKeywordsRequestBody{}
+	body := &AddNegativeKeywordsRequestBody{
+		Revision: p.Revision,
+	}
 	if p.NegativeKeywords != nil {
 		body.NegativeKeywords = make([]*NegativeKeywordInputRequestBody, len(p.NegativeKeywords))
 		for i, val := range p.NegativeKeywords {
@@ -13145,8 +13159,8 @@ func ValidateNegativeKeywordResultResponseBody(body *NegativeKeywordResultRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
 	}
 	if body.MatchType != nil {
-		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"Exact", "Phrase"}))
+		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase" || *body.MatchType == "Broad") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"Exact", "Phrase", "Broad"}))
 		}
 	}
 	if body.Outcome != nil {
@@ -13170,8 +13184,8 @@ func validateNegativeKeywordResultResponseBody(body *NegativeKeywordResultRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", path))
 	}
 	if body.MatchType != nil {
-		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".match_type", *body.MatchType, []any{"Exact", "Phrase"}))
+		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase" || *body.MatchType == "Broad") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".match_type", *body.MatchType, []any{"Exact", "Phrase", "Broad"}))
 		}
 	}
 	if body.Outcome != nil {
@@ -13491,8 +13505,8 @@ func ValidateNegativeKeywordInputRequestBody(body *NegativeKeywordInputRequestBo
 	if utf8.RuneCountInString(body.Text) > 100 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", body.Text, utf8.RuneCountInString(body.Text), 100, false))
 	}
-	if !(body.MatchType == "Exact" || body.MatchType == "Phrase") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", body.MatchType, []any{"Exact", "Phrase"}))
+	if !(body.MatchType == "Exact" || body.MatchType == "Phrase" || body.MatchType == "Broad") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", body.MatchType, []any{"Exact", "Phrase", "Broad"}))
 	}
 	return
 }
@@ -13507,8 +13521,8 @@ func validateNegativeKeywordInputRequestBody(body *NegativeKeywordInputRequestBo
 	if utf8.RuneCountInString(body.Text) > 100 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".text", body.Text, utf8.RuneCountInString(body.Text), 100, false))
 	}
-	if !(body.MatchType == "Exact" || body.MatchType == "Phrase") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".match_type", body.MatchType, []any{"Exact", "Phrase"}))
+	if !(body.MatchType == "Exact" || body.MatchType == "Phrase" || body.MatchType == "Broad") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".match_type", body.MatchType, []any{"Exact", "Phrase", "Broad"}))
 	}
 	return
 }

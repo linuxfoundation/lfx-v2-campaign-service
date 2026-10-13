@@ -4040,8 +4040,24 @@ provenance (fail closed), account.
 **Deliberately a separate interface, not a `KeywordAction` kind.** A kind on the existing enum
 would be delivered to every `KeywordActioner`, including Google's adapter, which has never been
 taught what a live negative keyword is; a separate optional interface means only a platform that
-implements the add can be asked to perform it, and every other platform answers
-`ErrNegativeKeywordsUnsupported` → 400.
+implements the add can be asked to perform it. Three dispatchers implement it — Microsoft (here),
+`RedditDispatcher` (`reddit_negative_keywords.go`) and `TwitterDispatcher`
+(`twitter_negative_keywords.go`) — and every other platform answers
+`ErrNegativeKeywordsUnsupported` → 400 (so does Reddit while
+`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED` is off). The method takes a `revision`, Reddit's
+compare-and-set token, which Microsoft and X refuse as an invalid batch.
+
+**Reddit and X negatives (LFXV2-2665).** The shared batch check is `negative_keywords.go`
+(`validateNegativeKeywordBatch`): Microsoft's text rules for every platform, the platform's own
+match types (Microsoft Exact/Phrase, X Broad/Phrase/Exact, Reddit Broad only), and duplicates
+refused under `textfold.Key` — the single simple-case-fold key (`internal/platform/textfold`)
+that the X already-present lookup and the X echo check also use, because `strings.ToLower` keeps
+σ and ς apart where `strings.EqualFold` does not. Reddit appends to the recorded ad group's
+`excluded_keywords` in one whole-targeting PATCH (revision checked, 2,000 array elements, re-read
+to confirm); X sends one paced `NE` keyword criterion POST per keyword (at most 20). Both answer
+per item whenever any item has a definite outcome — `ALREADY_PRESENT`, `APPLIED`, or `FAILED`
+with `REJECTED` / `NOT_SENT` — and error the whole call (UNCONFIRMED) only when every item is
+UNCONFIRMED. See [keyword-targeting-reddit-x](../architecture/keyword-targeting-reddit-x.md).
 
 **Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
 REMOVE the row's `keywordIds` still names the deleted keyword. On ACTIVATE `ToggleStatus` therefore
