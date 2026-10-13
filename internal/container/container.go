@@ -564,9 +564,12 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	// The Microsoft dispatcher reads stored assets too (microsoftConfig.imageAssetId, a
 	// campaign image extension — LFXV2-2665), under the same concrete-pointer guard.
 	microsoftDispatcher := dispatch.NewMicrosoftDispatcher(repo, enc)
+	// LinkedIn too (linkedInConfig.variants[].imageAssetId, Images API thumbnails).
+	linkedinDispatcher := dispatch.NewLinkedInDispatcher(repo, enc)
 	if creatives != nil {
 		metaDispatcher.SetCreativeAssetRepo(creatives)
 		microsoftDispatcher.SetCreativeAssetRepo(creatives)
+		linkedinDispatcher.SetCreativeAssetRepo(creatives)
 	}
 	// The AGGREGATE asset budget is bound unconditionally, not under the `creatives != nil`
 	// guard above. The two are independent: that guard exists because a nil concrete pointer
@@ -587,9 +590,10 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 		twitterDispatcher.SetCreativeAssetRepo(creatives)
 	}
 	twitterDispatcher.SetAssetReserver(assets)
+	linkedinDispatcher.SetAssetReserver(assets)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
-		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
+		model.ProviderLinkedInAds:  linkedinDispatcher,
 		model.ProviderMetaAds:      metaDispatcher,
 		model.ProviderTwitterAds:   twitterDispatcher,
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
