@@ -1751,6 +1751,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	// The LinkedIn audience read (LFXV2-2665) is declared in design/linkedin_audience.go.
+	linkedInAdsAudienceMethod()
+
 	Method("get-microsoft-ads-keywords", func() {
 		Description("Read Microsoft Advertising keyword performance for this project's own campaigns, in " +
 			"the same row shape as get-google-ads-keywords. Scoped to the campaigns this service holds for " +

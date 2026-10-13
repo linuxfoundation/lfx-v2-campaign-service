@@ -1804,6 +1804,44 @@ func BuildGetTwitterAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetTwitter
 	return v, nil
 }
 
+// BuildGetLinkedinAdsAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-connections get-linkedin-ads-audience endpoint from
+// CLI flags.
+func BuildGetLinkedinAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceProjectID *string, lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow *string, lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceBearerToken *string) (*lfxv2campaignserviceconnections.GetLinkedinAdsAudiencePayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow != nil {
+			window = lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow
+			if !(*lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "today" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "last_7_days" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "last_30_days" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "this_month" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetLinkedinAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMicrosoftAdsKeywordsPayload builds the payload for the
 // lfx-v2-campaign-service-connections get-microsoft-ads-keywords endpoint from
 // CLI flags.

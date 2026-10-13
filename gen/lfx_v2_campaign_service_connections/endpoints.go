@@ -63,6 +63,7 @@ type Endpoints struct {
 	GetGoogleAdsAudience        goa.Endpoint
 	GetMetaAdsAudience          goa.Endpoint
 	GetTwitterAdsAudience       goa.Endpoint
+	GetLinkedinAdsAudience      goa.Endpoint
 	GetMicrosoftAdsKeywords     goa.Endpoint
 	GetMicrosoftAdsAudience     goa.Endpoint
 	ResolveGoogleAdsCampaign    goa.Endpoint
@@ -141,6 +142,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetGoogleAdsAudience:        NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:          NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:       NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
+		GetLinkedinAdsAudience:      NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsAudience:     NewGetMicrosoftAdsAudienceEndpoint(s, a.JWTAuth),
 		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignEndpoint(s, a.JWTAuth),
@@ -217,6 +219,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetGoogleAdsAudience = m(e.GetGoogleAdsAudience)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
+	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
 	e.GetMicrosoftAdsKeywords = m(e.GetMicrosoftAdsKeywords)
 	e.GetMicrosoftAdsAudience = m(e.GetMicrosoftAdsAudience)
 	e.ResolveGoogleAdsCampaign = m(e.ResolveGoogleAdsCampaign)
@@ -1338,6 +1341,30 @@ func NewGetTwitterAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc)
 			return nil, err
 		}
 		return s.GetTwitterAdsAudience(ctx, p)
+	}
+}
+
+// NewGetLinkedinAdsAudienceEndpoint returns an endpoint function that calls
+// the method "get-linkedin-ads-audience" of service
+// "lfx-v2-campaign-service-connections".
+func NewGetLinkedinAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetLinkedinAdsAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetLinkedinAdsAudience(ctx, p)
 	}
 }
 

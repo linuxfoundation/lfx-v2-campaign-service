@@ -206,6 +206,10 @@ type Client struct {
 	// get-twitter-ads-audience endpoint.
 	GetTwitterAdsAudienceDoer goahttp.Doer
 
+	// GetLinkedinAdsAudience Doer is the HTTP client used to make requests to the
+	// get-linkedin-ads-audience endpoint.
+	GetLinkedinAdsAudienceDoer goahttp.Doer
+
 	// GetMicrosoftAdsKeywords Doer is the HTTP client used to make requests to the
 	// get-microsoft-ads-keywords endpoint.
 	GetMicrosoftAdsKeywordsDoer goahttp.Doer
@@ -366,6 +370,7 @@ func NewClient(
 		GetGoogleAdsAudienceDoer:        doer,
 		GetMetaAdsAudienceDoer:          doer,
 		GetTwitterAdsAudienceDoer:       doer,
+		GetLinkedinAdsAudienceDoer:      doer,
 		GetMicrosoftAdsKeywordsDoer:     doer,
 		GetMicrosoftAdsAudienceDoer:     doer,
 		ResolveGoogleAdsCampaignDoer:    doer,
@@ -1523,6 +1528,30 @@ func (c *Client) GetTwitterAdsAudience() goa.Endpoint {
 		resp, err := c.GetTwitterAdsAudienceDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-twitter-ads-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetLinkedinAdsAudience returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience server.
+func (c *Client) GetLinkedinAdsAudience() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetLinkedinAdsAudienceRequest(c.encoder)
+		decodeResponse = DecodeGetLinkedinAdsAudienceResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetLinkedinAdsAudienceRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetLinkedinAdsAudienceDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-linkedin-ads-audience", err)
 		}
 		return decodeResponse(resp)
 	}
