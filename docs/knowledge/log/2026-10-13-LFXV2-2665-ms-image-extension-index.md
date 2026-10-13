@@ -14,5 +14,11 @@
   to AddMedia, AddAdExtensions (attributed by the collection's `Index`) and
   SetAdExtensionsAssociations. New whole-wire decoders, `imageErrors` and `imageNestedErrors`,
   keep `Index` and tally evidence for our item and for other items across the entire array.
+- #323 review: the UNCONFIRMED messages no longer take codes from the retained prefix. That
+  prefix drops `Index`, so when index-0 entries filled it they were reported as "naming another
+  item". The decoders now collect the foreign entries' codes, with their index, over the whole
+  wire, and the association, AddMedia and AddAdExtensions messages name only those. The
+  concept's AddMedia, AddAdExtensions and Set bullets now state the index-0 rule and
+  `imageNestedErrors` in place of the earlier any-error and `boundedNestedErrorItems` wording.
 
 Concept: [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).

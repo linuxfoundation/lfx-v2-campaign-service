@@ -742,3 +742,37 @@ func TestAttachCampaignImage_ErrorIndexAttribution(t *testing.T) {
 		})
 	}
 }
+
+// The UNCONFIRMED message names only codes on OTHER items. Index-0 entries filling the retained
+// prefix must not be attributed to the foreign item that arrives after the retention window.
+func TestAttachCampaignImage_ForeignCodesAreAttributedByIndex(t *testing.T) {
+	ours := strings.Repeat(`{"Index":0,"ErrorCode":"OurItemCode"},`, maxDecodedErrorItems+1)
+	cases := map[string]struct{ path, body string }{
+		"association": {"AdExtensionsAssociations/Set", `{"PartialErrors":[` + ours + `{"Index":5,"ErrorCode":"ForeignItemCode"}]}`},
+		"media":       {"Media", `{"MediaIds":[null],"PartialErrors":[` + ours + `{"Index":5,"ErrorCode":"ForeignItemCode"}]}`},
+		"extension": {"AdExtensions", `{"AdExtensionIdentities":[null],"NestedPartialErrors":[` +
+			strings.Repeat(`{"Index":0,"ErrorCode":"OurItemCode"},`, maxDecodedErrorItems+1) +
+			`{"Index":5,"BatchErrors":[{"Index":0,"ErrorCode":"ForeignItemCode"}]}]}`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := runAttachWith(t, tc.path, 200, tc.body)
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("want UNCONFIRMED, got %v", err)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "ForeignItemCode") {
+				t.Errorf("the foreign code must be named: %s", msg)
+			}
+			if strings.Contains(msg, "OurItemCode") {
+				t.Errorf("an index-0 code must not be attributed to the other item: %s", msg)
+			}
+		})
+	}
+	t.Run("unindexed entry is named as foreign", func(t *testing.T) {
+		_, _, err := runAttachWith(t, "AdExtensionsAssociations/Set", 200, `{"PartialErrors":[{"Index":0,"ErrorCode":"OurItemCode"},{"ErrorCode":"NoIndexCode"}]}`)
+		if err == nil || !strings.Contains(err.Error(), "NoIndexCode") || strings.Contains(err.Error(), "OurItemCode") {
+			t.Errorf("got %v", err)
+		}
+	})
+}

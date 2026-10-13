@@ -90,10 +90,10 @@ Every 2xx body must actually answer before it counts. Each rule below fails clos
   `AssociationType` is `Campaign`; otherwise it fails the lookup and is never treated as
   AlreadyAttached. Every image association is checked before any is trusted, and the first
   valid id is returned only when no other entry fails.
-- **AddAdExtensions errors vs. truncation.** Only actual error evidence counts toward a definite
-  rejection. That evidence is the whole-wire `AnyErrors` tallies, so an error beyond the
-  16-entry retention window still counts. Truncation or null-only placeholders with a null
-  identity stay UNCONFIRMED, because they explain nothing.
+- **Errors vs. truncation.** Only coded evidence about our item counts toward a definite
+  rejection (see Error index). The decoders tally it over the whole wire array, so an entry
+  beyond the 16-entry retention window still counts. Truncation or null-only placeholders with a
+  null id stay UNCONFIRMED, because they explain nothing.
 - **Association success.** A `PartialErrors` array that is present but carries no codes (for
   example `[null]`) is UNCONFIRMED, not success.
 - **Error index.** Each mutating call sends ONE item, at index 0. A coded `BatchError` is
@@ -102,25 +102,30 @@ Every 2xx body must actually answer before it counts. Each rule below fails clos
   name list items inside that extension. An absent, nonzero or out-of-range index contradicts
   the 2xx and is UNCONFIRMED. This follows the keyword levers' `attribute()`, which treats an
   absent index as unattributable. The tallies cover the whole wire array, so a foreign entry
-  past the 16-entry window still counts.
+  past the 16-entry window still counts. The UNCONFIRMED message names only the codes of the
+  foreign entries, which are collected with their index. The retained prefix drops `Index`, so
+  index-0 codes are never attributed to another item.
 - **Raw-body integrity.** Every image-extension response body passes `identityjson.Check`
   before it is decoded. That rejects malformed UTF-8, unpaired surrogates, and keys declared
   twice, including under the case fold. Without it, a duplicate key could mark a field present
   from one spelling and decode it empty from the other. An untrustworthy lookup fails, and
   nothing is uploaded; an untrustworthy mutation body is UNCONFIRMED.
-- **AddMedia.** `PartialErrors` beside `MediaIds` is decoded. A null id is a definite rejection
-  only on whole-wire `AnyErrors` evidence, so a rejection past the 16-entry window still counts.
-  Null placeholders, or a null id with no explanation, are UNCONFIRMED.
+- **AddMedia.** `PartialErrors` beside `MediaIds` is decoded with `imageErrors`. A null id is
+  a definite rejection only when a coded entry has `Index` 0 and no coded entry names another or
+  absent index; this holds over the whole wire array. Codes on other items, null placeholders,
+  or a null id with no explanation are UNCONFIRMED.
   A returned id next to any error entry is also UNCONFIRMED. The id is recorded, and the attach
   stops before AddAdExtensions.
-- **AddAdExtensions.** `NestedPartialErrors` is `BatchErrorCollection[]`. It is decoded with
-  `boundedNestedErrorItems`, the same decoder as geo, and both the collection-level codes and
-  each nested `BatchErrors` are classified. A null identity with any error is definite. An
-  identity returned alongside errors is UNCONFIRMED: its id is recorded, and the attach stops
-  before association.
+- **AddAdExtensions.** `NestedPartialErrors` is `BatchErrorCollection[]`, decoded with
+  `imageNestedErrors`. A collection counts as coded when it has a collection-level code or a
+  coded nested `BatchErrors` entry, and it is attributed by the collection's own `Index`. A null
+  identity is definite only when a coded collection has `Index` 0 and no coded collection names
+  another or absent index; otherwise it is UNCONFIRMED. An identity returned alongside any error
+  entry is UNCONFIRMED: its id is recorded, and the attach stops before association.
 - **SetAdExtensionsAssociations.** The presence of `PartialErrors` is tracked as in
   `updateStatusResponse`. `null` or `[]` confirms success; an omitted field or a top-level
-  `null` is UNCONFIRMED.
+  `null` is UNCONFIRMED. Coded entries follow the Error index rule: index 0 alone is definite,
+  and any other index is UNCONFIRMED.
 - **Error text.** An association failure's message makes no claim about whether the
   extension is attached. The NOT attached / UNCONFIRMED step wording decides that.
 

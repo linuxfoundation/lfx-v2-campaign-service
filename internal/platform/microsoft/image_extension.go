@@ -450,7 +450,7 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 			err = fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
 		case resp.PartialErrors.AnyErrors:
 			// Coded, but not (only) about index 0 — the one item sent: a contradictory 2xx.
-			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors name an item other than the one sent (%s): %w", partialErrorCodes(resp.PartialErrors.Items), errNoID)
+			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors name an item other than the one sent (codes on other or unindexed items: %s): %w", resp.PartialErrors.foreignCodes(), errNoID)
 		case len(resp.PartialErrors.Items) > 0 || resp.PartialErrors.Truncated:
 			// Present but malformed (`[null]`, `[{}]`): entries that carry no code neither confirm
 			// nor reject, so it is not the empty-error success — mirrors putUpdateOutcome.
@@ -555,11 +555,12 @@ func adExtensionIdentity(body []byte) (string, error) {
 	if len(resp.AdExtensionIdentities) > 0 && resp.AdExtensionIdentities[0] != nil {
 		id = numberID(resp.AdExtensionIdentities[0].Id)
 	}
-	// EVIDENCE and INCOMPLETENESS are kept apart. Only evidence — an actual code anywhere on the
-	// wire, counted by the decoders' whole-array AnyErrors tallies so an error past the retention
-	// cap still counts — can make a null identity a DEFINITE rejection. Truncation or null-only
-	// placeholders explain nothing, so a null identity with only those stays UNCONFIRMED: calling
-	// it definite would invite a retry that creates a second extension.
+	// EVIDENCE and INCOMPLETENESS are kept apart. Only evidence ABOUT OUR ITEM — a coded collection
+	// at Index 0 with no coded collection naming anything else, tallied over the whole wire array so
+	// an entry past the retention cap still counts — can make a null identity a DEFINITE rejection.
+	// Truncation, null-only placeholders, or codes on other/unindexed items explain nothing about
+	// the one extension sent, so a null identity with only those stays UNCONFIRMED: calling it
+	// definite would invite a retry that creates a second extension.
 	nested := resp.NestedPartialErrors
 	evidence := nested.rejectsOurItem()
 	incomplete := nested.AnyErrors || nested.Truncated || nestedTruncated(nested.Items) || len(nested.Items) > 0
@@ -568,6 +569,8 @@ func adExtensionIdentity(body []byte) (string, error) {
 		return "", fmt.Errorf("%w: %s", errPartialFailure, nestedErrorCodes(nested.Items))
 	case id != "" && incomplete:
 		return id, fmt.Errorf("extension %s was returned alongside nested error entries (%s): %w", id, nestedErrorCodes(nested.Items), errNoID)
+	case id == "" && nested.Foreign > 0:
+		return "", fmt.Errorf("AdExtensionIdentities carried no id and NestedPartialErrors name an item other than the one sent (codes on other or unindexed items: %s): %w", nested.foreignCodes(), errNoID)
 	case id == "":
 		return "", fmt.Errorf("AdExtensionIdentities %w", errNoID)
 	}
@@ -612,6 +615,9 @@ func mediaIdentity(body []byte) (string, error) {
 	if resp.PartialErrors.rejectsOurItem() {
 		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
 	}
+	if resp.PartialErrors.Foreign > 0 {
+		return "", fmt.Errorf("MediaIds carried no id and PartialErrors name an item other than the one sent (codes on other or unindexed items: %s): %w", resp.PartialErrors.foreignCodes(), errNoID)
+	}
 	return "", fmt.Errorf("MediaIds %w", errNoID)
 }
 
@@ -640,6 +646,10 @@ type imageErrors struct {
 	AnyErrors bool
 	// Ours / Foreign count coded entries whose Index is 0 / is absent or anything else.
 	Ours, Foreign int
+	// foreign holds the codes of the FOREIGN entries only, gathered over the whole wire array
+	// (bounded): Items drops each Index, so a message built from Items would attribute index-0
+	// codes to the other item whenever index-0 entries fill the retained prefix.
+	foreign []string
 }
 
 // rejectsOurItem reports a DEFINITE rejection of the one item sent: coded evidence at Index 0,
@@ -658,6 +668,7 @@ func (e *imageErrors) UnmarshalJSON(data []byte) error {
 				e.Ours++
 			} else {
 				e.Foreign++
+				e.foreign = appendForeignCode(e.foreign, it.ErrorCode, it.Code)
 			}
 		}
 		if len(e.Items) < maxDecodedErrorItems {
@@ -678,9 +689,44 @@ type imageNestedErrors struct {
 	Truncated     bool
 	AnyErrors     bool
 	Ours, Foreign int
+	foreign       []string
 }
 
 func (e imageNestedErrors) rejectsOurItem() bool { return e.Ours > 0 && e.Foreign == 0 }
+
+func (e imageNestedErrors) foreignCodes() string { return joinForeignCodes(e.foreign, e.Foreign) }
+
+func (e imageErrors) foreignCodes() string { return joinForeignCodes(e.foreign, e.Foreign) }
+
+// unrenderedCode stands in for a coded entry whose code this client cannot render (too long, or
+// not a string/number): it is still counted, just not named.
+const unrenderedCode = "(unrendered)"
+
+// appendForeignCode appends the entry's symbolic code (else its numeric one), bounded by
+// maxRetainedErrorCodes, using the same rendering and length cap as partialErrorCodes.
+func appendForeignCode(dst []string, errorCode, code json.RawMessage) []string {
+	if len(dst) >= maxRetainedErrorCodes {
+		return dst
+	}
+	for _, raw := range []json.RawMessage{errorCode, code} {
+		if v := codeString(raw); v != "" && len(v) <= maxErrorCodeLen {
+			return append(dst, v)
+		}
+	}
+	if rawCodePresent(errorCode) || rawCodePresent(code) {
+		return append(dst, unrenderedCode)
+	}
+	return dst
+}
+
+// joinForeignCodes renders the foreign codes, noting how many more were counted than kept.
+func joinForeignCodes(codes []string, total int) string {
+	out := strings.Join(codes, ",")
+	if more := total - len(codes); more > 0 {
+		out += fmt.Sprintf(" and %d more", more)
+	}
+	return out
+}
 
 func (e *imageNestedErrors) UnmarshalJSON(data []byte) error {
 	return streamArray(data, func(dec *json.Decoder) error {
@@ -699,6 +745,21 @@ func (e *imageNestedErrors) UnmarshalJSON(data []byte) error {
 				e.Ours++
 			} else {
 				e.Foreign++
+				code := appendForeignCode(nil, it.ErrorCode, it.Code)
+				if len(code) == 0 {
+					// The collection is coded only through its nested BatchErrors.
+					for _, b := range it.BatchErrors.Items {
+						if code = appendForeignCode(nil, b.ErrorCode, b.Code); len(code) > 0 {
+							break
+						}
+					}
+				}
+				if len(code) == 0 {
+					code = []string{unrenderedCode}
+				}
+				if len(e.foreign) < maxRetainedErrorCodes {
+					e.foreign = append(e.foreign, code[0])
+				}
 			}
 		}
 		if len(e.Items) < maxDecodedErrorItems {
