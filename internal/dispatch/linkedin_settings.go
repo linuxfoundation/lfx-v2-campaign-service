@@ -62,6 +62,12 @@ const (
 // An ADOPTED row records no budget or flight, so those read `unknown`; the campaign-level
 // fields are read normally.
 func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign) (*model.CampaignSettingsReadback, error) {
+	// The stored id is validated VERBATIM before anything else: " 777" is not campaign 777, and
+	// a trimmed read would describe a campaign the row does not name.
+	if err := linkedin.ValidateCampaignID(campaign.PlatformCampaignID); err != nil {
+		return nil, fmt.Errorf("read linkedin campaign settings: the campaign row's platform campaign id is not a canonical LinkedIn campaign id, so it names no campaign this read may describe; re-dispatch the campaign: %w: %w",
+			err, domain.ErrCampaignUpstreamIdentityMismatch)
+	}
 	created := linkedInCreationAccountID(campaign)
 	if created == "" {
 		return nil, fmt.Errorf("read linkedin campaign settings: campaign %s does not record which ad account it was created under, so its id cannot be resolved against any account: %w",

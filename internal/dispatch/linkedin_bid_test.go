@@ -107,6 +107,10 @@ func TestLinkedIn_WriteBid_RowFactsRefuseBeforeAnyRequest(t *testing.T) {
 	badID.PlatformCampaignID = "77/7"
 	pastInt64 := liRow()
 	pastInt64.PlatformCampaignID = "9223372036854775808"
+	padded := liRow()
+	padded.PlatformCampaignID = " 777"
+	trailing := liRow()
+	trailing.PlatformCampaignID = "777 "
 	cases := []struct {
 		name   string
 		row    *model.Campaign
@@ -114,13 +118,16 @@ func TestLinkedIn_WriteBid_RowFactsRefuseBeforeAnyRequest(t *testing.T) {
 		check  func(error) bool
 	}{
 		{"adopted row", adopted, 6.5, func(e error) bool {
-			return errors.Is(e, domain.ErrBidUnwritable) && strings.Contains(e.Error(), "ADOPTED")
+			return errors.Is(e, domain.ErrBidAdoptedCampaign) && errors.Is(e, domain.ErrBidUnwritable) && strings.Contains(e.Error(), "ADOPTED")
 		}},
 		{"unknown provenance", unknown, 6.5, func(e error) bool {
 			return errors.Is(e, domain.ErrCampaignProvenanceUnknown) && errors.Is(e, domain.ErrCampaignAccountMismatch)
 		}},
 		{"malformed campaign id", badID, 6.5, func(e error) bool { return errors.Is(e, domain.ErrBidUnwritable) }},
 		{"campaign id past int64", pastInt64, 6.5, func(e error) bool { return errors.Is(e, domain.ErrBidUnwritable) }},
+		// VERBATIM: a padded stored id is not campaign 777 and must never read or mutate it.
+		{"leading space in stored id", padded, 6.5, func(e error) bool { return errors.Is(e, domain.ErrBidUnwritable) }},
+		{"trailing space in stored id", trailing, 6.5, func(e error) bool { return errors.Is(e, domain.ErrBidUnwritable) }},
 		{"sub-cent amount", liRow(), 2.345, func(e error) bool { return errors.Is(e, domain.ErrBidAmountRejected) }},
 		{"zero amount", liRow(), 0, func(e error) bool { return errors.Is(e, domain.ErrBidAmountRejected) }},
 	}

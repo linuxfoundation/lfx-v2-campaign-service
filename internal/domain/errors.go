@@ -210,8 +210,8 @@ var (
 	// (no dispatcher, or the dispatcher is not a BidWriter). The platform is never contacted.
 	// Maps to 400, and lives here for the same reason as ErrBudgetWriteUnsupported.
 	//
-	// Microsoft Advertising, Reddit, Meta and X implement the capability today (LFXV2-2665);
-	// Google Ads and LinkedIn still answer 400. As with budgets, the service layer holds NO
+	// Microsoft Advertising, Reddit, Meta, X and LinkedIn implement the capability today
+	// (LFXV2-2665); Google Ads still answers 400. As with budgets, the service layer holds NO
 	// allowlist: what a platform supports is decided solely by whether its dispatcher is a
 	// BidWriter.
 	ErrBidUnsupported = errors.New("bid writes are not supported for this platform")
@@ -224,6 +224,15 @@ var (
 	// Maps to 409: each is a property of how the campaign is set up, so no retry improves it.
 	// An outcome the platform did not confirm is never this sentinel.
 	ErrBidUnwritable = errors.New("the campaign's bid could not be written as a manual bid")
+
+	// ErrBidAdoptedCampaign is the NARROWER reason a bid write was refused because the campaign
+	// was ADOPTED (bound from the ad platform, not created here), so this service never set up
+	// the bidding it would be writing into. An adapter returns it ALONGSIDE ErrBidUnwritable, so
+	// every existing ErrBidUnwritable caller keeps matching; the bid handler checks it FIRST so
+	// the 409 names adoption rather than ErrBidUnwritable's strategy/child-entity text, which
+	// does not describe this case (LinkedIn bids on the campaign itself — there is no ad group,
+	// ad set or line item to be missing). Nothing was sent; maps to 409.
+	ErrBidAdoptedCampaign = errors.New("the campaign was adopted, so its bid is managed in the ad platform")
 
 	// ErrBidAmountRejected indicates the requested BID was refused and the platform was NOT
 	// changed: by the adapter's own bounds before the mutate, or by the platform's DEFINITE

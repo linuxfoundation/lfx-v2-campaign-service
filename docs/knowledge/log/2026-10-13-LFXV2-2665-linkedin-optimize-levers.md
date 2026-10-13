@@ -43,3 +43,10 @@ int64 (shape plus `ParseInt`, as Microsoft's rule does), so `9223372036854775808
 adoption, campaign-ref (400 before the lookup), the settings readback and the bid lever; a
 connection storing such an account id is an unusable connection (409) on the readback and the bid
 lever. The design and the decoder-drift test now state that the Pattern is the shape only.
+
+Sixth #318 review round: the bid lever and the settings readback validate the stored
+`platform_campaign_id` verbatim (a padded " 777" fails closed — 409 — instead of reading or
+mutating campaign 777; adoption and campaign-ref already did). An adopted LinkedIn bid refusal now
+carries the new `domain.ErrBidAdoptedCampaign` alongside `ErrBidUnwritable`, and the bid handler
+answers it with its own 409 naming adoption and Campaign Manager instead of the generic
+strategy/ad-group text.

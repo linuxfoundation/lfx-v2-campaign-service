@@ -4275,7 +4275,9 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   whenever the currency is missing, never a bare number), `objective_type`. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
-  Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidUnwritable`, campaign id
+  Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
+  checks the adoption sentinel first and answers its own 409 naming Campaign Manager), the stored
+  campaign id validated VERBATIM (never trimmed — " 777" is not campaign 777), campaign id
   shape, amount (`linkedin.ValidateBidAmount`: whole cents, ≤ 1,000,000 → else 400), credentials +
   account match, ONE read, then guards — the reported `account` must be present and the
   connection's, a reported status that is not terminal (CANCELED/PENDING_DELETION/REMOVED; an unreported status is refused too), `ManualCPC()` (costType CPC with

@@ -236,3 +236,22 @@ func TestLinkedIn_AccountIDPastInt64IsAnUnusableConnection(t *testing.T) {
 		t.Fatalf("%d request(s) sent with an impossible account id", n)
 	}
 }
+
+// The stored campaign id is validated VERBATIM: a row holding " 777" or "777 " is not campaign 777,
+// so the readback refuses it (409) before any request rather than describing campaign 777.
+func TestLinkedIn_ReadSettings_PaddedStoredIDFailsClosed(t *testing.T) {
+	for _, id := range []string{" 777", "777 ", "0777"} {
+		t.Run(id, func(t *testing.T) {
+			d, api := liLeverDispatcher(t, map[string]settingsRoute{liCampaignPath: {status: 200, body: liCampaignJSON()}})
+			row := liRow()
+			row.PlatformCampaignID = id
+			_, err := d.ReadSettings(context.Background(), "proj", model.ProviderLinkedInAds, row)
+			if !errors.Is(err, domain.ErrCampaignUpstreamIdentityMismatch) {
+				t.Fatalf("err = %v, want ErrCampaignUpstreamIdentityMismatch", err)
+			}
+			if n := len(api.requests()); n != 0 {
+				t.Fatalf("%d request(s) sent for a non-canonical stored id", n)
+			}
+		})
+	}
+}

@@ -49,10 +49,12 @@ func (d *LinkedInDispatcher) WriteBid(ctx context.Context, projectID string, pla
 			bid.Type, domain.ErrBidUnwritable)
 	}
 	if linkedInAdopted(campaign) {
-		return fmt.Errorf("write linkedin campaign bid: campaign %s was ADOPTED, and adoption verifies the campaign's identity, not the bidding setup a bid would be written into; change the bid in LinkedIn Campaign Manager: %w",
-			campaign.PlatformCampaignID, domain.ErrBidUnwritable)
+		return fmt.Errorf("write linkedin campaign bid: campaign %s was ADOPTED, and adoption verifies the campaign's identity, not the bidding setup a bid would be written into; change the bid in LinkedIn Campaign Manager: %w: %w",
+			campaign.PlatformCampaignID, domain.ErrBidAdoptedCampaign, domain.ErrBidUnwritable)
 	}
-	campaignID := strings.TrimSpace(campaign.PlatformCampaignID)
+	// VERBATIM, never trimmed: a row holding " 777" is not campaign 777, and trimming it would read
+	// and mutate a campaign the row does not name. A non-canonical stored id fails closed here.
+	campaignID := campaign.PlatformCampaignID
 	if err := linkedin.ValidateCampaignID(campaignID); err != nil {
 		return fmt.Errorf("write linkedin campaign bid: the campaign row's platform campaign id cannot address a linkedin request: %w: %w", err, domain.ErrBidUnwritable)
 	}
