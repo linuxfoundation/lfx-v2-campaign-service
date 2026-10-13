@@ -148,7 +148,10 @@ stored the asset and `200` when an identical upload already existed and the stor
 returned unchanged — the upload is idempotent on `(brief_id, checksum)`, and an unconditional
 `201` told a retrying client it had created something when nothing was created. The two statuses
 are selected by the `created` attribute via `Response(StatusCreated, Tag("created","true"))` plus
-a default `Response(StatusOK)`; both share one body shape. Neither carries an ETag: creative
+a default `Response(StatusOK)`; both share one body shape. The 201 arm also declares
+`Body(CreativeAsset)` explicitly: since goa v3.31 an implicit response body drops the attribute its
+`Tag` tests, which would silently remove `created` from the 201 body; an explicit `Body` is used as
+declared. Neither carries an ETag: creative
 assets are insert-only and carry no version, so there is no optimistic-concurrency
 handle to return (contrast the campaign/audience updates that require `If-Match`). `project_id`
 uses the permissive UUID-or-slug attribute, not the slug-only one `create-campaigns` needs,

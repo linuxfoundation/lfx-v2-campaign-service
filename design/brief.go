@@ -379,7 +379,7 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 		//     describe a campaign that recorded no impressions and no spend and tell the
 		//     operator to check targeting and creative approval. That is the zero_delivery
 		//     symptom and remedy. `budget_constrained` — previously pinned here — is the
-		//     OPPOSITE state: it fires on a campaign spending AHEAD of plan and its remedy is
+		//     OPPOSITE state: it fires on a campaign spending above 90% of plan and its remedy is
 		//     to raise or accept the budget, so the composed example described two different
 		//     findings at once and propagated that incoherence into every
 		//     `action_items` array example.
@@ -1697,7 +1697,15 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			//
 			// No ETag on either: creative assets are insert-only and carry no version, so there
 			// is no optimistic-concurrency handle to hand back.
-			Response(StatusCreated, func() { Tag("created", "true") })
+			//
+			// Body(CreativeAsset) is explicit on the 201 arm because, since goa v3.31, a
+			// response's implicit body drops the attribute its Tag tests (goa treats a Tag
+			// attribute like a header-mapped one). An explicit Body is used as declared, so
+			// the 201 body keeps rendering `created` exactly as the 200 arm does.
+			Response(StatusCreated, func() {
+				Tag("created", "true")
+				Body(CreativeAsset)
+			})
 			Response(StatusOK)
 			briefErrorResponses()
 		})

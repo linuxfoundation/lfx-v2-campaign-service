@@ -119,15 +119,14 @@ func buildMux(ctx context.Context, cfg *config.Config, endpoints *svc.Endpoints,
 	// formatter instead of building its generated code/message/reason body. Validation 400s are
 	// kept from echoing the rejected value by the encoder instead (see error_formatter.go).
 	//
-	// ACCEPTED KNOWN UPSTREAM RACE. With a nil formatter, goa v3.25.3's goahttp.ErrorEncoder
-	// (http/encoding.go:265-266) assigns `formatter = NewErrorResponse` INSIDE the closure it
-	// returns, on every non-named error, so two concurrent error responses on one endpoint write
-	// that captured variable without synchronization. The value written is always the same, so
-	// no response is ever wrong, but it is a Go-memory-model race that `-race` reports if a test
-	// drives concurrent errors through one endpoint. It is not avoidable here: a non-nil
-	// formatter is what replaced the named-error bodies. Goa fixed it upstream in v3.30.0 (the nil
-	// check moved outside the closure); the remedy is a goa bump (>= v3.30.0, regenerating gen/),
-	// tracked as a follow-up rather than done in this change. main carried the same race before.
+	// The nil formatter is race-free on the pinned goa (go.mod). Before goa v3.29,
+	// goahttp.ErrorEncoder assigned `formatter = NewErrorResponse` INSIDE the closure it returns,
+	// on every non-named error, so concurrent error responses on one endpoint wrote that captured
+	// variable without synchronization (a race `-race` reported; the value was always the same).
+	// Goa moved the nil check outside the closure, so the default is resolved once when each
+	// generated handler builds its encoder. TestErrorEncoder_ConcurrentNonNamedErrors_NoRace
+	// drives concurrent non-named errors through one endpoint under -race and fails on an
+	// affected goa; do not pin goa below v3.29.
 	eh := errorHandler(ctx)
 	server := svcsvr.New(
 		endpoints,
