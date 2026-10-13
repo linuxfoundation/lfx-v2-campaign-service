@@ -34,13 +34,41 @@ func TestComputePacing_ProratesAcrossTheFlight(t *testing.T) {
 	if math.Abs(onPlan.Pct-100) > 1 {
 		t.Errorf("halfway through the flight having spent half the budget = %.1f%%, want ~100%%", onPlan.Pct)
 	}
-	if onPlan.Label != PacingNormal {
-		t.Errorf("label = %q, want normal", onPlan.Label)
+	if onPlan.Label != PacingConstrained {
+		t.Errorf("label = %q, want constrained (exactly on plan, D2)", onPlan.Label)
 	}
 
 	// The same $500 against the FULL budget would read as 50% — the naive comparison.
 	if math.Abs(onPlan.Pct-50) < 1 {
 		t.Error("pacing was computed against the whole budget rather than the elapsed share")
+	}
+}
+
+// TestComputePacing_D2LadderBoundaries pins the brief path's bands at each boundary of the one
+// 50/90/100 ladder (product decision D2, 2026-10-13), unrounded: before D2 this path ran
+// 50/100/130, so above 90 through 100 was normal and above 100 through 130 was constrained.
+func TestComputePacing_D2LadderBoundaries(t *testing.T) {
+	flight := Flight{Start: day(-10), End: day(9)} // expected-by-now = $500, so spend = pct * 5
+	for _, tc := range []struct {
+		pct  float64
+		want PacingLabel
+	}{
+		{49.9, PacingUnderspending},
+		{50, PacingNormal},
+		{89.9, PacingNormal},
+		{90, PacingNormal},
+		{90.1, PacingConstrained},
+		{100, PacingConstrained},
+		{100.1, PacingOverspending},
+	} {
+		got := ComputePacing(tc.pct*5, 10, 1000, BudgetLifetime, flight, testNow, DefaultThresholds)
+		if !got.Computable || math.Abs(got.Pct-tc.pct) > 1e-9 {
+			t.Errorf("%v%%: computable=%v pct=%v", tc.pct, got.Computable, got.Pct)
+			continue
+		}
+		if got.Label != tc.want {
+			t.Errorf("%v%% labelled %q, want %q", tc.pct, got.Label, tc.want)
+		}
 	}
 }
 
@@ -50,15 +78,16 @@ func TestComputePacing_Labels(t *testing.T) {
 		spend float64
 		want  PacingLabel
 	}{
-		"far below plan":        {100, PacingUnderspending}, // 20%
-		"just below the floor":  {245, PacingUnderspending}, // 49%
-		"exactly on the floor":  {250, PacingNormal},        // 50% — boundary is half-open UP
-		"healthy":               {400, PacingNormal},        // 80%
-		"top of normal":         {450, PacingNormal},        // 90%
-		"exactly on plan":       {500, PacingNormal},        // 100% — on plan is NOT constrained
-		"ahead of plan":         {600, PacingConstrained},   // 120%
-		"at the overspend edge": {650, PacingConstrained},   // 130%
-		"overspending":          {700, PacingOverspending},  // 140%
+		"far below plan":       {100, PacingUnderspending}, // 20%
+		"just below the floor": {245, PacingUnderspending}, // 49%
+		"exactly on the floor": {250, PacingNormal},        // 50% — boundary is half-open UP
+		"healthy":              {400, PacingNormal},        // 80%
+		"top of normal":        {450, PacingNormal},        // 90% — the healthy top is inclusive
+		"constrained":          {475, PacingConstrained},   // 95% (D2: 50/90/100)
+		"exactly on plan":      {500, PacingConstrained},   // 100% — on plan is constrained, not overspending
+		"ahead of plan":        {600, PacingOverspending},  // 120%
+		"former 130 edge":      {650, PacingOverspending},  // 130% — the pre-D2 brief edge is gone
+		"overspending":         {700, PacingOverspending},  // 140%
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -201,8 +230,8 @@ func TestComputePacing_ComparesLikeForLikePeriods(t *testing.T) {
 	if math.Abs(got.Pct-100) > 1 {
 		t.Errorf("on-plan campaign read over 7 days = %.1f%%, want ~100%%", got.Pct)
 	}
-	if got.Label != PacingNormal {
-		t.Errorf("label = %q, want normal — this campaign is exactly on plan", got.Label)
+	if got.Label != PacingConstrained {
+		t.Errorf("label = %q, want constrained (exactly on plan, D2)", got.Label)
 	}
 
 	// Had expected-spend been computed over the full 20 elapsed days ($2000), the same $700
@@ -258,8 +287,8 @@ func TestComputePacing_DailyBudgetUsesTheMeasuredWindow(t *testing.T) {
 	if math.Abs(got.Pct-100) > 1 {
 		t.Errorf("pct = %.1f%%, want ~100%% (expected spend must cover the 7 measured days, not 20 elapsed)", got.Pct)
 	}
-	if got.Label != PacingNormal {
-		t.Errorf("label = %q, want normal", got.Label)
+	if got.Label != PacingConstrained {
+		t.Errorf("label = %q, want constrained (exactly on plan, D2)", got.Label)
 	}
 }
 
@@ -432,13 +461,13 @@ func TestComputePacing_TwoDayFlightOnItsFinalDay(t *testing.T) {
 	if onPlan.Pct != 100 {
 		t.Errorf("on-plan two-day flight at noon on day two = %v%%, want exactly 100%%", onPlan.Pct)
 	}
-	if onPlan.Label != PacingNormal {
-		t.Errorf("label = %q, want normal — this campaign spent exactly its plan", onPlan.Label)
+	if onPlan.Label != PacingConstrained {
+		t.Errorf("label = %q, want constrained (exactly on plan, D2)", onPlan.Label)
 	}
 
 	// The reported case, with the reported numbers: $200 spent by noon of the final day. Front-
 	// loading the whole two-day budget into the first day and a half IS ahead of plan, and 133%
-	// clears the 130 overspend edge, so `overspending` here is a true finding rather than the
+	// clears the 100 overspend edge, so `overspending` here is a true finding rather than the
 	// artefact. What changed is the MAGNITUDE: the un-normalised end priced the entire flight at
 	// a single day and reported 200%.
 	got := ComputePacing(200, 2, 100, BudgetDaily, Flight{Start: &start, End: &end}, now, DefaultThresholds)
@@ -455,8 +484,8 @@ func TestComputePacing_TwoDayFlightOnItsFinalDay(t *testing.T) {
 	// And by the END of the flight the full $200 is exactly the plan.
 	atEnd := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
 	done := ComputePacing(200, 2, 100, BudgetDaily, Flight{Start: &start, End: &end}, atEnd, DefaultThresholds)
-	if done.Pct != 100 || done.Label != PacingNormal {
-		t.Errorf("a fully-delivered two-day flight = %v%% / %q, want exactly 100%% / normal", done.Pct, done.Label)
+	if done.Pct != 100 || done.Label != PacingConstrained {
+		t.Errorf("a fully-delivered two-day flight = %v%% / %q, want exactly 100%% / constrained (D2)", done.Pct, done.Label)
 	}
 }
 
@@ -481,8 +510,8 @@ func TestComputePacing_SingleDayFlight(t *testing.T) {
 	if got.Pct != 100 {
 		t.Errorf("a fully-spent one-day flight = %v%%, want exactly 100%%", got.Pct)
 	}
-	if got.Label != PacingNormal {
-		t.Errorf("label = %q, want normal", got.Label)
+	if got.Label != PacingConstrained {
+		t.Errorf("label = %q, want constrained (exactly on plan, D2)", got.Label)
 	}
 
 	// Half spent on that same one-day flight is genuinely underspending — the label must still
@@ -516,8 +545,8 @@ func TestComputePacing_FinalDayOfFlightIsPaced(t *testing.T) {
 	if got.Pct != 100 {
 		t.Errorf("on-plan campaign on its final day = %v%%, want exactly 100%%", got.Pct)
 	}
-	if got.Label != PacingNormal {
-		t.Errorf("label = %q, want normal", got.Label)
+	if got.Label != PacingConstrained {
+		t.Errorf("label = %q, want constrained (exactly on plan, D2)", got.Label)
 	}
 }
 

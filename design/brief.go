@@ -379,7 +379,7 @@ var CampaignActionItem = Type("campaign-action-item", func() {
 		//     describe a campaign that recorded no impressions and no spend and tell the
 		//     operator to check targeting and creative approval. That is the zero_delivery
 		//     symptom and remedy. `budget_constrained` — previously pinned here — is the
-		//     OPPOSITE state: it fires on a campaign spending AHEAD of plan and its remedy is
+		//     OPPOSITE state: it fires on a campaign spending above 90% of plan and its remedy is
 		//     to raise or accept the budget, so the composed example described two different
 		//     findings at once and propagated that incoherence into every
 		//     `action_items` array example.
@@ -1515,7 +1515,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("upload-creative-asset", func() {
-		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch.")
+		Description("Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch.")
 		Payload(func() {
 			bearerToken()
 			// Permissive project identifier (UUID or slug), matching the other brief
@@ -1629,7 +1629,15 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			//
 			// No ETag on either: creative assets are insert-only and carry no version, so there
 			// is no optimistic-concurrency handle to hand back.
-			Response(StatusCreated, func() { Tag("created", "true") })
+			//
+			// Body(CreativeAsset) is explicit on the 201 arm because, since goa v3.31, a
+			// response's implicit body drops the attribute its Tag tests (goa treats a Tag
+			// attribute like a header-mapped one). An explicit Body is used as declared, so
+			// the 201 body keeps rendering `created` exactly as the 200 arm does.
+			Response(StatusCreated, func() {
+				Tag("created", "true")
+				Body(CreativeAsset)
+			})
 			Response(StatusOK)
 			briefErrorResponses()
 		})

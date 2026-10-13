@@ -27,10 +27,10 @@ func xTestPNG(n int) []byte {
 	return b
 }
 
-// scopedCreativeAssets serves assets keyed by project/brief/id, so a lookup under any other
+// xScopedCreativeAssets serves assets keyed by project/brief/id, so a lookup under any other
 // project or brief is ErrNotFound — the ownership property the real repository's scoped
 // queries provide. It counts loads so a test can prove a refusal happened before one.
-type scopedCreativeAssets struct {
+type xScopedCreativeAssets struct {
 	mu     sync.Mutex
 	assets map[string]*model.CreativeAsset
 	loads  int
@@ -41,7 +41,7 @@ type scopedCreativeAssets struct {
 	failLoads int
 }
 
-func (s *scopedCreativeAssets) GetAsset(_ context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
+func (s *xScopedCreativeAssets) GetAsset(_ context.Context, projectID, briefID, assetID string) (*model.CreativeAsset, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loads++
@@ -57,7 +57,7 @@ func (s *scopedCreativeAssets) GetAsset(_ context.Context, projectID, briefID, a
 	return a, nil
 }
 
-func (s *scopedCreativeAssets) GetAssetSize(_ context.Context, projectID, briefID, assetID string) (int64, error) {
+func (s *xScopedCreativeAssets) GetAssetSize(_ context.Context, projectID, briefID, assetID string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sizes++
@@ -69,15 +69,15 @@ func (s *scopedCreativeAssets) GetAssetSize(_ context.Context, projectID, briefI
 	return int64(len(a.Bytes)), nil
 }
 
-func (s *scopedCreativeAssets) loadCount() int {
+func (s *xScopedCreativeAssets) loadCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loads
 }
 
-func briefAsset(img []byte) *scopedCreativeAssets {
+func briefAsset(img []byte) *xScopedCreativeAssets {
 	b := testBrief()
-	return &scopedCreativeAssets{assets: map[string]*model.CreativeAsset{
+	return &xScopedCreativeAssets{assets: map[string]*model.CreativeAsset{
 		b.ProjectID + "/" + b.ID + "/" + xAssetID: {ID: xAssetID, ProjectID: b.ProjectID, BriefID: b.ID, MimeType: model.MimeTypePNG, Bytes: img, ByteSize: int64(len(img))},
 	}}
 }
@@ -290,7 +290,7 @@ func TestTwitter_ImageRefusalsPrecedeEveryRequest(t *testing.T) {
 			if total != 0 {
 				t.Errorf("a refused image must not contact X, saw %d requests", total)
 			}
-			if s, ok := tc.assets.(*scopedCreativeAssets); ok && tc.noLoads && s.loadCount() != 0 {
+			if s, ok := tc.assets.(*xScopedCreativeAssets); ok && tc.noLoads && s.loadCount() != 0 {
 				t.Errorf("the refusal must precede loading the blob, loads=%d", s.loadCount())
 			}
 		})

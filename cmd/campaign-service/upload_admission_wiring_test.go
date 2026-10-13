@@ -33,18 +33,15 @@ import (
 // produces, and one that can only appear if admission is wired.
 //
 // Only the probe's response is inspected. The parked requests are never allowed to complete
-// during the assertion, which also keeps this test clear of a pre-existing upstream data race in
-// goa v3.25.3's ErrorEncoder (http/encoding.go:265-266 writes a shared `formatter` closure
-// variable): that race fires when two error responses encode concurrently and reproduces through
-// the bare mux with no admission middleware present, so it is not this PR's to fix here. (That
-// write happens only for a nil formatter, and buildMux passes nil to every generated server: a
-// non-nil formatter replaces every named error's generated body, see error_formatter.go.)
+// during the assertion. (This test was also written to stay clear of goa's pre-v3.29
+// ErrorEncoder data race on concurrent error responses; goa is now past that fix, and
+// TestErrorEncoder_ConcurrentNonNamedErrors_NoRace pins it through the real mux.)
 func TestUploadAdmission_IsWiredIntoTheRealChain(t *testing.T) {
 	// buildHandler is exercised with a SENTINEL inner handler in place of the mux. The subject
 	// under test is buildHandler's own composition -- whether it installs UploadAdmission --
-	// and the sentinel keeps the parked requests out of goa's generated error encoder, which
-	// carries a pre-existing upstream data race (see the doc comment above). The chain being
-	// measured is the real one; only the thing it wraps is substituted.
+	// and the sentinel keeps the parked requests under the test's control instead of goa's
+	// generated decoders and error encoder. The chain being measured is the real one; only the
+	// thing it wraps is substituted.
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
 			_, _ = io.Copy(io.Discard, r.Body)

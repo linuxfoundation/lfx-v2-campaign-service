@@ -234,9 +234,17 @@ type CampaignResult struct {
 	// when the campaign itself was reused. So true means "the entire tree already existed".
 	// (At the campaign level, a reused campaign is one found by findCampaignByName OR one
 	// reconciled by the duplicate-name self-heal after losing a create race.)
-	AlreadyExisted  bool     `json:"alreadyExisted,omitempty"`
-	MicrosoftAdsURL string   `json:"microsoftAdsUrl"`
-	Steps           []string `json:"steps"`
+	AlreadyExisted bool `json:"alreadyExisted,omitempty"`
+	// ImageMediaID / ImageAdExtensionID record the campaign image extension (LFXV2-2665),
+	// set by the DISPATCHER after AttachCampaignImage — CreateCampaign never sets them. They
+	// are the persisted record of the upload, mirroring the Meta result's per-ad ImageHash:
+	// MediaID is "" when nothing was uploaded (no image requested, or an extension was
+	// already associated), and either may be set alongside a degraded outcome so a
+	// partially-built extension can be found.
+	ImageMediaID       string   `json:"imageMediaId,omitempty"`
+	ImageAdExtensionID string   `json:"imageAdExtensionId,omitempty"`
+	MicrosoftAdsURL    string   `json:"microsoftAdsUrl"`
+	Steps              []string `json:"steps"`
 }
 
 // msCampaign is one Campaign in the POST CampaignManagement/v13/Campaigns body. Only

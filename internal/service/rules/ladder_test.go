@@ -8,34 +8,23 @@ import (
 	"testing"
 )
 
-// TestLadders_Values pins the two named ladders' numbers. D2 (which ladder is correct) is open;
-// a change here moves operator-facing alert bands and is that decision, not a refactor.
-func TestLadders_Values(t *testing.T) {
-	if want := (PacingLadder{Underspending: 50, Constrained: 100, Overspending: 130}); BriefViewLadder() != want {
-		t.Errorf("BriefViewLadder = %+v, want %+v", BriefViewLadder(), want)
+// TestStandardLadder_Values pins the one ladder's numbers (D2: 50/90/100 everywhere) and that the
+// brief view's DefaultThresholds is that ladder. A change here moves operator-facing alert bands on
+// both read paths at once.
+func TestStandardLadder_Values(t *testing.T) {
+	if want := (PacingLadder{Underspending: 50, Constrained: 90, Overspending: 100}); StandardLadder() != want {
+		t.Errorf("StandardLadder = %+v, want %+v", StandardLadder(), want)
 	}
-	if want := (PacingLadder{Underspending: 50, Constrained: 90, Overspending: 100}); AccountMonitorLadder() != want {
-		t.Errorf("AccountMonitorLadder = %+v, want %+v", AccountMonitorLadder(), want)
-	}
-	if DefaultThresholds != BriefViewLadder() {
-		t.Errorf("DefaultThresholds = %+v, want BriefViewLadder %+v", DefaultThresholds, BriefViewLadder())
+	if DefaultThresholds != StandardLadder() {
+		t.Errorf("DefaultThresholds = %+v, want StandardLadder %+v", DefaultThresholds, StandardLadder())
 	}
 }
 
-// TestPacingLadder_Label_Boundaries pins the one implementation's inclusivity on both ladders.
+// TestPacingLadder_Label_Boundaries pins the one implementation's inclusivity on the one ladder.
 func TestPacingLadder_Label_Boundaries(t *testing.T) {
-	for _, c := range []struct {
-		name   string
-		ladder PacingLadder
-		want   map[float64]string
-	}{
-		{"brief", BriefViewLadder(), briefViewWant},
-		{"monitor", AccountMonitorLadder(), unroundedMonitorWant},
-	} {
-		for _, pct := range boundaryPcts {
-			if got := c.ladder.Label(pct); string(got) != c.want[pct] {
-				t.Errorf("%s.Label(%v) = %q, want %q", c.name, pct, got, c.want[pct])
-			}
+	for _, pct := range boundaryPcts {
+		if got := StandardLadder().Label(pct); string(got) != unroundedMonitorWant[pct] {
+			t.Errorf("StandardLadder().Label(%v) = %q, want %q", pct, got, unroundedMonitorWant[pct])
 		}
 	}
 }
@@ -44,11 +33,8 @@ func TestPacingLadder_Label_Boundaries(t *testing.T) {
 // view's historical behaviour), while pacingLabelFor keeps the account monitor's historical
 // normal — see the guard there.
 func TestPacingLadder_Label_NaN(t *testing.T) {
-	if got := BriefViewLadder().Label(math.NaN()); got != PacingOverspending {
-		t.Errorf("BriefViewLadder().Label(NaN) = %q, want overspending", got)
-	}
-	if got := AccountMonitorLadder().Label(math.NaN()); got != PacingOverspending {
-		t.Errorf("AccountMonitorLadder().Label(NaN) = %q, want overspending", got)
+	if got := StandardLadder().Label(math.NaN()); got != PacingOverspending {
+		t.Errorf("StandardLadder().Label(NaN) = %q, want overspending", got)
 	}
 }
 

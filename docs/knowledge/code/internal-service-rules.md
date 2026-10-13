@@ -54,25 +54,30 @@ anything: the four now share **one** pacing ladder, `pacingLabelFor` in
 `monitor_shared.go`, and the deliberately-ported defects are being fixed under
 their own tickets instead of frozen.
 
-What remains separate is the **ladder's numbers**, not its implementation.
+The two read paths (brief view and account monitors) also share the **ladder** — its
+implementation and, since D2, its numbers.
 
-## One pacing ladder implementation, two named ladders (D2 open)
+## One pacing ladder: 50 / 90 / 100 everywhere (D2)
 
 Placing a percentage on a band lives in **one** place: `PacingLadder.Label` in
 `internal/service/rules/ladder.go`. Bands are half-open upward — `pct < Underspending`
 is underspending, up to and including `Constrained` is normal, up to and including
-`Overspending` is constrained, above that is overspending. Two named ladders feed it:
+`Overspending` is constrained, above that is overspending. **One** ladder feeds it,
+`StandardLadder()` = 50 / 90 / 100: below 50 underspending, 50–90 normal, above 90 up to and
+including exactly on plan (100) constrained, above 100 overspending. It is used by
+`ComputePacing` → `Evaluate` (the single-campaign brief view, via `DefaultThresholds`;
+`Thresholds` is an alias of `PacingLadder`) and by `pacingLabelFor` → every `EvaluateXMonitor`.
 
-| Ladder | Bands | Used by |
-|---|---|---|
-| `BriefViewLadder` (= `DefaultThresholds`; `Thresholds` is an alias of `PacingLadder`) | 50 / 100 / 130 — exactly on plan is normal | `ComputePacing` → `Evaluate`, the single-campaign brief view |
-| `AccountMonitorLadder` | 50 / 90 / 100 — 95% of plan is already constrained, exactly on plan is constrained | `pacingLabelFor` → every `EvaluateXMonitor` |
-
-**Which ladder is correct is open product decision D2** (Monitor & Optimize brief), and it is
-not made in code. Switching a caller from one ladder to the other moves operator-facing alert
-bands, so it is that decision on its own ticket — never a side effect of a refactor. Until
-then, do not write another band switch, priority rank or unknown-pacing builder: add a ladder
-value or call the existing helper.
+**Product decision D2 (2026-10-13): the pacing ladder is 50/90/100 everywhere.** Before it the
+brief view ran its own `BriefViewLadder` (50 / 100 / 130, matching lfx-self-serve's
+`CAMPAIGN_PACING_THRESHOLDS`, under which exactly on plan was normal) and the monitors ran
+`AccountMonitorLadder` (50 / 90 / 100); both were replaced by `StandardLadder`. The visible
+shift is on the brief path only: values above 90% through 100% of plan moved from `normal` to
+`constrained` (exactly 90% stays `normal`; exactly 100% — on plan — is in this band), and values
+above 100% through 130% moved from `constrained` to `overspending` — so a brief campaign exactly
+on plan now raises a `budget_constrained` item. Changing the ladder moves both read paths' alert bands at once; do
+not add a second ladder, band switch, priority rank or unknown-pacing builder without a product
+decision behind it.
 
 What stays per caller, deliberately:
 
@@ -90,9 +95,10 @@ What stays per caller, deliberately:
   in `monitor_shared.go`); the brief view's `Evaluate` returns items in rule order.
 
 `ladder_pin_test.go` places every boundary (49.99/50/50.01, 89.99/90/90.01, 99.99/100/100.01,
-129.99/130/130.01, plus points either side of each rounding half-way mark), zero spend, no
-budget and a failed fetch through every caller's own entry point, and states each caller's own
-outcome.
+the brief view's former 129.99/130/130.01 edge, plus points either side of each rounding
+half-way mark), zero spend, no budget and a failed fetch through every caller's own entry
+point, and states each caller's own outcome; `TestComputePacing_D2LadderBoundaries` adds
+49.9/50/89.9/90/90.1/100/100.1 on the brief path.
 
 It exists because the UI carried four separate implementations of this logic — LinkedIn, Reddit,
 Meta and campaign-metrics — which disagreed three ways on the underspending floor, and Reddit
@@ -200,7 +206,7 @@ across platforms — the same reason the brief-metrics response refuses a cross-
 |---|---|
 | `zero_delivery` | No impressions **and** no spend, on a **paid-ads** campaign believed to exist upstream **whose flight has begun**. Suppresses the pacing rules below for that campaign |
 | `underspending` | Pacing is computable and below the floor |
-| `budget_constrained` | Pacing is computable and above plan |
+| `budget_constrained` | Pacing is computable and `constrained` (above 90% up to and including 100% of plan — issue text "Budget constrained") or `overspending` (above 100% — "Spending ahead of plan"); one rule token, `MED`, for both |
 | `low_ctr` | CTR below the threshold, over enough impressions to mean anything |
 | `no_conversions` | Zero **measured** conversions over enough clicks to mean anything, on a platform that reports conversions at all |
 

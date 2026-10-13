@@ -88,7 +88,11 @@ route works on the platform gateway (v3.1.0+), but the render alone doesn't prov
 after deploy, verify the HTTPRoute's `Accepted` status condition is `True`.
 
 A second rule routes the reserved `/campaigns`, `/campaigns/`, and `/_campaigns/`
-placeholder prefixes (OpenAPI docs + not-yet-built endpoints).
+placeholder prefixes (OpenAPI docs + not-yet-built endpoints). The `/_campaigns/` prefix also
+forwards the public signed creative-asset route,
+`/_campaigns/creative-assets/{projectId}/{briefId}/{assetId}` (LFXV2-2665), which Reddit fetches
+anonymously; it needs no branch of its own, and the RuleSet's anonymous
+`signed-creative-asset:get` rule is what admits it.
 
 ## Heimdall parity
 
