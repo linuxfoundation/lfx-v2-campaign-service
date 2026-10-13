@@ -84,11 +84,12 @@ Every 2xx body must actually answer before it counts. Each rule below fails clos
   `[]` answered for nobody, and two or more answered for something not asked, so both are a
   failed lookup. Inside that one collection, a null slot (`[null]`) or a null or empty
   `AdExtensionAssociations` means none. An omitted field, `null` or a non-array is also a
-  failed lookup, and nothing is uploaded. Associations with no `AdExtension`, or with an explicit `Type` other than
-  `ImageAdExtension`, are skipped. An image association that reaches the entity check counts only
-  when its `EntityId` is this campaign and its `AssociationType` is `Campaign`; otherwise it
-  fails the lookup and is never treated as AlreadyAttached. Every image association is checked
-  before any is trusted, and the first valid id is returned only when no other entry fails.
+  failed lookup, and nothing is uploaded. Associations with no `AdExtension`, or with an
+  explicit `Type` other than `ImageAdExtension`, are skipped. An image association that
+  reaches the entity check counts only when its `EntityId` is this campaign and its
+  `AssociationType` is `Campaign`; otherwise it fails the lookup and is never treated as
+  AlreadyAttached. Every image association is checked before any is trusted, and the first
+  valid id is returned only when no other entry fails.
 - **AddAdExtensions errors vs. truncation.** Only actual error evidence counts toward a definite
   rejection. That evidence is the whole-wire `AnyErrors` tallies, so an error beyond the
   16-entry retention window still counts. Truncation or null-only placeholders with a null
