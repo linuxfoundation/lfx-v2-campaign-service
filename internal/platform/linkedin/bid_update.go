@@ -168,6 +168,9 @@ func (c *Client) UpdateCampaignUnitCost(ctx context.Context, campaignID, wire st
 	if err != nil {
 		return fmt.Errorf("linkedin: %w", err)
 	}
+	if !ValidAccountID(accountID) {
+		return fmt.Errorf("linkedin: ad account id %q is not a positive 64-bit integer", accountID)
+	}
 	path := fmt.Sprintf("adAccounts/%s/adCampaigns/%s", accountID, campaignID)
 	body := map[string]any{"patch": map[string]any{"$set": map[string]any{
 		"unitCost": map[string]any{"amount": wire, "currencyCode": "USD"},

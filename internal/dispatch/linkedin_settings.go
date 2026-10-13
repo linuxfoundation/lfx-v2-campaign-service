@@ -11,6 +11,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 )
 
 // Upstream-only readback fields only LinkedIn reports. The bid's setup is three LinkedIn fields
@@ -71,6 +72,9 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 		return nil, err
 	}
 	accountID := strings.TrimSpace(res.accountID)
+	if !linkedin.ValidAccountID(accountID) {
+		return nil, linkedinAccountIDUnusable(res, projectID, "read linkedin campaign settings")
+	}
 	if err := verifyLinkedInAccountMatch("read linkedin campaign settings", campaign, accountID); err != nil {
 		return nil, err
 	}
@@ -135,4 +139,13 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 	}
 	rb.SummariseSettings()
 	return rb, nil
+}
+
+// linkedinAccountIDUnusable is the refusal for a connection whose stored ad account id is not a
+// positive int64 (linkedin.ValidAccountID): a permanent defect on the row, decided before anything
+// is sent — the "repair the connection" answer, attributed to the LF system row when it came from
+// there, never a 503 that promises a retry could help.
+func linkedinAccountIDUnusable(res *resolved, projectID, op string) error {
+	return res.systemScoped(fmt.Errorf("%w: %w: %s: the linkedin connection for project %s stores an ad account id that is not a positive 64-bit integer",
+		domain.ErrConnectionNotUsable, domain.ErrProviderConfigInvalid, op, projectID))
 }

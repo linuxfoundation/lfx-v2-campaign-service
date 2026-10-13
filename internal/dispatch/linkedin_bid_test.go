@@ -105,6 +105,8 @@ func TestLinkedIn_WriteBid_RowFactsRefuseBeforeAnyRequest(t *testing.T) {
 	unknown.Result = []byte(`{}`)
 	badID := liRow()
 	badID.PlatformCampaignID = "77/7"
+	pastInt64 := liRow()
+	pastInt64.PlatformCampaignID = "9223372036854775808"
 	cases := []struct {
 		name   string
 		row    *model.Campaign
@@ -118,6 +120,7 @@ func TestLinkedIn_WriteBid_RowFactsRefuseBeforeAnyRequest(t *testing.T) {
 			return errors.Is(e, domain.ErrCampaignProvenanceUnknown) && errors.Is(e, domain.ErrCampaignAccountMismatch)
 		}},
 		{"malformed campaign id", badID, 6.5, func(e error) bool { return errors.Is(e, domain.ErrBidUnwritable) }},
+		{"campaign id past int64", pastInt64, 6.5, func(e error) bool { return errors.Is(e, domain.ErrBidUnwritable) }},
 		{"sub-cent amount", liRow(), 2.345, func(e error) bool { return errors.Is(e, domain.ErrBidAmountRejected) }},
 		{"zero amount", liRow(), 0, func(e error) bool { return errors.Is(e, domain.ErrBidAmountRejected) }},
 	}

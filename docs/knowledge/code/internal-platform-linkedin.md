@@ -470,8 +470,12 @@ or a value past int64 micro-units → unparseable, never rounded or wrapped); a 
 PRESENT without an amount marks the budget unparseable. `runSchedule` epoch-ms → UTC instants. A **404 is (nil, nil) only
 after `confirmAccountReadable`** answers 2xx naming the connection's account — LinkedIn documents
 404 for restricted Ads access too. `Terminal()` is CANCELED/PENDING_DELETION/REMOVED (ARCHIVED and
-COMPLETED can be revived). `ValidateCampaignID` (`^[1-9][0-9]{0,18}$`) is exactly the
-`resolve-linkedin-ads-campaign` Pattern (pinned by `internal/apivalidation`).
+COMPLETED can be revived). `ValidateCampaignID` and `ValidAccountID` require a positive int64
+without a leading zero (`isPositiveLong`: the `^[1-9][0-9]{0,18}$` shape PLUS a `ParseInt`, as
+`microsoft.ValidateCampaignID` does). The `resolve-linkedin-ads-campaign` Pattern is only the shape,
+so the decoder is necessary, not sufficient — `internal/apivalidation` pins that the one class it
+admits and the rule refuses is a 19-digit id past MaxInt64. `GetCampaignSettings` and
+`UpdateCampaignUnitCost` re-check the resolved account id with `ValidAccountID`.
 `AdoptedCampaignResult` builds the adopted row's blob, whose new `CampaignResult.Adopted` flag is
 what the dispatcher's toggle and bid lever read.
 

@@ -214,3 +214,25 @@ func TestLinkedIn_ReadSettings_UnitCostCarriesItsCurrency(t *testing.T) {
 		})
 	}
 }
+
+// A connection whose stored ad account id is not a positive int64 (here one past MaxInt64) is an
+// unusable connection on both the readback and the bid lever — refused before any request,
+// never an id sent upstream.
+func TestLinkedIn_AccountIDPastInt64IsAnUnusableConnection(t *testing.T) {
+	conn := activeLinkedInConn(goodLinkedInCreds)
+	conn.AccountID = "9223372036854775808"
+	api := newSettingsAPI(t, nil)
+	d := NewLinkedInDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, linkedin.WithBaseURL(api.srv.URL))
+	row := liRow()
+	row.Result = []byte(`{"accountId":"9223372036854775808"}`)
+	_, rerr := d.ReadSettings(context.Background(), "proj", model.ProviderLinkedInAds, row)
+	berr := d.WriteBid(context.Background(), "proj", model.ProviderLinkedInAds, row, model.BidChange{Amount: 5, Type: model.BidTypeCPC})
+	for name, err := range map[string]error{"ReadSettings": rerr, "WriteBid": berr} {
+		if !errors.Is(err, domain.ErrConnectionNotUsable) || !errors.Is(err, domain.ErrProviderConfigInvalid) {
+			t.Errorf("%s: err = %v, want ErrConnectionNotUsable + ErrProviderConfigInvalid", name, err)
+		}
+	}
+	if n := len(api.requests()); n != 0 {
+		t.Fatalf("%d request(s) sent with an impossible account id", n)
+	}
+}

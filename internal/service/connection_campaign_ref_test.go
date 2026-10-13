@@ -55,7 +55,8 @@ var campaignRefRoutes = []campaignRefRoute{
 	},
 	{
 		name: "linkedin", platform: model.ProviderLinkedInAds, validID: "868353296",
-		malformed: []string{"", "0", "0868", "-1", "12a", " 868", "868 ", "urn:li:sponsoredCampaign:868", strings.Repeat("9", 20)},
+		malformed: []string{"", "0", "0868", "-1", "12a", " 868", "868 ", "urn:li:sponsoredCampaign:868", strings.Repeat("9", 20),
+			"9223372036854775808", strings.Repeat("9", 19)}, // past int64: the decoder's Pattern admits these
 		resolve: func(s *ConnectionService, projectID, id string) (*conn.PlatformCampaignResolution, error) {
 			return s.ResolveLinkedinAdsCampaign(context.Background(), &conn.ResolveLinkedinAdsCampaignPayload{ProjectID: projectID, PlatformCampaignID: id})
 		},

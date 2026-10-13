@@ -37,3 +37,9 @@ Fourth #318 review round: the LinkedIn settings readback reports `unit_cost_curr
 missing or empty, so a EUR bid never reads as a bare number. The bid write already refuses (409) a
 campaign whose unitCost is not USD or reports no currency, so it never writes USD over another
 currency.
+
+Fifth #318 review round: `linkedin.ValidateCampaignID` and `ValidAccountID` now require a positive
+int64 (shape plus `ParseInt`, as Microsoft's rule does), so `9223372036854775808` is refused by
+adoption, campaign-ref (400 before the lookup), the settings readback and the bid lever; a
+connection storing such an account id is an unusable connection (409) on the readback and the bid
+lever. The design and the decoder-drift test now state that the Pattern is the shape only.

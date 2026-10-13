@@ -200,7 +200,7 @@ func adopterCases() []adopterCase {
 				return r.Method == http.MethodGet && r.URL.Path == "/adAccounts/123456789/adCampaigns/777"
 			},
 			validID:         "777",
-			malformed:       []string{"0", "0777", "abc", " 777", "urn:li:sponsoredCampaign:777", "12345678901234567890"},
+			malformed:       []string{"0", "0777", "abc", " 777", "urn:li:sponsoredCampaign:777", "12345678901234567890", "9223372036854775808"},
 			found:           `{"id":777,"account":"urn:li:sponsoredAccount:123456789","name":"KubeCon — Conversions","status":"PAUSED","costType":"CPC","optimizationTargetType":"NONE"}`,
 			foreign:         `{"id":777,"account":"urn:li:sponsoredAccount:999","name":"KubeCon — Conversions","status":"PAUSED"}`,
 			absent:          [2]any{http.StatusNotFound, `{"status":404}`},

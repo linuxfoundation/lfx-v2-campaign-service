@@ -49,10 +49,22 @@ func TestCampaignRefIDPatterns_MatchPlatformValidators(t *testing.T) {
 	t.Run("linkedin", func(t *testing.T) {
 		decodeOK := campaignRefDecoderChecker(t, "/linkedin-ads/campaign-ref",
 			connsrv.MountResolveLinkedinAdsCampaignHandler, connsrv.DecodeResolveLinkedinAdsCampaignRequest)
+		// The Pattern is the SHAPE of a long and cannot state int64's range, so the decoder is a
+		// NECESSARY check only: whatever the platform rule accepts, the decoder must accept, and
+		// the one class the decoder admits but the rule refuses is a 19-digit id past MaxInt64
+		// (which the service then refuses 400 before any lookup — internal/service pins that).
 		cases := []string{"868353296", "1", "0", "01", "", "12a", " 1", "1 ", "-1", "urn:li:sponsoredCampaign:1",
-			strings.Repeat("9", 19), strings.Repeat("9", 20)}
+			"9223372036854775807", "9223372036854775808", strings.Repeat("9", 19), strings.Repeat("9", 20)}
+		pastInt64 := map[string]bool{"9223372036854775808": true, strings.Repeat("9", 19): true}
 		for _, id := range cases {
-			if designOK, platformOK := decodeOK(id), linkedin.ValidateCampaignID(id) == nil; designOK != platformOK {
+			designOK, platformOK := decodeOK(id), linkedin.ValidateCampaignID(id) == nil
+			if pastInt64[id] {
+				if !designOK || platformOK {
+					t.Errorf("id %q past int64: design accepts=%v (want true), platform accepts=%v (want false)", id, designOK, platformOK)
+				}
+				continue
+			}
+			if designOK != platformOK {
 				t.Errorf("id %q: design accepts=%v, linkedin.ValidateCampaignID accepts=%v", id, designOK, platformOK)
 			}
 		}

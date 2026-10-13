@@ -4288,7 +4288,7 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   `createSponsoredCampaign` sends costType CPC and NO optimizationTargetType or unitCost, which
   LinkedIn's schema defaults to NONE (manual) with unitCost 0; so unlike Reddit/Meta/X a created
   LinkedIn campaign is expected to PASS the strategy guard — unverified live, and never assumed.
-- **Adopt** (`LookupCampaign`): `linkedin.ValidateCampaignID` (digits, no leading zero, ≤19) →
+- **Adopt** (`LookupCampaign`): `linkedin.ValidateCampaignID` (a positive int64, no leading zero) →
   `ErrInvalidPlatformCampaignID`; `resolveLinkedInCredentials` with `resolveOwnedForAdoption`
   (never the LF system row); an unaddressable account id → `adoptionAccountIDUnusable`; one read;
   a terminal status is absent; an unreported or foreign `account` → `ErrCampaignAccountMismatch` (409; `account` is a required field, the bid lever's rule). The Result is

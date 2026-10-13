@@ -40,27 +40,39 @@ import (
 // ---------------------------------------------------------------------------
 
 // ErrInvalidCampaignID marks a campaign id this client refuses before any request.
-var ErrInvalidCampaignID = errors.New("linkedin: campaign id must be 1-19 digits without a leading zero")
+var ErrInvalidCampaignID = errors.New("linkedin: campaign id must be a positive 64-bit integer without a leading zero")
 
-// campaignIDRE is a LinkedIn campaign id: a `long`, so digits with no leading zero, at most 19
-// of them. It is EXACTLY the Pattern resolve-linkedin-ads-campaign declares (pinned by
-// internal/apivalidation), which cannot express int64's upper bound, so neither does this — the
-// same bound the Microsoft route states.
-var campaignIDRE = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
+// longIDRE is the SHAPE of a LinkedIn `long` id: digits, no leading zero, at most 19 of them. It is
+// the Pattern resolve-linkedin-ads-campaign declares, and it is NOT the whole rule: a regexp cannot
+// state int64's upper bound, so isPositiveLong also parses the value — 9999999999999999999 has the
+// shape and is not a long. The decoder's Pattern is therefore a necessary check only, and the
+// service applies this one before any lookup (internal/apivalidation pins the relationship).
+var longIDRE = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 
-// ValidateCampaignID reports whether id is a usable LinkedIn campaign id. Nothing is trimmed —
-// the id is compared verbatim against stored platform ids. It contacts nothing.
+// isPositiveLong reports whether id is the canonical spelling of a positive int64 — the range of a
+// LinkedIn campaign or ad-account `long`, as microsoft.ValidateCampaignID checks Microsoft's.
+func isPositiveLong(id string) bool {
+	if !longIDRE.MatchString(id) {
+		return false
+	}
+	n, err := strconv.ParseInt(id, 10, 64)
+	return err == nil && n > 0
+}
+
+// ValidateCampaignID reports whether id is a usable LinkedIn campaign id: a positive int64 with no
+// leading zero. Nothing is trimmed — the id is compared verbatim against stored platform ids. It
+// contacts nothing. Adoption, campaign-ref, the settings readback and the bid lever all apply it.
 func ValidateCampaignID(id string) error {
-	if !campaignIDRE.MatchString(id) {
+	if !isPositiveLong(id) {
 		return fmt.Errorf("validate campaign id: %w", ErrInvalidCampaignID)
 	}
 	return nil
 }
 
-// ValidAccountID reports whether id can address an ad account path (digits only). It is the
-// rule resolveAccountID applies, exposed so a dispatcher can classify a connection's stored id
-// BEFORE anything is sent.
-func ValidAccountID(id string) bool { return accountIDRE.MatchString(id) }
+// ValidAccountID reports whether id can name a LinkedIn ad account: a positive int64 with no
+// leading zero, the campaign id's rule. The dispatchers check a connection's stored id with it
+// BEFORE anything is sent, and the campaign read and bid write re-check the resolved one.
+func ValidAccountID(id string) bool { return isPositiveLong(id) }
 
 // LinkedIn campaign statuses this package reasons about beyond ACTIVE/PAUSED (schema `status`).
 const (
@@ -245,6 +257,9 @@ func (c *Client) GetCampaignSettings(ctx context.Context, campaignID string) (*C
 	accountID, err := c.resolveAccountID("")
 	if err != nil {
 		return nil, fmt.Errorf("linkedin: %w", err)
+	}
+	if !ValidAccountID(accountID) {
+		return nil, fmt.Errorf("linkedin: ad account id %q is not a positive 64-bit integer", accountID)
 	}
 	raw, err := c.doEntityGET(ctx, fmt.Sprintf("adAccounts/%s/adCampaigns/%s", accountID, campaignID))
 	if err != nil {

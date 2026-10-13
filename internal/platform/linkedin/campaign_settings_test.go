@@ -76,9 +76,9 @@ const fullCampaignJSON = `{"id":777,"account":"urn:li:sponsoredAccount:509430019
 
 func TestValidateCampaignID(t *testing.T) {
 	for id, ok := range map[string]bool{
-		"777": true, "1": true, "9223372036854775807": true,
+		"777": true, "1": true, "9223372036854775807": true, // MaxInt64 accepted
 		"": false, "0": false, "0777": false, "-1": false, "12a": false, " 1": false, "1 ": false,
-		"9999999999999999999": true, "12345678901234567890": false, "urn:li:sponsoredCampaign:1": false,
+		"9223372036854775808": false, "9999999999999999999": false, "12345678901234567890": false, "urn:li:sponsoredCampaign:1": false,
 	} {
 		if got := ValidateCampaignID(id) == nil; got != ok {
 			t.Errorf("ValidateCampaignID(%q) accepted=%v, want %v", id, got, ok)
@@ -265,5 +265,17 @@ func TestGetCampaignSettings_PresentBudgetWithoutAmountIsUnreadable(t *testing.T
 				t.Errorf("a present totalBudget without an amount must mark the budget unreadable: %+v", got)
 			}
 		})
+	}
+}
+
+// ValidAccountID is the campaign id's rule: a positive int64 without a leading zero.
+func TestValidAccountID_IsAPositiveLong(t *testing.T) {
+	for id, ok := range map[string]bool{
+		"509430019": true, "9223372036854775807": true,
+		"0": false, "0509": false, "": false, "9223372036854775808": false, "-1": false, "12a": false,
+	} {
+		if got := ValidAccountID(id); got != ok {
+			t.Errorf("ValidAccountID(%q) = %v, want %v", id, got, ok)
+		}
 	}
 }

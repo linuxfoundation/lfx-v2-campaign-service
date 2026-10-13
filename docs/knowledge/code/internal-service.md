@@ -2062,8 +2062,8 @@ every generated OpenAPI document and fails on an X audience example no response 
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
 `ResolveRedditAdsCampaign`, `ResolveTwitterAdsCampaign` and `ResolveLinkedinAdsCampaign`
-(`GET .../{platform}/campaign-ref`; LinkedIn's id rule is `linkedin.ValidateCampaignID`, digits
-with no leading zero, ≤19) map one platform campaign id to this service's own campaign + brief.
+(`GET .../{platform}/campaign-ref`; LinkedIn's id rule is `linkedin.ValidateCampaignID`, a positive
+int64 with no leading zero — stricter than the decoder's Pattern, which cannot state the range) map one platform campaign id to this service's own campaign + brief.
 All six are one helper,
 `resolvePlatformCampaignRef(ctx, projectID, platform, id, validateID)` in
 `connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any

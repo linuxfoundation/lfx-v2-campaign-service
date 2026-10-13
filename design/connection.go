@@ -1953,11 +1953,12 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		`^[A-Za-z0-9]+$`, 64,
 		"The X/Twitter campaign id to resolve. Letters and digits, at most 64 characters.",
 		"8wxyz")
-	// LinkedIn joined the twins in LFXV2-2665. A LinkedIn campaign id is a `long`, so the rule is
-	// Microsoft's; it mirrors linkedin.ValidateCampaignID.
+	// LinkedIn joined the twins in LFXV2-2665. A LinkedIn campaign id is a `long`: the Pattern is
+	// its shape, and linkedin.ValidateCampaignID (applied by the service) adds the int64 range a
+	// regexp cannot state — internal/apivalidation pins that the decoder is necessary, not sufficient.
 	localCampaignRefMethod("resolve-linkedin-ads-campaign", "LinkedIn", "linkedin-ads",
 		`^[1-9][0-9]{0,18}$`, 19,
-		"The LinkedIn campaign id to resolve. Digits only, no leading zero, at most 19 digits.",
+		"The LinkedIn campaign id to resolve: a positive 64-bit integer (a LinkedIn `long`) — digits only, no leading zero, at most 9223372036854775807. The Pattern states only the shape; an id past the int64 range is refused 400 by the service before any lookup.",
 		"868353296")
 
 	Method("list-meta-ads-accounts", func() {

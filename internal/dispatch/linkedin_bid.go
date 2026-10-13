@@ -68,6 +68,9 @@ func (d *LinkedInDispatcher) WriteBid(ctx context.Context, projectID string, pla
 		return err
 	}
 	accountID := strings.TrimSpace(res.accountID)
+	if !linkedin.ValidAccountID(accountID) {
+		return linkedinAccountIDUnusable(res, projectID, "write linkedin campaign bid")
+	}
 	if err := verifyLinkedInAccountMatch("write linkedin campaign bid", campaign, accountID); err != nil {
 		return err
 	}
