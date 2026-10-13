@@ -4290,7 +4290,7 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
 - **Adopt** (`LookupCampaign`): `linkedin.ValidateCampaignID` (digits, no leading zero, ≤19) →
   `ErrInvalidPlatformCampaignID`; `resolveLinkedInCredentials` with `resolveOwnedForAdoption`
   (never the LF system row); an unaddressable account id → `adoptionAccountIDUnusable`; one read;
-  a terminal status is absent; a foreign `account` → `adoptionAccountMismatch`. The Result is
+  a terminal status is absent; an unreported or foreign `account` → `ErrCampaignAccountMismatch` (409; `account` is a required field, the bid lever's rule). The Result is
   `linkedin.AdoptedCampaignResult` — account, id, name, Campaign Manager link and **`adopted:
   true`**. LinkedIn records no child ids for a toggle to miss (it DISCOVERS creatives), so that
   flag (`linkedInAdopted`) is what `ToggleStatus` refuses ACTIVATE on (`ErrCampaignNotProvisioned`,

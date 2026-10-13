@@ -19,8 +19,9 @@ import (
 // adopt.go for the order every adopter follows and why.
 //
 // The read is GET adAccounts/{acct}/adCampaigns/{id} (linkedin.Client.GetCampaignSettings),
-// scoped by its path to the connection's account; the `account` URN it echoes is compared too,
-// and another account is refused with domain.ErrCampaignAccountMismatch. A 404 is absence only
+// scoped by its path to the connection's account; the `account` URN it echoes must be present and
+// the connection's — an unreported or another account is refused with
+// domain.ErrCampaignAccountMismatch. A 404 is absence only
 // once the ad account itself is confirmed readable; CANCELED, PENDING_DELETION and REMOVED are
 // absences (terminal — nothing can serve), as DELETED/ARCHIVED are on Reddit.
 //
@@ -60,7 +61,14 @@ func (d *LinkedInDispatcher) LookupCampaign(ctx context.Context, projectID strin
 	if settings == nil || settings.Terminal() {
 		return nil, nil
 	}
-	if settings.AccountID != "" && settings.AccountID != accountID {
+	// `account` is a REQUIRED campaign field, so an unreported one is an unestablished fact and is
+	// refused like a foreign one (409) — the bid lever's rule. The path scopes the read, but
+	// adoption binds the campaign for good, so the answer's own account must confirm it.
+	if settings.AccountID == "" {
+		return nil, fmt.Errorf("adopt %s campaign %s: the platform did not report the campaign's ad account, so it cannot be established that it is the connection's account %s: %w",
+			platform, settings.CampaignID, accountID, domain.ErrCampaignAccountMismatch)
+	}
+	if settings.AccountID != accountID {
 		return nil, adoptionAccountMismatch(platform, settings.CampaignID, settings.AccountID, accountID)
 	}
 	if settings.Name == nil || strings.TrimSpace(*settings.Name) == "" {

@@ -15,3 +15,8 @@ campaign alone, the budget lever works. New route `resolve-linkedin-ads-campaign
 (`GET /projects/{project_id}/linkedin-ads/campaign-ref`) with HTTPRoute regex, RuleSet and parity
 rows. See [internal/dispatch](../code/internal-dispatch.md) and
 [internal/platform/linkedin](../code/internal-platform-linkedin.md).
+
+PR #318 review: adoption now refuses a campaign whose `account` LinkedIn did not report (409,
+`ErrCampaignAccountMismatch`), matching the bid lever, instead of trusting the path scope alone;
+and `ValidateBidAmount` checks "rounds to zero" BEFORE the whole-cent check — the latter's
+absolute tolerance would otherwise pass an amount under 1e-8 as a "0.00" wire.

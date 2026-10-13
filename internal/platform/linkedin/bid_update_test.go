@@ -51,7 +51,7 @@ func TestValidateBidAmount(t *testing.T) {
 			t.Errorf("ValidateBidAmount(%v) = %q, %v; want %q", tc.amount, got, err, tc.wire)
 		}
 	}
-	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1), 1_000_000.01, 2.345, 0.001} {
+	for _, bad := range []float64{0, -1, math.NaN(), math.Inf(1), 1_000_000.01, 2.345, 0.001, 0.004, 5e-9, 1e-12} {
 		_, err := ValidateBidAmount(bad)
 		if !errors.Is(err, ErrBidAmountInvalid) {
 			t.Errorf("ValidateBidAmount(%v) = %v, want ErrBidAmountInvalid", bad, err)
@@ -166,5 +166,22 @@ func TestSendOnce_IsScopedToTheBidWrite(t *testing.T) {
 	_ = c.UpdateCampaignBudget(context.Background(), "777", "100.00", false)
 	if n := len(s.requests()); n < 2 {
 		t.Fatalf("the budget write sent %d request(s); its 429 retry must be untouched by the bid write's opt-out", n)
+	}
+}
+
+// Both sub-cent refusals are reachable and each says what is wrong: an amount that rounds to zero
+// cents (including one under 1e-8, inside the whole-cent tolerance) is "rounds to zero", never a
+// "0.00" wire; a non-zero sub-cent remainder is "not a whole number of cents".
+func TestValidateBidAmount_SubCentRefusalsAreDistinct(t *testing.T) {
+	for amount, want := range map[float64]string{
+		0.004: "rounds to zero",
+		5e-9:  "rounds to zero",
+		2.345: "not a whole number of cents",
+		0.015: "not a whole number of cents",
+	} {
+		wire, err := ValidateBidAmount(amount)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ValidateBidAmount(%v) = %q, %v; want a refusal saying %q", amount, wire, err, want)
+		}
 	}
 }
