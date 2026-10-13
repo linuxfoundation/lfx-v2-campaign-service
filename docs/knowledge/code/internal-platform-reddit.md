@@ -747,3 +747,15 @@ the single `KEYWORD` breakdown — one report per campaign — then one `Keyword
 keyword), ranked by impressions, campaign id, text (unattributed last), capped at `MaxKeywordRows`
 (50) with `Truncated`. `keywordTextErr` keeps text verbatim but refuses blank, over-200-byte,
 invalid-UTF-8, control-character and `<`/`>` values. Tests: `keyword_performance_test.go`.
+
+### Reporting budget (`report_budget.go`, PR #306)
+
+`requestWithThrottleRetryCounted` calls `acquireReportSlot` at the top of EVERY attempt: when the
+path is the reports operation (`reportPathRE`, `/ad_accounts/{id}/reports`), the attempt takes a
+slot from the account's ledger in the process-wide `defaultReportBudgets` (sliding 60 s; 45 in all,
+24 for attempts whose context carries `withInsightsReports` — the audience and keyword reads, set once in `readBreakdownReports`). So each page and
+each 429 retry of the audience read, the campaign metrics read and the account monitor is counted.
+A slot that will not free before the context's deadline fails at once with
+`ErrReportBudgetExhausted`, nothing sent. `WithReportBudgets` / `NewReportBudgets` let tests use a
+ledger of their own; the package's tests run on an unlimited default ledger
+(`report_budget_main_test.go`) and `report_budget_test.go` exercises the real limits.

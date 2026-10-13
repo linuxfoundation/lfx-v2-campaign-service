@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -105,5 +106,56 @@ func TestReddit_ReadRedditKeywordPerformance_UpstreamFailureIsUnclassified(t *te
 	}
 	if strings.Contains(err.Error(), "t2_acct") {
 		t.Errorf("error leaks the account id: %v", err)
+	}
+}
+
+// Strict provenance applies to the keyword read too: an unrecorded creating account is refused
+// before Reddit is contacted.
+func TestReddit_ReadRedditKeywordPerformance_UnknownProvenanceRefused(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	s := newRedditAudienceServer(t)
+	scope := append(redditScope("t3_c"), model.ProjectCampaignScope{PlatformCampaignID: "t3_old"})
+	_, err := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}).
+		ReadRedditKeywordPerformance(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, scope)
+	if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) || !errors.Is(err, domain.ErrCampaignAccountMismatch) {
+		t.Fatalf("error = %v, want provenance unknown joined with the mismatch", err)
+	}
+	if n := len(s.requests()); n != 0 {
+		t.Errorf("Reddit was contacted %d time(s)", n)
+	}
+}
+
+// The keyword read spends from the same insight allowance as the audience read: on a shared ledger
+// with room for the audience read's 3 attempts and nothing more, the keyword read is refused whole.
+func TestReddit_ReadRedditKeywordPerformance_SharesTheInsightBudget(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	s := newRedditAudienceServer(t)
+	d := s.dispatcherWithBudget(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, reddit.NewReportBudgets(time.Minute, 100, 3))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := d.ReadRedditAudienceInsights(ctx, "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, redditScope("t3_c")); err != nil {
+		t.Fatalf("audience read: %v", err)
+	}
+	kp, err := d.ReadRedditKeywordPerformance(ctx, "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, redditScope("t3_c"))
+	if !errors.Is(err, reddit.ErrReportBudgetExhausted) || kp != nil {
+		t.Fatalf("got (%+v, %v), want ErrReportBudgetExhausted", kp, err)
+	}
+	if n := len(s.requests()); n != 3 {
+		t.Errorf("sent %d requests, want only the audience read's 3", n)
+	}
+}
+
+// A refresh inside the TTL spends no further reporting requests.
+func TestReddit_ReadRedditKeywordPerformance_RefreshReusesTheRead(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	s := newRedditAudienceServer(t)
+	d := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)})
+	for i := 0; i < 3; i++ {
+		if _, err := d.ReadRedditKeywordPerformance(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, redditScope("t3_c")); err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+	}
+	if n := len(s.requests()); n != 1 {
+		t.Errorf("reporting requests = %d, want 1", n)
 	}
 }

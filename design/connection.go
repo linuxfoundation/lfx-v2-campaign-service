@@ -1830,8 +1830,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"no AGE breakdown, so there is no age dimension. Read from the project's OWN connection only " +
 			"(never the LF system account) and its bound ad account only, and scoped to the campaigns this " +
 			"service holds for the project: one report per campaign per breakdown, each filtered to that " +
-			"campaign (campaign:id==<id>) with every returned row checked against it. At most 8 campaigns " +
-			"(24 report requests against Reddit's documented 60-per-minute reporting quota); more is 409. " +
+			"campaign (campaign:id==<id>) with every returned row checked against it. A campaign that does not record " +
+			"which ad account it was created under is 409 (re-dispatch it). At most 8 campaigns (more is 409). Every " +
+			"report request — each page and each 429 retry — first takes a slot in the ad account's per-process " +
+			"reporting budget (45 per 60 seconds of Reddit's documented 60, at most 24 of them for this read, shared " +
+			"with the Reddit metrics read and account monitor); a read that cannot get its slots before its deadline " +
+			"is 503 with nothing partial. Identical concurrent reads share one upstream read, and a successful read " +
+			"is reused for 60 seconds within the same UTC day. " +
 			"A pure read-through; nothing is persisted. A project with no Reddit campaigns of its own receives " +
 			"an empty `buckets` array and Reddit is not contacted. All three breakdowns must load or the " +
 			"request fails (503): each covers the same traffic independently, and one presented without the " +

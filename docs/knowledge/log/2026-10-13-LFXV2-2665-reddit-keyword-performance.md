@@ -20,4 +20,7 @@ Reddit Ads API v3 `KEYWORD` report breakdown, top 50 by impressions with `trunca
 - Chart route regex, RuleSet entry and parity rows for `reddit-ads/keywords`; API catalog row; the
   keyword-targeting concept now points at this read instead of saying there are no per-keyword
   metrics.
+- Built on the PR #306 fixes: the read refuses rows with no recorded creation account, spends
+  every request attempt from the ad account's reporting budget (sharing the audience read's
+  insight allowance), and has its own single-flight guard with a 60 s success cache.
 - Verified only against Reddit's published schema, not a live account.

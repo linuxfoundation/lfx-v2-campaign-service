@@ -40,21 +40,39 @@ blocks are Reddit's own.
   requested as a field for provenance. Community (the subreddit) is Reddit's own audience
   dimension; gender is the one demographic Reddit breaks reports down by. PLACEMENT, OS_TYPE,
   INTEREST, REGION, DMA are documented too and left for later: each extra dimension costs one more
-  request per campaign against the 60-per-minute quota.
+  report per campaign against the reporting budget below.
 - **One report per campaign per breakdown.** The only `filter` form this repository has verified
   is the single term `campaign:id==<id>` (the campaign metrics read and the account monitor). The
   spec says `filter` is "a comma-separated list" but not whether two terms on the same field are
   OR-ed or AND-ed; an AND would answer an empty report — read as no delivery — for a project that
   had plenty. Per-campaign requests trade request count for a scope this read can prove, and every
   row is still checked against the requested campaign.
-- **At most 8 campaigns** (`reddit.MaxReportCampaigns`), so a read is at most 24 requests — under
-  half the reporting quota, which the metrics read and account monitor share. More is
+- **At most 8 campaigns** (`reddit.MaxReportCampaigns`), so a read is at most 24 reports. More is
   `ErrAudienceScopeTooLarge` (409), refused before any request. At most 3 reports in flight, each
-  walking at most 10 pages, inside the orchestrator's 20s `metricsCallTimeout`.
+  walking at most 10 pages, inside the orchestrator's 20s `metricsCallTimeout`. The campaign cap
+  bounds REPORTS, not requests: a report can span pages and a 429 is retried.
+- **A process-wide reporting budget bounds the requests** (`internal/platform/reddit/report_budget.go`).
+  Per ad account, over a sliding 60 s window, every attempt at the reports operation by any client
+  in the process — this read, the campaign metrics read, the account monitor; every page and every
+  429 retry — takes a slot before it is sent: at most 45 in all (of Reddit's 60; the rest is
+  headroom for Ads Manager and other tools), and at most 24 for this read (its context is marked
+  `withInsightsReports`), so the metrics read and monitor always keep 21. An attempt waits for a slot
+  only if one frees before its deadline; otherwise nothing is sent and it fails with
+  `ErrReportBudgetExhausted`, which fails the whole read (503, fixed text). The ledger is PER
+  PROCESS: with several replicas the account-wide figure multiplies, and a shared ledger would be
+  needed to claim it account-wide.
+- **Identical concurrent reads share one upstream read** (`internal/dispatch/reddit_report_guard.go`):
+  keyed by account, window, UTC day and the sorted campaign set, single-flight with leader-context
+  re-lead (as the X audience guard), and a successful result reused for 60 s. Failures are never
+  reused; the UTC day in the key means "today" is never served across midnight.
 - **Own connection only, bound account only** (`resolveOwned`, as the account monitor): never the
   LF system fallback, and the client reads only the connection's own `account_id`. Any campaign in
   scope whose recorded creation account differs is `ErrCampaignAccountMismatch` (409) for the whole
-  read; a stored id that is not a valid Reddit campaign id is `ErrAudienceScopeInvalid` (409).
+  read. A campaign that records NO creation account is refused too —
+  `ErrCampaignProvenanceUnknown` joined with the mismatch (409, re-dispatch remedy), stricter than
+  the Meta/X reads: Reddit ids are unique only within an account, so after the connection is
+  re-pointed such a row could name another advertiser's campaign. A stored id that is not a valid
+  Reddit campaign id is `ErrAudienceScopeInvalid` (409). All before Reddit is contacted.
 - **Fail closed.** `identityjson.Check` on each raw response body before decoding (a repeated or
   case-folded key anywhere fails the read); a missing **or explicit `null`** counter is refused,
   never read as 0 (the campaign metrics read's `reportRow.validate`); a missing breakdown key, an

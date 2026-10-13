@@ -462,7 +462,8 @@ var (
 	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
 	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
 	// counted over DISTINCT campaign ids; Reddit's is reddit.MaxReportCampaigns (a local bound
-	// on the per-campaign reports one read issues against Reddit's 60-per-minute reporting quota). Refused before any upstream call and PERMANENT while the
+	// on the per-campaign reports one read issues; the requests themselves are bounded by the ad account's
+	// reporting budget, reddit/report_budget.go). Refused before any upstream call and PERMANENT while the
 	// project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message is fixed,
 	// client-safe text: it reaches the HTTP body.
 	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")

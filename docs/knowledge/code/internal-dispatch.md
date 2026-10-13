@@ -4277,3 +4277,14 @@ partial mismatch, matching/unknown provenance, 403 unclassified without the acco
 `reddit_audience.go`; `redditReportSentinels` picks each read's 409 sentinels (audience:
 `ErrAudienceScope*`; keywords: `ErrKeywordReportScope*`) and `classifyRedditReportError` re-tags
 the client's `ErrReportScope*`. Tests: `reddit_keywords_test.go`.
+
+The Reddit audience read refuses a scope entry with NO recorded creation account
+(`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`, 409) rather than letting
+it through as the X/Meta reads do, and runs its upstream call through `d.audience`, a
+`redditReportGuard` (`reddit_report_guard.go`): single flight for identical reads (account, window,
+UTC day, sorted scope) with leader-context re-lead, and a 60 s cache of successes. Tests:
+`reddit_report_guard_test.go`, and the provenance/budget cases in `reddit_audience_test.go`.
+
+Since the keyword read, the strict-provenance `redditScopeForAccount` is the shared prelude's, so
+both Reddit reads refuse an unrecorded creation account; each read has its own guard
+(`d.audience`, `d.keywords`).

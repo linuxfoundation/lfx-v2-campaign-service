@@ -171,6 +171,18 @@ func TestGetRedditAdsAudience_ErrorMapping(t *testing.T) {
 	}
 }
 
+// A campaign that records no creating account is a 409 with the re-dispatch remedy — not the
+// reconnect remedy an actual mismatch gets, though the two sentinels arrive joined.
+func TestGetRedditAdsAudience_UnknownProvenanceIs409ReDispatch(t *testing.T) {
+	err := fmt.Errorf("2 of 3 campaigns CANARY: %w", errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	_, got := redditAudienceService(t, &redditAudienceDispatcher{err: err}, "t3_c").
+		GetRedditAdsAudience(context.Background(), &conn.GetRedditAdsAudiencePayload{ProjectID: "cncf"})
+	ce, ok := got.(*conn.ConflictError)
+	if !ok || !strings.Contains(ce.Message, "do not record which ad account") || strings.Contains(ce.Message, "CANARY") {
+		t.Fatalf("error = %T (%v), want the fixed provenance 409", got, got)
+	}
+}
+
 // The 409s carry the sentinels' fixed text, nothing from the wrapped detail.
 func TestGetRedditAdsAudience_ScopeConflictsUseFixedText(t *testing.T) {
 	for _, sentinel := range []error{domain.ErrAudienceScopeTooLarge, domain.ErrAudienceScopeInvalid} {

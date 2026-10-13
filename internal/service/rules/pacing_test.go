@@ -46,7 +46,7 @@ func TestComputePacing_ProratesAcrossTheFlight(t *testing.T) {
 
 // TestComputePacing_D2LadderBoundaries pins the brief path's bands at each boundary of the one
 // 50/90/100 ladder (product decision D2, 2026-10-13), unrounded: before D2 this path ran
-// 50/100/130, so 90.01..100 was normal and 100..130 was constrained.
+// 50/100/130, so above 90 through 100 was normal and above 100 through 130 was constrained.
 func TestComputePacing_D2LadderBoundaries(t *testing.T) {
 	flight := Flight{Start: day(-10), End: day(9)} // expected-by-now = $500, so spend = pct * 5
 	for _, tc := range []struct {

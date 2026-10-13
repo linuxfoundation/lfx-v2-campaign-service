@@ -254,13 +254,15 @@ flowchart TD
 
 **Pacing Thresholds:**
 
+One ladder (`rules.StandardLadder`, product decision D2, 2026-10-13) for the brief view and
+every account monitor:
+
 | Label | Range |
 |-------|-------|
 | Underspending | < 50% |
-| Normal | 50-90% |
-| Constrained | 90-100% |
-| Overspending | 100-130% |
-| Severe | > 130% |
+| Normal | 50% to 90% (both included) |
+| Constrained | above 90% to 100% (100% included) |
+| Overspending | above 100% |
 
 ### Phase 4: Optimization
 

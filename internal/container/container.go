@@ -530,8 +530,12 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	// asset-backed variant would nil-panic mid-dispatch instead of failing cleanly
 	// pre-spend. The no-database tests call registerDispatchers with all-nil args, so this
 	// is a reachable path, not a hypothetical.
+	// The Microsoft dispatcher reads stored assets too (microsoftConfig.imageAssetId, a
+	// campaign image extension — LFXV2-2665), under the same concrete-pointer guard.
+	microsoftDispatcher := dispatch.NewMicrosoftDispatcher(repo, enc)
 	if creatives != nil {
 		metaDispatcher.SetCreativeAssetRepo(creatives)
+		microsoftDispatcher.SetCreativeAssetRepo(creatives)
 	}
 	// The AGGREGATE asset budget is bound unconditionally, not under the `creatives != nil`
 	// guard above. The two are independent: that guard exists because a nil concrete pointer
@@ -539,8 +543,12 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	// whose nil case is already a documented no-op. Binding it here means every dispatcher the
 	// live and cold-start paths build shares ONE budget — which is the point, since the bound
 	// is across concurrent dispatches rather than within one.
-	metaDispatcher.SetAssetReserver(dispatch.NewAssetReserver(
-		dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait))
+	//
+	// ONE reserver, handed to every dispatcher that holds asset bytes: two would be two
+	// budgets, and the bound is only a bound if it is shared.
+	assets := dispatch.NewAssetReserver(dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait)
+	metaDispatcher.SetAssetReserver(assets)
+	microsoftDispatcher.SetAssetReserver(assets)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
@@ -548,7 +556,7 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
-		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
+		model.ProviderMicrosoftAds: microsoftDispatcher,
 	}
 }
 

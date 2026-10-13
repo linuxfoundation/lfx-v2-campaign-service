@@ -72,9 +72,10 @@ including exactly on plan (100) constrained, above 100 overspending. It is used 
 brief view ran its own `BriefViewLadder` (50 / 100 / 130, matching lfx-self-serve's
 `CAMPAIGN_PACING_THRESHOLDS`, under which exactly on plan was normal) and the monitors ran
 `AccountMonitorLadder` (50 / 90 / 100); both were replaced by `StandardLadder`. The visible
-shift is on the brief path only: 90–100% of plan moved from `normal` to `constrained`, and
-100–130% from `constrained` to `overspending` — so a brief campaign exactly on plan now raises a
-`budget_constrained` item. Changing the ladder moves both read paths' alert bands at once; do
+shift is on the brief path only: values above 90% through 100% of plan moved from `normal` to
+`constrained` (exactly 90% stays `normal`; exactly 100% — on plan — is in this band), and values
+above 100% through 130% moved from `constrained` to `overspending` — so a brief campaign exactly
+on plan now raises a `budget_constrained` item. Changing the ladder moves both read paths' alert bands at once; do
 not add a second ladder, band switch, priority rank or unknown-pacing builder without a product
 decision behind it.
 

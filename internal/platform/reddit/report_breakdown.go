@@ -25,15 +25,15 @@ import (
 // here once, and each read only says which breakdowns it wants and how it folds the totals.
 
 const (
-	// MaxReportCampaigns bounds the campaigns one broken-down read covers. A LOCAL bound, not a
-	// Reddit limit: a read issues one report per campaign per breakdown (see readBreakdownReports
-	// for why), and Reddit's published rate limit for the reporting policy (`ads-reporting`) is 60
-	// requests per 60 seconds per caller. 8 campaigns × 3 audience breakdowns = 24 requests, under
-	// half the quota, leaving the rest for the campaign metrics read and the account monitor, which
-	// share it; the keyword read is 8.
+	// MaxReportCampaigns bounds the campaigns one broken-down read covers: one report per campaign
+	// per breakdown (see readBreakdownReports for why), so the audience read is at most 8 × 3 = 24
+	// reports — exactly the insight sub-budget (reportBudgetInsights) — and the keyword read 8. It
+	// does NOT bound the requests sent: a report may span pages and a 429 is retried, and each of
+	// those attempts is its own request. What bounds the requests is the ad account's process-wide
+	// reporting budget (report_budget.go), from which every attempt — of these reads, the metrics
+	// read and the account monitor alike — takes a slot before it is sent.
 	MaxReportCampaigns = 8
-	// reportBreakdownConcurrency bounds the reports in flight at once: enough to fit 24 requests in
-	// the orchestrator's 20s metrics budget, below the monitor's own 5.
+	// reportBreakdownConcurrency bounds the reports in flight at once, below the monitor's own 5.
 	reportBreakdownConcurrency = 3
 	// breakdownMaxPages bounds one report's pagination walk. A walk that is still paging after this
 	// many pages is not a result a read can trust to be complete — and a partial distribution looks
@@ -142,7 +142,9 @@ func breakdownScope(op string, campaignIDs []string) ([]string, error) {
 // failure cancels the rest. Request errors have the account id redacted from their path.
 func (c *Client) readBreakdownReports(ctx context.Context, r *breakdownRead, breakdowns []reportBreakdown) ([][]map[string]breakdownTotals, error) {
 	results := make([][]map[string]breakdownTotals, len(breakdowns))
-	g, gctx := errgroup.WithContext(ctx)
+	// Every attempt of a broken-down read (audience or keyword) draws on the account's insight
+	// sub-budget as well as its total (report_budget.go).
+	g, gctx := errgroup.WithContext(withInsightsReports(ctx))
 	g.SetLimit(reportBreakdownConcurrency)
 	for bi, b := range breakdowns {
 		results[bi] = make([]map[string]breakdownTotals, len(r.campaignIDs))

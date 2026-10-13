@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -352,5 +353,32 @@ func TestAudienceBreakdowns_NoAge(t *testing.T) {
 		if b.breakdown == "AGE" || b.dimension == "age" {
 			t.Errorf("breakdown %+v: Reddit's report breakdowns enum has no AGE", b)
 		}
+	}
+}
+
+// Two campaigns whose counters for one dimension value are each valid but together exceed int64
+// refuse the WHOLE read rather than wrapping — for each counter.
+func TestGetAudienceInsights_CrossCampaignOverflowRefused(t *testing.T) {
+	const big = int64(math.MaxInt64/2 + 1)
+	for name, row := range map[string]func(id string) string{
+		"impressions": func(id string) string { return audienceRow(id, "country", `"US"`, big, 1, 1) },
+		"clicks":      func(id string) string { return audienceRow(id, "country", `"US"`, 1, big, 1) },
+		"spend":       func(id string) string { return audienceRow(id, "country", `"US"`, 1, 1, big) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &audienceStub{answer: func(id, b string) (int, string) {
+				if b == "COUNTRY" {
+					return http.StatusOK, audienceReport(row(id))
+				}
+				return healthyAudience(id, b)
+			}}
+			ai, err := newAudienceClient(t, s).GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a", "t3_b"})
+			if err == nil || ai != nil {
+				t.Fatalf("got (%+v, %v), want the whole read refused", ai, err)
+			}
+			if !strings.Contains(err.Error(), "overflow") {
+				t.Errorf("error = %v, want the overflow refusal", err)
+			}
+		})
 	}
 }

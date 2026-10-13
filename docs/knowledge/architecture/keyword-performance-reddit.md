@@ -34,8 +34,16 @@ From Reddit's published Ads API v3 OpenAPI document (read as described in
   The dispatcher prelude (`redditReportClient`: gate, window, own connection, bound account,
   provenance) is shared the same way; only the 409 sentinels differ — this read reports
   `ErrKeywordReportScopeTooLarge` / `ErrKeywordReportScopeInvalid`.
-- **One request per campaign** (8 at most), for the audience read's reason: the single-term
-  `campaign:id==<id>` filter is the only verified form.
+- **One report per campaign** (8 at most), for the audience read's reason: the single-term
+  `campaign:id==<id>` filter is the only verified form. The cap bounds reports, not requests;
+  every request attempt — each page, each 429 retry — takes a slot in the ad account's per-process
+  reporting budget (`report_budget.go`), and this read's attempts count against the same 24-slot
+  insight allowance as the audience read (both go through `readBreakdownReports`, which marks its
+  context `withInsightsReports`). No slot before the deadline: the read fails whole (503).
+- **Strict provenance**, as the audience read: a campaign that records no creating account is
+  refused (409, re-dispatch) before Reddit is contacted.
+- **Identical concurrent reads share one upstream read** (`d.keywords`, a `redditReportGuard`), and a
+  success is reused for 60 s within the same UTC day.
 - **Rows per (campaign, keyword), not summed.** Reddit's only keyword action is removing a keyword
   from ONE campaign's ad-group targeting, so a row says which campaign it served in. Ranked by
   impressions, then campaign id, then text; capped at 50 with `truncated`, like the Google and

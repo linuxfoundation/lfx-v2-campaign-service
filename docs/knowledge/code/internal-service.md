@@ -2068,7 +2068,7 @@ the same subset); then `Orchestrator.ReadRedditAudienceInsights`, which type-ass
 `RedditAudienceReader`, asks its `AudienceEnabled()` BEFORE the scope lookup (so
 `REDDIT_METRICS_ENABLED` off is 400 even with no Reddit campaigns), and runs the shared
 `readScopedAudience`. Errors go through `classifyInsightsErrorFor` with the
-`redditAdsAudienceInsights` descriptor; no new arm was needed. Buckets are `dimension`
+`redditAdsAudienceInsights` descriptor. One arm was added there, ahead of the mismatch arm: `domain.ErrCampaignProvenanceUnknown` → 409 with the re-dispatch remedy (the Reddit read joins it with the mismatch sentinel for rows that record no creation account). Buckets are `dimension`
 (`gender` | `country` | `community`) + optional `value` (absent for Reddit's explicit null); no
 `account_currency`. Tests: `reddit_audience_test.go`, including
 `TestPublishedRedditAudienceExamplesArePossible` over every generated OpenAPI document.
