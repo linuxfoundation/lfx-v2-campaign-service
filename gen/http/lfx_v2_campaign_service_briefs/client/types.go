@@ -4076,6 +4076,14 @@ type MetaAdSetResponseBody struct {
 	// campaign row recorded at dispatch). Always false on an adopted campaign,
 	// which records no ad set.
 	Recorded *bool `form:"recorded,omitempty" json:"recorded,omitempty" xml:"recorded,omitempty"`
+	// true when this is the `recorded` ad set and the campaign row holds a
+	// DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the
+	// campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only
+	// resuming it through toggle-meta-ad-set-status clears this. It is this
+	// service's record, not Meta's — `status` is what Meta reports. Also true
+	// after a pause whose outcome was UNCONFIRMED (unknown is treated as paused).
+	// Always false on an adopted campaign.
+	DeliberatelyPaused *bool `form:"deliberately_paused,omitempty" json:"deliberately_paused,omitempty" xml:"deliberately_paused,omitempty"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.
@@ -13240,6 +13248,9 @@ func ValidateMetaAdSetResponseBody(body *MetaAdSetResponseBody) (err error) {
 	if body.Recorded == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("recorded", "body"))
 	}
+	if body.DeliberatelyPaused == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("deliberately_paused", "body"))
+	}
 	if body.BudgetType != nil {
 		if !(*body.BudgetType == "daily" || *body.BudgetType == "lifetime") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.budget_type", *body.BudgetType, []any{"daily", "lifetime"}))
@@ -13271,6 +13282,9 @@ func validateMetaAdSetResponseBody(body *MetaAdSetResponseBody, path string) (er
 	}
 	if body.Recorded == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("recorded", path))
+	}
+	if body.DeliberatelyPaused == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("deliberately_paused", path))
 	}
 	if body.BudgetType != nil {
 		if !(*body.BudgetType == "daily" || *body.BudgetType == "lifetime") {

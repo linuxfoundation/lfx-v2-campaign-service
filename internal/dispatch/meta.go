@@ -853,7 +853,19 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	if metaStatus == meta.StatusActive && strings.TrimSpace(adSetID) == "" {
 		return fmt.Errorf("%w: meta campaign %s cannot be activated because this service has no record of its ad set — either it was never provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to Meta Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus); uerr != nil {
+	// A DELIBERATE pause of the recorded ad set, made through toggle-meta-ad-set-status and still
+	// on record in the row (LFXV2-2665, product decision 2026-10-13), survives a campaign
+	// pause/resume: ACTIVATE then flips the ads and the campaign but leaves the ad set PAUSED.
+	// Only resuming the ad set through that lever clears the record. A PAUSE cascades as always.
+	var uerr error
+	if metaStatus == meta.StatusActive && model.MetaAdSetHeldPaused(campaign.Result, adSetID) {
+		slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
+			"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID)
+		uerr = client.ActivateCampaignHoldingAdSet(ctx, campaign.PlatformCampaignID, adSetID)
+	} else {
+		uerr = client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus)
+	}
+	if uerr != nil {
 		// An activate refused up front because the ad set has zero ads is a local/state error
 		// (the platform mutation never ran), so classify it as ErrCampaignNotProvisioned → 409,
 		// not the default 503 — deterministic "reprovision", not a transient "verify/retry".

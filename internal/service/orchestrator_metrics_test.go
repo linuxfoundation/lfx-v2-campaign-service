@@ -504,7 +504,7 @@ func (d upstreamCapableDispatcher) ReadMetaAdSets(context.Context, string, model
 	return &model.MetaAdSets{}, nil
 }
 
-func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string, model.Provider, *model.Campaign, string, string) (*model.MetaAdSetStatusResult, error) {
+func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string, model.Provider, *model.Campaign, string, string, MetaAdSetBeforeWrite) (*model.MetaAdSetStatusResult, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -655,7 +655,7 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			name: "toggle meta ad set status",
 			op:   opToggleMetaAdSetStatus,
 			call: func(ctx context.Context, o *Orchestrator) error {
-				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused)
+				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused, nil)
 				return err
 			},
 		},
