@@ -114,9 +114,11 @@ text is logged.
 
 The ad set's STATUS is not a column of the campaign row. When a call records or clears the
 deliberate pause (below) the row is written through `ReplaceCampaign` on the claim holder's
-connection — version bumped, index event co-committed — and the `ETag` is the new version. That
-holds even when the answer is a 503 (an UNCONFIRMED pause, or a definite refusal after the record
-was written and withdrawn), so a caller re-reads the campaign before retrying. Otherwise nothing
+connection — version bumped, index event co-committed — and the `200`'s `ETag` is the new
+version. An error response carries NO `ETag` (Goa writes it in the 200 encoder only), yet the row
+may still have been bumped on some 503 paths (an UNCONFIRMED pause, or a definite refusal after the
+record was written and withdrawn), so after any error a caller re-reads the campaign for its
+current version before retrying. Otherwise nothing
 is persisted and the `ETag` is the row's unchanged version — the precedent of pausing a
 `created_degraded` campaign — after `VerifyClaimedVersion` has proved no other writer changed the
 row under the claim (409 if one did). If-Match still serialises this write with every other
