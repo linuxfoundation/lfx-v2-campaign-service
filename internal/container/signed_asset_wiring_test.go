@@ -78,6 +78,25 @@ func TestBindCreativeAssetSharing(t *testing.T) {
 	assert.False(t, ru.CreativeAssetURLsEnabled(), "a nil store must leave the Reddit path unbound, not bound to a typed nil")
 }
 
+// TestBindCreativeAssetSharing_LinkedInSharesTheContainerReserver: the LinkedIn dispatcher holds
+// asset bytes too (variants[].imageAssetId), so it must charge the container's ONE reserver —
+// the one the signed-asset route charges — not the per-call reserver registerDispatchers built.
+// Identity, not mere presence: AssetReserverIsSet is true for either budget.
+func TestBindCreativeAssetSharing_LinkedInSharesTheContainerReserver(t *testing.T) {
+	cont, err := NewContainer(&config.Config{Host: "*", Port: "8080"})
+	require.NoError(t, err)
+	require.NotNil(t, cont.assetReserver)
+
+	m := registerDispatchers(nil, nil, nil, postgres.NewCreativeAssetRepo(nil), nil)
+	ld, ok := m[model.ProviderLinkedInAds].(*dispatch.LinkedInDispatcher)
+	require.True(t, ok)
+	require.False(t, ld.SharesAssetReserver(cont.assetReserver), "premise: registerDispatchers binds its own reserver")
+
+	cont.bindCreativeAssetSharing(m, postgres.NewCreativeAssetRepo(nil))
+	assert.True(t, ld.SharesAssetReserver(cont.assetReserver),
+		"bindCreativeAssetSharing must re-point the LinkedIn dispatcher at the container's shared reserver")
+}
+
 // Both live paths — the fast path and the cold-start retry — must call
 // bindCreativeAssetSharing, or a pod that cold-started would serve no signed assets and refuse
 // every Reddit imageAssetId, with nothing failing at startup.
