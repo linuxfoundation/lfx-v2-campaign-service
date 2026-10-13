@@ -29,7 +29,7 @@ GOLANGCI_LINT_VERSION := v2.2.2
 LINT_TIMEOUT := 10m
 LINT_TOOL=$(shell go env GOPATH)/bin/golangci-lint
 
-GOA_VERSION := v3.25.3
+GOA_VERSION := v3.34.0
 
 ##@ Development
 

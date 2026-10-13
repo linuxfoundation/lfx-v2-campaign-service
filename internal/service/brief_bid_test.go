@@ -449,8 +449,9 @@ func TestUpdateCampaignBidDecoder_AcceptsAnOmittedBidType(t *testing.T) {
 // applying the default. A body naming only the bid must build, leaving BidType nil for the
 // service to default to cpc.
 func TestBuildUpdateCampaignBidPayload_AcceptsAnOmittedBidType(t *testing.T) {
-	p, err := briefsclient.BuildUpdateCampaignBidPayload(`{"bid":2.5}`, "cncf",
-		"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "token", `"3"`)
+	// The generated CLI builders take each flag as *string (nil = flag absent).
+	p, err := briefsclient.BuildUpdateCampaignBidPayload(strPtr(`{"bid":2.5}`), strPtr("cncf"),
+		strPtr("11111111-1111-4111-8111-111111111111"), strPtr("22222222-2222-4222-8222-222222222222"), strPtr("token"), strPtr(`"3"`))
 	if err != nil {
 		t.Fatalf("a body without bid_type must build: %v", err)
 	}

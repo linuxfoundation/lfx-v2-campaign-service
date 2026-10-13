@@ -195,6 +195,15 @@ func TestNonEchoingResponseEncoder(t *testing.T) {
 			`"project_id" is missing from path; a field failed validation`},
 		{"missing field untouched", goa.MissingFieldError("project_id", "path"), goa.MissingField, http.StatusBadRequest,
 			`"project_id" is missing from path`},
+		// Since goa v3.31 a nested required field is reported under the design-derived path of
+		// the object that lacks it, which carries no value and must survive.
+		{"nested missing field untouched", goa.MissingFieldError("refresh_token", "body.credentials"), goa.MissingField, http.StatusBadRequest,
+			`"refresh_token" is missing from body.credentials`},
+		{"array element missing field untouched", goa.MissingFieldError("keyword", "body.keywords[*]"), goa.MissingField, http.StatusBadRequest,
+			`"keyword" is missing from body.keywords[*]`},
+		// The context must be a request location or a body path, never free text.
+		{"missing field with unrecognized context fails closed", goa.MissingFieldError("x", marker), goa.MissingField, http.StatusBadRequest,
+			"a field failed validation"},
 		{"missing payload untouched", goa.MissingPayloadError(), goa.MissingPayload, http.StatusBadRequest,
 			"missing required payload"},
 		{"plain error untouched", errors.New(marker), "fault", http.StatusInternalServerError, marker},
