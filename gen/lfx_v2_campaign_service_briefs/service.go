@@ -42,7 +42,9 @@ type Service interface {
 	// Advertising campaign names one by microsoftConfig.imageAssetId, and at
 	// dispatch it is uploaded to the ad account's media library (an account-scoped
 	// MediaId) and attached to the campaign as an image ad extension; Microsoft
-	// accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels.
+	// accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit
+	// campaign can also reference the asset (redditConfig.imageAssetId), served to
+	// Reddit at a short-lived signed URL when that feature is configured.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// Create campaigns across the selected platforms (async -> job). One request
 	// shape is refused synchronously, before any job exists: an email campaign

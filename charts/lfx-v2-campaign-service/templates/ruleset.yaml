@@ -37,6 +37,36 @@ spec:
             values:
               aud: {{ .Values.app.audience }}
 
+    # Signed creative-asset URLs (LFXV2-2665). EXPLICITLY ANONYMOUS, by design: Reddit Ads
+    # takes a promoted-post image only as a public URL it fetches, and Reddit's fetcher carries
+    # no LFX credential. The authorization is the HMAC signature in the query string, verified
+    # by the service, which answers every rejection with one bare 404 (see
+    # docs/knowledge/architecture/signed-creative-asset-urls.md).
+    #
+    # Scoped as tightly as Heimdall allows: GET/HEAD only, and exactly the three-segment
+    # route the service mounts — no wildcard, so nothing else under /_campaigns/ is opened.
+    # Every other /_campaigns/** path still falls to the deny_all placeholder rule below;
+    # Heimdall prefers this rule's named-capture route over that rule's free wildcard.
+    # Only anonymous_authenticator runs (no oidc), so a caller's bearer token is never even
+    # evaluated here, and allow_all is safe because the route serves nothing without a valid
+    # signature. create_jwt mirrors the openapi rule so the upstream sees the same header
+    # shape; the route itself has no JWT security and ignores it.
+    - id: "rule:lfx:lfx-v2-campaign-service:signed-creative-asset:get"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+          - HEAD
+        routes:
+          - path: /_campaigns/creative-assets/:projectId/:briefId/:assetId
+      execute:
+        - authenticator: anonymous_authenticator
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
+
     # Project-nested campaign API. Per the approved architecture (D2), the service
     # introduces no new FGA object types — every endpoint is nested under
     # /projects/{projectId}/… and gated on the `campaign_manager` relation of that

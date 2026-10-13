@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/assetsign"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
@@ -52,7 +53,12 @@ type redditConfig struct {
 	// image post itself (brief->servable ad without a hand-made post). CallToAction
 	// is that post's button label (defaults to "Learn More"). Both are ignored when
 	// PostURL is supplied. See reddit.CampaignInput.ImageURL/CallToAction.
-	ImageURL          string `json:"imageUrl"`
+	ImageURL string `json:"imageUrl"`
+	// ImageAssetID names a creative asset uploaded against THIS brief, the alternative to
+	// ImageURL (exactly one of the two; not with PostURL). The dispatch proves the asset
+	// belongs to the brief and hands Reddit a short-lived signed URL at which this service
+	// serves it (reddit_asset.go). Refused when the feature is not configured.
+	ImageAssetID      string `json:"imageAssetId"`
 	CallToAction      string `json:"callToAction"`
 	ConversionPixelID string `json:"conversionPixelId"`
 	VideoGoal         string `json:"videoGoal"`
@@ -102,6 +108,11 @@ type RedditDispatcher struct {
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// assets and assetURLs back redditConfig.imageAssetId (reddit_asset.go): the store that
+	// proves the asset belongs to the brief, and the signer that mints the URL Reddit fetches.
+	// A nil assetURLs is the feature OFF.
+	assets    redditAssetSizer
+	assetURLs *assetsign.Signer
 }
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
@@ -157,6 +168,24 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		hsToken = bf.HSToken
 	}
 
+	// A stored creative asset becomes the signed URL Reddit fetches, resolved here — after
+	// the config is parsed and BEFORE any Reddit call — so a refused or foreign asset fails
+	// the platform pre-create and releases the claim. cfg itself is left untouched, so the
+	// persisted config snapshot records imageAssetId and never the minted URL.
+	imageURL := cfg.ImageURL
+	var signedURL string
+	assetID, err := d.checkRedditAssetChoice(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	if assetID != "" {
+		signedURL, err = d.resolveRedditAssetURL(ctx, brief, assetID)
+		if err != nil {
+			return nil, notCreated(err)
+		}
+		imageURL = signedURL
+	}
+
 	in := reddit.CampaignInput{
 		EventName:       bf.EventName,
 		EventSlug:       brief.EventSlug,
@@ -177,7 +206,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		Keywords:          cfg.Keywords,
 		Variants:          cfg.Variants,
 		PostURL:           cfg.PostURL,
-		ImageURL:          cfg.ImageURL,
+		ImageURL:          imageURL,
 		CallToAction:      cfg.CallToAction,
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,
@@ -201,6 +230,18 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	//                       orphan as reconciliation-required, not a false success.
 	//   - (result, nil)   → success.
 	result, cerr := client.CreateCampaign(ctx, in)
+	if signedURL != "" {
+		// Reddit may echo media_url in an error body, which would carry the signature into the
+		// job error and the persisted Steps/AdWarning. Scrub it; classification is unaffected
+		// (scrubErr preserves errors.Is/As).
+		cerr = scrubErr(cerr, signedURL)
+		if result != nil {
+			result.AdWarning = scrubSignedURL(result.AdWarning, signedURL)
+			for i := range result.Steps {
+				result.Steps[i] = scrubSignedURL(result.Steps[i], signedURL)
+			}
+		}
+	}
 	if cerr != nil {
 		if result == nil {
 			return nil, notCreated(fmt.Errorf("reddit campaign creation failed before any upstream create: %w", cerr))
