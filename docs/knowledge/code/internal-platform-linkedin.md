@@ -830,7 +830,7 @@ ids present and the discovery resolver only requires the credential to be otherw
 
 ## Audience read (`audience.go`, LFXV2-2665)
 
-`GetAudienceInsights(ctx, window, campaignIDs)` backs `get-linkedin-ads-audience` — see
+`GetAudienceInsights(ctx, accountID, window, campaignIDs)` backs `get-linkedin-ads-audience` — see
 [LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md) for the endpoint,
 trust boundary and error mapping. It reuses this package's Ad Analytics plumbing rather than a
 second transport: `dateRangeForWindow` (so its windows are exactly the metrics read's, and
@@ -839,25 +839,28 @@ second transport: `dateRangeForWindow` (so its windows are exactly the metrics r
 `getAdAnalyticsRaw`, a single-attempt GET that returns the bounded 2xx body (the account
 monitor's discipline: no 429 backoff inside a 20s read, no upstream body on `apiError`).
 
-One `q=statistics` request per pivot (`MEMBER_JOB_FUNCTION`, `MEMBER_SENIORITY`,
-`MEMBER_INDUSTRY`, `MEMBER_COMPANY_SIZE`, `MEMBER_COUNTRY_V2`), each `pivots=List(CAMPAIGN,…)`
-with a `campaigns` facet of the scoped URNs intersected with an `accounts` facet of the bound
-account (`GetAudienceInsights` takes the account id and holds it to `ValidateAccountID` first),
-because LinkedIn campaign ids are unique only within an ad account. The CAMPAIGN pivot is what
-makes the tenant boundary checkable on the way back — each element's two `pivotValues` must hold
-exactly one in-scope `urn:li:sponsoredCampaign` (order not relied on). `pivotValues` is named in
+One `q=analytics` request per (pivot, campaign) — `pivot=MEMBER_JOB_FUNCTION`,
+`MEMBER_SENIORITY`, `MEMBER_INDUSTRY`, `MEMBER_COMPANY_SIZE` or `MEMBER_COUNTRY_V2`, with a
+`campaigns` facet naming that ONE campaign URN and an `accounts` facet of the bound account
+(`accountID` is held to `ValidateAccountID` first), because LinkedIn campaign ids are unique only
+within an ad account. The multi-pivot `q=statistics` finder cannot be used: its documented `pivots`
+enum has no MEMBER_* value. An Analytics element carries only the demographic value, so
+attribution comes from the per-campaign request; each element must carry exactly one
+`pivotValue`, never a campaign URN. The answers are summed per value in `GetAudienceInsights`. At
+most `MaxAudienceCampaigns` (10) campaigns, so at most 50 requests, run `audienceConcurrency` (5)
+at a time through an `errgroup` whose first failure cancels the rest. `pivotValues` is named in
 `fields` explicitly, as LinkedIn's documented fields list shows.
 
 Decode is fail-closed: `identityjson.Check` on the raw body first (a repeated `elements` key
 would otherwise decode as an authoritative empty answer), `elements` as a pointer, counters as
 `json.RawMessage` so an ABSENT key reads 0 while an explicit `null` is refused, integers only
 and non-negative, clicks with zero impressions refused (the metrics read's guard), `costInUsd` only as a string, the demographic value held to a charset and —
-for the four pivots LinkedIn's URN-resolution table names — to its URN type, duplicates
-(campaign, value) refused, int64 overflow refused, a `next` paging link or a response at the
+for the four pivots LinkedIn's URN-resolution table names — to its URN type, a value
+repeated within one (pivot, campaign) answer refused, int64 overflow refused, a `next` paging link or a response at the
 documented 15,000-element ceiling refused. Errors never echo upstream values (lengths only).
 Scope is validated before any request: canonical ids (`ValidateAudienceCampaignID`,
-`^[1-9][0-9]{0,18}$`), duplicates collapsed, at most `MaxAudienceCampaigns` (50 — a local URL
-bound; no query tunneling here).
+`^[1-9][0-9]{0,18}$`), duplicates collapsed, at most `MaxAudienceCampaigns` (10 — a local bound
+on request count, not a LinkedIn limit).
 
 See [internal/platform/linkedin](../../../internal/platform/linkedin).
 
