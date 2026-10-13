@@ -1368,3 +1368,13 @@ creates stats jobs, with the chart's replica refusal as a first line of defence.
 `AudienceJobsAbandonedError.Unknown` — also when no job was created before — so the dispatcher
 can charge them. Tests: `TestAccountPacers_ClientsForOneAccountShareReservations`,
 `TestGetAudienceInsights_AmbiguousCreatesAreCharged`.
+
+## Creative images (media.go, LFXV2-2665)
+
+`CampaignInput.Image` attaches a stored PNG/JPEG (at most `MaxImageBytes`, 5 MiB) to the
+AUTHORED tweet. Before the campaign POST, `ensureImageMedia` looks the image up in the account's
+Media Library by `lfxasset<sha256>`. If it is not there, it uploads through the v2 chunked
+endpoints on `WithMediaUploadBaseURL` (default `https://api.x.com`) and adds it to the library.
+The key goes out as `media_keys` and is recorded in `CampaignResult.MediaKey`. `doBodyRequest`
+is the one body-carrying, never-retrying sender. It classifies outcomes the way `doRequestAbs`
+does. See [X Ads Creative Image Assets](../architecture/x-creative-assets.md).

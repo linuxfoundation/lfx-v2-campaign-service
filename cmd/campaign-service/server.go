@@ -204,6 +204,15 @@ func handleHTTPServer(ctx context.Context, cfg *config.Config, endpoints *svc.En
 	if err != nil {
 		return err
 	}
+	// The signed creative-asset route (LFXV2-2665) has its own error contract — one bare 404 for
+	// every rejection — so it is mounted with its own encoder/formatter rather than inside
+	// buildMux. See signed_asset_mount.go. A nil service is a mis-wiring and fails startup.
+	if cont.SignedAssets == nil {
+		return fmt.Errorf("container misconfigured: SignedAssets service is nil")
+	}
+	if err := mountSignedAssets(mux, cont.SignedAssets, errorHandler(ctx)); err != nil {
+		return err
+	}
 
 	// Track in-flight handlers so shutdown can wait (bounded) for stragglers to
 	// return before the DB pool closes. http.Server.Close does not wait for

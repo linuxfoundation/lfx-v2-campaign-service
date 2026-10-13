@@ -2182,6 +2182,10 @@ func mapBriefErr(err error) error {
 			Reason:  conflictReason("ab_test_unsupported_send_type"),
 			Message: domain.ErrABTestUnsupportedSendType.Error() + "; choose a source email that is not set to send by time zone, or turn the A/B test off",
 		}
+	case errors.Is(err, domain.ErrCreateConfigInvalid):
+		// A create pre-check refused the config before any platform was asked. Its message is
+		// fixed, caller-safe text by the sentinel's contract, and it is the actionable part.
+		return &briefs.BadRequestError{Code: "400", Message: err.Error()}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):

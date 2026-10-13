@@ -683,6 +683,9 @@ var (
 	// ErrPreflightNotApplicable: a CreatePreflighter had nothing to check and made no platform call.
 	// PreflightCreate skips it silently and records no upstream call for it.
 	ErrPreflightNotApplicable = domain.ErrPreflightNotApplicable
+	// ErrCreateConfigInvalid: a CreatePreflighter refused the config locally (no platform call).
+	// PreflightCreate returns it unrecorded; mapBriefErr answers 400.
+	ErrCreateConfigInvalid = domain.ErrCreateConfigInvalid
 
 	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
@@ -2811,6 +2814,11 @@ func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, pl
 			// one would add a near-zero "ok" sample for every create that did not ask for an A/B
 			// test and bury the quantiles and error rate of the lookups that really happen.
 			continue
+		}
+		if errors.Is(perr, ErrCreateConfigInvalid) {
+			// Refused on the config alone: nothing left the process, so — like
+			// ErrPreflightNotApplicable — there is no upstream call to record.
+			return perr
 		}
 		// A refusal is a read that SUCCEEDED and gave an answer we act on -- the platform replied
 		// and said the email sends by time zone -- so it is recorded as a successful upstream call.

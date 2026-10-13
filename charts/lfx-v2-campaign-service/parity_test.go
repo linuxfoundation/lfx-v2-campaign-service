@@ -17,7 +17,7 @@
 // (2) a WITNESS derivation that couples the assertions to the matchers' own content —
 // concrete example paths enumerated from the route regex's AST must each be ruled,
 // and a witness built from each RuleSet pattern must match the route. The witness
-// check is what catches a ONE-SIDED matcher edit (e.g. adding `tiktok-ads/metrics`
+// check is what catches a ONE-SIDED matcher edit (e.g. adding `tiktok-ads/campaign-ref`
 // to only the route regex): a static table can miss it, but an enumerated witness
 // for the new alternative will match the route and not the RuleSet, failing parity.
 package charts_test
@@ -456,9 +456,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// --- accepted: hubspot base + descendants ---
 		{"/projects/p1/hubspot", true},
 		{"/projects/p1/hubspot/utm", true},
-		// --- accepted: per-provider metrics + the google-ads reads (keywords, audience, campaign-ref) ---
-		{"/projects/p1/google-ads/metrics", true},
-		{"/projects/p1/twitter-ads/metrics", true},
+		// --- accepted: the google-ads reads (keywords, audience, campaign-ref) ---
 		{"/projects/p1/google-ads/keywords", true},
 		{"/projects/p1/google-ads/audience", true},
 		{"/projects/p1/google-ads/campaign-ref", true},
@@ -519,9 +517,20 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-google-ads/emails", false},
 		// hubspot's account-monitor is accepted (above); its discovery-shaped siblings are not.
 		{"/projects/p1/connection-hubspot/account-monitor/x", false},
-		// --- rejected: metrics/keywords on the wrong provider ---
+		// --- rejected: keywords/audience on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
 		{"/projects/p1/linkedin-ads/keywords", false},
+		// --- rejected: per-provider /metrics (2026-10-13) ---
+		// The chart used to route and rule /{provider}/metrics for five providers, but no
+		// design/ method serves that path — metrics are served per campaign and per brief,
+		// under /briefs/** (pinned above). Routing an unserved path only widened the gateway
+		// surface to a 404, so both matchers dropped it together; these rows fail if either
+		// side re-adds it alone or both re-add it without a handler.
+		{"/projects/p1/google-ads/metrics", false},
+		{"/projects/p1/linkedin-ads/metrics", false},
+		{"/projects/p1/meta-ads/metrics", false},
+		{"/projects/p1/reddit-ads/metrics", false},
+		{"/projects/p1/twitter-ads/metrics", false},
 		{"/projects/p1/hubspot-ads/metrics", false},
 		// The branch is an exact alternative, not a prefix: nothing hangs off it.
 		{"/projects/p1/fetch-event-url/anything", false},
