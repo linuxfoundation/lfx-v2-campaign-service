@@ -96,6 +96,12 @@ spec:
           port: {{ .Values.service.port }}
           weight: 1
     # OpenAPI spec + reserved placeholder prefix (served directly by the service).
+    # The /_campaigns/ PathPrefix below also carries the signed creative-asset route
+    # (LFXV2-2665): /_campaigns/creative-assets/{projectId}/{briefId}/{assetId}, the public
+    # URL Reddit fetches a stored image from. It needs no branch of its own — the prefix
+    # already forwards it through Heimdall — and Heimdall's dedicated ANONYMOUS rule
+    # (ruleset.yaml `signed-creative-asset:get`, GET/HEAD only) is what admits it; every other
+    # /_campaigns/** path stays deny_all. parity_test.go pins both halves.
     - matches:
       - path:
           type: Exact

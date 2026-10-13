@@ -17,6 +17,7 @@ import (
 	lfxv2campaignserviceaudiencesc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_audiences/client"
 	lfxv2campaignservicebriefsc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_briefs/client"
 	lfxv2campaignserviceconnectionsc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_connections/client"
+	lfxv2campaignservicesignedassetsc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_signed_assets/client"
 	lfxv2campaignservicesvcc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/http/lfx_v2_campaign_service_svc/client"
 	goahttp "goa.design/goa/v3/http"
 	goa "goa.design/goa/v3/pkg"
@@ -32,6 +33,7 @@ func UsageCommands() []string {
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|list-meta-ad-sets|toggle-meta-ad-set-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
 		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-meta-ads-audience|get-twitter-ads-audience|get-microsoft-ads-keywords|get-microsoft-ads-audience|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
+		"lfx-v2-campaign-service-signed-assets get-signed-creative-asset",
 	}
 }
 
@@ -727,6 +729,15 @@ func ParseEndpoint(
 		lfxV2CampaignServiceSvcReadyzFlags = flag.NewFlagSet("readyz", flag.ExitOnError)
 
 		lfxV2CampaignServiceSvcLivezFlags = flag.NewFlagSet("livez", flag.ExitOnError)
+
+		lfxV2CampaignServiceSignedAssetsFlags = flag.NewFlagSet("lfx-v2-campaign-service-signed-assets", flag.ContinueOnError)
+
+		lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags         = flag.NewFlagSet("get-signed-creative-asset", flag.ExitOnError)
+		lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetProjectIDFlag = new(cliStringFlag)
+		lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetBriefIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetAssetIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetExpFlag       = new(cliStringFlag)
+		lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetSigFlag       = new(cliStringFlag)
 	)
 	lfxV2CampaignServiceAudiencesCreateAudienceFlags.Var(lfxV2CampaignServiceAudiencesCreateAudienceBodyFlag, "body", "")
 	lfxV2CampaignServiceAudiencesCreateAudienceFlags.Var(lfxV2CampaignServiceAudiencesCreateAudienceProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
@@ -1127,6 +1138,11 @@ func ParseEndpoint(
 	lfxV2CampaignServiceConnectionsMonitorHubspotAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorHubspotAccountProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceConnectionsMonitorHubspotAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorHubspotAccountDaysFlag, "days", "")
 	lfxV2CampaignServiceConnectionsMonitorHubspotAccountFlags.Var(lfxV2CampaignServiceConnectionsMonitorHubspotAccountBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags.Var(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetProjectIDFlag, "project-id", "Project slug or UUID the asset belongs to")
+	lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags.Var(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetBriefIDFlag, "brief-id", "Brief UUID")
+	lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags.Var(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetAssetIDFlag, "asset-id", "Creative asset UUID")
+	lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags.Var(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetExpFlag, "exp", "")
+	lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags.Var(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetSigFlag, "sig", "")
 
 	lfxV2CampaignServiceAudiencesFlags.Usage = lfxV2CampaignServiceAudiencesUsage
 	lfxV2CampaignServiceAudiencesCreateAudienceFlags.Usage = lfxV2CampaignServiceAudiencesCreateAudienceUsage
@@ -1259,6 +1275,9 @@ func ParseEndpoint(
 	lfxV2CampaignServiceSvcReadyzFlags.Usage = lfxV2CampaignServiceSvcReadyzUsage
 	lfxV2CampaignServiceSvcLivezFlags.Usage = lfxV2CampaignServiceSvcLivezUsage
 
+	lfxV2CampaignServiceSignedAssetsFlags.Usage = lfxV2CampaignServiceSignedAssetsUsage
+	lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags.Usage = lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetUsage
+
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
 	}
@@ -1284,6 +1303,8 @@ func ParseEndpoint(
 			svcf = lfxV2CampaignServiceConnectionsFlags
 		case "lfx-v2-campaign-service-svc":
 			svcf = lfxV2CampaignServiceSvcFlags
+		case "lfx-v2-campaign-service-signed-assets":
+			svcf = lfxV2CampaignServiceSignedAssetsFlags
 		default:
 			return nil, nil, fmt.Errorf("unknown service %q", svcn)
 		}
@@ -1679,6 +1700,13 @@ func ParseEndpoint(
 
 			case "livez":
 				epf = lfxV2CampaignServiceSvcLivezFlags
+
+			}
+
+		case "lfx-v2-campaign-service-signed-assets":
+			switch epn {
+			case "get-signed-creative-asset":
+				epf = lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetFlags
 
 			}
 
@@ -2083,6 +2111,13 @@ func ParseEndpoint(
 			case "livez":
 				endpoint = c.Livez()
 			}
+		case "lfx-v2-campaign-service-signed-assets":
+			c := lfxv2campaignservicesignedassetsc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "get-signed-creative-asset":
+				endpoint = c.GetSignedCreativeAsset()
+				data, err = lfxv2campaignservicesignedassetsc.BuildGetSignedCreativeAssetPayload(lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetProjectIDFlag.value, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetBriefIDFlag.value, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetAssetIDFlag.value, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetExpFlag.value, lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetSigFlag.value)
+			}
 		}
 	}
 	if err != nil {
@@ -2486,7 +2521,7 @@ func lfxV2CampaignServiceBriefsUsage() {
 	fmt.Fprintln(os.Stderr, `    approve-brief: Approve a brief for campaign creation.`)
 	fmt.Fprintln(os.Stderr, `    delete-brief: Archive a brief (soft delete).`)
 	fmt.Fprintln(os.Stderr, `    fetch-event-url: Fetch an event page and extract its details, for pre-filling a brief. Does not create anything.`)
-	fmt.Fprintln(os.Stderr, `    upload-creative-asset: Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels.`)
+	fmt.Fprintln(os.Stderr, `    upload-creative-asset: Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch.`)
 	fmt.Fprintln(os.Stderr, `    create-campaigns: Create campaigns across the selected platforms (async -> job). One request shape is refused synchronously, before any job exists: an email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together. It returns 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. Every other dispatch failure still arrives later, as the job's own result.`)
 	fmt.Fprintln(os.Stderr, `    adopt-campaign: Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit and X only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit and X, where the budget is the campaign's own.`)
 	fmt.Fprintln(os.Stderr, `    get-campaign: Get one campaign under a brief; returns ETag.`)
@@ -2693,7 +2728,7 @@ func lfxV2CampaignServiceBriefsUploadCreativeAssetUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels.`)
+	fmt.Fprintln(os.Stderr, `Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account's media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
@@ -5001,4 +5036,41 @@ func lfxV2CampaignServiceSvcLivezUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-svc livez")
+}
+
+// lfxV2CampaignServiceSignedAssetsUsage displays the usage of the
+// lfx-v2-campaign-service-signed-assets command and its subcommands.
+func lfxV2CampaignServiceSignedAssetsUsage() {
+	fmt.Fprintln(os.Stderr, `Serves one stored creative asset at a short-lived HMAC-signed URL minted by the Reddit dispatch. Unauthenticated by design: the signature is the authorization.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] lfx-v2-campaign-service-signed-assets COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    get-signed-creative-asset: Serve the bytes of one stored creative asset named by a valid, unexpired signature over (project, brief, asset, expiry). Every rejection is the same 404.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-signed-assets COMMAND --help\n", os.Args[0])
+}
+func lfxV2CampaignServiceSignedAssetsGetSignedCreativeAssetUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-signed-assets get-signed-creative-asset", os.Args[0])
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -brief-id STRING")
+	fmt.Fprint(os.Stderr, " -asset-id STRING")
+	fmt.Fprint(os.Stderr, " -exp INT64")
+	fmt.Fprint(os.Stderr, " -sig STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Serve the bytes of one stored creative asset named by a valid, unexpired signature over (project, brief, asset, expiry). Every rejection is the same 404.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project slug or UUID the asset belongs to`)
+	fmt.Fprintln(os.Stderr, `    -brief-id STRING: Brief UUID`)
+	fmt.Fprintln(os.Stderr, `    -asset-id STRING: Creative asset UUID`)
+	fmt.Fprintln(os.Stderr, `    -exp INT64: `)
+	fmt.Fprintln(os.Stderr, `    -sig STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-signed-assets get-signed-creative-asset --project-id \"Jw\" --brief-id \"97798b82-bae1-4ad6-9b5b-85133b148acc\" --asset-id \"438e2c0c-6b43-46f2-84bd-6120abc6e4cf\" --exp 1904781533029344288 --sig \"6hpfZYhHyKzCBrdl7Z8R67pG4plsWyYNH-IQPX62j70\"")
 }
