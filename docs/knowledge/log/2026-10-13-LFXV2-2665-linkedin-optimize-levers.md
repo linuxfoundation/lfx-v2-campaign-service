@@ -31,3 +31,9 @@ adapters.
 Third #318 review round: the bid rejection classifier now REQUIRES every input error to echo
 `input.value.decimalValue` equal to the submitted bid; an envelope that omits it is no longer an
 amount REJECTED (400) and stays an ordinary definite failure.
+
+Fourth #318 review round: the LinkedIn settings readback reports `unit_cost_currency`
+(`unitCost.currencyCode`) beside `unit_cost`, and leaves the amount absent when the currency is
+missing or empty, so a EUR bid never reads as a bare number. The bid write already refuses (409) a
+campaign whose unitCost is not USD or reports no currency, so it never writes USD over another
+currency.

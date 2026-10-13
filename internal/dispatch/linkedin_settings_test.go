@@ -73,16 +73,17 @@ func TestLinkedIn_ReadSettings_ComparesTheCampaign(t *testing.T) {
 		t.Errorf("ids = %+v", rb)
 	}
 	assertSettingsFields(t, rb, map[string]fieldWant{
-		settingsFieldBudgetAmount:    {"100.00", "100.00", model.SettingsMatch},
-		settingsFieldBudgetType:      {"daily", "daily", model.SettingsMatch},
-		settingsFieldName:            {"KubeCon EU", "KubeCon EU", model.SettingsMatch},
-		settingsFieldStatus:          {"", "ACTIVE", model.SettingsUnknown},
-		settingsFieldStartDate:       {"2026-08-01", "2026-08-01", model.SettingsMatch},
-		settingsFieldEndDate:         {"2026-08-16", "2026-08-16", model.SettingsMatch},
-		settingsFieldBiddingStrategy: {"", "NONE", model.SettingsUnknown},
-		settingsFieldCostType:        {"", "CPC", model.SettingsUnknown},
-		settingsFieldUnitCost:        {"", "5.25", model.SettingsUnknown},
-		settingsFieldObjectiveType:   {"", "WEBSITE_CONVERSION", model.SettingsUnknown},
+		settingsFieldBudgetAmount:     {"100.00", "100.00", model.SettingsMatch},
+		settingsFieldBudgetType:       {"daily", "daily", model.SettingsMatch},
+		settingsFieldName:             {"KubeCon EU", "KubeCon EU", model.SettingsMatch},
+		settingsFieldStatus:           {"", "ACTIVE", model.SettingsUnknown},
+		settingsFieldStartDate:        {"2026-08-01", "2026-08-01", model.SettingsMatch},
+		settingsFieldEndDate:          {"2026-08-16", "2026-08-16", model.SettingsMatch},
+		settingsFieldBiddingStrategy:  {"", "NONE", model.SettingsUnknown},
+		settingsFieldCostType:         {"", "CPC", model.SettingsUnknown},
+		settingsFieldUnitCost:         {"", "5.25", model.SettingsUnknown},
+		settingsFieldUnitCostCurrency: {"", "USD", model.SettingsUnknown},
+		settingsFieldObjectiveType:    {"", "WEBSITE_CONVERSION", model.SettingsUnknown},
 	})
 	assertSettingsReadOnly(t, api.requests(), "")
 }
@@ -180,4 +181,36 @@ func TestLinkedIn_ReadSettings_TrustBoundary(t *testing.T) {
 			t.Fatalf("err = %v, want ErrConnectionNotUsable + ErrCredentialsExpired", err)
 		}
 	})
+}
+
+// The bid amount is never shown without its currency: an adopted campaign bidding in EUR reports
+// EUR beside the amount, and a unitCost with no currency reports neither side — never a bare
+// number that reads the same as a USD one.
+func TestLinkedIn_ReadSettings_UnitCostCarriesItsCurrency(t *testing.T) {
+	cases := []struct {
+		name             string
+		mutate           func(string) string
+		amount, currency string
+	}{
+		{"EUR campaign", replace(`"5.25","currencyCode":"USD"`, `"5.25","currencyCode":"EUR"`), "5.25", "EUR"},
+		{"missing currency", replace(`"5.25","currencyCode":"USD"`, `"5.25"`), "", ""},
+		{"empty currency", replace(`"5.25","currencyCode":"USD"`, `"5.25","currencyCode":""`), "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, _ := liLeverDispatcher(t, map[string]settingsRoute{liCampaignPath: {status: 200, body: liCampaignJSON(tc.mutate)}})
+			row := liRow()
+			row.Result = []byte(`{"accountId":"123456789","adopted":true}`)
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderLinkedInAds, row)
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			if got := derefOr(settingsField(t, rb, settingsFieldUnitCost).Upstream); got != tc.amount {
+				t.Errorf("unit_cost = %q, want %q", got, tc.amount)
+			}
+			if got := derefOr(settingsField(t, rb, settingsFieldUnitCostCurrency).Upstream); got != tc.currency {
+				t.Errorf("unit_cost_currency = %q, want %q", got, tc.currency)
+			}
+		})
+	}
 }

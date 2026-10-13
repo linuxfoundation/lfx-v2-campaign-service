@@ -18,9 +18,11 @@ import (
 // amount), so all three are shown: bidding_strategy_type alone cannot say whether a manual bid
 // is per click.
 const (
-	settingsFieldCostType      = "cost_type"
-	settingsFieldUnitCost      = "unit_cost"
-	settingsFieldObjectiveType = "objective_type"
+	settingsFieldCostType = "cost_type"
+	settingsFieldUnitCost = "unit_cost"
+	// settingsFieldUnitCostCurrency is unitCost.currencyCode: unit_cost is never shown without it.
+	settingsFieldUnitCostCurrency = "unit_cost_currency"
+	settingsFieldObjectiveType    = "objective_type"
 )
 
 // ReadSettings implements service.SettingsReader for LinkedIn: one account-scoped GET of the
@@ -34,7 +36,8 @@ const (
 //     campaign_name, start_date, end_date (runSchedule).
 //   - upstream-only: status (a different axis from the row's lifecycle status, as on every
 //     platform), bidding_strategy_type (optimizationTargetType), cost_type, unit_cost (the bid
-//     amount, in whole units of its currency) and objective_type. The create path records none
+//     amount, in whole units of its currency), unit_cost_currency (that currency — unit_cost is
+//     absent whenever it is not reported) and objective_type. The create path records none
 //     of these, so each reads `unknown`.
 //
 // BUDGET. The create path sets exactly one of dailyBudget/totalBudget in USD, so a campaign
@@ -100,9 +103,15 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 			upstreamBudget = settingsMicrosToUnits(settings.TotalBudgetMicros)
 		}
 	}
-	var unitCost *string
-	if !settings.UnitCostUnparseable {
-		unitCost = settingsMicrosToUnits(settings.UnitCostMicros)
+	// The bid amount is shown ONLY with the currency LinkedIn reported for it: unitCost is in
+	// the ad account's currency (an adopted campaign may bid in EUR), so a bare number would read
+	// the same for 5 USD and 5 EUR. No currency → no amount, never a unitless figure.
+	var unitCost, unitCostCurrency *string
+	if cur := strings.TrimSpace(settings.UnitCostCurrency); cur != "" {
+		unitCostCurrency = strPtr(cur)
+		if !settings.UnitCostUnparseable {
+			unitCost = settingsMicrosToUnits(settings.UnitCostMicros)
+		}
 	}
 
 	startField := model.CompareSettingsField(settingsFieldStartDate, rec.start, settingsUTCDate(settings.RunStart))
@@ -121,6 +130,7 @@ func (d *LinkedInDispatcher) ReadSettings(ctx context.Context, projectID string,
 		model.CompareSettingsField(settingsFieldBiddingStrategy, nil, settings.OptimizationTargetType),
 		model.CompareSettingsField(settingsFieldCostType, nil, settings.CostType),
 		model.CompareSettingsField(settingsFieldUnitCost, nil, unitCost),
+		model.CompareSettingsField(settingsFieldUnitCostCurrency, nil, unitCostCurrency),
 		model.CompareSettingsField(settingsFieldObjectiveType, nil, settings.ObjectiveType),
 	}
 	rb.SummariseSettings()

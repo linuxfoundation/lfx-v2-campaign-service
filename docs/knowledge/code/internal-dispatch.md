@@ -4271,7 +4271,8 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   neither — e.g. a campaign under a group's DYNAMIC budget — non-USD or unreadable → `unknown`),
   `campaign_name`, `start_date` (through `compareNudgedStart`, since `toMs` nudges a begun start)
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
-  `cost_type`, `unit_cost`, `objective_type`. An `account` URN naming another account →
+  `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
+  whenever the currency is missing, never a bare number), `objective_type`. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidUnwritable`, campaign id
