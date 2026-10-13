@@ -167,21 +167,76 @@ func (c *Client) resolveCurrencyOffset(acctCurrency string, preflightErr error) 
 // NaN is rejected explicitly rather than left to the comparisons: NaN fails every ordered
 // comparison, so it would slip past the range check and convert to an implementation-defined
 // int64 rather than being named for what it is.
+//
+// An amount finer than one minor unit (1.4 on a JPY account, 25.505 on a USD one) is REFUSED
+// before anything is written, not rounded: see fractionalMinorUnits (#235).
 // Every refusal wraps ErrBudgetAmountInvalid; the currency-offset failures above deliberately
 // do NOT, because those are upstream account configuration, not the caller's amount.
 func budgetToMinorUnits(budget float64, offset int64) (int64, error) {
 	if math.IsNaN(budget) {
 		return 0, invalidBudgetAmount("budget must be a finite number, got %v", budget)
 	}
-	scaled := math.Round(budget * float64(offset))
+	scaled := budget * float64(offset)
 	if scaled >= float64(math.MaxInt64) {
 		return 0, invalidBudgetAmount("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
 	}
-	budgetMinor := int64(scaled)
-	if budgetMinor < 1 {
+	if scaled < 1 {
 		return 0, invalidBudgetAmount("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	}
-	return budgetMinor, nil
+	// A fraction of a minor unit is REFUSED, never rounded (#235): rounding 1.4 on a JPY account
+	// to ¥1 and answering 200 is a silent change to money the caller never asked for.
+	if fractionalMinorUnits(budget, offset) {
+		return 0, invalidBudgetAmount("budget %s is finer than the ad account currency's smallest unit; %s",
+			strconv.FormatFloat(budget, 'f', -1, 64), wholeAmountsAdvice(offset))
+	}
+	return int64(math.Round(scaled)), nil
+}
+
+// fractionalMinorUnits reports whether amount, in whole account-currency units, carries a
+// fraction of the currency's minor unit — i.e. whether amount×offset is not an integer.
+//
+// For a power-of-ten offset (every entry in currencyMinorUnitOffset) the check is DECIMAL, not a
+// float comparison: the amount's shortest round-tripping decimal form (the digits the caller
+// sent — a JSON number is parsed from exactly that text) may carry at most log10(offset)
+// fractional digits. That is immune to binary representation error in both directions — 19.99
+// is accepted although 19.99*100 is 1998.9999999999998, and 1.005 is refused although a float
+// tolerance wide enough for large amounts would round it. Any other offset falls back to an
+// epsilon comparison on the product.
+func fractionalMinorUnits(amount float64, offset int64) bool {
+	places, ok := decimalPlaces(offset)
+	if !ok {
+		scaled := amount * float64(offset)
+		return math.Abs(scaled-math.Round(scaled)) > 1e-6
+	}
+	s := strconv.FormatFloat(math.Abs(amount), 'f', -1, 64)
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		return len(s)-i-1 > places
+	}
+	return false
+}
+
+// decimalPlaces returns n for offset == 10^n (n >= 0), ok=false otherwise.
+func decimalPlaces(offset int64) (int, bool) {
+	if offset < 1 {
+		return 0, false
+	}
+	n := 0
+	for offset > 1 {
+		if offset%10 != 0 {
+			return 0, false
+		}
+		offset /= 10
+		n++
+	}
+	return n, true
+}
+
+// wholeAmountsAdvice is the client-safe remedy sentence for a fractional-minor-unit refusal.
+func wholeAmountsAdvice(offset int64) string {
+	if places, ok := decimalPlaces(offset); ok && places > 0 {
+		return fmt.Sprintf("enter at most %d decimal places for this currency", places)
+	}
+	return "enter whole amounts for this currency"
 }
 
 // ResolveBudgetMinorUnits runs the account preflight and converts a whole-account-currency

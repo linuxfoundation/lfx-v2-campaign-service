@@ -10,37 +10,69 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// monitorPageResponses serves ListAccountCampaigns' two upstream reads (campaign list and
-// insights) from canned per-path page bodies, one per request to that path, and records
-// every request URI seen — mirroring adAccountsServer in accounts_test.go.
+// monitorPageResponses serves ListAccountCampaigns' upstream reads (campaign list, account
+// currency — always USD here — and insights) from canned per-path page bodies, one per request
+// to that path, and records every request URI seen — mirroring adAccountsServer in
+// accounts_test.go. A test that reaches the ad-set budget read uses monitorServer directly.
 func monitorPageResponses(t *testing.T, campaignPages, insightsPages []string) (*httptest.Server, *recordedURIs) {
 	t.Helper()
+	return monitorServer(t, monitorFixture{campaigns: campaignPages, insights: insightsPages, currency: `{"currency":"USD","id":"act_123"}`})
+}
+
+// monitorFixture is every upstream body ListAccountCampaigns can read. currency is the raw body
+// of GET /act_…?fields=currency; adSets is served one page per /adsets request, and adSetsFn,
+// when set, answers every /adsets request instead (for walks longer than a canned list).
+type monitorFixture struct {
+	campaigns, insights, adSets []string
+	currency                    string
+	adSetsFn                    func(n int) string
+	// adSetsStatus, when set, answers every /adsets request with that status and a Graph error.
+	adSetsStatus int
+}
+
+func monitorServer(t *testing.T, f monitorFixture) (*httptest.Server, *recordedURIs) {
+	t.Helper()
 	rec := &recordedURIs{}
-	var campaignN, insightsN int
+	var mu sync.Mutex
+	var campaignN, insightsN, adSetsN int
+	serve := func(w http.ResponseWriter, what string, pages []string, n *int) {
+		if *n >= len(pages) {
+			t.Errorf("%s asked for page %d but only %d were canned", what, *n+1, len(pages))
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(pages[*n]))
+		*n++
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec.add(r.URL.RequestURI())
+		mu.Lock()
+		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			if campaignN >= len(campaignPages) {
-				t.Errorf("campaign list asked for page %d but only %d were canned", campaignN+1, len(campaignPages))
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			_, _ = w.Write([]byte(campaignPages[campaignN]))
-			campaignN++
+			serve(w, "campaign list", f.campaigns, &campaignN)
 		case strings.HasSuffix(r.URL.Path, "/insights"):
-			if insightsN >= len(insightsPages) {
-				t.Errorf("insights asked for page %d but only %d were canned", insightsN+1, len(insightsPages))
-				w.WriteHeader(http.StatusInternalServerError)
+			serve(w, "insights", f.insights, &insightsN)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			if f.adSetsStatus != 0 {
+				w.WriteHeader(f.adSetsStatus)
+				_, _ = w.Write([]byte(`{"error":{"message":"Invalid parameter","type":"OAuthException","code":100}}`))
 				return
 			}
-			_, _ = w.Write([]byte(insightsPages[insightsN]))
-			insightsN++
+			if f.adSetsFn != nil {
+				_, _ = w.Write([]byte(f.adSetsFn(adSetsN)))
+				adSetsN++
+				return
+			}
+			serve(w, "ad-set budgets", f.adSets, &adSetsN)
+		case r.URL.Path == "/act_123" && r.URL.Query().Get("fields") == "currency":
+			_, _ = w.Write([]byte(f.currency))
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -125,8 +157,9 @@ func TestListAccountCampaigns_SinglePage_ReturnsAllRows(t *testing.T) {
 	if rows[0].CampaignID != "111" || rows[0].Impressions != 1000 || rows[0].Clicks != 50 {
 		t.Errorf("unexpected row: %+v", rows[0])
 	}
-	if rec.count() != 2 {
-		t.Errorf("expected exactly one campaign-list request and one insights request, got %d requests: %v", rec.count(), rec.all())
+	// The campaign carries a campaign-level budget, so no ad-set read is made.
+	if rec.count() != 3 {
+		t.Errorf("expected exactly one campaign-list, one account-currency and one insights request, got %d requests: %v", rec.count(), rec.all())
 	}
 }
 
@@ -162,10 +195,10 @@ func TestListAccountCampaigns_MultiPage_ConcatenatesEveryPage(t *testing.T) {
 	if r, ok := byID["222"]; !ok || r.Impressions != 2000 || r.Clicks != 75 {
 		t.Errorf("missing or wrong row for campaign 222: %+v (ok=%v)", r, ok)
 	}
-	// Two pages of campaigns + two pages of insights = 4 requests. This asserts the walk
-	// actually followed paging.cursors.after rather than stopping after page one.
-	if rec.count() != 4 {
-		t.Errorf("expected 4 requests (2 campaign pages + 2 insights pages), got %d: %v", rec.count(), rec.all())
+	// Two pages of campaigns + one currency read + two pages of insights = 5 requests. This
+	// asserts the walk actually followed paging.cursors.after rather than stopping after page one.
+	if rec.count() != 5 {
+		t.Errorf("expected 5 requests (2 campaign pages + 1 currency + 2 insights pages), got %d: %v", rec.count(), rec.all())
 	}
 	for _, uri := range rec.all() {
 		if strings.Contains(uri, "tok-secret-abc") {
@@ -316,7 +349,11 @@ func TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed(t *testing.T
 // string is NOT treated as a parse failure — only a non-empty, unparseable value is.
 func TestListAccountCampaigns_EmptyBudget_IsLegitimateZero(t *testing.T) {
 	emptyBudget := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{}}`
-	srv, _ := monitorPageResponses(t, []string{emptyBudget}, []string{insightsPage("111", 1000, 50, false)})
+	// No campaign-level budget sends the read to the ad sets; this account has none.
+	srv, _ := monitorServer(t, monitorFixture{
+		campaigns: []string{emptyBudget}, insights: []string{insightsPage("111", 1000, 50, false)},
+		currency: `{"currency":"USD"}`, adSets: []string{`{"data":[],"paging":{}}`},
+	})
 	c := newMonitorClient(srv)
 
 	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)

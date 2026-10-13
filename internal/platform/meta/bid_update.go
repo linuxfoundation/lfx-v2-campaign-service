@@ -93,7 +93,9 @@ func BidAmountReason(err error) (string, bool) {
 }
 
 // bidToMinorUnits converts a bid in the account's currency to the minor-unit integer bid_amount
-// carries, with budgetToMinorUnits's rounding (half away from zero). It is not an FX conversion.
+// carries. It is not an FX conversion. Like budgetToMinorUnits it REFUSES an amount finer than
+// one minor unit rather than rounding it (#235): a ¥1.4 bid silently written as ¥1 is a change to
+// money the caller never asked for.
 func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 	switch {
 	case math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0:
@@ -102,12 +104,16 @@ func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s exceeds the largest bid this service sets on Meta (%s)",
 			strconv.FormatFloat(amount, 'f', -1, 64), strconv.FormatFloat(metaMaxBid, 'f', -1, 64))}
 	}
-	minor := int64(math.Round(amount * float64(offset)))
-	if minor < 1 {
+	scaled := amount * float64(offset)
+	if scaled < 1 {
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is smaller than one minor unit of the ad account's currency, the smallest bid Meta accepts",
 			strconv.FormatFloat(amount, 'f', -1, 64))}
 	}
-	return minor, nil
+	if fractionalMinorUnits(amount, offset) {
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is finer than the ad account currency's smallest unit; %s",
+			strconv.FormatFloat(amount, 'f', -1, 64), wholeAmountsAdvice(offset))}
+	}
+	return int64(math.Round(scaled)), nil
 }
 
 // ResolveBidMinorUnits runs the account preflight and encodes a bid in the minor units of the

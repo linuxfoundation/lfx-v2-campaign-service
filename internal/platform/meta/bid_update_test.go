@@ -25,7 +25,10 @@ func TestBidToMinorUnits(t *testing.T) {
 		refused bool
 	}{
 		{2.35, 100, 235, false},
-		{0.005, 100, 1, false}, // half a cent rounds away from zero to the one-cent floor
+		{0.005, 100, 0, true},  // half a cent is below the one-cent floor: refused, no longer rounded up (#235)
+		{1.4, 1, 0, true},      // a fraction of a yen is refused, not written as ¥1 (#235)
+		{2.355, 100, 0, true},  // a fraction of a cent is refused (#235)
+		{0.29, 100, 29, false}, // 0.29*100 is 28.999999999999996 as a float; the decimal check accepts it
 		{0.004, 100, 0, true},
 		{120, 1, 120, false},
 		{0.4, 1, 0, true},

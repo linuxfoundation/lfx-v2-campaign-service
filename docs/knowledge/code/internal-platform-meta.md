@@ -197,7 +197,8 @@ over-limit copy fails before any paid campaign/ad-set exists rather than at
 non-fatal creative creation; `CampaignInput.Budget` is denominated in the ad
 ACCOUNT's own currency — the client does NO foreign-exchange conversion, so the
 caller must pass an amount already in that currency — and it is bounded
-(rejecting rounds-to-zero and overflow-scale values) then converted to minor
+(rejecting below-one-minor-unit, finer-than-one-minor-unit and overflow-scale values — a
+fraction of a minor unit is refused, never rounded, #235) then converted to minor
 units by multiplying by the account's minor-unit offset
 (`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. That offset is
 DERIVED from the account's ISO 4217 currency code, not fetched: the Meta AdAccount
@@ -390,8 +391,16 @@ decimal string. The currency-offset precedence described above is no longer inli
 same rules, same error texts — so an amount this service would refuse to create with cannot be
 reached by editing a live campaign. The scaling is likewise shared, as `budgetToMinorUnits`,
 which rejects NaN explicitly rather than relying on an ordered comparison (NaN fails every one,
-so it previously reached the `int64` conversion), refuses an amount below one minor unit, and
-refuses one that overflows the representable range after scaling. **Those three refusals wrap
+so it previously reached the `int64` conversion), refuses an amount below one minor unit,
+refuses one that overflows the representable range after scaling, and refuses one FINER than one
+minor unit (`1.4` on a JPY account, `25.505` on a USD one) instead of rounding it — it used to be
+written as ¥1 / $25.51 and answered 200 (#235). That check (`fractionalMinorUnits`) is DECIMAL:
+the amount's shortest round-tripping decimal form may carry at most log10(offset) fractional
+digits, so `19.99` is accepted although `19.99*100` is `1998.9999999999998` as a float, and no
+float tolerance has to be chosen; a non-power-of-ten offset (none is in the map) falls back to an
+epsilon comparison. The sentence ends "enter whole amounts for this currency" (offset 1) or
+"enter at most 2 decimal places for this currency" (offset 100). Because the encoder is shared,
+the create path refuses the same amounts. **Those four refusals wrap
 `ErrBudgetAmountInvalid`** and expose their sentence through `BudgetAmountReason(err)`; the
 currency-offset failures deliberately do NOT, because an unknown account currency is upstream
 configuration, not the caller's amount.
@@ -456,7 +465,8 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
   (`ErrInvalidAccountID`) before any request, since the id is spliced into the Graph path; then
   the account preflight plus `resolveCurrencyOffset` (the
   create/budget scale), then `bidToMinorUnits`: finite, positive, at most 1,000,000, at least one
-  minor unit; refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
+  minor unit, and no finer than one (the same decimal `fractionalMinorUnits` check — a ¥1.4 bid is
+  refused, never written as ¥1, #235); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
   currency wraps `ErrAccountCurrencyUnresolvable`.
 - `GetAdSetBid(ctx, adSetID)` — `GET /{id}?fields=id,campaign_id,bid_strategy,billing_event,optimization_goal,bid_amount`;
   a pure read; an answer for another ad set is an error; a non-numeric id is `ErrInvalidAdSetID`
@@ -716,6 +726,26 @@ client's injected clock, rather than the BFF's hardcoded `date_preset=last_30d`.
 [Account-Monitor Endpoints](../architecture/account-monitor-endpoints.md) for both
 departures, the credential-scoping (`resolveOwned`, no system-account fallback), and
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
+
+**Budgets: where the campaign keeps them, in the account currency (LFXV2-2665).** The read makes
+one `GET /{act}?fields=currency` (via `accountCurrency`, identity-checked) per request and converts
+every minor-unit budget with that currency's own offset (`minorToWhole`); the BFF-ported
+`minorUnitsToWhole` divided by 100 unconditionally, reading a JPY/KRW budget 100x too small, and is
+gone. A currency outside the supported map leaves every budget 0 (pacing unknown), never guessed.
+`CreateCampaign` puts the budget on the AD SET, so a campaign this service created reports no
+campaign-level budget and used to be `PacingUnknown` forever. When any admitted, non-failed
+campaign has neither a positive `daily_budget` nor `lifetime_budget`, `fetchAccountAdSetBudgets`
+makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status&limit=500`
+(`id` is the duplicate-row proof), bounded at `monitorAdSetMaxPages` (20) × 500, every body through
+`identityjson.Check` before decoding, and sums `effective_status == ACTIVE` ad sets per campaign.
+A CBO campaign keeps its own budget. Per-ad-set defects (explicit `null`, non-string, fractional or
+negative amount, both or neither budget on an active ad set, unreadable `effective_status`) make
+only that campaign unknown; a mixed daily/lifetime sum is unknown; an untrustworthy answer as a
+whole — page cap hit, identity-check failure, no `data`, an unattributable or repeated row, an
+unfollowable cursor — is `adSetBudgetsUnreadableError` and leaves every campaign that needed it
+unknown (never a partial sum) while the monitor read still succeeds. A failed REQUEST (transport,
+Graph error) fails the monitor like its sibling reads. `rules/monitor_meta.go` needed no change:
+an unknown budget is 0/0, which `metaPacingPct` already reports as not computable.
 
 See [internal/platform/meta](../../../internal/platform/meta).
 

@@ -31,7 +31,16 @@ func TestBudgetToMinorUnits(t *testing.T) {
 		wantErr string
 	}{
 		{name: "usd", budget: 25.50, offset: 100, want: 2550},
-		{name: "usd rounds to the nearest cent", budget: 25.505, offset: 100, want: 2551},
+		// #235: a fraction of a minor unit is refused, never rounded and written.
+		{name: "usd fraction of a cent is refused", budget: 25.505, offset: 100, wantErr: "enter at most 2 decimal places"},
+		{name: "jpy fraction of a yen is refused", budget: 1.4, offset: 1, wantErr: "enter whole amounts for this currency"},
+		{name: "jpy just above a whole yen is refused", budget: 3000.0000001, offset: 1, wantErr: "enter whole amounts"},
+		// The decimal check is immune to binary representation error: 19.99*100 is
+		// 1998.9999999999998 as a float and must still encode to exactly 1999.
+		{name: "usd cents with float representation error", budget: 19.99, offset: 100, want: 1999},
+		{name: "usd 0.29", budget: 0.29, offset: 100, want: 29},
+		{name: "large usd amount with cents", budget: 12345678.91, offset: 100, want: 1234567891},
+		{name: "usd whole dollars", budget: 40, offset: 100, want: 4000},
 		{name: "zero-decimal currency", budget: 3000, offset: 1, want: 3000},
 		{name: "one minor unit is the floor", budget: 0.01, offset: 100, want: 1},
 		{name: "below one minor unit", budget: 0.004, offset: 100, wantErr: "budget too small"},

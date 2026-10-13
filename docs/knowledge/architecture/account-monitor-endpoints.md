@@ -181,6 +181,27 @@ N-1 days. It now renders through `reportRange`, the same renderer
 scope audit below.) See `fetchAccountCampaignInsights`'s doc comment in
 `internal/platform/meta/monitor.go` for the same note next to the code.
 
+A fifth and sixth, both pacing-correctness bugs inherited from the BFF and fixed on
+2026-10-13 (LFXV2-2665). **Ad-set budgets**: the BFF read only the CAMPAIGN's
+`daily_budget`/`lifetime_budget`, but `CreateCampaign` puts the budget on the AD SET, so
+every campaign this service creates had no budget, read `pacing_unknown`, and could never
+raise an under- or overspend item. When an admitted campaign has neither campaign-level
+budget, the read now makes ONE account-level paged call,
+`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status`,
+and sums the `ACTIVE` ad sets' budgets per campaign (a paused ad set, or one under a paused
+campaign, is excluded; a CBO campaign keeps its own budget). It fails closed: daily and
+lifetime ad sets mixed under one campaign, an active ad set with no budget or an explicit
+`null` one, and any answer that cannot be trusted whole — the 20 × 500 page cap hit, a body
+that fails `identityjson`, an unattributable or repeated row — leave the campaigns that
+needed it `pacing_unknown`, never paced against a partial sum; only a failed request fails
+the endpoint. **Account currency**: the BFF divided every minor-unit budget by 100, so a
+JPY/KRW budget read 100x too small (and its campaign as wildly overspending). One
+`?fields=currency` read per request now supplies the offset the create path uses (1 for
+zero-decimal currencies); a currency outside the supported map leaves budgets unknown.
+`rules/monitor_meta.go` is unchanged — an unknown budget arrives as 0/0, which it already
+reports as not computable. See
+[2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md](../log/2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md).
+
 ## Correctness bugs found during local differential verification
 
 Local OLD-vs-NEW verification (Google only, so far) surfaced three real port
