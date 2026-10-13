@@ -618,27 +618,37 @@ func adSetRecordErr(err error, applied bool, verb string) error {
 	if applied {
 		what = "the ad set WAS " + verb + " on Meta"
 	}
-	consequence := "a campaign resume would re-activate it; pause it here again"
-	if verb == "resumed" {
-		consequence = "until it is, a campaign resume leaves this ad set paused; resume it here again"
-	}
+	advice := adSetRecordAdvice(verb)
 	if errors.Is(err, domain.ErrPreconditionFailed) || errors.Is(err, domain.ErrNotFound) {
-		return &briefs.ConflictError{Code: "409", Message: what + ", but this campaign was modified or deleted by another request meanwhile, so the change was not recorded: " + consequence + " after reading the campaign"}
+		return &briefs.ConflictError{Code: "409", Message: what + ", but this campaign was modified or deleted by another request meanwhile, so the change was not recorded: " + advice}
 	}
 	if errors.Is(err, errMetaAdSetClaimLost) {
 		// Meta's outcome is CONFIRMED here (this runs only after APPLIED / ALREADY_IN_STATE); only
 		// the record is in doubt. Not the pre-write claim-loss answer, which says the status is
 		// unconfirmed and that nothing was sent.
-		recheck := "if it is not shown, pause it here again"
-		if verb == "resumed" {
-			recheck = "if it is still shown, resume it here again to clear it"
-		}
-		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but this request lost the campaign's write lock while recording that, so whether the deliberate-pause record is on the campaign could not be confirmed: read the ad sets (deliberately_paused) before retrying; " + recheck}
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but this request lost the campaign's write lock while recording that, so the deliberate-pause record could not be confirmed: " + advice}
 	}
 	if errors.Is(err, errMetaAdSetRecordUnknown) {
-		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but whether that was recorded on the campaign could not be confirmed: read the ad sets (deliberately_paused); if it is not shown, " + consequence}
+		return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but whether that was recorded on the campaign could not be confirmed: " + advice}
 	}
-	return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but recording it on the campaign failed: " + consequence}
+	return &briefs.ConnServiceUnavailableError{Code: "503", Message: what + ", but recording it on the campaign failed: " + advice}
+}
+
+// adSetRecordAdvice is what the caller does next when the deliberate-pause record could not be
+// brought in line with Meta's confirmed outcome. It is operation-specific, because the same
+// flag means opposite things:
+//
+//   - after a PAUSE the record should be SET: an ABSENT deliberately_paused means it is missing,
+//     and a campaign resume would then re-activate the ad set — so pause it again;
+//   - after a RESUME the record should be CLEARED: an absent flag means the clear succeeded and
+//     nothing is to be done; a flag STILL present is a stale hold over an ad set that is now
+//     ACTIVE, and while it stands a campaign resume is refused with 409 — so resume the ad set
+//     again to clear it.
+func adSetRecordAdvice(verb string) string {
+	if verb == "resumed" {
+		return "re-read the ad sets — if deliberately_paused is still true, resume the ad set here again to clear it; it is ACTIVE on Meta, and until the record is cleared a campaign resume is refused with 409"
+	}
+	return "re-read the ad sets — if deliberately_paused is absent, pause the ad set here again; until it is recorded, a campaign resume would re-activate it"
 }
 
 // answerUnconfirmedAdSetWrite answers a Meta write whose outcome is unknown: the fixed 503, with
