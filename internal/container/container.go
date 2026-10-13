@@ -580,11 +580,18 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	assets := dispatch.NewAssetReserver(dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait)
 	metaDispatcher.SetAssetReserver(assets)
 	microsoftDispatcher.SetAssetReserver(assets)
+	// X attaches a stored creative asset to an authored tweet (LFXV2-2665): the same concrete-
+	// pointer guard, and the SAME budget, since the bound is across all concurrent dispatches.
+	twitterDispatcher := dispatch.NewTwitterDispatcher(repo, enc)
+	if creatives != nil {
+		twitterDispatcher.SetCreativeAssetRepo(creatives)
+	}
+	twitterDispatcher.SetAssetReserver(assets)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
 		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
 		model.ProviderMetaAds:      metaDispatcher,
-		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
+		model.ProviderTwitterAds:   twitterDispatcher,
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
 		model.ProviderMicrosoftAds: microsoftDispatcher,
