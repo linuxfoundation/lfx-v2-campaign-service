@@ -50,3 +50,8 @@ mutating campaign 777; adoption and campaign-ref already did). An adopted Linked
 carries the new `domain.ErrBidAdoptedCampaign` alongside `ErrBidUnwritable`, and the bid handler
 answers it with its own 409 naming adoption and Campaign Manager instead of the generic
 strategy/ad-group text.
+
+Seventh #318 review round: the `resolve-linkedin-ads-campaign` 400 now states the enforced bound
+("a positive integer no greater than 9223372036854775807 … without a leading zero") instead of
+"at most 19 digits", which a 19-digit id past int64 also satisfied. The other LinkedIn-id refusals
+already state the 64-bit bound or are platform-neutral (adoption's 400).

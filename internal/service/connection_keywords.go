@@ -319,7 +319,7 @@ var (
 	validateTwitterCampaignRefID = platformCampaignIDRule(twitter.ValidateCampaignID,
 		"the campaign id must be 1-64 letters or digits")
 	validateLinkedInCampaignRefID = platformCampaignIDRule(linkedin.ValidateCampaignID,
-		"the campaign id must be digits only, at most 19, without a leading zero")
+		"the campaign id must be a positive integer no greater than 9223372036854775807 (a LinkedIn 64-bit id), without a leading zero")
 )
 
 // ResolveMetaAdsCampaign, ResolveRedditAdsCampaign and ResolveTwitterAdsCampaign are
