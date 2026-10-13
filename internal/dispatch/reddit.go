@@ -168,10 +168,6 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		hsToken = bf.HSToken
 	}
 
-	// A stored creative asset becomes the signed URL Reddit fetches, resolved here — after
-	// the config is parsed and BEFORE any Reddit call — so a refused or foreign asset fails
-	// the platform pre-create and releases the claim. cfg itself is left untouched, so the
-	// persisted config snapshot records imageAssetId and never the minted URL.
 	// A stored creative asset is CHECKED here — after the config is parsed and BEFORE any
 	// Reddit call — so a refused or foreign asset fails the platform pre-create and releases
 	// the claim. Its signed URL is NOT minted here: the client mints it through
