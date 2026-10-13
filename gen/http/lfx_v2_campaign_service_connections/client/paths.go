@@ -244,6 +244,11 @@ func GetTwitterAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) 
 	return fmt.Sprintf("/projects/%v/twitter-ads/audience", projectID)
 }
 
+// GetLinkedinAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-linkedin-ads-audience HTTP endpoint.
+func GetLinkedinAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/audience", projectID)
+}
+
 // GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-microsoft-ads-keywords HTTP endpoint.
 func GetMicrosoftAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/microsoft-ads/keywords", projectID)

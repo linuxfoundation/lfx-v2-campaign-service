@@ -5561,7 +5561,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: upload-creative-asset lfx-v2-campaign-service-briefs
-            description: 'Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch.'
+            description: 'Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn''s Images API (an organization-owned image URN) and used as that dark post''s article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels.'
             operationId: lfx-v2-campaign-service-briefs#upload-creative-asset
             parameters:
                 - name: project_id
@@ -14435,6 +14435,136 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-linkedin-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read LinkedIn professional demographics — job function, seniority, industry, company size and country — for this project''s own campaigns, live from LinkedIn''s Ad Analytics API. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project''s OWN connection only (never the LF system account) and only the account that connection is bound to. One Ad Analytics statistics request per pivot (pivots CAMPAIGN plus the MEMBER_* pivot, filtered by the project''s campaign URNs and the bound account); every returned row must name one of those campaigns or the read fails, because the account is shared across foundations. A pure read-through; nothing is persisted. A project with no LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn is not contacted. All five pivots must load or the request fails (503). Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE (see `approximate`): LinkedIn drops values under 3 events, withholds values for ads reaching too few members, keeps only the top 100 values per creative per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No conversions. Not gated: LinkedIn has no metrics feature flag.'
+            operationId: lfx-v2-campaign-service-connections#get-linkedin-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on LinkedIn.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on LinkedIn.
+                    example: last_7_days
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+                  example: last_7_days
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LinkedinAdsAudience'
+                            example:
+                                approximate: true
+                                bucket_count: 2
+                                buckets:
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: job_function
+                                      impressions: 9000
+                                      value: urn:li:function:8
+                                    - clicks: 185
+                                      cost_micros: 2100000
+                                      ctr: 0.025
+                                      dimension: country
+                                      impressions: 7400
+                                      value: urn:li:geo:103644278
+                                window: last_30_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/meta-ads/audience:
         get:
             tags:
@@ -20522,6 +20652,120 @@ components:
                 - applied_count
         LfxV2CampaignServiceBriefsuploadCreativeAssetResponseBody:
             $ref: '#/components/schemas/CreativeAsset'
+        LinkedinAdsAudience:
+            type: object
+            properties:
+                approximate:
+                    type: boolean
+                    description: 'Always true: LinkedIn documents professional-demographic metrics as APPROXIMATE (privacy protection), privacy-thresholded (values under 3 events dropped, values for ads reaching too few members withheld, top 100 values per creative per day) and delayed 12-24 hours. Present every counter as an estimate, never as an exact measurement, and do not reconcile it against the campaign metrics read.'
+                    example: true
+                bucket_count:
+                    type: integer
+                    description: How many buckets are in `buckets`, across all dimensions.
+                    example: 2
+                    format: int64
+                buckets:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/LinkedinAdsAudienceBucket'
+                    description: 'Every bucket across the five pivots, discriminated by `dimension`. Ordered by dimension (job_function, seniority, industry, company_size, country), then impressions descending, then value. Each dimension covers the same traffic independently, so total within one dimension only — and even then the total is BELOW the campaigns'' own totals: LinkedIn drops values with fewer than 3 events, withholds values for ads reaching too few members, and returns only the top 100 values per creative per day.'
+                    example:
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: job_function
+                          impressions: 9000
+                          value: urn:li:function:8
+                        - clicks: 185
+                          cost_micros: 2100000
+                          ctr: 0.025
+                          dimension: country
+                          impressions: 7400
+                          value: urn:li:geo:103644278
+                window:
+                    type: string
+                    description: The reporting window these counters cover, as UTC calendar days (LinkedIn's Ad Analytics dateRange is UTC) — the same days the LinkedIn campaign metrics read uses for the same window name
+                    example: today
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+            example:
+                approximate: true
+                bucket_count: 2
+                buckets:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: job_function
+                      impressions: 9000
+                      value: urn:li:function:8
+                    - clicks: 185
+                      cost_micros: 2100000
+                      ctr: 0.025
+                      dimension: country
+                      impressions: 7400
+                      value: urn:li:geo:103644278
+                window: last_30_days
+            required:
+                - window
+                - buckets
+                - bucket_count
+                - approximate
+        LinkedinAdsAudienceBucket:
+            type: object
+            properties:
+                clicks:
+                    type: integer
+                    description: Clicks over the window — APPROXIMATE
+                    example: 270
+                    format: int64
+                cost_micros:
+                    type: integer
+                    description: Spend over the window in micro-units of USD (LinkedIn's costInUsd times 10^6, the same unit the LinkedIn campaign metrics read reports) — APPROXIMATE, and per LinkedIn not adjusted for over-delivery on a demographic pivot.
+                    example: 2700000
+                    format: int64
+                ctr:
+                    type: number
+                    description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                    example: 0.03
+                    format: double
+                dimension:
+                    type: string
+                    description: 'Which LinkedIn Ad Analytics professional-demographic pivot this bucket belongs to: job_function (MEMBER_JOB_FUNCTION), seniority (MEMBER_SENIORITY), industry (MEMBER_INDUSTRY), company_size (MEMBER_COMPANY_SIZE) or country (MEMBER_COUNTRY_V2)'
+                    example: country
+                    enum:
+                        - job_function
+                        - seniority
+                        - industry
+                        - company_size
+                        - country
+                impressions:
+                    type: integer
+                    description: Impressions over the window — APPROXIMATE (LinkedIn's privacy approximation for professional demographics)
+                    example: 9000
+                    format: int64
+                value:
+                    type: string
+                    description: 'LinkedIn''s pivot value for this bucket, VERBATIM — a URN such as urn:li:function:8, urn:li:seniority:5, urn:li:industry:4 or urn:li:geo:103644278 (company_size values are passed through as LinkedIn reports them). NOT resolved to a name: LinkedIn resolves each URN type through its Standardized Data APIs (/functions, /seniorities, /industries, /geo), which this read does not call. A value outside a conservative charset fails the read rather than being returned.'
+                    example: urn:li:function:8
+                    pattern: ^[A-Za-z0-9][A-Za-z0-9:_.\-]{0,127}$
+            example:
+                clicks: 185
+                cost_micros: 2100000
+                ctr: 0.025
+                dimension: country
+                impressions: 7400
+                value: urn:li:geo:103644278
+            required:
+                - dimension
+                - value
+                - impressions
+                - clicks
+                - cost_micros
+                - ctr
         LinkedinAdsConnection:
             type: object
             properties:
