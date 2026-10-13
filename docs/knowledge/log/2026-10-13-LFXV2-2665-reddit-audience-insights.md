@@ -29,3 +29,6 @@ audience reads. See [Reddit Audience Insights](../architecture/audience-insights
   per-account, per-process budget (45 per 60 s, 24 for this read) or the read fails whole (503);
   identical concurrent reads share one upstream read and successes are reused for 60 s; the
   cross-campaign overflow refusal is now tested.
+- **Kubernetes concepts.** `kubernetes/httproute.md` and `kubernetes/ruleset.md` now list
+  `(meta-ads|reddit-ads|twitter-ads)/audience`, and `kubernetes/deployment.md` says
+  `REDDIT_METRICS_ENABLED` also gates the audience read, not only `ReadMetrics`.
