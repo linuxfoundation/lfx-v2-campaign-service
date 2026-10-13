@@ -34,7 +34,8 @@ var _ service.LinkedInAudienceReader = (*LinkedInDispatcher)(nil)
 //     to. ANY mismatch refuses the whole read (ErrCampaignAccountMismatch, 409) rather than
 //     dropping the entry — see googleAdsScopeForCustomer for why a silently reduced scope is worse
 //     than a refusal. An unrecorded account ("") is unknown and proceeds.
-//  4. The client names only those campaign URNs and checks every returned element against them.
+//  4. The client names only those campaign URNs, plus the bound account's URN as the `accounts`
+//     facet, and checks every returned element against the campaign scope.
 func (d *LinkedInDispatcher) ReadLinkedInAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.LinkedInAudienceInsights, error) {
 	const op = "read linkedin audience insights"
 	if werr := linkedin.ValidateMetricsWindow(window); werr != nil {
@@ -53,13 +54,17 @@ func (d *LinkedInDispatcher) ReadLinkedInAudienceInsights(ctx context.Context, p
 		return nil, err
 	}
 	client := d.cachedLinkedInClient(projectID, platform, res, creds, accountID)
-	ai, err := client.GetAudienceInsights(ctx, window, ids)
+	ai, err := client.GetAudienceInsights(ctx, accountID, window, ids)
 	if err != nil {
 		switch {
 		case errors.Is(err, linkedin.ErrAudienceScopeTooLarge):
 			return nil, fmt.Errorf("%s: %w: %w", op, domain.ErrAudienceScopeTooLarge, err)
 		case errors.Is(err, linkedin.ErrAudienceScopeInvalid):
 			return nil, fmt.Errorf("%s: %w: %w", op, domain.ErrAudienceScopeInvalid, err)
+		case errors.Is(err, linkedin.ErrInvalidAccountID):
+			// The bound account is stored connection configuration, so a malformed one is a
+			// connection the operator must repair, not a request fault.
+			return nil, res.systemScoped(fmt.Errorf("%s: %w: %w", op, domain.ErrConnectionNotUsable, err))
 		case errors.Is(err, linkedin.ErrUnsupportedWindow):
 			return nil, fmt.Errorf("%s: %w", op, errors.Join(domain.ErrMetricsWindowUnsupported, err))
 		case linkedinConnectionDefect(err):

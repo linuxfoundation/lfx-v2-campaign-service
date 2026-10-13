@@ -16,3 +16,12 @@ table admit the path; the api-catalog's "Reddit, LinkedIn: no audience route" wo
 Reddit only. New concept
 [LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md); audience section added to
 [internal/platform/linkedin](../code/internal-platform-linkedin.md).
+
+**Fix** — PR #314 review: each statistics request now also carries an `accounts` facet of the
+connection's bound sponsored account (LinkedIn campaign ids are unique only within an ad account,
+one token reaches several, and unknown provenance proceeds, so the campaign facet alone could
+match a same-id campaign elsewhere); `GetAudienceInsights` takes the account id and validates it
+first. `pivotValues` is now projected explicitly in `fields`, as LinkedIn's documented fields list
+shows, rather than relied on to arrive unrequested. An element reporting clicks with zero
+impressions is refused as incomplete (the LinkedIn metrics read's guard). The docs no longer name
+a nonexistent `/linkedin-ads/metrics` route; they point at the campaign metrics read.

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -24,9 +25,10 @@ import (
 // linkedInAudienceUpstream counts adAnalytics requests and answers every pivot with one element
 // for campaign 555.
 type linkedInAudienceUpstream struct {
-	mu     sync.Mutex
-	calls  int
-	status int
+	mu      sync.Mutex
+	calls   int
+	status  int
+	queries []string
 }
 
 func (u *linkedInAudienceUpstream) server(t *testing.T) *httptest.Server {
@@ -34,6 +36,7 @@ func (u *linkedInAudienceUpstream) server(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u.mu.Lock()
 		u.calls++
+		u.queries = append(u.queries, r.URL.RawQuery)
 		u.mu.Unlock()
 		if u.status != 0 {
 			w.WriteHeader(u.status)
@@ -96,6 +99,18 @@ func TestLinkedIn_ReadAudience_HappyPathMapsEveryPivot(t *testing.T) {
 	}
 	if up.count() != 5 {
 		t.Errorf("requests = %d, want 5", up.count())
+	}
+	// Every request is confined to the connection's BOUND account (activeLinkedInConn's
+	// 123456789) as well as to the scoped campaign: campaign ids are unique only per account.
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	for i, q := range up.queries {
+		if !strings.Contains(q, "accounts=List("+url.QueryEscape("urn:li:sponsoredAccount:123456789")+")") {
+			t.Errorf("request %d is not confined to the bound account: %s", i, q)
+		}
+		if !strings.Contains(q, "campaigns=List("+url.QueryEscape("urn:li:sponsoredCampaign:555")+")") {
+			t.Errorf("request %d does not name the scoped campaign: %s", i, q)
+		}
 	}
 }
 

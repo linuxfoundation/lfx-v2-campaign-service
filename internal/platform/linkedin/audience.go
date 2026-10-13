@@ -136,11 +136,15 @@ type audienceElement struct {
 // named by campaignIDs — NOT the whole ad account.
 //
 // Each pivot is one `GET /adAnalytics?q=statistics&pivots=List(CAMPAIGN,MEMBER_…)` with a
-// `campaigns` facet of the scoped campaign URNs and NO `accounts` facet (the campaign facet is the
-// tenant boundary; LinkedIn documents `campaigns` as sufficient on its own). The CAMPAIGN pivot is
-// requested alongside the demographic one so the boundary is ALSO checked on the way back: every
-// element must name a campaign in the scope or the read fails — once a foreign campaign's spend
-// is summed into a bucket it is indistinguishable from the project's own.
+// `campaigns` facet of the scoped campaign URNs AND an `accounts` facet of the connection's bound
+// sponsored account — the same pair GetCampaignMetrics sends. LinkedIn campaign ids are unique only
+// within an ad account (see verifyLinkedInAccountMatch in internal/dispatch), the token may reach
+// several accounts, and unknown campaign provenance is allowed to proceed, so the campaign facet
+// alone could match a same-id campaign on another accessible account; the account facet confines
+// it to the bound one. The CAMPAIGN pivot is requested alongside the demographic one so the
+// boundary is ALSO checked on the way back: every element must name a campaign in the scope or the
+// read fails — once a foreign campaign's spend is summed into a bucket it is indistinguishable from
+// the project's own.
 //
 // The window is the LinkedIn metrics read's (dateRangeForWindow: UTC calendar days); yesterday
 // and last_14_days are ErrUnsupportedWindow exactly as there.
@@ -151,7 +155,10 @@ type audienceElement struct {
 //
 // Single attempt per pivot, like the account monitor's analytics read: a 429 surfaces as an
 // error (the caller answers 503) rather than spending the request's budget on backoff.
-func (c *Client) GetAudienceInsights(ctx context.Context, window model.MetricsWindow, campaignIDs []string) (*AudienceInsights, error) {
+func (c *Client) GetAudienceInsights(ctx context.Context, accountID string, window model.MetricsWindow, campaignIDs []string) (*AudienceInsights, error) {
+	if err := ValidateAccountID(accountID); err != nil {
+		return nil, fmt.Errorf("get audience insights: %w", err)
+	}
 	start, end, err := c.dateRangeForWindow(window)
 	if err != nil {
 		return nil, fmt.Errorf("get audience insights: %w", err)
@@ -162,7 +169,7 @@ func (c *Client) GetAudienceInsights(ctx context.Context, window model.MetricsWi
 	}
 	out := &AudienceInsights{Window: window, Buckets: []AudienceBucket{}}
 	for _, p := range audiencePivots {
-		buckets, perr := c.readAudiencePivot(ctx, p, start, end, facet, inScope)
+		buckets, perr := c.readAudiencePivot(ctx, p, start, end, accountID, facet, inScope)
 		if perr != nil {
 			return nil, fmt.Errorf("get audience insights (%s): %w", p.dimension, perr)
 		}
@@ -196,21 +203,23 @@ func audienceScope(campaignIDs []string) (map[string]struct{}, string, error) {
 }
 
 // readAudiencePivot issues one statistics request and aggregates its elements by pivot value.
-func (c *Client) readAudiencePivot(ctx context.Context, p audiencePivot, start, end time.Time, facet string, inScope map[string]struct{}) ([]AudienceBucket, error) {
+func (c *Client) readAudiencePivot(ctx context.Context, p audiencePivot, start, end time.Time, accountID, facet string, inScope map[string]struct{}) ([]AudienceBucket, error) {
 	u, err := url.Parse(c.baseURL + "/adAnalytics")
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
 	// Rest.li 2.0 List()/nested-object literals go into RawQuery verbatim (see
 	// makeAdAnalyticsRequest). Every interpolated value is a constant, a date this client
-	// computed, or a query-escaped URN of a validated id. pivotValues is not named in `fields`:
-	// it is returned with the pivots, as the account monitor's CAMPAIGN-pivot read relies on.
+	// computed, or a query-escaped URN of a validated id. pivotValues is named in `fields`
+	// explicitly — LinkedIn's documented fields list includes it, and every element is required to
+	// carry it below, so leaving its projection to the finder would risk a 503 on every read.
 	u.RawQuery = "q=statistics" +
 		"&pivots=List(CAMPAIGN," + p.pivot + ")" +
 		"&timeGranularity=ALL" +
 		"&dateRange=(start:" + restLiDate(start) + ",end:" + restLiDate(end) + ")" +
 		"&campaigns=" + facet +
-		"&fields=impressions,clicks,costInUsd"
+		"&accounts=List(" + url.QueryEscape("urn:li:sponsoredAccount:"+accountID) + ")" +
+		"&fields=impressions,clicks,costInUsd,pivotValues"
 
 	body, err := c.getAdAnalyticsRaw(ctx, u.String())
 	if err != nil {
@@ -282,6 +291,12 @@ func (c *Client) readAudiencePivot(ctx context.Context, p audiencePivot, start, 
 		cost, serr := audienceCostMicros(el.CostInUsd)
 		if err := errors.Join(ierr, cerr, serr); err != nil {
 			return nil, malformed("audience statistics element %d: %v", i, err)
+		}
+		// Clicks without impressions is not a low number but an impossible one (every click
+		// follows the impression that carried it): the element is incomplete, and publishing it
+		// would yield ctr 0 beside a non-zero click count. Same guard as GetCampaignMetrics.
+		if clicks > 0 && impressions == 0 {
+			return nil, malformed("audience statistics element %d: reports clicks with zero impressions", i)
 		}
 		bucket, ok := totals[value]
 		if !ok {

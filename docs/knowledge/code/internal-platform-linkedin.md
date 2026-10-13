@@ -795,16 +795,17 @@ monitor's discipline: no 429 backoff inside a 20s read, no upstream body on `api
 
 One `q=statistics` request per pivot (`MEMBER_JOB_FUNCTION`, `MEMBER_SENIORITY`,
 `MEMBER_INDUSTRY`, `MEMBER_COMPANY_SIZE`, `MEMBER_COUNTRY_V2`), each `pivots=List(CAMPAIGN,…)`
-with a `campaigns` facet of the scoped URNs and **no `accounts` facet**. The CAMPAIGN pivot is
-what makes the tenant boundary checkable on the way back — each element's two `pivotValues`
-must hold exactly one in-scope `urn:li:sponsoredCampaign` (order not relied on). `pivotValues`
-is not named in `fields`: the account monitor's CAMPAIGN-pivot read already relies on it being
-returned with the pivot.
+with a `campaigns` facet of the scoped URNs intersected with an `accounts` facet of the bound
+account (`GetAudienceInsights` takes the account id and holds it to `ValidateAccountID` first),
+because LinkedIn campaign ids are unique only within an ad account. The CAMPAIGN pivot is what
+makes the tenant boundary checkable on the way back — each element's two `pivotValues` must hold
+exactly one in-scope `urn:li:sponsoredCampaign` (order not relied on). `pivotValues` is named in
+`fields` explicitly, as LinkedIn's documented fields list shows.
 
 Decode is fail-closed: `identityjson.Check` on the raw body first (a repeated `elements` key
 would otherwise decode as an authoritative empty answer), `elements` as a pointer, counters as
 `json.RawMessage` so an ABSENT key reads 0 while an explicit `null` is refused, integers only
-and non-negative, `costInUsd` only as a string, the demographic value held to a charset and —
+and non-negative, clicks with zero impressions refused (the metrics read's guard), `costInUsd` only as a string, the demographic value held to a charset and —
 for the four pivots LinkedIn's URN-resolution table names — to its URN type, duplicates
 (campaign, value) refused, int64 overflow refused, a `next` paging link or a response at the
 documented 15,000-element ceiling refused. Errors never echo upstream values (lengths only).

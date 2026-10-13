@@ -4262,8 +4262,9 @@ Order: `linkedin.ValidateMetricsWindow` (→ `ErrMetricsWindowUnsupported`, 400)
 LinkedIn account monitor (no connection of its own → `ErrNotFound`, 404; inactive / undecodable /
 no token / no account → `ErrConnectionNotUsable`, 400); then `linkedInAudienceScopeForAccount`: ANY
 entry whose `linkedInCreationAccountID` differs from the bound account refuses the whole read
-(`ErrCampaignAccountMismatch`, 409). Only then the cached client's `GetAudienceInsights`; its scope
-sentinels are re-tagged with the domain ones, `linkedinConnectionDefect` errors go through
+(`ErrCampaignAccountMismatch`, 409). Only then the cached client's `GetAudienceInsights`, given the bound account so the request is
+confined to it by an `accounts` facet; its scope sentinels are re-tagged with the domain ones (a
+malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefect` errors go through
 `linkedinExpiry` (a 401 → `ErrCredentialsExpired`, 400), everything else is returned unclassified
 (503). Tests: `linkedin_audience_test.go` (every pivot mapped, LF fallback refused with zero upstream
 calls, foreign/legacy-URL/mixed provenance 409 with zero calls, unknown provenance proceeds, window

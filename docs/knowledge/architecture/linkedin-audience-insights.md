@@ -56,20 +56,25 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   name this service invented would be worse than none. The design says so on `value`.
 - **`approximate` is always `true`** — a property of the source, not of an answer, so it is set
   even on an empty result. A dimension's total sits below the campaigns' own totals; it must not
-  be reconciled against `/linkedin-ads/metrics`.
+  be reconciled against the LinkedIn campaign metrics read
+  (`GET .../briefs/{brief_id}/campaigns/{campaign_id}/metrics`).
 - **Request.** Per pivot, one `GET /adAnalytics?q=statistics&pivots=List(CAMPAIGN,MEMBER_…)
   &timeGranularity=ALL&dateRange=(start:…,end:…)&campaigns=List(<campaign URNs>)
-  &fields=impressions,clicks,costInUsd`, sequential, single attempt (a 429 is a 503). The CAMPAIGN
-  pivot is there so every returned element can be proven to belong to the project; with a single
-  MEMBER_ pivot the rows would carry no evidence the facet was honoured. No `accounts` facet: it
-  could only widen the read.
+  &accounts=List(urn:li:sponsoredAccount:<bound account>)&fields=impressions,clicks,costInUsd,pivotValues`,
+  sequential, single attempt (a 429 is a 503). The CAMPAIGN pivot is there so every returned
+  element can be proven to belong to the project; with a single MEMBER_ pivot the rows would carry
+  no evidence the facet was honoured. The `accounts` facet is the bound account, the same pair
+  `GetCampaignMetrics` sends: LinkedIn campaign ids are unique only within an ad account, the token
+  can reach several, and unknown provenance proceeds, so the campaign facet alone could match a
+  same-id campaign on another accessible account. `pivotValues` is projected explicitly (it is in
+  LinkedIn's documented fields list, and every element is required to carry it).
 - **Window.** `today`, `last_7_days`, `last_30_days` (default), `this_month`, `last_month` — the
   LinkedIn metrics read's UTC `dateRange` mapping (`dateRangeForWindow`). `yesterday` and
   `last_14_days` are 400 there, so they are 400 here, refused by the design enum and by
   `resolveLinkedInAudienceWindow`. `today` is served but is mostly empty given the 12–24h delay.
 - **Counters.** An absent counter reads 0 (the schema's default for an unreported long); an
   explicit `null` is NOT a 0 and fails the read, as do non-integer, negative or overflowing
-  values and a non-string or malformed `costInUsd`. Cost is USD micros, the unit the LinkedIn
+  values, clicks reported with zero impressions (an incomplete element, the metrics read's guard), and a non-string or malformed `costInUsd`. Cost is USD micros, the unit the LinkedIn
   metrics read already publishes; no currency field.
 - **All or nothing.** Any pivot failing, a foreign or duplicated element, a wrong URN type, an
   out-of-charset value, a `next` paging link or a response at the 15,000 ceiling fails the whole
@@ -106,8 +111,7 @@ path and rejects `/audience/x` and `/audiences`.
 
 ## Verification status
 
-Verified only against LinkedIn's published documentation, not a live account. The one inference
-beyond the docs is that `pivotValues` is returned without being named in `fields` — the account
-monitor's CAMPAIGN-pivot read (ported from the production BFF) already relies on it; if LinkedIn
-ever omits it, every element fails the two-value check and the read is a 503, never a silent
-mis-attribution.
+Verified only against LinkedIn's published documentation, not a live account. `pivotValues` is
+named in `fields` as LinkedIn's documented Analytics-finder fields list shows (the account
+monitor's older 400 was for the legacy singular `pivotValue`); if LinkedIn ever omits it, every
+element fails the two-value check and the read is a 503, never a silent mis-attribution.

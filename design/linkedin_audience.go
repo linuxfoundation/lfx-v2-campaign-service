@@ -94,7 +94,8 @@ func linkedInAdsAudienceMethod() {
 			"Scoped to the campaigns this service holds for the project, NOT to the connected ad account, " +
 			"and read from the project's OWN connection only (never the LF system account) and only the " +
 			"account that connection is bound to. One Ad Analytics statistics request per pivot " +
-			"(pivots CAMPAIGN plus the MEMBER_* pivot, filtered by the project's campaign URNs); every " +
+			"(pivots CAMPAIGN plus the MEMBER_* pivot, filtered by the project's campaign URNs and the bound " +
+			"account); every " +
 			"returned row must name one of those campaigns or the read fails, because the account is " +
 			"shared across foundations. A pure read-through; nothing is persisted. A project with no " +
 			"LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn is not " +

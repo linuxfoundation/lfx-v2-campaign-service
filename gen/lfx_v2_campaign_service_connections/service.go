@@ -209,16 +209,16 @@ type Service interface {
 	// OWN connection only (never the LF system account) and only the account that
 	// connection is bound to. One Ad Analytics statistics request per pivot
 	// (pivots CAMPAIGN plus the MEMBER_* pivot, filtered by the project's campaign
-	// URNs); every returned row must name one of those campaigns or the read
-	// fails, because the account is shared across foundations. A pure
-	// read-through; nothing is persisted. A project with no LinkedIn campaigns of
-	// its own receives an empty `buckets` array and LinkedIn is not contacted. All
-	// five pivots must load or the request fails (503). Values are LinkedIn URNs,
-	// verbatim, not names. Every counter is APPROXIMATE (see `approximate`):
-	// LinkedIn drops values under 3 events, withholds values for ads reaching too
-	// few members, keeps only the top 100 values per creative per day, and delays
-	// demographics 12-24 hours. Cost is USD (costInUsd). No conversions. Not
-	// gated: LinkedIn has no metrics feature flag.
+	// URNs and the bound account); every returned row must name one of those
+	// campaigns or the read fails, because the account is shared across
+	// foundations. A pure read-through; nothing is persisted. A project with no
+	// LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn
+	// is not contacted. All five pivots must load or the request fails (503).
+	// Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE
+	// (see `approximate`): LinkedIn drops values under 3 events, withholds values
+	// for ads reaching too few members, keeps only the top 100 values per creative
+	// per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No
+	// conversions. Not gated: LinkedIn has no metrics feature flag.
 	GetLinkedinAdsAudience(context.Context, *GetLinkedinAdsAudiencePayload) (res *LinkedinAdsAudience, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the

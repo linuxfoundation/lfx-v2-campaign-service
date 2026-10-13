@@ -92,7 +92,7 @@ func TestGetAudienceInsights_RequestShapeAndAggregation(t *testing.T) {
 		]}`,
 	}}
 	c := newAudienceClient(t, s)
-	got, err := c.GetAudienceInsights(context.Background(), model.MetricsWindowLast7Days, []string{"111", "222", "111"})
+	got, err := c.GetAudienceInsights(context.Background(), "512345678", model.MetricsWindowLast7Days, []string{"111", "222", "111"})
 	if err != nil {
 		t.Fatalf("GetAudienceInsights: %v", err)
 	}
@@ -120,15 +120,17 @@ func TestGetAudienceInsights_RequestShapeAndAggregation(t *testing.T) {
 			"timeGranularity=ALL",
 			"dateRange=(start:(day:7,month:10,year:2026),end:(day:13,month:10,year:2026))",
 			facet, // duplicates collapsed, order kept
-			"fields=impressions,clicks,costInUsd",
+			"accounts=List(" + url.QueryEscape("urn:li:sponsoredAccount:512345678") + ")",
+			"fields=impressions,clicks,costInUsd,pivotValues",
 		} {
 			if !strings.Contains(q, frag) {
 				t.Errorf("request %d missing %q: %s", i, frag, q)
 			}
 		}
-		// The campaign facet IS the tenant boundary; an accounts facet could only widen it.
-		if strings.Contains(q, "accounts=") {
-			t.Errorf("request %d carries an accounts facet: %s", i, q)
+		// Campaign ids are unique only within an ad account, so the campaign facet is
+		// intersected with the bound account's facet — exactly one, and that account.
+		if n := strings.Count(q, "accounts="); n != 1 {
+			t.Errorf("request %d carries %d accounts facets, want 1: %s", i, n, q)
 		}
 	}
 }
@@ -159,6 +161,8 @@ func TestGetAudienceInsights_DecodeGuardsFailClosed(t *testing.T) {
 		{"string impressions", el(ok, `,"impressions":"12"`), ""},
 		{"fractional impressions", el(ok, `,"impressions":1.5`), ""},
 		{"negative clicks", el(ok, `,"clicks":-1`), ""},
+		{"clicks with absent impressions", el(ok, `,"clicks":3`), ""},
+		{"clicks with zero impressions", el(ok, `,"impressions":0,"clicks":3,"costInUsd":"1.00"`), ""},
 		{"numeric cost", el(ok, `,"costInUsd":1.5`), ""},
 		{"malformed cost", el(ok, `,"costInUsd":"1e9x"`), "1e9x"},
 		{"pivotValues missing", `{"elements":[{"impressions":1}]}`, ""},
@@ -175,7 +179,7 @@ func TestGetAudienceInsights_DecodeGuardsFailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &audienceStub{bodies: map[string]string{"MEMBER_JOB_FUNCTION": tc.body}}
 			c := newAudienceClient(t, s)
-			got, err := c.GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"111", "222"})
+			got, err := c.GetAudienceInsights(context.Background(), "512345678", model.MetricsWindowLast30Days, []string{"111", "222"})
 			if err == nil {
 				t.Fatalf("accepted; buckets = %+v", got)
 			}
@@ -208,7 +212,7 @@ func TestGetAudienceInsights_UpstreamStatuses(t *testing.T) {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
 			s := &audienceStub{status: tc.status}
 			c := newAudienceClient(t, s)
-			_, err := c.GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"111"})
+			_, err := c.GetAudienceInsights(context.Background(), "512345678", model.MetricsWindowLast30Days, []string{"111"})
 			if err == nil {
 				t.Fatal("accepted")
 			}
@@ -250,7 +254,7 @@ func TestGetAudienceInsights_LocalRefusalsNeverContactLinkedIn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &audienceStub{}
 			c := newAudienceClient(t, s)
-			if _, err := c.GetAudienceInsights(context.Background(), tc.window, tc.ids); !errors.Is(err, tc.want) {
+			if _, err := c.GetAudienceInsights(context.Background(), "512345678", tc.window, tc.ids); !errors.Is(err, tc.want) {
 				t.Errorf("err = %v, want %v", err, tc.want)
 			}
 			if n := s.calls(); n != 0 {
@@ -258,10 +262,22 @@ func TestGetAudienceInsights_LocalRefusalsNeverContactLinkedIn(t *testing.T) {
 			}
 		})
 	}
+	// The bound account is interpolated into the accounts facet, so a malformed one is refused
+	// before any request.
+	for _, bad := range []string{"", "urn:li:sponsoredAccount:1", "12 3", "abc"} {
+		s := &audienceStub{}
+		c := newAudienceClient(t, s)
+		if _, err := c.GetAudienceInsights(context.Background(), bad, model.MetricsWindowLast30Days, []string{"111"}); !errors.Is(err, ErrInvalidAccountID) {
+			t.Errorf("account %q: err = %v, want ErrInvalidAccountID", bad, err)
+		}
+		if n := s.calls(); n != 0 {
+			t.Errorf("account %q: LinkedIn contacted %d time(s)", bad, n)
+		}
+	}
 	// Exactly at the cap is served (and duplicates do not count toward it).
 	s := &audienceStub{}
 	c := newAudienceClient(t, s)
-	if _, err := c.GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, append(append([]string{}, atCap...), atCap[0])); err != nil {
+	if _, err := c.GetAudienceInsights(context.Background(), "512345678", model.MetricsWindowLast30Days, append(append([]string{}, atCap...), atCap[0])); err != nil {
 		t.Errorf("at the cap: %v", err)
 	}
 }
