@@ -4131,7 +4131,8 @@ type PlatformResultResponseBody struct {
 	// campaign_id).
 	Reconcile []*ReconcileIdentifierResponseBody `form:"reconcile,omitempty" json:"reconcile,omitempty" xml:"reconcile,omitempty"`
 	// True when the result held more identifiers than one job result may carry, so
-	// reconcile lists only the first of them in key order
+	// reconcile is incomplete: top-level identifiers are always kept, and only the
+	// most deeply nested or latest entries are cut
 	ReconcileTruncated *bool `form:"reconcile_truncated,omitempty" json:"reconcile_truncated,omitempty" xml:"reconcile_truncated,omitempty"`
 }
 

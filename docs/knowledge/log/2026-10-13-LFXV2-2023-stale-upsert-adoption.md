@@ -58,3 +58,11 @@ objects (depth 3), keeping identifier-keyed values under dotted paths (HubSpot
 rule for Meta's image hashes), with the whole payload bounded at 256 strings / 32,768 runes and
 `reconcile_truncated` set past it (new `PlatformResult` field, regenerated). The campaign's
 status is no longer a `reconcile` entry — it is state, not a handle — and is logged instead.
+
+Seventh follow-up, same review: `reconcileRef` walks breadth-first, scalars before collections
+at each depth, so hundreds of nested ad-group criterion ids can no longer spend the payload bound
+before the top-level campaign and budget handles are kept. And `UpsertCampaign` now refuses by
+itself what 000022's index refused for it: under the slot lock it passes only this job's own
+claim at its slot version, or an INSERT into a wholly empty slot; anything else is
+`ErrDispatchClaimLost`. A live test drops the index in a scratch database to pin that on the
+contracted schema.

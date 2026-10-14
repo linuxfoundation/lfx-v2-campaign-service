@@ -2017,9 +2017,13 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// job's own claim. On the conflict arm the query leaves the
 				// column alone, so passing it costs nothing; omitting it would leave a
 				// campaign with no recorded author on the one path that creates a row
-				// without a live claim in front of it. (If ANOTHER row has taken the slot by
-				// then — an adoption, or a later dispatch's claim — neither arm runs: the
-				// upsert returns domain.ErrDispatchClaimLost, handled below.)
+				// without a live claim in front of it — and it reaches it only when the slot
+				// is wholly EMPTY by then. If ANY live row is on the slot, at any version (an
+				// adoption at slot 1, a later dispatch's claim, or the earlier version a
+				// new_version claim sat beside), UpsertCampaign's ownership check refuses
+				// before either arm runs and returns domain.ErrDispatchClaimLost, handled
+				// below — schema-independently, so it still holds once 000022's
+				// one-live-row-per-slot index is dropped.
 				campaign.CreatedBy = by
 				campaign.UpdatedBy = by
 				// Decide the persisted status. Preserve a dispatcher-set status that
@@ -2218,8 +2222,9 @@ const (
 // whatever their own key, to reconcileRefMaxDepth, because dispatchers keep identifiers there
 // too (HubSpot's abTestVariant, Google's adGroups, Meta's Ads); a nested identifier is kept
 // under its dotted path, e.g. "abTestVariant.id", "adGroups[0].adIds", "Ads[1].ImageHash".
-// Every other value is dropped. Keys are visited in sorted order so the same blob always yields
-// the same identifiers, including where the bounds cut it.
+// Every other value is dropped. The walk is breadth-first, scalars before collections at each
+// depth, and in sorted-key order, so the same blob always yields the same identifiers and the
+// bounds only ever cut the deepest or latest entries (see the walk below).
 //
 // Every string kept goes through the rune cap (reconcileRefMaxRunes): an over-long one is
 // truncated and the field flagged "<key>Truncated": true. Empty strings are skipped. The
@@ -2261,95 +2266,131 @@ func reconcileRef(c *model.Campaign) (map[string]any, bool) {
 		ref[path] = v
 		flag(path, cut)
 	}
-	var walk func(prefix string, obj map[string]json.RawMessage, depth int)
-	walk = func(prefix string, obj map[string]json.RawMessage, depth int) {
+	// node is one object to visit: its path prefix and its decoded fields.
+	type node struct {
+		prefix string
+		obj    map[string]json.RawMessage
+	}
+	sortedKeys := func(obj map[string]json.RawMessage) []string {
 		keys := make([]string, 0, len(obj))
 		for k := range obj {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		for _, k := range keys {
-			if capped {
-				return
-			}
-			raw, path := obj[k], prefix+k
-			if isReconcileIdentifierKey(k) {
-				var str string
-				if json.Unmarshal(raw, &str) == nil {
-					keepString(path, str)
-					continue
-				}
-				var list []string
-				if json.Unmarshal(raw, &list) == nil {
-					kept, anyCut := make([]string, 0, len(list)), false
-					for _, e := range list {
-						e, cut := clip(e)
-						if e == "" || !admit(e) {
-							continue
-						}
-						kept = append(kept, e)
-						anyCut = anyCut || cut
-					}
-					if len(kept) > 0 {
-						ref[path] = kept
-						flag(path, anyCut)
-					}
-					continue
-				}
-				var entries map[string]string
-				if json.Unmarshal(raw, &entries) == nil {
-					ek := make([]string, 0, len(entries))
-					for mk := range entries {
-						ek = append(ek, mk)
-					}
-					sort.Strings(ek)
-					kept, anyCut := make(map[string]string, len(entries)), false
-					for _, mk := range ek {
-						ck, kcut := clip(mk)
-						cv, vcut := clip(entries[mk])
-						if (ck == "" && cv == "") || !admit(ck) || !admit(cv) {
-							continue
-						}
-						kept[ck] = cv
-						anyCut = anyCut || kcut || vcut
-					}
-					if len(kept) > 0 {
-						ref[path] = kept
-						flag(path, anyCut)
-					}
-					continue
-				}
-			}
-			if depth >= reconcileRefMaxDepth {
+		return keys
+	}
+	keepList := func(path string, list []string) {
+		kept, anyCut := make([]string, 0, len(list)), false
+		for _, e := range list {
+			e, cut := clip(e)
+			if e == "" || !admit(e) {
 				continue
 			}
-			// A nested object or array of objects, whatever its key: descend.
-			var child map[string]json.RawMessage
-			if json.Unmarshal(raw, &child) == nil {
-				walk(path+".", child, depth+1)
-				continue
-			}
-			var children []json.RawMessage
-			if json.Unmarshal(raw, &children) == nil {
-				for idx, el := range children {
-					var elem map[string]json.RawMessage
-					if json.Unmarshal(el, &elem) == nil {
-						walk(fmt.Sprintf("%s[%d].", path, idx), elem, depth+1)
-					}
-				}
-			}
+			kept = append(kept, e)
+			anyCut = anyCut || cut
+		}
+		if len(kept) > 0 {
+			ref[path] = kept
+			flag(path, anyCut)
 		}
 	}
+	keepEntries := func(path string, entries map[string]string) {
+		ek := make([]string, 0, len(entries))
+		for mk := range entries {
+			ek = append(ek, mk)
+		}
+		sort.Strings(ek)
+		kept, anyCut := make(map[string]string, len(entries)), false
+		for _, mk := range ek {
+			ck, kcut := clip(mk)
+			cv, vcut := clip(entries[mk])
+			if (ck == "" && cv == "") || !admit(ck) || !admit(cv) {
+				continue
+			}
+			kept[ck] = cv
+			anyCut = anyCut || kcut || vcut
+		}
+		if len(kept) > 0 {
+			ref[path] = kept
+			flag(path, anyCut)
+		}
+	}
+
+	// BREADTH-FIRST, one depth at a time, and within a depth two passes: every identifier
+	// SCALAR at that depth first, then every identifier COLLECTION. The payload bound is spent
+	// in that order, so the handles that matter most — the campaign's and budget's own ids and
+	// names at the top level — are always kept, and a blob too big for the bound loses only its
+	// deepest or latest entries (hundreds of ad-group criterion ids), never the campaign. A
+	// depth-first walk let a nested adGroups list exhaust the bound before campaignId was
+	// visited. Objects at one depth are visited in sorted-key / array-index order.
+	var level []node
 	if len(c.Result) > 0 {
 		var top map[string]json.RawMessage
 		if json.Unmarshal(c.Result, &top) == nil {
-			walk("", top, 1)
+			level = []node{{"", top}}
 		}
 	}
-	if _, ok := ref["campaignName"]; !ok {
-		if _, ok := ref["CampaignName"]; !ok {
-			keepString("campaignName", c.CampaignName)
+	for depth := 1; len(level) > 0 && !capped; depth++ {
+		// Pass 1: identifier scalars.
+		for _, n := range level {
+			for _, k := range sortedKeys(n.obj) {
+				var str string
+				if isReconcileIdentifierKey(k) && json.Unmarshal(n.obj[k], &str) == nil {
+					keepString(n.prefix+k, str)
+				}
+			}
 		}
+		if depth == 1 {
+			// The campaign's own name is a top-level handle; add it with the top-level
+			// scalars, before any collection can spend the bound.
+			if _, ok := ref["campaignName"]; !ok {
+				if _, ok := ref["CampaignName"]; !ok {
+					keepString("campaignName", c.CampaignName)
+				}
+			}
+		}
+		// Pass 2: identifier collections; and the next depth's objects, in order.
+		var next []node
+		for _, n := range level {
+			for _, k := range sortedKeys(n.obj) {
+				raw, path := n.obj[k], n.prefix+k
+				if isReconcileIdentifierKey(k) {
+					var str string
+					if json.Unmarshal(raw, &str) == nil {
+						continue // kept in pass 1
+					}
+					var list []string
+					if json.Unmarshal(raw, &list) == nil {
+						keepList(path, list)
+						continue
+					}
+					var entries map[string]string
+					if json.Unmarshal(raw, &entries) == nil {
+						keepEntries(path, entries)
+						continue
+					}
+				}
+				if depth >= reconcileRefMaxDepth {
+					continue
+				}
+				// A nested object or array of objects, whatever its key: visit it next depth.
+				var child map[string]json.RawMessage
+				if json.Unmarshal(raw, &child) == nil {
+					next = append(next, node{path + ".", child})
+					continue
+				}
+				var children []json.RawMessage
+				if json.Unmarshal(raw, &children) == nil {
+					for idx, el := range children {
+						var elem map[string]json.RawMessage
+						if json.Unmarshal(el, &elem) == nil {
+							next = append(next, node{fmt.Sprintf("%s[%d].", path, idx), elem})
+						}
+					}
+				}
+			}
+		}
+		level = next
 	}
 	if len(ref) == 0 {
 		return nil, capped

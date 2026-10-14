@@ -162,7 +162,9 @@ and arrays of objects are descended to depth 3 and their identifiers kept under 
 HubSpot `abTestVariant.id`, Google `adGroups[0].adIds`, Meta `Ads[1].ImageHash`; plus the
 campaign's name when the blob has none; never status, Steps text, URLs or other shapes; every
 string capped at 1024 RUNES and truncated with a `<key>Truncated: true` flag rather than dropped;
-the whole payload bounded at 256 strings / 32,768 runes in sorted key order, past which
+the whole payload bounded at 256 strings / 32,768 runes, spent breadth-first — every depth's
+identifier scalars before its collections, in sorted-key order — so the campaign's and budget's
+top-level handles always survive and only the deepest or latest entries are cut, past which
 `reconcile_truncated` is set) into the stored
 platform result's `reconcile` map and the ERROR log. On the retained-partial path that log also
 carries the provider's error as `dispatch_error` (logged the way the retained-partial path

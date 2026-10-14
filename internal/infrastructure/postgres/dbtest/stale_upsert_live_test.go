@@ -247,3 +247,87 @@ func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
 		t.Fatalf("live rows on the slot = %d, want 1 (the adoption only)", live)
 	}
 }
+
+// contractedSchemaRepo migrates a scratch database of its own and then DROPS 000022's
+// three-column one-live-row-per-slot index in it — the schema the contract release will ship.
+// A scratch database, not the shared one, because every other live test in the package runs
+// against the expand-phase schema and some of them (the ErrSlotVersionUnavailable path) depend
+// on that index existing.
+func contractedSchemaRepo(ctx context.Context, t *testing.T) (*postgres.CampaignRepo, *pgxpool.Pool) {
+	t.Helper()
+	_ = dbtest.Pool(t) // skip (or fail on CI) exactly as every live test does when unconfigured
+	dsn := freshDatabase(ctx, t)
+	if err := postgres.Migrate(dsn); err != nil {
+		t.Fatalf("migrate the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	t.Cleanup(pool.Close) // registered after freshDatabase's reaper, so it runs before the drop
+	if _, err := pool.Exec(ctx, `DROP INDEX uq_campaigns_brief_platform_variant_live`); err != nil {
+		t.Fatalf("drop 000022's index to model the contracted schema: %v", err)
+	}
+	return postgres.NewCampaignRepo(&postgres.Pool{Pool: pool}), pool
+}
+
+// TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex pins PR #260's contract-phase
+// thread against the CONTRACTED schema. With 000022's index gone, nothing in the schema stops
+// a stale slot-2 INSERT from landing beside an adopted slot-1 row, and the advisory lock only
+// orders the two writes. UpsertCampaign's ownership check must refuse it: this job's claim is
+// gone and the slot is occupied, so it is ErrDispatchClaimLost and only the adoption is live.
+// The same test also pins the legitimate flow the check must let through on that schema: a
+// new_version claim of slot 2, made while slot 1 is live and complete, finalizes normally.
+func TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex(t *testing.T) {
+	ctx := context.Background()
+	repo, pool := contractedSchemaRepo(ctx, t)
+	p := model.ProviderMicrosoftAds
+
+	t.Run("claim slot 2, clear, adopt slot 1, stale slot-2 upsert", func(t *testing.T) {
+		briefID, project := insertApprovedBrief(ctx, t, pool)
+		staleJob := uuid.NewString()
+		if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, staleJob, nil); err != nil || !claimed {
+			t.Fatalf("slot-2 claim: claimed=%v err=%v", claimed, err)
+		}
+		if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, 2); err != nil {
+			t.Fatalf("operator clear: %v", err)
+		}
+		adopted, err := adoptInto(ctx, t, repo, project, briefID, p)
+		if err != nil {
+			t.Fatalf("adopt slot 1: %v", err)
+		}
+		before := readSlotRow(ctx, t, pool, adopted.ID)
+
+		staleUpstream := dbtest.UniqueID(t, "stale-upstream")
+		_, err = repo.UpsertCampaign(ctx, &model.Campaign{
+			ProjectID: project, BriefID: briefID, JobID: &staleJob,
+			Platform: p, Variant: model.VariantDefault, SlotVersion: 2,
+			CampaignName: dbtest.UniqueID(t, "campaign"), Status: model.CampaignStatusCreated,
+			PlatformCampaignID: staleUpstream,
+		}, nil)
+		if !errors.Is(err, domain.ErrDispatchClaimLost) {
+			t.Fatalf("stale slot-2 upsert beside the adoption: err = %v, want ErrDispatchClaimLost", err)
+		}
+		if !strings.Contains(err.Error(), staleUpstream) {
+			t.Errorf("lost-claim error %q does not name the upstream id %s", err, staleUpstream)
+		}
+		if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+			t.Fatalf("live rows on the slot = %d, want 1 (the adoption only)", live)
+		}
+		if after := readSlotRow(ctx, t, pool, adopted.ID); after.version != before.version {
+			t.Fatalf("adopted row changed: before=%+v after=%+v", before, after)
+		}
+	})
+
+	t.Run("new_version claim beside a live slot 1 finalizes", func(t *testing.T) {
+		briefID, project := insertApprovedBrief(ctx, t, pool)
+		createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+		second := createSlotVersion(ctx, t, repo, project, briefID, p, 2)
+		if second.SlotVersion != 2 || second.PlatformCampaignID == "" {
+			t.Fatalf("slot 2 = %+v, want a finalized second campaign", second)
+		}
+		if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 2 {
+			t.Fatalf("live rows on the slot = %d, want 2 (both versions)", live)
+		}
+	})
+}

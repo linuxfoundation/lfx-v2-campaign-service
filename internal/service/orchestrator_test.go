@@ -4023,3 +4023,48 @@ func TestReconcileRefIsBounded(t *testing.T) {
 		t.Errorf("the first identifier in key order was not kept: %v", ref["Ads[0].AdID"])
 	}
 }
+
+// The payload bound must never cost the campaign's own handles. A Google-shaped blob with
+// hundreds of ad-group criterion ids used to exhaust the 256-string bound inside adGroups —
+// visited before campaignId/budgetId in a depth-first, sorted walk — so the top-level campaign
+// and budget ids and names were dropped. Breadth-first, scalars first, they always survive and
+// only the nested tail is cut.
+func TestReconcileRefKeepsTopLevelHandlesWhenNestedListsExhaustTheBound(t *testing.T) {
+	groups := make([]map[string]any, 5)
+	for g := range groups {
+		ids := make([]string, 120)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("kw-%d-%03d", g, i)
+		}
+		groups[g] = map[string]any{"name": fmt.Sprintf("grp-%d", g), "id": fmt.Sprintf("ag-%d", g), "keywordCriteriaIds": ids}
+	}
+	blob, _ := json.Marshal(map[string]any{
+		// "adGroups" sorts BEFORE every one of these keys.
+		"adGroups":     groups,
+		"budgetId":     "budget-1",
+		"budgetName":   "LFX | Budget | x",
+		"campaignId":   "camp-1",
+		"campaignName": "LFX | Search Campaign | x",
+	})
+	ref, capped := reconcileRef(&model.Campaign{Result: blob})
+	if !capped {
+		t.Fatal("600 criterion ids did not hit the bound; the fixture no longer exercises it")
+	}
+	for k, v := range map[string]string{
+		"budgetId": "budget-1", "budgetName": "LFX | Budget | x",
+		"campaignId": "camp-1", "campaignName": "LFX | Search Campaign | x",
+	} {
+		if ref[k] != v {
+			t.Errorf("top-level %s = %v, want %q: the bound was spent on nested ids first", k, ref[k], v)
+		}
+	}
+	// Depth-2 scalars come before depth-2 collections, so every group's id and name survive.
+	for g := 0; g < 5; g++ {
+		if ref[fmt.Sprintf("adGroups[%d].id", g)] != fmt.Sprintf("ag-%d", g) {
+			t.Errorf("adGroups[%d].id missing: nested scalars must outrank nested lists", g)
+		}
+	}
+	if _, ok := ref["adGroups[4].keywordCriteriaIds"]; ok {
+		t.Error("the LAST group's criterion ids were kept; truncation must cut the latest entries")
+	}
+}

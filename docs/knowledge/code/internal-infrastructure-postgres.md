@@ -225,6 +225,18 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   different version (a cleared slot-2 claim, then an adopt at slot 1). It is also
   `ErrDispatchClaimLost` (`TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim`).
 
+  Both of those are statement-level backstops. The rule itself is an ownership check
+  `UpsertCampaign` runs under the slot lock before writing (`slotOwnershipQuery`): pass when this
+  job's own claim is the live row at its slot version (other live versions are expected — a
+  `new_version` claim of slot N is made only while slot N-1 is live and complete); otherwise
+  pass only when the slot has NO live row at any version (the INSERT arm into an empty slot);
+  anything else is `ErrDispatchClaimLost`. It restates 000022's one-live-row-per-slot rule for
+  the INSERT arm so it survives that index's drop: without it the advisory lock would only
+  ORDER a stale slot-2 INSERT after an adopted slot 1, not refuse it. Pinned against the
+  contracted schema (index dropped in a scratch database) by
+  `TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex`, which also checks a new-version
+  slot 2 beside a live slot 1 still finalizes.
+
   The same job id keys the RELEASE. `DeleteDispatchClaim(..., slotVersion, jobID)` deletes only a
   `pending` row whose `job_id` is that job's, so the orchestrator's pre-create release and the
   claim's read-back rollback are no-ops once the claim was cleared and a successor job holds the

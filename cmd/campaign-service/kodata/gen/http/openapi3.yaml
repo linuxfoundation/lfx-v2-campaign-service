@@ -22731,7 +22731,7 @@ components:
                             - Labore dolorem cupiditate vero.
                 reconcile_truncated:
                     type: boolean
-                    description: True when the result held more identifiers than one job result may carry, so reconcile lists only the first of them in key order
+                    description: 'True when the result held more identifiers than one job result may carry, so reconcile is incomplete: top-level identifiers are always kept, and only the most deeply nested or latest entries are cut'
                     example: false
             example:
                 campaign_id: Expedita id soluta minus quaerat ullam voluptas.

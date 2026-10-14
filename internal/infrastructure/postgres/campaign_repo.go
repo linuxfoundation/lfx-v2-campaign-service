@@ -148,6 +148,14 @@ const campaignSlotLockNamespace int32 = 0x736c6f74
 const slotLiveRowExistsQuery = `SELECT EXISTS (
 	SELECT 1 FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status <> 'deleted')`
 
+// slotOwnershipQuery answers UpsertCampaign's ownership check in one round-trip: whether the
+// live row at this slot version is the writer's own claim (job_id = $5; a NULL job id never
+// matches), and whether the slot has ANY live row at any version.
+const slotOwnershipQuery = `SELECT
+	EXISTS (SELECT 1 FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND slot_version=$4
+		AND status <> 'deleted' AND job_id = $5::uuid),
+	EXISTS (SELECT 1 FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND status <> 'deleted')`
+
 // lockCampaignSlot takes the per-slot advisory lock inside tx. variant must already be
 // normalized.
 func lockCampaignSlot(ctx context.Context, tx pgx.Tx, briefID string, platform model.Provider, variant string) error {
@@ -928,16 +936,40 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	}
 	// The per-slot lock, because the INSERT arm can create a live row for the slot (on the
 	// orchestrator's path only when the claim row is gone by the time the result is
-	// persisted — see ClaimCampaignDispatch). What the lock buys is ORDERING against an adopt
-	// of the same slot, nothing more: an adopt that runs first is visible to this statement,
-	// and one that runs after sees this row and refuses. The lock alone does NOT stop the
-	// conflict arm from updating a row an adopt (or another dispatch's claim) created at the
-	// same slot version after this dispatch's claim was cleared; the query's
-	// `WHERE campaigns.job_id = EXCLUDED.job_id` does, and this method reports that case as
-	// ErrDispatchClaimLost. On the usual conflict arm the lock costs one uncontended
-	// round-trip.
-	if lerr := lockCampaignSlot(ctx, tx, c.BriefID, c.Platform, model.NormalizeVariant(c.Variant)); lerr != nil {
+	// persisted — see ClaimCampaignDispatch). The lock ORDERS this write against an adopt or a
+	// claim of the same slot; it refuses nothing by itself. What refuses is the ownership check
+	// below, which runs under it.
+	variant := model.NormalizeVariant(c.Variant)
+	if lerr := lockCampaignSlot(ctx, tx, c.BriefID, c.Platform, variant); lerr != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", lerr)
+	}
+	// OWNERSHIP, decided under the slot lock and before any write. Either:
+	//   - this job's own claim is the live row at this slot version (same job_id): the
+	//     conflict arm finalizes it. Live rows at OTHER versions are expected here — a
+	//     new_version claim of slot N is only ever made while slot N-1 is live and complete
+	//     (dispatchPlatform), so they were there when this job claimed and say nothing about
+	//     whether the claim is still ours; or
+	//   - this job's claim is GONE (an operator cleared it), and then the write may only
+	//     create a row in a slot that is wholly EMPTY — no live row at any version. Anything
+	//     live there now is either a row created after the clear (an adopt, which always takes
+	//     slot 1, or another job's claim) or a version this job's slot was claimed beside; in
+	//     both cases inserting would put a second live campaign on the slot beside one this
+	//     service already tracks, so it is ErrDispatchClaimLost.
+	// This is the rule 000022's three-column index enforces today for the INSERT arm (one live
+	// row per slot), restated so it still holds once that index is dropped: the advisory lock
+	// alone would let the stale slot-2 INSERT land beside an adopted slot 1. The conflict arm's
+	// job_id guard and the legacy-index classification below stay as the statement-level
+	// backstops. Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim and, against the
+	// contracted schema, TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex.
+	var ownClaim, occupied bool
+	if qerr := tx.QueryRow(ctx, slotOwnershipQuery, c.BriefID, string(c.Platform), variant,
+		model.NormalizeSlotVersion(c.SlotVersion), c.JobID).Scan(&ownClaim, &occupied); qerr != nil {
+		return nil, fmt.Errorf("upsert campaign: check slot ownership: %w", qerr)
+	}
+	if !ownClaim && occupied {
+		return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s (slot version %d) is no longer held by job %s",
+			domain.ErrDispatchClaimLost, c.Platform, c.PlatformCampaignID,
+			model.NormalizeSlotVersion(c.SlotVersion), derefStr(c.JobID))
 	}
 	// The legacy account-less binding gap, closed on the DISPATCH path too, in this transaction
 	// and before the upsert (see refuseLegacyBinding).
@@ -958,7 +990,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType),
 		c.StartDate, c.EndDate, nullJSON(c.ConfigSnapshot), nullJSON(c.Result),
-		createdBy, updatedBy, model.NormalizeVariant(c.Variant),
+		createdBy, updatedBy, variant,
 		// Passed as *bool so a nil stays a SQL NULL ("unknown") rather than collapsing to
 		// false. BOTH arms consume it, and on a normal dispatch it is the CONFLICT arm that
 		// does — the claim already INSERTed the row — where a write-once IS NULL guard stamps
