@@ -29,3 +29,12 @@ the service description, regenerated into `gen/`) still said the Reddit dispatch
 and the api-catalog row said it was minted "only inside the Reddit dispatch". Both now say the
 Reddit client mints it immediately before the promoted-post request, matching the concept and
 `reddit.CampaignInput.ImageURLSource`.
+
+Follow-up (#317 review, token refresh): the `ImageURLSource` and Step 1.5 comments in the Reddit
+client, the `lateAssetURL` comment and the concept said the URL is minted after "the token
+exchange". That is not guaranteed: `requestNoThrottleRetry` refreshes the token on every attempt,
+so the post request can refresh after minting — for example when a 401 during account
+verification invalidated the cached token. They now say minting follows account verification
+(the cached token is normally already valid) and that a refresh inside the post request adds at
+most one more request timeout, which `MinTTL` covers; `MinTTL`'s derivation in `assetsign.go`
+and the concept's TTL bullet now count that refresh. Behaviour is unchanged.

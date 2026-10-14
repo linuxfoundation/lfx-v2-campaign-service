@@ -27,7 +27,10 @@ asset's bytes at a short-lived, HMAC-signed URL and passes the URL as `media_url
    It also checks the ids can be carried in a signed URL (`assetsign.ValidateIDs`). It does **not**
    mint the URL: it passes `reddit.CampaignInput.ImageURLSource`, which the client calls
    **immediately before the promoted-post request** that hands the URL to Reddit — after account
-   verification, the token exchange and any `Retry-After` wait. Minting in Dispatch (the #310
+   verification and any `Retry-After` wait (the cached token is normally already valid). A token
+   refresh inside the post request (`requestNoThrottleRetry` refreshes per attempt, e.g. after a
+   401 during account verification invalidated the cached token) adds at most one more request
+   timeout, which `MinTTL` (5m) covers. Minting in Dispatch (the #310
    original) let a throttled account check spend a short TTL before Reddit fetched, ending in a
    404 and a `created_degraded` campaign with no ad. A source failure at that point is still
    pre-create (nothing exists yet), and the URL is otherwise used exactly like `imageUrl`. All downstream
@@ -62,8 +65,9 @@ sig = base64url_nopad(HMAC-SHA256(key, "lfx-v2-campaign-service/creative-asset-u
   one second ahead of the serving pod was refused. It widens only the far bound; an expiry
   already past on the verifier's clock is still refused. Default TTL 10 min; configurable within 5–60 min. The 5-minute floor is
   what the URL must outlive: the promoted-post request it is minted for (the Reddit client's
-  30 s timeout), Reddit's own fetch inside that request, and clock skew between the minting and
-  serving pods.
+  30 s timeout), a token refresh that request may make first (at most one more timeout — the
+  cached token is normally valid, but a 401 during account verification can invalidate it),
+  Reddit's own fetch inside that request, and clock skew between the minting and serving pods.
 - The signature is in the **query**, not the path, on purpose: the Reddit client's error
   redaction (`redactURL`) keeps scheme, host and path but drops the query, and otelhttp v0.69
   records `url.path` only.

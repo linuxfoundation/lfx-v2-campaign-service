@@ -447,9 +447,12 @@ type CampaignInput struct {
 	// ImageURLSource, when set (and PostURL and ImageURL are empty), also selects the
 	// author-a-post path, but the image URL is obtained LATE: CreateCampaign calls it
 	// immediately before the post-authoring request that hands the URL to Reddit, after
-	// account verification, the token exchange and any throttle wait. It exists for URLs that
-	// EXPIRE — a short-lived signed URL for a stored creative asset (LFXV2-2665) — which
-	// minted any earlier could lapse during a Retry-After wait before Reddit fetches it. The
+	// account verification and any throttle wait (the cached token is normally already valid
+	// by then). That request can still refresh the token after this returns — e.g. when a 401
+	// during account verification invalidated the cached one — which adds at most one more
+	// request timeout; assetsign.MinTTL covers it. It exists for URLs that EXPIRE — a
+	// short-lived signed URL for a stored creative asset (LFXV2-2665) — which minted any
+	// earlier could lapse during a Retry-After wait before Reddit fetches it. The
 	// returned URL gets the same validateImageURL check as ImageURL. An error from it is
 	// returned as (nil, err): nothing has been created at that point. It must not be logged
 	// or persisted by the client: the URL may be a bearer credential.
@@ -1852,8 +1855,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 
 	if authorPost {
 		// A late image URL is obtained HERE, immediately before the request that hands it to
-		// Reddit, so nothing above (account verification, a token exchange, a Retry-After wait)
-		// can spend its lifetime. Nothing has been created yet, so a failure is (nil, err).
+		// Reddit, so nothing above (account verification, a Retry-After wait) can spend its
+		// lifetime; the cached token is normally already valid by now. createPromotedPost can
+		// still refresh the token after this returns (requestNoThrottleRetry refreshes per
+		// attempt, e.g. after a 401 above invalidated the cached token), which adds at most one
+		// more request timeout — assetsign.MinTTL covers it. Nothing has been created yet, so
+		// a failure is (nil, err).
 		if in.ImageURLSource != nil {
 			lateURL, lerr := in.ImageURLSource(ctx)
 			if lerr != nil {

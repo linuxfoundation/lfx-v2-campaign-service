@@ -126,8 +126,9 @@ func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.Ca
 // lateAssetURL returns the reddit.CampaignInput.ImageURLSource that mints the signed URL. The
 // client calls it immediately before the promoted-post request that hands the URL to Reddit —
 // NOT here in Dispatch — because everything CreateCampaign does first (account verification,
-// the token exchange, a Retry-After wait of up to a minute) would otherwise spend the URL's
-// lifetime before Reddit fetches it. The minted URL is also written to *minted so the caller
+// a Retry-After wait of up to a minute) would otherwise spend the URL's lifetime before Reddit
+// fetches it. The post request itself may still refresh the token after minting, which adds
+// at most one more request timeout; assetsign.MinTTL covers it. The minted URL is also written to *minted so the caller
 // can scrub it from anything that comes back.
 func (d *RedditDispatcher) lateAssetURL(brief *model.CampaignBrief, assetID string, minted *string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {

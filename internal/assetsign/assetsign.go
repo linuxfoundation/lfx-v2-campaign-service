@@ -60,10 +60,12 @@ const (
 	// MinTTL is the floor on the configured TTL. The URL is minted immediately before the
 	// promoted-post request that hands it to Reddit (reddit.CampaignInput.ImageURLSource), and
 	// Reddit fetches it inside that request, so the URL must outlive: one post attempt (bounded
-	// by the Reddit client's 30s request timeout), Reddit's own fetch of the image, and clock
-	// skew between the pod that minted it and the pod that serves it. Five minutes covers that
-	// with a wide margin; anything shorter risks a created_degraded campaign with no ad because
-	// the fetch arrived after expiry.
+	// by the Reddit client's 30s request timeout), a token refresh that attempt may make first
+	// (the cached token is normally still valid, but a 401 earlier in CreateCampaign can
+	// invalidate it; the refresh is at most one more request timeout), Reddit's own fetch of
+	// the image, and clock skew between the pod that minted it and the pod that serves it.
+	// Five minutes covers that with a wide margin; anything shorter risks a created_degraded
+	// campaign with no ad because the fetch arrived after expiry.
 	MinTTL = 5 * time.Minute
 
 	// RoutePrefix is the path the serving route is mounted under
