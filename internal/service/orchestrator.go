@@ -2183,8 +2183,19 @@ const reconcileRefMaxRunes = 1024
 // urn:li:image) — and Meta's per-ad ImageHash, the account-scoped key of the image behind an ad.
 var reconcileIdentifierSuffixes = []string{"ids", "urns", "names", "id", "urn", "name", "hash"}
 
+// reconcileIdentifierExactKeys are identifier handles whose names no suffix rule can cover
+// without overreach, matched EXACTLY (lower-cased). X's mediaKey is the Media Library
+// media_key of an image uploaded BEFORE the campaign POST, so on X's name-only partial it is
+// the only handle on that library entry. A "key" suffix is deliberately NOT a rule: it would
+// admit credential-shaped fields (apiKey, tokenKey). Every dispatcher's partial-result struct
+// was checked when this list was written; this is the only such handle today.
+var reconcileIdentifierExactKeys = map[string]bool{"mediakey": true}
+
 func isReconcileIdentifierKey(k string) bool {
 	lk := strings.ToLower(k)
+	if reconcileIdentifierExactKeys[lk] {
+		return true
+	}
 	for _, suf := range reconcileIdentifierSuffixes {
 		if strings.HasSuffix(lk, suf) {
 			return true

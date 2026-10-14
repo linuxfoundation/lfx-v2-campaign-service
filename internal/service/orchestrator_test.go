@@ -4068,3 +4068,34 @@ func TestReconcileRefKeepsTopLevelHandlesWhenNestedListsExhaustTheBound(t *testi
 		t.Error("the LAST group's criterion ids were kept; truncation must cut the latest entries")
 	}
 }
+
+// X uploads the creative image BEFORE the campaign POST, so its name-only partial carries the
+// Media Library mediaKey as the only handle on that upload. The suffix rule cannot see it (no
+// id/name/urn/hash ending), so it is an EXACT, case-insensitive allowlist entry — and only that:
+// a broad "key" suffix would let credential-shaped fields through, which this pins too.
+func TestReconcileRefKeepsXMediaKeyButNoOtherKeyFields(t *testing.T) {
+	blob, _ := json.Marshal(map[string]any{
+		"Platform":     "twitter-ads",
+		"CampaignName": "LFX | Event | x",
+		"AccountID":    "18ce54d4x5t",
+		"MediaKey":     "3_1234567890123456789",
+		"TwitterURL":   "https://example.invalid/x",
+		"Steps":        []string{"provider said: campaign create timed out"},
+		"apiKey":       "should-never-appear",
+		"tokenKey":     "should-never-appear",
+	})
+	ref, _ := reconcileRef(&model.Campaign{Result: blob})
+	if ref["MediaKey"] != "3_1234567890123456789" {
+		t.Errorf("MediaKey = %v, want the media library key kept (ref = %v)", ref["MediaKey"], ref)
+	}
+	if ref["CampaignName"] != "LFX | Event | x" || ref["AccountID"] != "18ce54d4x5t" {
+		t.Errorf("X name-only partial lost its name/account: %v", ref)
+	}
+	lower, _ := reconcileRef(&model.Campaign{Result: json.RawMessage(`{"mediakey":"3_9"}`)})
+	if lower["mediakey"] != "3_9" {
+		t.Errorf("the mediaKey match must be case-insensitive: %v", lower)
+	}
+	if dump := fmt.Sprint(ref); strings.Contains(dump, "should-never-appear") || strings.Contains(dump, "example.invalid") {
+		t.Errorf("reconcile %s carries a non-identifier key field or URL", dump)
+	}
+}

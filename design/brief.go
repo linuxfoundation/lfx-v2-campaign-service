@@ -236,7 +236,7 @@ var PlatformResult = Type("platform-result", func() {
 	Attribute("campaign_id", String, "Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.")
 	Attribute("error", String, "Failure reason (present when not ok)")
 	Attribute("hubspot_url", String, "Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.")
-	Attribute("reconcile", ArrayOf(ReconcileIdentifier), "Present only when this dispatch's claim was lost before its result was recorded: the identifiers of what it created upstream (ids, names, urns, image hashes — never state, platform text or URLs), which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).")
+	Attribute("reconcile", ArrayOf(ReconcileIdentifier), "Present only when this dispatch's claim was lost before its result was recorded: the identifiers of what it created upstream (ids, names, urns, image hashes, X media keys — never state, platform text, URLs or other key-like fields), which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).")
 	Attribute("reconcile_truncated", Boolean, "True when the result held more identifiers than one job result may carry, so reconcile is incomplete: top-level identifiers are always kept, and only the most deeply nested or latest entries are cut")
 	Required("platform", "ok")
 })

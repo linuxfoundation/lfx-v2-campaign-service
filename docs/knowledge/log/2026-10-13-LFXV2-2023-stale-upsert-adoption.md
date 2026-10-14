@@ -66,3 +66,9 @@ itself what 000022's index refused for it: under the slot lock it passes only th
 claim at its slot version, or an INSERT into a wholly empty slot; anything else is
 `ErrDispatchClaimLost`. A live test drops the index in a scratch database to pin that on the
 contracted schema.
+
+Eighth follow-up, same review: X keeps the Media Library `mediaKey` of the image it uploads
+before the campaign POST in its name-only partial, and the suffix rule dropped it. It is now an
+exact, case-insensitive allowlist entry (not a `key` suffix, which would admit credential-shaped
+fields). A scan of every dispatcher's partial-result struct found no other handle the suffix
+rule misses (Meta's `ImageHash` is already covered by `hash`).

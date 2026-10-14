@@ -156,7 +156,9 @@ row takes the slot, `UpsertCampaign` returns `domain.ErrDispatchClaimLost` witho
 `CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). Because
 the row that would have held the dispatch's `Result` blob is never written, `lostClaimResult`
 also copies the blob's identifying fields (`reconcileRef`: fields whose key ends in
-`id`/`ids`/`urn`/`urns`/`name`/`names`/`hash` and whose value is a string, a string array — Google's
+`id`/`ids`/`urn`/`urns`/`name`/`names`/`hash`, or whose key is exactly `mediaKey` (any case; X's
+Media Library handle — deliberately not a `key` suffix, which would admit credential-shaped
+fields), and whose value is a string, a string array — Google's
 `creativeAssetIds`/`extensionAssetIds` — or a string map — LinkedIn's `imageUrns`; nested objects
 and arrays of objects are descended to depth 3 and their identifiers kept under a dotted path —
 HubSpot `abTestVariant.id`, Google `adGroups[0].adIds`, Meta `Ads[1].ImageHash`; plus the

@@ -4126,9 +4126,9 @@ type PlatformResultResponseBody struct {
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 	// Present only when this dispatch's claim was lost before its result was
 	// recorded: the identifiers of what it created upstream (ids, names, urns,
-	// image hashes — never state, platform text or URLs), which this service no
-	// longer tracks, sorted by key. The only handle on an id-less partial (no
-	// campaign_id).
+	// image hashes, X media keys — never state, platform text, URLs or other
+	// key-like fields), which this service no longer tracks, sorted by key. The
+	// only handle on an id-less partial (no campaign_id).
 	Reconcile []*ReconcileIdentifierResponseBody `form:"reconcile,omitempty" json:"reconcile,omitempty" xml:"reconcile,omitempty"`
 	// True when the result held more identifiers than one job result may carry, so
 	// reconcile is incomplete: top-level identifiers are always kept, and only the
