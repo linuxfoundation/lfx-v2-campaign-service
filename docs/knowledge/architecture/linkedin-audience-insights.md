@@ -41,9 +41,19 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   "non-demographic pivots only" list is `approximateMemberReach`, card and viral-card metrics and
   `conversionValueInLocalCurrency`); cost "is not adjusted for over delivery when a member
   professional demographic pivot is specified".
-- **Shape.** No pagination; responses are limited to 15,000 elements. The statistics finder takes
-  up to three pivots. `campaigns` is a sufficient facet on its own ("Yes unless another facet is
-  provided").
+- **Finders.** `adAnalytics` has an Analytics finder (`q=analytics`, ONE `pivot`) and a
+  Statistics finder (`q=statistics`, up to three `pivots`). The MEMBER_* values appear ONLY in the
+  Analytics finder's `pivot` enum; the Statistics finder's `pivots` enum lists none of them
+  (ads-reporting-schema, "Analytics Finder Query Parameters" vs "Statistics Finder Query
+  Parameters"). So a demographic pivot cannot be paired with CAMPAIGN in one request. The Analytics
+  finder requires `q`, `dateRange.start`, `timeGranularity`, `fields` and at least one facet
+  (`campaigns`, `accounts`, … — "Yes unless another facet is provided"); requests carry the
+  `Linkedin-Version: YYYYMM` and `X-Restli-Protocol-Version: 2.0.0` headers (both already sent by
+  this client), and the documented samples use the record syntax
+  `dateRange=(start:(year:…,month:…,day:…),end:(…))`, `timeGranularity=ALL`, `pivot=MEMBER_…`.
+- **Shape.** No pagination; responses are limited to 15,000 elements. An Analytics element on a
+  MEMBER_ pivot carries only that pivot's value in `pivotValues` (the `MEMBER_COMPANY` sample:
+  `["urn:li:organization:1111"]`), never the campaign.
 - **Values.** `pivotValues` are URNs (`urn:li:function:{id}`, `urn:li:seniority:{id}`,
   `urn:li:industry:{id}`, `urn:li:geo:{id}`), resolved to names by separate Standardized Data
   calls (`/functions`, `/seniorities`, `/industries`, `/geo`). The company-size value format is not
@@ -58,16 +68,38 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   even on an empty result. A dimension's total sits below the campaigns' own totals; it must not
   be reconciled against the LinkedIn campaign metrics read
   (`GET .../briefs/{brief_id}/campaigns/{campaign_id}/metrics`).
-- **Request.** Per pivot, one `GET /adAnalytics?q=statistics&pivots=List(CAMPAIGN,MEMBER_…)
-  &timeGranularity=ALL&dateRange=(start:…,end:…)&campaigns=List(<campaign URNs>)
-  &accounts=List(urn:li:sponsoredAccount:<bound account>)&fields=impressions,clicks,costInUsd,pivotValues`,
-  sequential, single attempt (a 429 is a 503). The CAMPAIGN pivot is there so every returned
-  element can be proven to belong to the project; with a single MEMBER_ pivot the rows would carry
-  no evidence the facet was honoured. The `accounts` facet is the bound account, the same pair
-  `GetCampaignMetrics` sends: LinkedIn campaign ids are unique only within an ad account, the token
-  can reach several, and unknown provenance proceeds, so the campaign facet alone could match a
-  same-id campaign on another accessible account. `pivotValues` is projected explicitly (it is in
-  LinkedIn's documented fields list, and every element is required to carry it).
+- **Request.** One `GET /adAnalytics?q=analytics&pivot=MEMBER_…&timeGranularity=ALL
+  &dateRange=(start:(day:…,month:…,year:…),end:(…))&campaigns=List(urn:li:sponsoredCampaign:<ONE id>)
+  &accounts=List(urn:li:sponsoredAccount:<bound account>)&fields=impressions,clicks,costInUsd,pivotValues`
+  per (pivot, campaign) — at most 5 × 10 = 50 requests, 5 in flight at a time
+  (`audienceConcurrency`), single attempt each (a 429 is a 503; the first failure cancels the
+  rest), all inside the orchestrator's 20s `metricsCallTimeout`. The per-campaign answers are summed
+  per value. Campaign attribution comes from the REQUEST: because the Analytics finder takes one
+  pivot and its elements carry no campaign, each request names exactly one campaign. The `accounts`
+  facet is the bound account, the same pair `GetCampaignMetrics` sends: LinkedIn campaign ids are
+  unique only within an ad account, the token can reach several, and unknown provenance proceeds,
+  so the campaign facet alone could match a same-id campaign on another accessible account.
+  `pivotValues` is projected explicitly, and this was re-checked after review (#322): the
+  ads-reporting page's "Requesting specific metrics in the Analytics Finder" lists `pivotValues`
+  among the supported `fields`, its `pivot=MEMBER_COMPANY` sample sends
+  `fields=…,costInLocalCurrency,pivotValues`, its `MEMBER_COUNTRY_V2` and URN-resolution samples
+  send `fields=impressions,pivotValues`, and it states that without `fields` "only impressions and
+  clicks are returned by default". No page says `pivotValues` is rejected or returned
+  automatically. The 400 recorded in `monitor.go` names the legacy SINGULAR `pivotValue`, which is
+  not a schema field; that comment now says so. Every element is required to carry exactly one
+  value, so omitting the projection would risk a 503 on every read.
+- **Cancellation.** The first failing request cancels the read's context: requests in flight are
+  cancelled, tasks still queued behind the limiter check the context and never reach LinkedIn,
+  and no partial result is returned; the error is the failing request's own (`*apiError`, 500 in
+  the test), never a sibling's cancellation. `TestGetAudienceInsights_FirstFailureCancelsInFlightAndQueued`
+  pins all three with two campaigns (10 requests, 5 queued).
+- **What the response can and cannot prove.** Checked: every element carries exactly ONE
+  `pivotValue`, of the requested pivot's URN type, and never a `urn:li:sponsoredCampaign` (a CAMPAIGN
+  grouping in the answer means LinkedIn did not apply the requested pivot). NOT checkable: that
+  LinkedIn honoured the `campaigns` and `accounts` facets — an Analytics element names no campaign
+  or account, so that rests on the facets, as it does for the LinkedIn campaign metrics read.
+  Summing campaign-level demographics is itself an approximation LinkedIn warns about ("adding
+  campaign level data and comparing it to account level data"), which `approximate` already covers.
 - **Window.** `today`, `last_7_days`, `last_30_days` (default), `this_month`, `last_month` — the
   LinkedIn metrics read's UTC `dateRange` mapping (`dateRangeForWindow`). `yesterday` and
   `last_14_days` are 400 there, so they are 400 here, refused by the design enum and by
@@ -76,7 +108,7 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   explicit `null` is NOT a 0 and fails the read, as do non-integer, negative or overflowing
   values, clicks reported with zero impressions (an incomplete element, the metrics read's guard), and a non-string or malformed `costInUsd`. Cost is USD micros, the unit the LinkedIn
   metrics read already publishes; no currency field.
-- **All or nothing.** Any pivot failing, a foreign or duplicated element, a wrong URN type, an
+- **All or nothing.** Any request failing, a duplicated element, a wrong URN type, an
   out-of-charset value, a `next` paging link or a response at the 15,000 ceiling fails the whole
   read (503, fixed text, no upstream content). `identityjson.Check` runs on the raw bytes first.
 
@@ -94,7 +126,7 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   (`ErrCampaignAccountMismatch`) before LinkedIn is contacted. Unknown provenance proceeds.
 - **Project campaign scope.** The scope is this service's own rows (`projectCampaignScope`); an
   empty scope answers `buckets: []` without contacting LinkedIn. A non-canonical stored id or more
-  than 50 distinct campaigns (a local URL bound) is 409 (`ErrAudienceScopeInvalid` /
+  than 10 distinct campaigns (a local bound on request count: 50 requests per read) is 409 (`ErrAudienceScopeInvalid` /
   `ErrAudienceScopeTooLarge`), checked before credentials are decrypted, as is the window.
 - **Errors.** `classifyInsightsErrorFor` with the `linkedInAdsAudienceInsights` descriptor:
   inactive / incomplete / unselected account / expired token (401, re-tagged by `linkedinExpiry`)
@@ -111,7 +143,10 @@ path and rejects `/audience/x` and `/audiences`.
 
 ## Verification status
 
-Verified only against LinkedIn's published documentation, not a live account. `pivotValues` is
-named in `fields` as LinkedIn's documented Analytics-finder fields list shows (the account
-monitor's older 400 was for the legacy singular `pivotValue`); if LinkedIn ever omits it, every
-element fails the two-value check and the read is a 503, never a silent mis-attribution.
+Verified only against LinkedIn's published documentation, not a live account. The first version
+(#314) paired CAMPAIGN with each MEMBER_* pivot on the Statistics finder, which LinkedIn's
+documented `pivots` enum does not allow, so every non-empty read would have been rejected (503);
+it now uses the Analytics finder per campaign. `pivotValues` is named in `fields` as LinkedIn's
+documented Analytics-finder fields list shows (the account monitor's older 400 was for the legacy
+singular `pivotValue`); if LinkedIn ever omits it, every element fails the one-value check and the
+read is a 503, never a silent mis-attribution.

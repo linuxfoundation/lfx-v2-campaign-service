@@ -65,33 +65,37 @@ type Service interface {
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
 	// project's connection, and nothing is created upstream. Supported platforms:
-	// google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other
-	// platform answers 400. The read is one get-campaign-by-id under the project's
-	// OWN connection (never the shared LF system account), plus, on Reddit and X
-	// only, one read of that connection's ad account after a campaign 404, and the
-	// campaign must belong to that connection's ad account. Returns 404 only when
-	// the platform PROVES it holds no such campaign (a deleted, removed or
-	// archived campaign counts as absent), 503 when the campaign could not be
-	// verified (the platform was unreachable or throttled, answered with something
-	// untrustworthy, or gave a not-found that could equally be an access, auth or
-	// account problem - its existence is unknown), 409 when this brief already has
-	// a live campaign on that platform / that campaign is already bound to another
-	// brief (in any project, since several foundations share one upstream ad
-	// account) / the platform reports the campaign under a different ad account
-	// than the project's connection / the campaign is of a type that platform's
-	// slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost
-	// approval during the read / the project has no ad-platform connection of its
-	// own, and 400 when the platform has no adoption capability wired or
-	// platform_campaign_id is malformed for that platform (checked before any
-	// connection work). An adopted campaign records only the campaign itself (id,
-	// name, account), never its children. The metrics read and the settings
-	// readback (on the platforms that support them), delete and pause work on it;
-	// activation is refused on every platform because adoption does not verify the
-	// targeting the activate guard requires; the bid lever is refused on
-	// Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line
-	// item the row does not record); the budget lever is refused on Meta (its
-	// budget lives on the ad set) and works on Microsoft, Reddit and X, where the
-	// budget is the campaign's own.
+	// google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and
+	// linkedin-ads; every other platform answers 400. The read is one
+	// get-campaign-by-id under the project's OWN connection (never the shared LF
+	// system account), plus, on Reddit, X and LinkedIn only, one read of that
+	// connection's ad account after a campaign 404, and the campaign must belong
+	// to that connection's ad account. Returns 404 only when the platform PROVES
+	// it holds no such campaign (a deleted, removed or archived campaign counts as
+	// absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when
+	// the campaign could not be verified (the platform was unreachable or
+	// throttled, answered with something untrustworthy, or gave a not-found that
+	// could equally be an access, auth or account problem - its existence is
+	// unknown), 409 when this brief already has a live campaign on that platform /
+	// that campaign is already bound to another brief (in any project, since
+	// several foundations share one upstream ad account) / the platform reports
+	// the campaign under a different ad account than the project's connection /
+	// the campaign is of a type that platform's slot cannot hold (Microsoft adopts
+	// Search campaigns only) / the brief lost approval during the read / the
+	// project has no ad-platform connection of its own, and 400 when the platform
+	// has no adoption capability wired or platform_campaign_id is malformed for
+	// that platform (checked before any connection work). An adopted campaign
+	// records only the campaign itself (id, name, account), never its children.
+	// The metrics read and the settings readback (on the platforms that support
+	// them), delete and pause work on it; activation is refused on every platform
+	// because adoption does not verify the targeting the activate guard requires;
+	// the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on
+	// an ad group, ad set or line item the row does not record) and on LinkedIn
+	// (its bid is the campaign's own unitCost, but adoption verifies identity, not
+	// the bidding setup); the budget lever is refused on Meta (its budget lives on
+	// the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget
+	// is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the
+	// campaign alone, never its creatives.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
@@ -115,14 +119,14 @@ type Service interface {
 	// describe a campaign's configuration. A setting that could not be read on
 	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
 	// zero and never counted as a match. Support is per-platform: Google Ads,
-	// Microsoft Advertising, Meta, Reddit and X (Twitter) Ads are wired, and a
-	// campaign on any other platform returns 400. The field set is per-platform
-	// too — each platform reports only the settings it can answer honestly,
-	// normalised to the units its create path wrote (Microsoft carries no flight
-	// dates, so reports none) — and on every platform the provenance rules are the
-	// same: a campaign that does not record the account it was created under, or
-	// that belongs to a different account than the connection now resolves to, is
-	// refused 409 before anything is read.
+	// Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired,
+	// and a campaign on any other platform returns 400. The field set is
+	// per-platform too — each platform reports only the settings it can answer
+	// honestly, normalised to the units its create path wrote (Microsoft carries
+	// no flight dates, so reports none) — and on every platform the provenance
+	// rules are the same: a campaign that does not record the account it was
+	// created under, or that belongs to a different account than the connection
+	// now resolves to, is refused 409 before anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -154,7 +158,16 @@ type Service interface {
 	// 'paused' would spend the reconciliation marker to record a run state the
 	// platform already holds authoritatively. Resuming such a campaign is refused
 	// outright (409). Read the pause's effect from the ad platform, not from this
-	// row.
+	// row. META: ACTIVE cascades to the campaign's recorded ad set and its ads,
+	// EXCEPT that a recorded ad set deliberately paused through
+	// toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left
+	// PAUSED — its ads and the campaign are still activated. That record is this
+	// service's, not Meta's, so the held ad set is READ first (GET
+	// /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written
+	// unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an
+	// ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the
+	// record, through toggle-meta-ad-set-status first), and an unreadable one is
+	// 503 with the campaign not modified.
 	ToggleCampaignStatus(context.Context, *ToggleCampaignStatusPayload) (res *Campaign, err error)
 	// Change how much a campaign may spend, on its ad platform, then persist the
 	// new amount. A MUTATION on a live paid campaign, dispatched to the platform
@@ -236,20 +249,25 @@ type Service interface {
 	// units) of the ONE ad set this service created. X: the bid_amount_local_micro
 	// of the ONE line item this service created. A campaign whose row records none
 	// (an adopted campaign, or one whose creation never reached it) is refused
-	// (409): the service will not choose which of several to re-bid. REFUSED (409)
-	// WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only
-	// does something under a bid strategy that reads it — Microsoft's EnhancedCpc
-	// or ManualCpc; Reddit's MANUAL_BIDDING with bid_type CPC; Meta's
-	// LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both
-	// LINK_CLICKS (a Meta bid cap is per optimization event and, billed on
-	// impressions, per 1,000 impressions — so only that pairing is a max cost per
-	// click); X's MAX with pay_by LINK_CLICK. Under an automated or target
-	// strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
+	// (409): the service will not choose which of several to re-bid. LinkedIn: the
+	// campaign's own unitCost (a decimal amount, written in USD at whole cents — a
+	// sub-cent amount is refused 400 rather than rounded); an ADOPTED LinkedIn
+	// campaign is refused (409). REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS
+	// NOT A COST PER CLICK. A manual bid only does something under a bid strategy
+	// that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's
+	// MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with
+	// billing_event AND optimization_goal both LINK_CLICKS (a Meta bid cap is per
+	// optimization event and, billed on impressions, per 1,000 impressions — so
+	// only that pairing is a max cost per click); X's MAX with pay_by LINK_CLICK;
+	// LinkedIn's costType CPC with optimizationTargetType NONE or
+	// ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or
+	// target strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
 	// MaxConversionValue, TargetImpressionShare, a portfolio strategy the read
 	// cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta
 	// LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO,
-	// TARGET) the platform would ignore it or, worse, the write would be read as a
-	// request to switch strategy — and this endpoint NEVER switches strategy,
+	// TARGET; LinkedIn MAX_*, TARGET_COST_PER_*, CAP_COST_AND_*, or any CPM/CPV
+	// campaign) the platform would ignore it or, worse, the write would be read as
+	// a request to switch strategy — and this endpoint NEVER switches strategy,
 	// billing or charge unit. An unreported strategy is refused the same way
 	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
 	// first and then the ad group's: with Campaign Budget Optimization on (as on
@@ -259,24 +277,29 @@ type Service interface {
 	// campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign
 	// AUTO, so those three legs apply only after an operator has moved the Reddit
 	// campaign and ad group, the Meta ad set or the X line item to a manual
-	// per-click bid in the platform's own UI. The amount is in the AD ACCOUNT's
-	// own currency, not USD, and this service neither knows nor converts it.
-	// Microsoft Advertising, Reddit, Meta and X today: a campaign on any other
-	// platform is refused with 400. **409** when the change is refused BEFORE the
-	// platform is written, so nothing has changed: the campaign is unprovisioned;
-	// it belongs to a different ad account than the project's connection now
-	// resolves to, or does not record which ad account it was created under; its
-	// bid strategy is automated, a target, or unreported; or the bid could not be
-	// addressed (no recorded ad group, ad set or line item, one reporting another
-	// campaign or deleted, or one bidding in a unit other than `bid_type`). None
-	// is retryable. **400** for a request fault: a non-positive, non-finite or
-	// out-of-range bid, an unknown bid type, a platform with no bid-write
-	// capability wired, or a bid the campaign's platform refuses on its own
-	// minimum or maximum — the response names what it was. **503** when the
-	// platform could not be reached or did not confirm — including a throttled
-	// Meta or X write, which is never retried in-call; the row is unchanged.
-	// Setting the same bid twice converges, but verify the bid in the ad platform
-	// before retrying.
+	// per-click bid in the platform's own UI. A LinkedIn campaign this service
+	// creates sends no optimizationTargetType, which LinkedIn documents as
+	// defaulting to NONE (manual), so it is expected to pass — but the guard
+	// decides on what LinkedIn REPORTS, never on that expectation. On every
+	// adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not
+	// USD, and this service neither knows nor converts it; the LinkedIn adapter
+	// writes USD and refuses (409) a campaign whose bid is in any other or an
+	// unreported currency. Microsoft Advertising, Reddit, Meta, X and LinkedIn
+	// today: a campaign on any other platform is refused with 400. **409** when
+	// the change is refused BEFORE the platform is written, so nothing has
+	// changed: the campaign is unprovisioned; it belongs to a different ad account
+	// than the project's connection now resolves to, or does not record which ad
+	// account it was created under; its bid strategy is automated, a target, or
+	// unreported; or the bid could not be addressed (no recorded ad group, ad set
+	// or line item, one reporting another campaign or deleted, or one bidding in a
+	// unit other than `bid_type`). None is retryable. **400** for a request fault:
+	// a non-positive, non-finite or out-of-range bid, an unknown bid type, a
+	// platform with no bid-write capability wired, or a bid the campaign's
+	// platform refuses on its own minimum or maximum — the response names what it
+	// was. **503** when the platform could not be reached or did not confirm —
+	// including a throttled Meta, X or LinkedIn write, which is never retried
+	// in-call; the row is unchanged. Setting the same bid twice converges, but
+	// verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
@@ -325,30 +348,52 @@ type Service interface {
 	// retrying, because retrying an irreversible REMOVE that already ran cannot
 	// undo it.
 	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
-	// Add campaign-level negative keywords to one live campaign. Microsoft
-	// Advertising only (AddNegativeKeywordsToEntities, EntityType Campaign); a
-	// campaign on any other platform is refused with 400 before anything is
-	// contacted. A MUTATION on a live paid campaign — a negative keyword stops the
-	// campaign serving on matching queries — so it carries the keyword actions'
-	// guard set, all before the platform is contacted: the batch's syntax, the
-	// campaign's provisioning, and the campaign's ad account against the project's
-	// current connection (a campaign that does not record its ad account is
-	// refused, never assumed). Like apply-keyword-actions it persists nothing —
-	// the negatives live on the platform — so it takes no If-Match and returns no
-	// ETag. NOT ATOMIC: Microsoft adds each negative independently, so the 200
-	// carries one result per requested keyword, in request order, each with its
-	// own outcome. A negative the campaign already has is ALREADY_PRESENT, a
-	// success. **400** for a malformed batch (empty or over 60, a text over 100
-	// characters or outside the allowed characters, consecutive punctuation, a
-	// match type other than Exact or Phrase, the same keyword twice) or an
-	// unsupported platform. A malformed batch is 400 even when the campaign is
-	// also unprovisioned. **409** when refused before the platform is contacted:
-	// unprovisioned, a different ad account, an unrecorded ad account
-	// (re-dispatch), or an unusable connection. **503** only when the platform
-	// answered nothing per keyword. The MESSAGE separates a DEFINITE failure
-	// (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a
-	// rate limit, an unreadable answer — verify the campaign's negative keywords
-	// before retrying).
+	// Add negative keywords to one live campaign (LFXV2-2665). Three platforms,
+	// each at its own level: Microsoft Advertising at CAMPAIGN level
+	// (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in the
+	// excluded_keywords of the ONE ad group this service created (a
+	// whole-targeting PATCH, behind REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off
+	// is 400 before Reddit is contacted); X as one negated keyword targeting
+	// criterion (operator_type NE) per keyword on the ONE line item this service
+	// created. A campaign on any other platform is refused with 400 before
+	// anything is contacted. Match types per platform: Microsoft Exact or Phrase;
+	// X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); Reddit Broad only,
+	// because Reddit's excluded keywords carry no match type. Any other is 400. A
+	// MUTATION on a live paid campaign — a negative keyword stops the campaign
+	// serving on matching queries, so it only narrows delivery — and it carries
+	// the keyword levers' guard set, all before the platform is mutated: the
+	// batch's syntax, the campaign's provisioning, the campaign's ad account
+	// against the project's current connection (a campaign that does not record
+	// its ad account is refused, never assumed), and on Reddit and X a READ
+	// proving the ad group / line item is live and reported under THIS campaign.
+	// Reddit also requires `revision`, the fingerprint get-keyword-targeting
+	// returned, and refuses (409) when the ad group's targeting has changed since,
+	// and a blank one is 400; Microsoft and X refuse a present revision, even an
+	// empty one (400). Like apply-keyword-actions it persists nothing — the
+	// negatives live on the platform — so it takes no If-Match and returns no
+	// ETag. Every write is sent ONCE and never retried on a 429. The 200 carries
+	// one result per requested keyword, in request order, each with its own
+	// outcome. A negative already there is ALREADY_PRESENT, a success, and is not
+	// sent again. Microsoft adds each negative independently; Reddit's one PATCH
+	// carries every new one, so they share its outcome (confirmed by a re-read)
+	// while ALREADY_PRESENT ones keep theirs — a batch with any ALREADY_PRESENT
+	// item always answers per item; X sends one POST per keyword, at most 20 per
+	// request (X's one-write-per-second account pacing), each APPLIED, FAILED
+	// (NOT_SENT, REJECTED) or UNCONFIRMED. **400** for a malformed batch (empty or
+	// over 60 — over 20 on X —, a text over 100 characters or outside the allowed
+	// characters, consecutive punctuation, a match type the platform does not
+	// offer, the same keyword twice, a missing or misplaced revision), an
+	// unsupported platform, or Reddit writes switched off. A malformed batch is
+	// 400 even when the campaign is also unprovisioned. **409** when refused
+	// before anything is written: unprovisioned, a different ad account, an
+	// unrecorded ad account (re-dispatch), an unusable connection, an ad group /
+	// line item this service did not record or the platform no longer reports
+	// under this campaign, a stale Reddit revision, or a Reddit ad group whose
+	// excluded keywords would exceed Reddit's 2,000. **503** only when the
+	// platform answered nothing per keyword. The MESSAGE separates a DEFINITE
+	// failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a
+	// timeout, a rate limit, an unreadable answer — verify the campaign's negative
+	// keywords before retrying).
 	AddNegativeKeywords(context.Context, *AddNegativeKeywordsPayload) (res *NegativeKeywords, err error)
 	// Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the
 	// positive keywords on the ONE ad group (Reddit) or line item (X) this service
@@ -453,12 +498,30 @@ type Service interface {
 	// 409; a problem with the LF system connection, stored-credential decryption
 	// or this service itself is 500. If the write was APPLIED but the campaign row
 	// changed or was deleted concurrently, the answer is 409 stating that the ad
-	// set's status WAS changed on Meta. The ad set's status is NOT stored on the
-	// campaign row, so the returned ETag is the row's UNCHANGED version (as when a
-	// created_degraded campaign is paused). NOTE: toggle-campaign-status cascades
-	// an ACTIVATE to the recorded ad set, so a campaign ACTIVATE re-activates the
-	// recorded ad set; a deliberate ad-set pause does not survive a campaign
-	// pause/resume. Any platform but Meta is 400.
+	// set's status WAS changed on Meta. A DELIBERATE PAUSE OF THE RECORDED AD SET
+	// SURVIVES A CAMPAIGN PAUSE/RESUME: pausing the ad set this service created
+	// records the pause on the campaign row, and toggle-campaign-status ACTIVE
+	// then activates the campaign and its ads but leaves that ad set PAUSED; only
+	// a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The
+	// record is written BEFORE the pause is sent, so a pause whose outcome is
+	// UNCONFIRMED normally stays on record (unknown is treated as paused), and it
+	// is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume
+	// does not clear it. The record is NOT guaranteed after every 503: when the
+	// 503 says the record could not be confirmed, or that the write lock was lost,
+	// re-read list-meta-ad-sets and do not assume `deliberately_paused` — pause
+	// the ad set again if it is not shown. list-meta-ad-sets reports it as
+	// `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED
+	// campaign, which records no ad set — records nothing, since the campaign
+	// cascade never re-activates it. When the record is written the campaign row's
+	// version is bumped and the returned ETag (200 only) is the new one. An ERROR
+	// response carries no ETag, yet some 503 paths can still have bumped the
+	// version (a record written before an UNCONFIRMED write, or one withdrawn
+	// after a definite refusal), so after any error re-read the campaign for its
+	// current ETag before retrying; otherwise the ETag is the row's UNCHANGED
+	// version (as when a created_degraded campaign is paused). If recording fails
+	// before the write, nothing is sent (503, or 409 if the row changed); if it
+	// fails after Meta's definite answer, the 503/409 says what Meta now holds and
+	// that the record was not updated. Any platform but Meta is 400.
 	ToggleMetaAdSetStatus(context.Context, *ToggleMetaAdSetStatusPayload) (res *MetaAdSetStatusChange, err error)
 	// Delete a campaign (soft delete, requires If-Match). LOCAL ONLY: this removes
 	// the campaign from this service and frees its (brief, platform) slot so the
@@ -544,8 +607,14 @@ type AddNegativeKeywordsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
-	// The negative keywords to add, at campaign level.
+	// The negative keywords to add: at campaign level on Microsoft Advertising, on
+	// the campaign's one ad group on Reddit, on its one line item on X.
 	NegativeKeywords []*NegativeKeywordInput
+	// Reddit only, and required there: the revision get-keyword-targeting
+	// returned; an empty or blank one is 400. The add is refused (409) when the ad
+	// group's targeting no longer has that fingerprint. Microsoft Advertising and
+	// X refuse the field (400) whenever it is present, even empty.
+	Revision *string
 }
 
 // AdoptCampaignPayload is the payload type of the
@@ -867,8 +936,17 @@ type CampaignSettingsField struct {
 	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
 	// forward past UTC midnight (because the requested day had already begun at
 	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
-	// must render an unrecognised field name rather than dropping it.
+	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
+	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
+	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
+	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
+	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
+	// currency is not reported, never a bare number) and `objective_type` are
+	// upstream-only; a campaign reporting both a daily and a total budget, neither
+	// (as under a campaign group's shared budget), or a non-USD amount reads both
+	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
+	// consumer must render an unrecognised field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -1516,6 +1594,18 @@ type MetaAdSet struct {
 	// campaign row recorded at dispatch). Always false on an adopted campaign,
 	// which records no ad set.
 	Recorded bool
+	// true when this is the `recorded` ad set and the campaign row holds a
+	// DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the
+	// campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only
+	// resuming it through toggle-meta-ad-set-status clears this. It is this
+	// service's record, not Meta's — `status` is what Meta reports. After a pause
+	// whose outcome was UNCONFIRMED it is normally true (unknown is treated as
+	// paused), but this is NOT guaranteed: when that 503 said the pause's record
+	// could not be confirmed, or that the write lock was lost, it may be false —
+	// re-read it, and if it is false pause the ad set again before resuming the
+	// campaign; never assume it from the 503 alone. Always false on an adopted
+	// campaign.
+	DeliberatelyPaused bool
 }
 
 // MetaAdSetStatusChange is the result type of the
@@ -1534,8 +1624,11 @@ type MetaAdSetStatusChange struct {
 	// write whose outcome is unknown is never a 200: it is a 503 saying the change
 	// is unconfirmed.)
 	Outcome string
-	// ETag header value: the campaign row's version, UNCHANGED — an ad set's
-	// status is not stored on the campaign row, so this write does not bump it.
+	// ETag header value: the campaign row's version after this call. It CHANGES
+	// when the call records or clears the deliberate pause of the campaign's
+	// recorded ad set (a PAUSE of it, or a confirmed resume of it while paused on
+	// record); otherwise it is UNCHANGED — the ad set's status itself is not
+	// stored on the campaign row.
 	Etag *string
 }
 
@@ -1564,7 +1657,10 @@ type NegativeKeywordInput struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
 	// 100 characters.
 	Text string
-	// How the negative keyword is compared with a search query. Exact or Phrase.
+	// How the negative keyword is compared with a search query. Microsoft
+	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
+	// (Reddit's excluded keywords carry no match type). Any other value for the
+	// platform is 400.
 	MatchType string
 }
 
@@ -1574,16 +1670,19 @@ type NegativeKeywordResult struct {
 	Text string
 	// The match type as sent to the platform
 	MatchType string
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign already had
-	// it, so the requested state holds; FAILED — definitely not added (see
-	// error_code); UNCONFIRMED — may have been added, verify in the ad platform
-	// before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
+	// or ad group / line item (Reddit / X) already had it, so the requested state
+	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
+	// have been added, verify in the ad platform before retrying.
 	Outcome string
-	// The platform's id for a negative keyword this request added. Absent for
-	// every other outcome.
+	// The platform's id for a negative keyword this request added: Microsoft's
+	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
+	// an excluded keyword has no id, and for every outcome other than APPLIED.
 	NegativeKeywordID *string
-	// The platform's machine-readable error code for a FAILED keyword, when it
-	// named one.
+	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
+	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
+	// it was never sent) or REJECTED (the platform refused it); their own text is
+	// never returned.
 	ErrorCode *string
 }
 

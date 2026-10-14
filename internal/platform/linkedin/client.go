@@ -273,6 +273,10 @@ type CampaignResult struct {
 	CreativeCount int      `json:"creativeCount"`
 	LinkedInURL   string   `json:"linkedInUrl"`
 	Steps         []string `json:"steps"`
+	// Adopted marks a row bound by adoption (LFXV2-2665) rather than created here. LinkedIn
+	// records no child ids to be missing — the toggle DISCOVERS creatives — so this flag is
+	// what refuses ACTIVATE and the bid lever on such a row. Omitted on created rows.
+	Adopted bool `json:"adopted,omitempty"`
 	// ImageURNs records, per stored asset id, the urn:li:image this run minted for it through
 	// the Images API — including one that then failed to upload or process, so the result names
 	// every image this run created. Omitted when no variant named a stored asset.
@@ -417,6 +421,10 @@ type apiError struct {
 	Method     string
 	Path       string
 	Body       string
+	// raw is the COMPLETE response body (bounded by maxResponseBytes), kept only so a
+	// caller can parse LinkedIn's structured error envelope — which routinely runs past
+	// Body's 400-character cut. Never surfaced, exactly like Body. See bidAmountRefused.
+	raw []byte
 }
 
 func (e *apiError) Error() string {
@@ -1031,8 +1039,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 	// campaign, post, creative — no PARTIAL_UPDATE header) stay NON-idempotent: those
 	// endpoints carry no idempotency key, so a 429 whose first attempt may already have
 	// committed upstream must NOT be re-sent (it would create a DUPLICATE resource).
-	idempotent := method == http.MethodGet || method == http.MethodHead ||
-		strings.EqualFold(headers["X-Restli-Method"], "PARTIAL_UPDATE")
+	//
+	// A caller that must SEND ONCE (the bid write, withSendOnce) opts out: a 429 then comes
+	// back as itself, which createOutcomeAmbiguous classifies UNCONFIRMED, rather than a
+	// retry's definite answer standing in for the first attempt's unknown one.
+	idempotent := (method == http.MethodGet || method == http.MethodHead ||
+		strings.EqualFold(headers["X-Restli-Method"], "PARTIAL_UPDATE")) && !sendOnce(ctx)
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		var reqBody *bytes.Reader
 		if encoded != nil {
@@ -1205,7 +1217,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body map[st
 			if ce := c.expiredCredentialsError(resp.StatusCode, text, method); ce != nil {
 				return nil, ce
 			}
-			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text}
+			return nil, &apiError{StatusCode: resp.StatusCode, Method: method, Path: path, Body: text, raw: append([]byte(nil), buf.Bytes()...)}
 		}
 
 		// A 2xx SUCCESS when the caller decodes no body (status updates): return without

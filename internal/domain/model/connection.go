@@ -583,8 +583,9 @@ const (
 	KeywordTargetingErrWouldEmpty = "WOULD_EMPTY"
 )
 
-// NegativeKeyword is one requested campaign-level negative keyword. MatchType is the
-// platform-neutral "Exact" or "Phrase".
+// NegativeKeyword is one requested negative keyword. MatchType is the platform-neutral "Exact",
+// "Phrase" or "Broad"; each adapter accepts its platform's subset (Microsoft Exact/Phrase, X all
+// three, Reddit Broad only) and refuses the rest before contacting the platform.
 type NegativeKeyword struct {
 	Text      string
 	MatchType string

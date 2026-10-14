@@ -284,6 +284,11 @@ func ResolveTwitterAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID stri
 	return fmt.Sprintf("/projects/%v/twitter-ads/campaign-ref", projectID)
 }
 
+// ResolveLinkedinAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign HTTP endpoint.
+func ResolveLinkedinAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/campaign-ref", projectID)
+}
+
 // ListMetaAdsAccountsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-meta-ads-accounts HTTP endpoint.
 func ListMetaAdsAccountsLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/connection-meta-ads/accounts", projectID)

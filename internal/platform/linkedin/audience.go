@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
@@ -31,12 +33,15 @@ const (
 )
 
 const (
-	// MaxAudienceCampaigns bounds the campaign URNs one audience read names in its `campaigns`
-	// facet. LinkedIn publishes no limit for the facet's list; this is a conservative LOCAL bound
-	// on the GET URL the list is encoded into (each URN is ~45 bytes percent-encoded, and this
-	// client does not implement LinkedIn's query tunneling for over-long URLs), not a documented
-	// LinkedIn limit.
-	MaxAudienceCampaigns = 50
+	// MaxAudienceCampaigns bounds the campaigns one audience read covers. Demographics are read
+	// one request per (pivot, campaign) — the Analytics finder takes one pivot and an element
+	// carries no campaign — so this caps a read at len(audiencePivots)*MaxAudienceCampaigns = 50
+	// requests, which audienceConcurrency at a time keeps inside the orchestrator's 20s budget. A
+	// LOCAL bound on request count, not a documented LinkedIn limit.
+	MaxAudienceCampaigns = 10
+	// audienceConcurrency is how many of a read's requests are in flight at once: enough to fit 50
+	// requests in the budget, few enough not to burst one shared ad account.
+	audienceConcurrency = 5
 	// audienceMaxElements is LinkedIn's documented response ceiling for adAnalytics ("Response is
 	// limited to 15,000 elements"; the endpoint has no pagination). A response AT the ceiling
 	// cannot prove it is whole, so it is refused rather than summed as a complete distribution.
@@ -73,10 +78,11 @@ func ValidateAudienceCampaignID(id string) error {
 // dropped: the row is untrustworthy and the read fails.
 var audienceValueRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.\-]{0,127}$`)
 
-// campaignURNPrefix is the pivot value the CAMPAIGN pivot yields.
+// campaignURNPrefix is the sponsored-campaign URN prefix: the `campaigns` facet's value, and a
+// value an Analytics element on a MEMBER_* pivot must never carry.
 const campaignURNPrefix = "urn:li:sponsoredCampaign:"
 
-// audiencePivot is one statistics request: the dimension token, LinkedIn's MEMBER_* pivot, and
+// audiencePivot is one Analytics-finder pivot: the dimension token, LinkedIn's MEMBER_* pivot, and
 // the URN prefix its values must carry ("" = LinkedIn documents no URN shape for the pivot, so
 // only the charset is enforced).
 type audiencePivot struct {
@@ -121,7 +127,7 @@ type AudienceInsights struct {
 	Buckets []AudienceBucket
 }
 
-// audienceElement is one statistics element. The counters are RAW so an ABSENT key (read as 0,
+// audienceElement is one Analytics-finder element. The counters are RAW so an ABSENT key (read as 0,
 // the schema's default for an unreported long) is distinguishable from an explicit JSON null,
 // which a plain int64 would decode as 0 and publish as an authoritative zero for a value LinkedIn
 // explicitly did not give; a null is refused instead.
@@ -133,27 +139,33 @@ type audienceElement struct {
 }
 
 // GetAudienceInsights reads LinkedIn's professional demographics over window across the campaigns
-// named by campaignIDs — NOT the whole ad account.
+// named by campaignIDs on the bound ad account accountID — NOT the whole ad account.
 //
-// Each pivot is one `GET /adAnalytics?q=statistics&pivots=List(CAMPAIGN,MEMBER_…)` with a
-// `campaigns` facet of the scoped campaign URNs AND an `accounts` facet of the connection's bound
-// sponsored account — the same pair GetCampaignMetrics sends. LinkedIn campaign ids are unique only
-// within an ad account (see verifyLinkedInAccountMatch in internal/dispatch), the token may reach
-// several accounts, and unknown campaign provenance is allowed to proceed, so the campaign facet
-// alone could match a same-id campaign on another accessible account; the account facet confines
-// it to the bound one. The CAMPAIGN pivot is requested alongside the demographic one so the
-// boundary is ALSO checked on the way back: every element must name a campaign in the scope or the
-// read fails — once a foreign campaign's spend is summed into a bucket it is indistinguishable from
-// the project's own.
+// LinkedIn serves professional-demographic (MEMBER_*) pivots ONLY through the single-pivot
+// Analytics finder (`q=analytics`): the multi-pivot Statistics finder's documented `pivots` enum
+// lists no MEMBER_* value, so it cannot pair CAMPAIGN with a demographic pivot. Campaign
+// attribution therefore comes from the REQUEST, not the response: one
+// `GET /adAnalytics?q=analytics&pivot=MEMBER_…&timeGranularity=ALL&dateRange=(…)` per (pivot,
+// campaign), each with a `campaigns` facet naming exactly that one campaign URN AND an `accounts`
+// facet of the bound sponsored account (the pair GetCampaignMetrics sends; LinkedIn campaign ids
+// are unique only within an ad account and one token can reach several). The per-campaign answers
+// are summed per value here.
+//
+// What the response CAN prove is checked: every element carries exactly one pivotValue, of the
+// requested pivot's URN shape, never a campaign URN. What it CANNOT prove — that LinkedIn applied
+// the campaign and account facets — is the facets' job; an Analytics element carries no campaign.
+//
+// At most MaxAudienceCampaigns campaigns, so at most len(audiencePivots)*MaxAudienceCampaigns
+// requests, run audienceConcurrency at a time inside the caller's deadline.
 //
 // The window is the LinkedIn metrics read's (dateRangeForWindow: UTC calendar days); yesterday
 // and last_14_days are ErrUnsupportedWindow exactly as there.
 //
-// All or nothing: a failure on any pivot, a malformed, foreign or duplicated element, an
-// untrustworthy pivot value, an explicit-null or malformed counter, a `next` paging link, or a
-// response at LinkedIn's 15,000-element ceiling fails the whole call.
+// All or nothing: a failure on any request (the rest are cancelled), a malformed or duplicated
+// element, an untrustworthy pivot value, an explicit-null or malformed counter, a `next` paging
+// link, or a response at LinkedIn's 15,000-element ceiling fails the whole call.
 //
-// Single attempt per pivot, like the account monitor's analytics read: a 429 surfaces as an
+// Single attempt per request, like the account monitor's analytics read: a 429 surfaces as an
 // error (the caller answers 503) rather than spending the request's budget on backoff.
 func (c *Client) GetAudienceInsights(ctx context.Context, accountID string, window model.MetricsWindow, campaignIDs []string) (*AudienceInsights, error) {
 	if err := ValidateAccountID(accountID); err != nil {
@@ -163,61 +175,112 @@ func (c *Client) GetAudienceInsights(ctx context.Context, accountID string, wind
 	if err != nil {
 		return nil, fmt.Errorf("get audience insights: %w", err)
 	}
-	inScope, facet, err := audienceScope(campaignIDs)
+	ids, err := audienceScope(campaignIDs)
 	if err != nil {
 		return nil, err
 	}
-	out := &AudienceInsights{Window: window, Buckets: []AudienceBucket{}}
-	for _, p := range audiencePivots {
-		buckets, perr := c.readAudiencePivot(ctx, p, start, end, accountID, facet, inScope)
-		if perr != nil {
-			return nil, fmt.Errorf("get audience insights (%s): %w", p.dimension, perr)
+	// results[pivot][campaign], written by exactly one goroutine each.
+	results := make([][][]audienceValueCounts, len(audiencePivots))
+	for i := range results {
+		results[i] = make([][]audienceValueCounts, len(ids))
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(audienceConcurrency)
+	for pi, p := range audiencePivots {
+		for ci, id := range ids {
+			g.Go(func() error {
+				// A task the limiter released after another failed must not reach LinkedIn:
+				// the read is already lost, and a queued request is pure load on a shared
+				// account. (net/http would refuse a cancelled context too; this does not rely
+				// on it.)
+				if err := gctx.Err(); err != nil {
+					return err
+				}
+				rows, rerr := c.readAudienceCampaignPivot(gctx, p, start, end, accountID, id)
+				if rerr != nil {
+					return fmt.Errorf("get audience insights (%s): %w", p.dimension, rerr)
+				}
+				results[pi][ci] = rows
+				return nil
+			})
 		}
-		out.Buckets = append(out.Buckets, buckets...)
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	out := &AudienceInsights{Window: window, Buckets: []AudienceBucket{}}
+	for pi, p := range audiencePivots {
+		totals := map[string]*AudienceBucket{}
+		for _, rows := range results[pi] {
+			for _, r := range rows {
+				bucket, ok := totals[r.value]
+				if !ok {
+					bucket = &AudienceBucket{Dimension: p.dimension, Value: r.value}
+					totals[r.value] = bucket
+				}
+				if err := addAudienceCounters(bucket, r.impressions, r.clicks, r.cost); err != nil {
+					return nil, &transportError{Method: http.MethodGet, Path: "adAnalytics", Err: fmt.Errorf("get audience insights (%s): %w", p.dimension, err)}
+				}
+			}
+		}
+		out.Buckets = append(out.Buckets, finishAudienceBuckets(totals)...)
 	}
 	return out, nil
 }
 
-// audienceScope validates the campaign ids and renders the `campaigns` facet value.
-// Duplicates collapse; an empty, invalid or oversized scope is refused before any request.
-func audienceScope(campaignIDs []string) (map[string]struct{}, string, error) {
+// audienceScope validates the campaign ids, collapsing duplicates; an empty, invalid or oversized
+// scope is refused before any request.
+func audienceScope(campaignIDs []string) ([]string, error) {
 	if len(campaignIDs) == 0 {
-		return nil, "", fmt.Errorf("get audience insights: %w", ErrAudienceScopeInvalid)
+		return nil, fmt.Errorf("get audience insights: %w", ErrAudienceScopeInvalid)
 	}
-	inScope := make(map[string]struct{}, len(campaignIDs))
-	urns := make([]string, 0, len(campaignIDs))
+	seen := make(map[string]struct{}, len(campaignIDs))
+	ids := make([]string, 0, len(campaignIDs))
 	for _, id := range campaignIDs {
 		if err := ValidateAudienceCampaignID(id); err != nil {
-			return nil, "", fmt.Errorf("get audience insights: %w", err)
+			return nil, fmt.Errorf("get audience insights: %w", err)
 		}
-		if _, dup := inScope[id]; dup {
+		if _, dup := seen[id]; dup {
 			continue
 		}
-		inScope[id] = struct{}{}
-		urns = append(urns, url.QueryEscape(campaignURNPrefix+id))
+		seen[id] = struct{}{}
+		ids = append(ids, id)
 	}
-	if len(urns) > MaxAudienceCampaigns {
-		return nil, "", fmt.Errorf("get audience insights: %d campaigns (at most %d): %w", len(urns), MaxAudienceCampaigns, ErrAudienceScopeTooLarge)
+	if len(ids) > MaxAudienceCampaigns {
+		return nil, fmt.Errorf("get audience insights: %d campaigns (at most %d): %w", len(ids), MaxAudienceCampaigns, ErrAudienceScopeTooLarge)
 	}
-	return inScope, "List(" + strings.Join(urns, ",") + ")", nil
+	return ids, nil
 }
 
-// readAudiencePivot issues one statistics request and aggregates its elements by pivot value.
-func (c *Client) readAudiencePivot(ctx context.Context, p audiencePivot, start, end time.Time, accountID, facet string, inScope map[string]struct{}) ([]AudienceBucket, error) {
+// audienceValueCounts is one validated element of one (pivot, campaign) response.
+type audienceValueCounts struct {
+	value                     string
+	impressions, clicks, cost int64
+}
+
+// readAudienceCampaignPivot issues one Analytics-finder request for one campaign and one MEMBER_*
+// pivot and returns its validated elements.
+func (c *Client) readAudienceCampaignPivot(ctx context.Context, p audiencePivot, start, end time.Time, accountID, campaignID string) ([]audienceValueCounts, error) {
 	u, err := url.Parse(c.baseURL + "/adAnalytics")
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
 	// Rest.li 2.0 List()/nested-object literals go into RawQuery verbatim (see
 	// makeAdAnalyticsRequest). Every interpolated value is a constant, a date this client
-	// computed, or a query-escaped URN of a validated id. pivotValues is named in `fields`
-	// explicitly — LinkedIn's documented fields list includes it, and every element is required to
-	// carry it below, so leaving its projection to the finder would risk a 503 on every read.
-	u.RawQuery = "q=statistics" +
-		"&pivots=List(CAMPAIGN," + p.pivot + ")" +
+	// computed, or a query-escaped URN of a validated id.
+	//
+	// pivotValues IS projected, deliberately. LinkedIn's ads-reporting page lists it among the
+	// Analytics finder's supported `fields`, its MEMBER_COMPANY sample sends
+	// `fields=…,costInLocalCurrency,pivotValues`, and its MEMBER_COUNTRY_V2 / URN-resolution
+	// samples send `fields=impressions,pivotValues`; the page says that without `fields` "only
+	// impressions and clicks are returned by default", so leaving it out risks elements with no
+	// pivotValues — every one of which fails the one-value check below. The 400 recorded in
+	// monitor.go names the legacy SINGULAR `pivotValue`, which is not a field of the schema.
+	u.RawQuery = "q=analytics" +
+		"&pivot=" + p.pivot +
 		"&timeGranularity=ALL" +
 		"&dateRange=(start:" + restLiDate(start) + ",end:" + restLiDate(end) + ")" +
-		"&campaigns=" + facet +
+		"&campaigns=List(" + url.QueryEscape(campaignURNPrefix+campaignID) + ")" +
 		"&accounts=List(" + url.QueryEscape("urn:li:sponsoredAccount:"+accountID) + ")" +
 		"&fields=impressions,clicks,costInUsd,pivotValues"
 
@@ -232,7 +295,7 @@ func (c *Client) readAudiencePivot(ctx context.Context, p audiencePivot, start, 
 	// case-folded, at any level) in favour of the last value with no error, so
 	// `{"elements":[…],"elements":[]}` would decode as an authoritative empty answer.
 	if err := identityjson.Check(body); err != nil {
-		return nil, malformed("audience statistics: %v", err)
+		return nil, malformed("audience analytics: %v", err)
 	}
 	var parsed struct {
 		// Pointer so `{}`, `"elements":null` and a missing field are distinct from LinkedIn's
@@ -246,100 +309,80 @@ func (c *Client) readAudiencePivot(ctx context.Context, p audiencePivot, start, 
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		// The decoder's message can quote a value; report the shape only.
-		return nil, malformed("audience statistics: malformed JSON (%d bytes)", len(body))
+		return nil, malformed("audience analytics: malformed JSON (%d bytes)", len(body))
 	}
 	if parsed.Elements == nil {
-		return nil, malformed("audience statistics: response has no elements field")
+		return nil, malformed("audience analytics: response has no elements field")
 	}
 	if parsed.Paging != nil {
 		for _, l := range parsed.Paging.Links {
 			if strings.EqualFold(strings.TrimSpace(l.Rel), "next") {
 				// adAnalytics documents no pagination; a `next` link says this answer is not
 				// whole, and summing part of a distribution looks exactly like all of it.
-				return nil, malformed("audience statistics: response offers a next page; refusing a partial distribution")
+				return nil, malformed("audience analytics: response offers a next page; refusing a partial distribution")
 			}
 		}
 	}
 	if len(*parsed.Elements) >= audienceMaxElements {
-		return nil, malformed("audience statistics: %d elements reaches LinkedIn's %d-element response ceiling; cannot prove the answer is whole", len(*parsed.Elements), audienceMaxElements)
+		return nil, malformed("audience analytics: %d elements reaches LinkedIn's %d-element response ceiling; cannot prove the answer is whole", len(*parsed.Elements), audienceMaxElements)
 	}
 
-	totals := map[string]*AudienceBucket{}
+	out := make([]audienceValueCounts, 0, len(*parsed.Elements))
 	seen := map[string]struct{}{}
 	for i, raw := range *parsed.Elements {
 		var el audienceElement
 		if err := json.Unmarshal(raw, &el); err != nil {
-			return nil, malformed("audience statistics element %d: not an object of the expected shape", i)
+			return nil, malformed("audience analytics element %d: not an object of the expected shape", i)
 		}
-		campaignID, value, verr := audiencePivotValues(el.PivotValues, p)
+		value, verr := audiencePivotValue(el.PivotValues, p)
 		if verr != nil {
-			return nil, malformed("audience statistics element %d: %v", i, verr)
+			return nil, malformed("audience analytics element %d: %v", i, verr)
 		}
-		if _, ok := inScope[campaignID]; !ok {
-			// Not echoed: the id is unvalidated upstream content.
-			return nil, malformed("audience statistics element %d: names a campaign outside the requested scope (%d bytes)", i, len(campaignID))
-		}
-		key := campaignID + "\x00" + value
-		if _, dup := seen[key]; dup {
-			// timeGranularity=ALL yields one element per (campaign, value); a repeat would
+		if _, dup := seen[value]; dup {
+			// timeGranularity=ALL on one campaign yields one element per value; a repeat would
 			// double-count when summed.
-			return nil, malformed("audience statistics element %d: duplicate element for one campaign and value", i)
+			return nil, malformed("audience analytics element %d: duplicate element for one value", i)
 		}
-		seen[key] = struct{}{}
+		seen[value] = struct{}{}
 		impressions, ierr := audienceCount("impressions", el.Impressions)
 		clicks, cerr := audienceCount("clicks", el.Clicks)
 		cost, serr := audienceCostMicros(el.CostInUsd)
 		if err := errors.Join(ierr, cerr, serr); err != nil {
-			return nil, malformed("audience statistics element %d: %v", i, err)
+			return nil, malformed("audience analytics element %d: %v", i, err)
 		}
 		// Clicks without impressions is not a low number but an impossible one (every click
 		// follows the impression that carried it): the element is incomplete, and publishing it
 		// would yield ctr 0 beside a non-zero click count. Same guard as GetCampaignMetrics.
 		if clicks > 0 && impressions == 0 {
-			return nil, malformed("audience statistics element %d: reports clicks with zero impressions", i)
+			return nil, malformed("audience analytics element %d: reports clicks with zero impressions", i)
 		}
-		bucket, ok := totals[value]
-		if !ok {
-			bucket = &AudienceBucket{Dimension: p.dimension, Value: value}
-			totals[value] = bucket
-		}
-		if err := addAudienceCounters(bucket, impressions, clicks, cost); err != nil {
-			return nil, malformed("audience statistics element %d: %v", i, err)
-		}
+		out = append(out, audienceValueCounts{value: value, impressions: impressions, clicks: clicks, cost: cost})
 	}
-	return finishAudienceBuckets(totals), nil
+	return out, nil
 }
 
-// audiencePivotValues splits an element's pivotValues into its campaign id and its demographic
-// value. Exactly two values are required, exactly one of them a sponsoredCampaign URN; the order
-// is not relied on. Neither value is echoed into an error.
-func audiencePivotValues(values *[]string, p audiencePivot) (string, string, error) {
+// audiencePivotValue returns an Analytics element's single demographic value. Exactly one
+// pivotValue is required (the finder groups by the one requested pivot); a campaign URN there, an
+// out-of-charset value or — for the four pivots with a documented URN type — a value of another
+// type is refused. The value is never echoed into an error.
+func audiencePivotValue(values *[]string, p audiencePivot) (string, error) {
 	if values == nil {
-		return "", "", errors.New("pivotValues is missing")
+		return "", errors.New("pivotValues is missing")
 	}
-	if len(*values) != 2 {
-		return "", "", fmt.Errorf("pivotValues carries %d values, want 2 (CAMPAIGN and %s)", len(*values), p.pivot)
+	if len(*values) != 1 {
+		return "", fmt.Errorf("pivotValues carries %d values, want 1 (%s)", len(*values), p.pivot)
 	}
-	var campaignID, value string
-	campaigns := 0
-	for _, v := range *values {
-		if strings.HasPrefix(v, campaignURNPrefix) {
-			campaigns++
-			campaignID = strings.TrimPrefix(v, campaignURNPrefix)
-			continue
-		}
-		value = v
-	}
-	if campaigns != 1 {
-		return "", "", fmt.Errorf("pivotValues carries %d campaign URNs, want exactly 1", campaigns)
+	value := (*values)[0]
+	if strings.HasPrefix(value, campaignURNPrefix) {
+		return "", fmt.Errorf("pivotValues carries a campaign URN, not a %s value", p.pivot)
 	}
 	if !audienceValueRE.MatchString(value) {
-		return "", "", fmt.Errorf("%s value is outside the accepted charset (%d bytes)", p.pivot, len(value))
+		return "", fmt.Errorf("%s value is outside the accepted charset (%d bytes)", p.pivot, len(value))
 	}
 	if p.urnPrefix != "" && (!strings.HasPrefix(value, p.urnPrefix) || len(value) == len(p.urnPrefix)) {
-		return "", "", fmt.Errorf("%s value is not a %s URN (%d bytes)", p.pivot, strings.TrimSuffix(p.urnPrefix, ":"), len(value))
+		return "", fmt.Errorf("%s value is not a %s URN (%d bytes)", p.pivot, strings.TrimSuffix(p.urnPrefix, ":"), len(value))
 	}
-	return campaignID, value, nil
+	return value, nil
 }
 
 // audienceCount decodes an integer counter: absent is 0 (the schema's default for an
