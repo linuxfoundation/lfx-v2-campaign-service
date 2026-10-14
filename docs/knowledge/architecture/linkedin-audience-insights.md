@@ -137,7 +137,7 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
 ## Routing
 
 `charts/lfx-v2-campaign-service/templates/httproute.yaml` routes
-`(linkedin-ads|meta-ads|twitter-ads)/audience`; `ruleset.yaml` rules
+`(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`; `ruleset.yaml` rules
 `/projects/:projectId/linkedin-ads/audience` (campaign_manager); `parity_test.go` accepts the base
 path and rejects `/audience/x` and `/audiences`.
 

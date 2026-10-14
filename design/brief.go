@@ -790,6 +790,74 @@ var TwitterAdsAudience = Type("twitter-ads-audience", func() {
 	})
 })
 
+// redditAudienceWindowEnum is the subset of metricsWindowEnum the Reddit audience read serves: the
+// windows the Reddit report client maps to a starts_at/ends_at range (reddit.ValidateMetricsWindow
+// — the campaign metrics read's set). `yesterday` and `last_14_days` have no mapping there, so the
+// decoder refuses them here rather than reaching a runtime 400 the design did not declare.
+func redditAudienceWindowEnum() {
+	Enum("today", "last_7_days", "last_30_days", "this_month", "last_month")
+}
+
+// RedditAdsAudienceBucket is one Reddit report breakdown value's counters, summed across the
+// project's own campaigns.
+//
+// A Reddit-named type: its dimensions are the Reddit Ads API v3 report `breakdowns` GENDER,
+// COUNTRY and COMMUNITY (Reddit offers no AGE breakdown, so there is no age dimension), and a
+// breakdown value may be an explicit null on Reddit's side — returned here as a bucket with no
+// `value` rather than dropped, so a dimension's buckets still total its traffic. One value per
+// dimension, so a single `value` fits, as on X.
+var RedditAdsAudienceBucket = Type("reddit-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which Reddit report breakdown this bucket belongs to: gender (GENDER), country (COUNTRY) or community (COMMUNITY, the subreddit)", func() { Enum("gender", "country", "community") })
+	Attribute("value", String, "Reddit's breakdown value, verbatim (a gender, a country code or a subreddit name). ABSENT when Reddit reported an explicit null for this dimension: traffic Reddit did not attribute to any value, kept so the dimension's buckets still total its traffic. A value outside a conservative charset fails the read rather than being returned.", func() {
+		Pattern(`^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$`)
+		Example("US")
+	})
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Spend over the window (Reddit's SPEND) in micro-units of the ad account's own currency. This service performs no FX conversion and does not read the currency.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions after summing across campaigns, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples so the published bucket is one a response can contain.
+	Example("country bucket", redditAudienceCountryExample)
+	Example("community bucket", redditAudienceCommunityExample)
+})
+
+// redditAudienceGenderExample / redditAudienceCountryExample / redditAudienceCommunityExample are
+// possible bucket shapes (ctr = clicks/impressions), shared by the bucket type's examples and the
+// envelope's so the two cannot disagree. Each dimension totals the same traffic.
+var (
+	redditAudienceGenderExample = map[string]any{
+		"dimension": "gender", "value": "female",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	redditAudienceCountryExample = map[string]any{
+		"dimension": "country", "value": "US",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	redditAudienceCommunityExample = map[string]any{
+		"dimension": "community", "value": "kubernetes",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+)
+
+// RedditAdsAudience is the project-scoped Reddit audience read: the Google audience read's
+// envelope (window, buckets, bucket_count). No account_currency (the read does not request
+// Reddit's CURRENCY field) and no conversions (the Reddit metrics reads request none).
+var RedditAdsAudience = Type("reddit-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover, as UTC days (the Reddit campaign metrics read's range for the same window)", redditAudienceWindowEnum)
+	Attribute("buckets", ArrayOf(RedditAdsAudienceBucket), "Every bucket across the three breakdowns, discriminated by `dimension`. Ordered by dimension (gender, country, community), then impressions descending, then value (a value-less bucket last among equals).", func() {
+		Example([]map[string]any{redditAudienceGenderExample, redditAudienceCountryExample, redditAudienceCommunityExample})
+	})
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.", func() { Example(3) })
+	Required("window", "buckets", "bucket_count")
+	// Type-level so bucket_count equals len(buckets) and the dimensions appear in order.
+	Example(map[string]any{
+		"window":       "last_30_days",
+		"buckets":      []map[string]any{redditAudienceGenderExample, redditAudienceCountryExample, redditAudienceCommunityExample},
+		"bucket_count": 3,
+	})
+})
+
 // HubSpotCampaign is one LF HubSpot marketing campaign.
 //
 // The `hs_utm` token is the point of this type: it is what makes a send attributable to a
