@@ -215,8 +215,8 @@ func TestReddit_ReadRedditAudienceInsights_AccountMismatchRefusesWholeRead(t *te
 			s := newRedditAudienceServer(t)
 			_, err := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}).
 				ReadRedditAudienceInsights(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, scope)
-			if !errors.Is(err, domain.ErrCampaignAccountMismatch) {
-				t.Fatalf("error = %v, want ErrCampaignAccountMismatch", err)
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) || errors.Is(err, domain.ErrCampaignProvenanceUnknown) || errors.Is(err, domain.ErrCampaignProvenanceMixed) {
+				t.Fatalf("error = %v, want ErrCampaignAccountMismatch alone", err)
 			}
 			if n := len(s.requests()); n != 0 {
 				t.Errorf("Reddit was contacted %d time(s)", n)
@@ -239,8 +239,34 @@ func TestReddit_ReadRedditAudienceInsights_UnknownProvenanceRefusesWholeRead(t *
 			s := newRedditAudienceServer(t)
 			_, err := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}).
 				ReadRedditAudienceInsights(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, scope)
-			if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) || !errors.Is(err, domain.ErrCampaignAccountMismatch) {
-				t.Fatalf("error = %v, want ErrCampaignProvenanceUnknown joined with ErrCampaignAccountMismatch", err)
+			if !errors.Is(err, domain.ErrCampaignProvenanceUnknown) || !errors.Is(err, domain.ErrCampaignAccountMismatch) || errors.Is(err, domain.ErrCampaignProvenanceMixed) {
+				t.Fatalf("error = %v, want ErrCampaignProvenanceUnknown joined with ErrCampaignAccountMismatch, not mixed", err)
+			}
+			if n := len(s.requests()); n != 0 {
+				t.Errorf("Reddit was contacted %d time(s)", n)
+			}
+		})
+	}
+}
+
+// A scope with BOTH a foreign-account campaign and one recording no account reports both faults —
+// in either order — not just the first one found, so the service can name both remedies.
+func TestReddit_ReadRedditAudienceInsights_ForeignAndUnknownReportsBoth(t *testing.T) {
+	foreign := model.ProjectCampaignScope{PlatformCampaignID: "t3_f", Result: json.RawMessage(`{"accountId":"t2_other"}`)}
+	unknown := model.ProjectCampaignScope{PlatformCampaignID: "t3_old"}
+	for name, scope := range map[string][]model.ProjectCampaignScope{
+		"foreign first": append(redditScope("t3_a"), foreign, unknown),
+		"unknown first": {unknown, foreign},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+			s := newRedditAudienceServer(t)
+			_, err := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}).
+				ReadRedditAudienceInsights(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, scope)
+			for _, want := range []error{domain.ErrCampaignProvenanceMixed, domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch} {
+				if !errors.Is(err, want) {
+					t.Errorf("error = %v, want it to match %v", err, want)
+				}
 			}
 			if n := len(s.requests()); n != 0 {
 				t.Errorf("Reddit was contacted %d time(s)", n)

@@ -3695,7 +3695,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: update-campaign-bid lfx-v2-campaign-service-briefs
-            description: 'Change a campaign''s MAX COST-PER-CLICK BID on its ad platform, then persist the new bid. A MUTATION on a live paid campaign, dispatched to the platform first, with the same ONE-WAY invariant as update-campaign-budget: the new bid is never persisted before the platform confirms it; once confirmed, a failed row write answers 500 with the platform holding the new bid, logged as a divergence, and re-applying the same bid reconciles it. ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE''S CREATE PATH PUTS IT — never a bid strategy. Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the campaign (keywords are created without their own bids, so they inherit it). Reddit: the bid_value of the ONE ad group this service created. Meta: the bid_amount (a bid cap, in the account currency''s minor units) of the ONE ad set this service created. X: the bid_amount_local_micro of the ONE line item this service created. A campaign whose row records none (an adopted campaign, or one whose creation never reached it) is refused (409): the service will not choose which of several to re-bid. REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does something under a bid strategy that reads it — Microsoft''s EnhancedCpc or ManualCpc; Reddit''s MANUAL_BIDDING with bid_type CPC; Meta''s LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on impressions, per 1,000 impressions — so only that pairing is a max cost per click); X''s MAX with pay_by LINK_CLICK. Under an automated or target strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET) the platform would ignore it or, worse, the write would be read as a request to switch strategy — and this endpoint NEVER switches strategy, billing or charge unit. An unreported strategy is refused the same way rather than assumed manual. On Reddit the CAMPAIGN''s strategy is checked first and then the ad group''s: with Campaign Budget Optimization on (as on every campaign this service creates) the ad group''s strategy must match the campaign''s, so both must be MANUAL_BIDDING. NOTE: every Reddit campaign this service creates is BIDLESS on both the campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign AUTO, so those three legs apply only after an operator has moved the Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in the platform''s own UI. The amount is in the AD ACCOUNT''s own currency, not USD, and this service neither knows nor converts it. Microsoft Advertising, Reddit, Meta and X today: a campaign on any other platform is refused with 400. **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned; it belongs to a different ad account than the project''s connection now resolves to, or does not record which ad account it was created under; its bid strategy is automated, a target, or unreported; or the bid could not be addressed (no recorded ad group, ad set or line item, one reporting another campaign or deleted, or one bidding in a unit other than `bid_type`). None is retryable. **400** for a request fault: a non-positive, non-finite or out-of-range bid, an unknown bid type, a platform with no bid-write capability wired, or a bid the campaign''s platform refuses on its own minimum or maximum — the response names what it was. **503** when the platform could not be reached or did not confirm — including a throttled Meta or X write, which is never retried in-call; the row is unchanged. Setting the same bid twice converges, but verify the bid in the ad platform before retrying.'
+            description: 'Change a campaign''s MAX COST-PER-CLICK BID on its ad platform, then persist the new bid. A MUTATION on a live paid campaign, dispatched to the platform first, with the same ONE-WAY invariant as update-campaign-budget: the new bid is never persisted before the platform confirms it; once confirmed, a failed row write answers 500 with the platform holding the new bid, logged as a divergence, and re-applying the same bid reconciles it. ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE''S CREATE PATH PUTS IT — never a bid strategy. Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the campaign (keywords are created without their own bids, so they inherit it). Reddit: the bid_value of the ONE ad group this service created. Meta: the bid_amount (a bid cap, in the account currency''s minor units) of the ONE ad set this service created. X: the bid_amount_local_micro of the ONE line item this service created. A campaign whose row records none (an adopted campaign, or one whose creation never reached it) is refused (409): the service will not choose which of several to re-bid. LinkedIn: the campaign''s own unitCost (a decimal amount, written in USD at whole cents — a sub-cent amount is refused 400 rather than rounded); an ADOPTED LinkedIn campaign is refused (409). REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does something under a bid strategy that reads it — Microsoft''s EnhancedCpc or ManualCpc; Reddit''s MANUAL_BIDDING with bid_type CPC; Meta''s LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on impressions, per 1,000 impressions — so only that pairing is a max cost per click); X''s MAX with pay_by LINK_CLICK; LinkedIn''s costType CPC with optimizationTargetType NONE or ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or target strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET; LinkedIn MAX_*, TARGET_COST_PER_*, CAP_COST_AND_*, or any CPM/CPV campaign) the platform would ignore it or, worse, the write would be read as a request to switch strategy — and this endpoint NEVER switches strategy, billing or charge unit. An unreported strategy is refused the same way rather than assumed manual. On Reddit the CAMPAIGN''s strategy is checked first and then the ad group''s: with Campaign Budget Optimization on (as on every campaign this service creates) the ad group''s strategy must match the campaign''s, so both must be MANUAL_BIDDING. NOTE: every Reddit campaign this service creates is BIDLESS on both the campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign AUTO, so those three legs apply only after an operator has moved the Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in the platform''s own UI. A LinkedIn campaign this service creates sends no optimizationTargetType, which LinkedIn documents as defaulting to NONE (manual), so it is expected to pass — but the guard decides on what LinkedIn REPORTS, never on that expectation. On every adapter but LinkedIn the amount is in the AD ACCOUNT''s own currency, not USD, and this service neither knows nor converts it; the LinkedIn adapter writes USD and refuses (409) a campaign whose bid is in any other or an unreported currency. Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other platform is refused with 400. **409** when the change is refused BEFORE the platform is written, so nothing has changed: the campaign is unprovisioned; it belongs to a different ad account than the project''s connection now resolves to, or does not record which ad account it was created under; its bid strategy is automated, a target, or unreported; or the bid could not be addressed (no recorded ad group, ad set or line item, one reporting another campaign or deleted, or one bidding in a unit other than `bid_type`). None is retryable. **400** for a request fault: a non-positive, non-finite or out-of-range bid, an unknown bid type, a platform with no bid-write capability wired, or a bid the campaign''s platform refuses on its own minimum or maximum — the response names what it was. **503** when the platform could not be reached or did not confirm — including a throttled Meta, X or LinkedIn write, which is never retried in-call; the row is unchanged. Setting the same bid twice converges, but verify the bid in the ad platform before retrying.'
             operationId: lfx-v2-campaign-service-briefs#update-campaign-bid
             parameters:
                 - name: project_id
@@ -4532,6 +4532,7 @@ paths:
                                       clicks: 42
                                       cost_micros: 12340000
                                       ctr: 0.0228
+                                      deliberately_paused: false
                                       effective_status: ACTIVE
                                       id: "120210000000000888"
                                       impressions: 1840
@@ -4623,7 +4624,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-meta-ad-set-status lfx-v2-campaign-service-briefs
-            description: 'Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. `ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set''s targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign''s ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign''s write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set''s status WAS changed on Meta. The ad set''s status is NOT stored on the campaign row, so the returned ETag is the row''s UNCHANGED version (as when a created_degraded campaign is paused). NOTE: toggle-campaign-status cascades an ACTIVATE to the recorded ad set, so a campaign ACTIVATE re-activates the recorded ad set; a deliberate ad-set pause does not survive a campaign pause/resume. Any platform but Meta is 400.'
+            description: 'Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. `ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set''s targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign''s ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign''s write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set''s status WAS changed on Meta. A DELIBERATE PAUSE OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: pausing the ad set this service created records the pause on the campaign row, and toggle-campaign-status ACTIVE then activates the campaign and its ads but leaves that ad set PAUSED; only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The record is written BEFORE the pause is sent, so a pause whose outcome is UNCONFIRMED normally stays on record (unknown is treated as paused), and it is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume does not clear it. The record is NOT guaranteed after every 503: when the 503 says the record could not be confirmed, or that the write lock was lost, re-read list-meta-ad-sets and do not assume `deliberately_paused` — after a pause, pause the ad set again if it is false; after a resume, resume it again if it is still true — and re-read the campaign for a fresh ETag before retrying (the ad-set read returns none). list-meta-ad-sets reports it as `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED campaign, which records no ad set — records nothing, since the campaign cascade never re-activates it. When the record is written the campaign row''s version is bumped and the returned ETag (200 only) is the new one. An ERROR response carries no ETag, yet some 503 paths can still have bumped the version (a record written before an UNCONFIRMED write, or one withdrawn after a definite refusal), so after any error re-read the campaign for its current ETag before retrying; otherwise the ETag is the row''s UNCHANGED version (as when a created_degraded campaign is paused). If recording fails before the write, nothing is sent (503, or 409 if the row changed); if it fails after Meta''s definite answer, the 503/409 says what Meta now holds and that the record was not updated. Any platform but Meta is 400.'
             operationId: lfx-v2-campaign-service-briefs#toggle-meta-ad-set-status
             parameters:
                 - name: project_id
@@ -4688,10 +4689,10 @@ paths:
                     description: OK response.
                     headers:
                         ETag:
-                            description: 'ETag header value: the campaign row''s version, UNCHANGED — an ad set''s status is not stored on the campaign row, so this write does not bump it.'
+                            description: 'ETag header value: the campaign row''s version after this call. It CHANGES when the call records or clears the deliberate pause of the campaign''s recorded ad set (a PAUSE of it, or a confirmed resume of it while paused on record); otherwise it is UNCHANGED — the ad set''s status itself is not stored on the campaign row.'
                             schema:
                                 type: string
-                                description: 'ETag header value: the campaign row''s version, UNCHANGED — an ad set''s status is not stored on the campaign row, so this write does not bump it.'
+                                description: 'ETag header value: the campaign row''s version after this call. It CHANGES when the call records or clears the deliberate pause of the campaign''s recorded ad set (a PAUSE of it, or a confirmed resume of it while paused on record); otherwise it is UNCHANGED — the ad set''s status itself is not stored on the campaign row.'
                                 example: Occaecati aut quia vel.
                             example: Occaecati aut quia vel.
                     content:
@@ -4951,7 +4952,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: add-negative-keywords lfx-v2-campaign-service-briefs
-            description: 'Add campaign-level negative keywords to one live campaign. Microsoft Advertising only (AddNegativeKeywordsToEntities, EntityType Campaign); a campaign on any other platform is refused with 400 before anything is contacted. A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching queries — so it carries the keyword actions'' guard set, all before the platform is contacted: the batch''s syntax, the campaign''s provisioning, and the campaign''s ad account against the project''s current connection (a campaign that does not record its ad account is refused, never assumed). Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes no If-Match and returns no ETag. NOT ATOMIC: Microsoft adds each negative independently, so the 200 carries one result per requested keyword, in request order, each with its own outcome. A negative the campaign already has is ALREADY_PRESENT, a success. **400** for a malformed batch (empty or over 60, a text over 100 characters or outside the allowed characters, consecutive punctuation, a match type other than Exact or Phrase, the same keyword twice) or an unsupported platform. A malformed batch is 400 even when the campaign is also unprovisioned. **409** when refused before the platform is contacted: unprovisioned, a different ad account, an unrecorded ad account (re-dispatch), or an unusable connection. **503** only when the platform answered nothing per keyword. The MESSAGE separates a DEFINITE failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a rate limit, an unreadable answer — verify the campaign''s negative keywords before retrying).'
+            description: 'Add negative keywords to one live campaign (LFXV2-2665). Three platforms, each at its own level: Microsoft Advertising at CAMPAIGN level (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in the excluded_keywords of the ONE ad group this service created (a whole-targeting PATCH, behind REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off is 400 before Reddit is contacted); X as one negated keyword targeting criterion (operator_type NE) per keyword on the ONE line item this service created. A campaign on any other platform is refused with 400 before anything is contacted. Match types per platform: Microsoft Exact or Phrase; X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); Reddit Broad only, because Reddit''s excluded keywords carry no match type. Any other is 400. A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching queries, so it only narrows delivery — and it carries the keyword levers'' guard set, all before the platform is mutated: the batch''s syntax, the campaign''s provisioning, the campaign''s ad account against the project''s current connection (a campaign that does not record its ad account is refused, never assumed), and on Reddit and X a READ proving the ad group / line item is live and reported under THIS campaign. Reddit also requires `revision`, the fingerprint get-keyword-targeting returned, and refuses (409) when the ad group''s targeting has changed since, and a blank one is 400; Microsoft and X refuse a present revision, even an empty one (400). Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes no If-Match and returns no ETag. Every write is sent ONCE and never retried on a 429. The 200 carries one result per requested keyword, in request order, each with its own outcome. A negative already there is ALREADY_PRESENT, a success, and is not sent again. Microsoft adds each negative independently; Reddit''s one PATCH carries every new one, so they share its outcome (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch with any ALREADY_PRESENT item always answers per item; X sends one POST per keyword, at most 20 per request (X''s one-write-per-second account pacing), each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. **400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters or outside the allowed characters, consecutive punctuation, a match type the platform does not offer, the same keyword twice, a missing or misplaced revision), an unsupported platform, or Reddit writes switched off. A malformed batch is 400 even when the campaign is also unprovisioned. **409** when refused before anything is written: unprovisioned, a different ad account, an unrecorded ad account (re-dispatch), an unusable connection, an ad group / line item this service did not record or the platform no longer reports under this campaign, a stale Reddit revision, or a Reddit ad group whose excluded keywords would exceed Reddit''s 2,000. **503** only when the platform answered nothing per keyword. The MESSAGE separates a DEFINITE failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a timeout, a rate limit, an unreadable answer — verify the campaign''s negative keywords before retrying).'
             operationId: lfx-v2-campaign-service-briefs#add-negative-keywords
             parameters:
                 - name: project_id
@@ -4992,8 +4993,9 @@ paths:
                             $ref: '#/components/schemas/AddNegativeKeywordsRequestBody'
                         example:
                             negative_keywords:
-                                - match_type: Phrase
+                                - match_type: Broad
                                   text: free download
+                            revision: sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c
             responses:
                 "200":
                     description: OK response.
@@ -5091,7 +5093,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: get-campaign-settings lfx-v2-campaign-service-briefs
-            description: 'Read the campaign''s CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means "what this dispatch asked for", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign''s configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit and X (Twitter) Ads are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft carries no flight dates, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.'
+            description: 'Read the campaign''s CURRENT configuration from the platform that runs it and report, per setting, where it diverges from what the campaign row recorded. A pure read: the platform is only read, never written, and the observation is never persisted back onto the campaign row — the row means "what this dispatch asked for", and the two can legitimately disagree: nothing pushes the recorded config upstream, and more than one path lets them drift apart. This is the read metrics cannot be: impressions, clicks, cost and CTR do not describe a campaign''s configuration. A setting that could not be read on either side is reported ABSENT with an `unknown` verdict, never defaulted to zero and never counted as a match. Support is per-platform: Google Ads, Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired, and a campaign on any other platform returns 400. The field set is per-platform too — each platform reports only the settings it can answer honestly, normalised to the units its create path wrote (Microsoft carries no flight dates, so reports none) — and on every platform the provenance rules are the same: a campaign that does not record the account it was created under, or that belongs to a different account than the connection now resolves to, is refused 409 before anything is read.'
             operationId: lfx-v2-campaign-service-briefs#get-campaign-settings
             parameters:
                 - name: project_id
@@ -5251,7 +5253,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-campaign-status lfx-v2-campaign-service-briefs
-            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). Read the pause''s effect from the ad platform, not from this row.'
+            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). Read the pause''s effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign''s recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service''s, not Meta''s, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.'
             operationId: lfx-v2-campaign-service-briefs#toggle-campaign-status
             parameters:
                 - name: project_id
@@ -5422,7 +5424,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: adopt-campaign lfx-v2-campaign-service-briefs
-            description: 'Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project''s connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other platform answers 400. The read is one get-campaign-by-id under the project''s OWN connection (never the shared LF system account), plus, on Reddit and X only, one read of that connection''s ad account after a campaign 404, and the campaign must belong to that connection''s ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project''s connection / the campaign is of a type that platform''s slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit and X, where the budget is the campaign''s own.'
+            description: 'Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project''s connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project''s OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection''s ad account after a campaign 404, and the campaign must belong to that connection''s ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project''s connection / the campaign is of a type that platform''s slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign''s own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign''s own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.'
             operationId: lfx-v2-campaign-service-briefs#adopt-campaign
             parameters:
                 - name: project_id
@@ -14434,6 +14436,242 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-linkedin-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read LinkedIn professional demographics — job function, seniority, industry, company size and country — for this project''s own campaigns, live from LinkedIn''s Ad Analytics API. Scoped to the campaigns this service holds for the project, NOT to the connected ad account, and read from the project''s OWN connection only (never the LF system account) and only the account that connection is bound to. LinkedIn serves MEMBER_* pivots only through its single-pivot Analytics finder, so the read issues one Ad Analytics request per (pivot, campaign), each filtered to that one campaign and the bound account, and sums the answers; at most 10 campaigns (50 requests), because the account is shared across foundations and the read must fit one request budget. A pure read-through; nothing is persisted. A project with no LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn is not contacted. All five pivots must load or the request fails (503). Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE (see `approximate`): LinkedIn drops values under 3 events, withholds values for ads reaching too few members, keeps only the top 100 values per creative per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No conversions. Not gated: LinkedIn has no metrics feature flag.'
+            operationId: lfx-v2-campaign-service-connections#get-linkedin-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on LinkedIn.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on LinkedIn.
+                    example: last_7_days
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+                  example: last_7_days
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/LinkedinAdsAudience'
+                            example:
+                                approximate: true
+                                bucket_count: 2
+                                buckets:
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: job_function
+                                      impressions: 9000
+                                      value: urn:li:function:8
+                                    - clicks: 185
+                                      cost_micros: 2100000
+                                      ctr: 0.025
+                                      dimension: country
+                                      impressions: 7400
+                                      value: urn:li:geo:103644278
+                                window: last_30_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/linkedin-ads/campaign-ref:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: resolve-linkedin-ads-campaign lfx-v2-campaign-service-connections
+            description: 'Resolve one LinkedIn campaign id to this service''s own campaign and brief. The LinkedIn twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. A pure READ of this service''s own tables: LinkedIn is never contacted, no connection is resolved, and nothing is mutated. Scoped to the project''s own campaigns by the same `project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. **An unowned id is 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one entry:** migration 000020''s unique index covers Google Ads only, so a project whose connection was re-pointed between accounts can hold two live rows with the same id. A caller receiving more than one must refuse rather than choose. A malformed id is refused with 400 before any lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.'
+            operationId: lfx-v2-campaign-service-connections#resolve-linkedin-ads-campaign
+            parameters:
+                - name: platform_campaign_id
+                  in: query
+                  description: 'The LinkedIn campaign id to resolve: a positive 64-bit integer (a LinkedIn `long`) — digits only, no leading zero, at most 9223372036854775807. The Pattern states only the shape; an id past the int64 range is refused 400 by the service before any lookup.'
+                  allowEmptyValue: true
+                  required: true
+                  schema:
+                    type: string
+                    description: 'The LinkedIn campaign id to resolve: a positive 64-bit integer (a LinkedIn `long`) — digits only, no leading zero, at most 9223372036854775807. The Pattern states only the shape; an id past the int64 range is refused 400 by the service before any lookup.'
+                    example: "868353296"
+                    pattern: ^[1-9][0-9]{0,18}$
+                    maxLength: 19
+                  example: "868353296"
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PlatformCampaignResolution'
+                            example:
+                                match_count: 1
+                                matches:
+                                    - brief_id: 2c8e5a1b-4d3f-4e6a-9b7c-1d2e3f4a5b6c
+                                      campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                platform_campaign_id: "24183781329"
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/meta-ads/audience:
         get:
             tags:
@@ -16145,17 +16383,23 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/NegativeKeywordInput'
-                    description: The negative keywords to add, at campaign level.
+                    description: 'The negative keywords to add: at campaign level on Microsoft Advertising, on the campaign''s one ad group on Reddit, on its one line item on X.'
                     example:
-                        - match_type: Phrase
+                        - match_type: Broad
                           text: free download
                     minItems: 1
                     maxItems: 60
+                revision:
+                    type: string
+                    description: 'Reddit only, and required there: the revision get-keyword-targeting returned; an empty or blank one is 400. The add is refused (409) when the ad group''s targeting no longer has that fingerprint. Microsoft Advertising and X refuse the field (400) whenever it is present, even empty.'
+                    example: sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c
+                    maxLength: 128
             description: Request body for add-negative-keywords.
             example:
                 negative_keywords:
-                    - match_type: Phrase
+                    - match_type: Broad
                       text: free download
+                revision: sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c
             required:
                 - negative_keywords
         AdoptCampaignRequestBody:
@@ -18414,7 +18658,7 @@ components:
                         - unknown
                 field:
                     type: string
-                    description: 'The setting''s name in this service''s own stable vocabulary rather than the platform''s field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign''s config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service''s caller vocabulary onto Google''s OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service''s own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google''s `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config''s channel IS persisted in the campaign''s config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight dates, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (none of their create paths records a strategy); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.'
+                    description: 'The setting''s name in this service''s own stable vocabulary rather than the platform''s field names. Several names do coincide with a campaign-row column, but the vocabulary is NOT a column list and must not be read as one: `advertising_channel_type` has no column and is recovered from the campaign''s config snapshot, and the upstream-only names below have no recorded side at all. On Google Ads the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `advertising_channel_type`, `start_date` and `end_date`. `budget_delivery_method`, `budget_explicitly_shared` and `bidding_strategy_type` are reported UPSTREAM-ONLY, with no `recorded` counterpart and therefore always an `unknown` verdict. For the two budget fields that is because nothing this service records expresses them. `bidding_strategy_type` IS recorded, and is left uncompared deliberately: the comparison would require mapping this service''s caller vocabulary onto Google''s OUTPUT_ONLY bidding-strategy enum, which is unverified exactly where it is ambiguous, and on an adopted campaign the recorded strategy was never pushed upstream, so a guessed mapping would report a false divergence on a campaign set exactly as asked. `status` is also reported with no `recorded` counterpart, but for a DIFFERENT reason: the campaign row DOES record a `status`, and it is deliberately never compared because the two are different axes. The column carries this service''s own lifecycle vocabulary — mostly provisioning state (`pending`, `created`, `created_degraded`, soft-deleted) and only sometimes a run state — while Google''s `ENABLED`/`PAUSED`/`REMOVED` is purely delivery state, so comparing them would report a permanent, meaningless divergence on nearly every campaign. The upstream value is still reported so an operator can see that a campaign is paused upstream. `advertising_channel_type` is compared rather than upstream-only because the dispatch config''s channel IS persisted in the campaign''s config snapshot; it still reads `unknown` on a legacy row that carries no snapshot, but for the ordinary reason that nothing was recorded there — not because the field has no recorded side. On Microsoft Advertising, Meta, Reddit and X the COMPARED settings are `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight dates, so they are not reported there); `status` and `bidding_strategy_type` are upstream-only on all four (none of their create paths records a strategy); Microsoft also reports `budget_explicitly_shared` upstream-only, Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the last two say where the budget lives, and explain a budget that reads `unknown` because the campaign-level amount is not the one the row recorded (Reddit with campaign budget optimization off, X under anything but `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged forward past UTC midnight (because the requested day had already begun at dispatch) is shown with both sides and an `unknown` verdict rather than a false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`, `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like Meta''s and Reddit''s, may be nudged by the create path); `status`, `bidding_strategy_type` (LinkedIn''s optimizationTargetType), `cost_type`, `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from LinkedIn''s `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the currency is not reported, never a bare number) and `objective_type` are upstream-only; a campaign reporting both a daily and a total budget, neither (as under a campaign group''s shared budget), or a non-USD amount reads both budget fields `unknown`. The vocabulary is per-platform and may grow, so a consumer must render an unrecognised field name rather than dropping it.'
                     example: budget_amount
                 recorded:
                     type: string
@@ -20780,6 +21024,120 @@ components:
                 - applied_count
         LfxV2CampaignServiceBriefsuploadCreativeAssetResponseBody:
             $ref: '#/components/schemas/CreativeAsset'
+        LinkedinAdsAudience:
+            type: object
+            properties:
+                approximate:
+                    type: boolean
+                    description: 'Always true: LinkedIn documents professional-demographic metrics as APPROXIMATE (privacy protection), privacy-thresholded (values under 3 events dropped, values for ads reaching too few members withheld, top 100 values per creative per day) and delayed 12-24 hours. Present every counter as an estimate, never as an exact measurement, and do not reconcile it against the campaign metrics read.'
+                    example: true
+                bucket_count:
+                    type: integer
+                    description: How many buckets are in `buckets`, across all dimensions.
+                    example: 2
+                    format: int64
+                buckets:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/LinkedinAdsAudienceBucket'
+                    description: 'Every bucket across the five pivots, discriminated by `dimension`. Ordered by dimension (job_function, seniority, industry, company_size, country), then impressions descending, then value. Each dimension covers the same traffic independently, so total within one dimension only — and even then the total is BELOW the campaigns'' own totals: LinkedIn drops values with fewer than 3 events, withholds values for ads reaching too few members, and returns only the top 100 values per creative per day.'
+                    example:
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: job_function
+                          impressions: 9000
+                          value: urn:li:function:8
+                        - clicks: 185
+                          cost_micros: 2100000
+                          ctr: 0.025
+                          dimension: country
+                          impressions: 7400
+                          value: urn:li:geo:103644278
+                window:
+                    type: string
+                    description: The reporting window these counters cover, as UTC calendar days (LinkedIn's Ad Analytics dateRange is UTC) — the same days the LinkedIn campaign metrics read uses for the same window name
+                    example: today
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+            example:
+                approximate: true
+                bucket_count: 2
+                buckets:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: job_function
+                      impressions: 9000
+                      value: urn:li:function:8
+                    - clicks: 185
+                      cost_micros: 2100000
+                      ctr: 0.025
+                      dimension: country
+                      impressions: 7400
+                      value: urn:li:geo:103644278
+                window: last_30_days
+            required:
+                - window
+                - buckets
+                - bucket_count
+                - approximate
+        LinkedinAdsAudienceBucket:
+            type: object
+            properties:
+                clicks:
+                    type: integer
+                    description: Clicks over the window — APPROXIMATE
+                    example: 270
+                    format: int64
+                cost_micros:
+                    type: integer
+                    description: Spend over the window in micro-units of USD (LinkedIn's costInUsd times 10^6, the same unit the LinkedIn campaign metrics read reports) — APPROXIMATE, and per LinkedIn not adjusted for over-delivery on a demographic pivot.
+                    example: 2700000
+                    format: int64
+                ctr:
+                    type: number
+                    description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                    example: 0.03
+                    format: double
+                dimension:
+                    type: string
+                    description: 'Which LinkedIn Ad Analytics professional-demographic pivot this bucket belongs to: job_function (MEMBER_JOB_FUNCTION), seniority (MEMBER_SENIORITY), industry (MEMBER_INDUSTRY), company_size (MEMBER_COMPANY_SIZE) or country (MEMBER_COUNTRY_V2)'
+                    example: country
+                    enum:
+                        - job_function
+                        - seniority
+                        - industry
+                        - company_size
+                        - country
+                impressions:
+                    type: integer
+                    description: Impressions over the window — APPROXIMATE (LinkedIn's privacy approximation for professional demographics)
+                    example: 9000
+                    format: int64
+                value:
+                    type: string
+                    description: 'LinkedIn''s pivot value for this bucket, VERBATIM — a URN such as urn:li:function:8, urn:li:seniority:5, urn:li:industry:4 or urn:li:geo:103644278 (company_size values are passed through as LinkedIn reports them). NOT resolved to a name: LinkedIn resolves each URN type through its Standardized Data APIs (/functions, /seniorities, /industries, /geo), which this read does not call. A value outside a conservative charset fails the read rather than being returned.'
+                    example: urn:li:function:8
+                    pattern: ^[A-Za-z0-9][A-Za-z0-9:_.\-]{0,127}$
+            example:
+                clicks: 185
+                cost_micros: 2100000
+                ctr: 0.025
+                dimension: country
+                impressions: 7400
+                value: urn:li:geo:103644278
+            required:
+                - dimension
+                - value
+                - impressions
+                - clicks
+                - cost_micros
+                - ctr
         LinkedinAdsConnection:
             type: object
             properties:
@@ -21068,6 +21426,10 @@ components:
                     description: clicks/impressions, 0 when impressions is 0.
                     example: 0.0228
                     format: double
+                deliberately_paused:
+                    type: boolean
+                    description: 'true when this is the `recorded` ad set and the campaign row holds a DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only resuming it through toggle-meta-ad-set-status clears this. It is this service''s record, not Meta''s — `status` is what Meta reports. After a pause whose outcome was UNCONFIRMED it is normally true (unknown is treated as paused), but this is NOT guaranteed: when that 503 said the pause''s record could not be confirmed, or that the write lock was lost, it may be false — re-read it, and if it is false pause the ad set again before resuming the campaign; never assume it from the 503 alone. Always false on an adopted campaign.'
+                    example: false
                 effective_status:
                     type: string
                     description: The ad set's EFFECTIVE status as Meta reports it (e.g. CAMPAIGN_PAUSED when the ad set is ACTIVE but its campaign is not). Reported verbatim; Meta grows this set without notice. Absent when not reported.
@@ -21104,6 +21466,7 @@ components:
                 clicks: 42
                 cost_micros: 12340000
                 ctr: 0.0228
+                deliberately_paused: false
                 effective_status: CAMPAIGN_PAUSED
                 id: "120210000000000888"
                 impressions: 1840
@@ -21119,6 +21482,7 @@ components:
                 - cost_micros
                 - ctr
                 - recorded
+                - deliberately_paused
         MetaAdSetStatusChange:
             type: object
             properties:
@@ -21179,6 +21543,7 @@ components:
                           clicks: 42
                           cost_micros: 12340000
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: CAMPAIGN_PAUSED
                           id: "120210000000000888"
                           impressions: 1840
@@ -21192,6 +21557,7 @@ components:
                           clicks: 42
                           cost_micros: 12340000
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: CAMPAIGN_PAUSED
                           id: "120210000000000888"
                           impressions: 1840
@@ -21205,6 +21571,7 @@ components:
                           clicks: 42
                           cost_micros: 12340000
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: CAMPAIGN_PAUSED
                           id: "120210000000000888"
                           impressions: 1840
@@ -21218,6 +21585,7 @@ components:
                           clicks: 42
                           cost_micros: 12340000
                           ctr: 0.0228
+                          deliberately_paused: false
                           effective_status: CAMPAIGN_PAUSED
                           id: "120210000000000888"
                           impressions: 1840
@@ -21263,6 +21631,7 @@ components:
                       clicks: 42
                       cost_micros: 12340000
                       ctr: 0.0228
+                      deliberately_paused: false
                       effective_status: ACTIVE
                       id: "120210000000000888"
                       impressions: 1840
@@ -21931,11 +22300,12 @@ components:
             properties:
                 match_type:
                     type: string
-                    description: How the negative keyword is compared with a search query. Exact or Phrase.
+                    description: 'How the negative keyword is compared with a search query. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only (Reddit''s excluded keywords carry no match type). Any other value for the platform is 400.'
                     example: Phrase
                     enum:
                         - Exact
                         - Phrase
+                        - Broad
                 text:
                     type: string
                     description: The negative keyword text. Letters, digits, spaces and & ' - . only; at most 100 characters.
@@ -21954,22 +22324,23 @@ components:
             properties:
                 error_code:
                     type: string
-                    description: The platform's machine-readable error code for a FAILED keyword, when it named one.
+                    description: 'Why a keyword is FAILED. Microsoft Advertising: Microsoft''s machine-readable error code, when it named one. Reddit and X: NOT_SENT (the request carrying it was never sent) or REJECTED (the platform refused it); their own text is never returned.'
                     example: CampaignServiceNegativeKeywordMatchesKeyword
                 match_type:
                     type: string
                     description: The match type as sent to the platform
-                    example: Phrase
+                    example: Broad
                     enum:
                         - Exact
                         - Phrase
+                        - Broad
                 negative_keyword_id:
                     type: string
-                    description: The platform's id for a negative keyword this request added. Absent for every other outcome.
+                    description: 'The platform''s id for a negative keyword this request added: Microsoft''s NegativeKeyword id, or X''s targeting criterion id. Absent on Reddit, where an excluded keyword has no id, and for every outcome other than APPLIED.'
                     example: "8475612390"
                 outcome:
                     type: string
-                    description: APPLIED — added by this request; ALREADY_PRESENT — the campaign already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.
+                    description: APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft) or ad group / line item (Reddit / X) already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.
                     example: ALREADY_PRESENT
                     enum:
                         - APPLIED
@@ -21982,7 +22353,7 @@ components:
                     example: free download
             example:
                 error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                match_type: Phrase
+                match_type: Broad
                 negative_keyword_id: "8475612390"
                 outcome: ALREADY_PRESENT
                 text: free download
@@ -22009,12 +22380,12 @@ components:
                     description: Exactly one entry per requested negative keyword, in request order, so results[i] answers negative_keywords[i].
                     example:
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                          match_type: Phrase
+                          match_type: Broad
                           negative_keyword_id: "8475612390"
                           outcome: ALREADY_PRESENT
                           text: free download
                         - error_code: CampaignServiceNegativeKeywordMatchesKeyword
-                          match_type: Phrase
+                          match_type: Broad
                           negative_keyword_id: "8475612390"
                           outcome: ALREADY_PRESENT
                           text: free download

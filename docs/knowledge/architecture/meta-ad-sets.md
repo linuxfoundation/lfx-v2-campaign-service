@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Meta Ad-Set Monitor and Pause/Resume"
-description: "Ad-set-level monitor-and-optimize for Meta: a live read of a campaign's ad sets with status, own budget and delivery counters, and a single-ad-set pause/resume guarded by the campaign row's ETag, provenance proven before any write, ACTIVATE limited to the recorded ad set, one unretried write answered APPLIED / ALREADY_IN_STATE or a 503 when unconfirmed, and no persistence."
+description: "Ad-set-level monitor-and-optimize for Meta: a live read of a campaign's ad sets with status, own budget and delivery counters, and a single-ad-set pause/resume guarded by the campaign row's ETag, provenance proven before any write, ACTIVATE limited to the recorded ad set, one unretried write answered APPLIED / ALREADY_IN_STATE or a 503 when unconfirmed, and a deliberate pause of the recorded ad set kept on the campaign row so a campaign resume leaves it paused."
 resource: "internal/service/meta_ad_sets.go"
 ---
 
@@ -65,7 +65,9 @@ Order, every refusal before the write:
    `ErrMetaAdSetUnwritable` (409); any other unrecognised status, or any read failure (100/33
    included), is a definite 503 — nothing was written.
 4. Already at the requested status → `ALREADY_IN_STATE`, nothing sent.
-5. ONE `POST /{ad_set_id} {"status": …}` via `do(..., retryThrottle=false)` — never repeated.
+5. The service's `beforeWrite` hook, when it passed one (a PAUSE of the recorded ad set not yet
+   on record — see below): run once, here, after every guard; if it fails nothing is sent.
+6. ONE `POST /{ad_set_id} {"status": …}` via `do(..., retryThrottle=false)` — never repeated.
 
 ### Write-safety classification (`meta.ClassifyAdSetWrite`)
 
@@ -110,19 +112,156 @@ text is logged.
 
 ### ETag
 
-The ad set's status is not a column of the campaign row, so nothing is persisted and the version
-is not bumped. The response's `ETag` is the row's unchanged version — the precedent of pausing a
-`created_degraded` campaign — and after an `APPLIED` write `VerifyClaimedVersion` proves no other
-writer changed the row under the claim (409 if one did). If-Match still serialises this write
-with every other campaign writer through the claim.
+The ad set's STATUS is not a column of the campaign row. When a call records or clears the
+deliberate pause (below) the row is written through `ReplaceCampaign` on the claim holder's
+connection — version bumped, index event co-committed — and the `200`'s `ETag` is the new
+version. An error response carries NO `ETag` (Goa writes it in the 200 encoder only), yet the row
+may still have been bumped on some 503 paths (an UNCONFIRMED pause, or a definite refusal after the
+record was written and withdrawn), so after any error a caller re-reads the campaign for its
+current version before retrying. Otherwise nothing
+is persisted and the `ETag` is the row's unchanged version — the precedent of pausing a
+`created_degraded` campaign — after `VerifyClaimedVersion` has proved no other writer changed the
+row under the claim (409 if one did). If-Match still serialises this write with every other
+campaign writer through the claim.
 
-## Interaction with the campaign toggle (known, product decision pending)
+## A deliberate ad-set pause survives a campaign pause/resume (decided 2026-10-13)
 
-`toggle-campaign-status` on Meta cascades an ACTIVATE to the campaign's RECORDED ad set
-(`UpdateCampaignAndChildrenStatus`). So **a campaign ACTIVATE re-activates the recorded ad set: a
-deliberate ad-set pause made here does not survive a campaign pause/resume.** The campaign toggle
-is deliberately unchanged; an operator who paused the recorded ad set must pause it again after
-resuming the campaign.
+Product decision: **a deliberate pause of the campaign's recorded ad set made here survives a
+campaign pause and resume.** `toggle-campaign-status` ACTIVE on Meta normally cascades to the
+recorded ad set and its ads (`UpdateCampaignAndChildrenStatus`); when the row holds a pause of
+that ad set it instead calls `meta.Client.ActivateCampaignHoldingAdSet`, which activates the ads
+and then the campaign (last, as always) but never posts the ad set. Its ads are activated so a
+later resume of the ad set alone is enough to serve; the paused ad set gates them meanwhile. A
+campaign PAUSE cascades exactly as before.
+
+**The record is checked against Meta before it is honoured.** It is this service's record, not
+Meta's: an UNCONFIRMED pause that never applied, or an ad set re-activated in Ads Manager, leaves
+it over an ACTIVE ad set, and a holding activation would then switch on the ads and the campaign
+over a serving ad set. So before `ActivateCampaignHoldingAdSet` the dispatcher READS the held ad
+set (`GET /{ad_set_id}?fields=id,campaign_id,account_id,status`, `verifyMetaHeldAdSetPaused`). Its
+CONFIGURED status decides, because an ad set under a paused campaign is effectively
+`CAMPAIGN_PAUSED` whatever it is configured to, and the configured status is what serves once the
+campaign is ACTIVE:
+
+- `PAUSED`, or `DELETED`/`ARCHIVED` (which cannot serve): proceed.
+- `ACTIVE`: `domain.ErrMetaHeldAdSetActive`, a definite 409, and nothing is written. Refusing
+  rather than pausing it here keeps the campaign toggle from writing an ad set's status the
+  operator did not ask for in this call. The 409 names the remedy: pause the ad set, or clear the
+  record by resuming it, through `toggle-meta-ad-set-status`, then resume the campaign.
+- Unreadable, reported under another campaign or account, or an unrecognised status: the
+  toggle's 503 "the campaign was not modified". Only a read preceded it, and nothing is activated.
+
+The ad set must be reported under the connection's account or, when that selection was cleared
+after the pause, the account the campaign was created under (its recorded provenance), as the
+toggle itself supports a cleared selection. With neither known it fails closed.
+Without a record nothing extra is read (`TestMeta_ToggleStatus_HeldActivationReadsTheAdSetFirst`,
+`…UnheldActivationDoesNotReadTheAdSet`).
+
+**Where it lives.** In the row's existing `result` JSON (the create path's untagged
+`meta.CampaignResult` blob) under the extra key `UserPausedAdSetID` — no migration, no new
+column (the column is Meta-only state; `metaAdSetID` records why the ad set id itself is not a
+column either). `model.WithMetaUserPausedAdSet` rewrites only that key, preserving every other;
+`model.MetaAdSetHeldPaused` is true only when the key names the recorded `AdSetID`. A
+re-dispatch writes a fresh `result` with a fresh ad set, so a record cannot outlive its ad set.
+
+**What is tracked.** Only the RECORDED ad set — the only one the campaign cascade touches. A
+hand-added ad set (pause allowed, activate refused) and every ad set of an ADOPTED campaign (which
+records none; #288's rule — PAUSED allowed, ACTIVE refused) record nothing, and those calls
+behave exactly as before.
+
+**When it is set, kept and cleared** (service `ToggleMetaAdSetStatus`, all under the campaign's
+write lock):
+
+| Lever call on the recorded ad set | Record |
+|---|---|
+| PAUSED, write about to be sent | SET first, through the dispatcher's `beforeWrite` hook (after every guard and the pre-write read); if that row write fails nothing is sent — 503 "nothing was changed on Meta", or 409 if the row changed |
+| PAUSED → APPLIED | stays set; `VerifyClaimedVersion` at the new version |
+| PAUSED → ALREADY_IN_STATE (e.g. the campaign pause already paused it) | SET after the answer; a failed row write is 503/409 saying the ad set is already paused but the pause was not recorded |
+| PAUSED → **UNCONFIRMED** | **stays set** (settled before the 503 if its own write was unconfirmed) — unknown is treated as paused, so a later campaign resume does not re-activate an ad set the user may have paused; the usual 503 and 30 s lock cooldown. NOT guaranteed when that 503 says the record could not be confirmed, or the write lock was lost: clients re-read `deliberately_paused` rather than assume it |
+| PAUSED → REJECTED / NOT_SENT (definite) | withdrawn; if the withdrawal cannot be established the answer is a 503 saying the ad set may be shown deliberately paused while active (resume it here to clear), never "nothing was changed" |
+| ACTIVE → APPLIED or ALREADY_IN_STATE | CLEARED (the `ReplaceCampaign` compare-and-swap is the row check); a failed clear is 503/409 saying the ad set WAS resumed (it is ACTIVE) and that, if `deliberately_paused` is still true, it must be resumed here again to clear the stale hold — until then a campaign resume is refused with 409 |
+| ACTIVE → **UNCONFIRMED** or any failure | **stays set** — the ad set may still be paused; keeping it held never spends unasked |
+
+**Ambiguous commits (PR #309).** `ReplaceCampaign` tells two COMMIT failures apart. If the
+SERVER answers the COMMIT with an error (a `*pgconn.PgError`, such as a deferred trigger raising,
+or `pgx.ErrTxCommitRollback`) whose SQLSTATE does not itself leave the outcome open (08007, 40003,
+class 08, 57P01/57P02 do), the rollback is CONFIRMED: a definite failure, so nothing is on
+record and the pause is not sent. If the acknowledgement is LOST (a broken connection, an I/O
+error, the deadline passing while the answer is awaited), PostgreSQL may have committed; only
+that case is marked `domain.ErrWriteOutcomeUnknown` (the hazard `reconcileAmbiguousAudienceCommit`
+handles for audiences). Every record write
+goes through `writeMetaAdSetRecord`, which never reads that as "not written". It reconciles ON THE
+CLAIMED CONNECTION, never a second pooled one beside it — the claim pins its connection for the
+whole request, so a fresh one would starve on a saturated pool (certain with `pool_max_conns=1`),
+the trap `ReplaceCampaign`'s own connection reuse avoids. Each step is bounded by
+`persistResultTimeout`:
+
+1. The same version-guarded write is repeated on the claimed connection — which doubles as the
+   usability check. Success means the first attempt rolled back and the record is now written;
+   `ErrPreconditionFailed` (a guarded UPDATE waits on the row lock of a transaction still
+   resolving) means it landed, accepted only when `VerifyClaimedVersion` on the claimed
+   connection shows exactly the next version with the intended record.
+2. Any other failure means the claimed connection is unusable: the claim is handed back
+   (`ReleaseCampaignLock`, which destroys a broken connection and frees its slot) and exclusive
+   ownership is TAKEN AGAIN with `ClaimCampaignVersion` — a try-lock, as every writer takes it.
+   Nothing continues without a SUCCESSFUL re-claim: another writer (a campaign resume, say) may
+   take the claim in the gap, so a failed re-claim FAILS CLOSED — nothing is sent to Meta and
+   nothing more is written, and the 503 says the record and the ad set's status are unconfirmed
+   and to re-read the ad sets. Once re-claimed the answer is definite wherever it can be:
+   - At the old version, the first attempt is proven not to have landed. The write is made on
+     the new claim, and only that write's own ambiguous commit counts as "unknown"; any other
+     failure is a definite "not recorded", and nothing is sent.
+   - At the next version, the first attempt landed if that row carries the record. If it does
+     not, another writer moved the row and the first attempt did not land (had it landed, that
+     writer would have moved it to +2). That is a definite 409 and nothing is sent.
+
+   The request's deferred release, cooldown and later writes follow the new claim.
+
+   When the claim is lost while recording AFTER Meta's confirmed answer (the record of an
+   ALREADY_IN_STATE pause, or the clear after a resume), the 503 states the confirmed status
+   outcome and reports only the record as unconfirmed. It is not the pre-write answer, which
+   says the status is unconfirmed and nothing was sent.
+
+   Every answer where the record could not be brought in line with Meta's confirmed outcome
+   (`adSetRecordErr`: lost claim, unknown write, failed write, row changed) ends with advice
+   that depends on the OPERATION, because the flag means opposite things. After a pause, re-read
+   `deliberately_paused` (always a boolean in the read, so a missing record reads `false`) and,
+   if it is `false`, pause again, since a campaign resume would otherwise re-activate the ad set.
+   After a resume, `false` means the clear succeeded; only a flag STILL `true` needs another
+   resume of the ad set. The message says the ad set is ACTIVE and that a campaign resume is
+   refused with 409 while that stale hold stands, never that the ad set is still paused. Every
+   variant, including the row-changed 409, ends by telling the caller to re-read the CAMPAIGN for
+   a fresh ETag before retrying: the ad-set read returns none, and a record write may have bumped
+   the version, so the old If-Match would get a 412
+   (`TestAdSetRecordErr_AdviceIsOperationSpecific` pins the exact texts for every branch).
+
+Anything else is "unknown". The state that must never arise is a pause on record over an ad set
+that was never paused (`deliberately_paused` while it serves), so a pause whose record may have
+landed is ALWAYS sent — pausing never spends: landed or rewritten → the normal path; unknown → the
+pause is still sent, then the record is settled from a read at the old or next version on the
+claim's connection (a 503 "could not be confirmed" if even that fails, with the ad set paused on
+Meta, so it cannot serve despite the record). The record is settled the same way when Meta's own
+answer is UNCONFIRMED or unrecognised, BEFORE the 503 and before the cooldown starts: an
+unconfirmed pause counts as paused, so the record must be on the row, or a later campaign resume
+would re-activate an ad set Meta may have paused. If even that settlement cannot be confirmed,
+the 503 says so (re-read `deliberately_paused` and pause again before resuming the campaign).
+Only a DEFINITE rollback (any error without the sentinel, including a server-rejected commit)
+suppresses the pause. A withdrawal and a clear-on-resume are reconciled the same way. On a
+ONE-connection pool, `TestLiveMetaPauseRecordConfirmedRollbackSendsNothing`,
+`TestLiveMetaPauseRecordReconcilesWithoutASecondPooledConnection` (a real lost acknowledgement,
+after which pgx closes the claimed connection, so the claim is re-taken) and
+`TestLiveMetaPauseRecordRejectedOnTheReTakenClaimSendsNothing` cover these outcomes. The unit test
+`TestToggleMetaAdSetStatus_ConcurrentToggleInTheReclaimGapStopsThePause` runs a real campaign
+resume that takes the claim in the gap: the pause is not sent.
+
+**Concurrency.** The record and the campaign toggle are serialised by `ClaimCampaignVersion`: a
+campaign resume racing a pause in flight is refused (409, nothing sent), one on the ETag read
+before the pause is 412, and the next one reads the record
+(`TestToggleMetaAdSetStatus_RacesTheCampaignToggleThroughTheWriteLock`).
+
+**Read.** `list-meta-ad-sets` reports `deliberately_paused` on the recorded ad set — this service's
+record, not Meta's — so the UI can explain why an ad set stayed paused after a campaign resume and
+that resuming it here is the way to clear it. Meta's `status` alone cannot say that.
 
 ## Verified from Meta's docs only (not against a live account)
 

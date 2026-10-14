@@ -188,7 +188,9 @@ func (d *RedditDispatcher) ReadRedditKeywordPerformance(ctx context.Context, pro
 // unique within an account, and a legacy row read on a re-pointed connection would publish another
 // campaign's numbers as this project's. An unrecorded account is ErrCampaignAccountMismatch joined
 // with ErrCampaignProvenanceUnknown (409, remedy: re-dispatch); a different one is
-// ErrCampaignAccountMismatch (409). A stored id that is not a usable Reddit campaign id is refused
+// ErrCampaignAccountMismatch (409); a scope with BOTH is all three of ErrCampaignProvenanceMixed,
+// ErrCampaignProvenanceUnknown and ErrCampaignAccountMismatch joined (409, naming both remedies),
+// never just one of the two faults. A stored id that is not a usable Reddit campaign id is refused
 // as invalid (the read's own 409 sentinel). All refused before any request, never dropped.
 func redditScopeForAccount(scope []model.ProjectCampaignScope, accountID, op string, invalid error) ([]string, error) {
 	current := strings.TrimSpace(accountID)
@@ -207,6 +209,13 @@ func redditScopeForAccount(scope []model.ProjectCampaignScope, accountID, op str
 		default:
 			ids = append(ids, s.PlatformCampaignID)
 		}
+	}
+	if foreign > 0 && unknown > 0 {
+		// Both faults at once: reporting either alone would hide the other's remedy, so the
+		// error carries both sentinels and ErrCampaignProvenanceMixed, which the service checks
+		// first to name both remedies.
+		return nil, fmt.Errorf("%s: of this project's %d campaigns, %d were created under a different reddit ad account than the one its connection now resolves to and %d do not record which reddit ad account they were created under: %w",
+			op, len(scope), foreign, unknown, errors.Join(domain.ErrCampaignProvenanceMixed, domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
 	}
 	if foreign > 0 {
 		return nil, fmt.Errorf("%s: %d of this project's %d campaigns were created under a different reddit ad account than the one its connection now resolves to; returning only the rest would report a partial result as complete: %w",

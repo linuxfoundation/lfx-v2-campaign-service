@@ -80,7 +80,7 @@ spec:
     # httproute.yaml is gated on the project `campaign_manager` relation. This is a
     # SINGLE rule covering every routed family — connections, briefs, campaigns
     # (under a brief), jobs, google-ads keywords/audience,
-    # meta-ads, reddit-ads and twitter-ads audience, reddit-ads keywords, and hubspot UTM — because they share the exact same
+    # meta-ads, reddit-ads, twitter-ads and linkedin-ads audience, reddit-ads keywords, and hubspot UTM — because they share the exact same
     # authorization (D2:
     # campaign_manager on project:{projectId}, reads AND writes). Keeping them in one
     # rule preserves the chart↔route parity invariant (every heimdall-routed path has
@@ -228,6 +228,9 @@ spec:
           # Reddit audience read (LFXV2-2665): the Reddit sibling of twitter-ads/audience, a
           # campaign_manager read scoped to the project's own campaigns on its own connection.
           - path: /projects/:projectId/reddit-ads/audience
+          # LinkedIn audience read (LFXV2-2665): the LinkedIn sibling of meta-ads/audience, a
+          # campaign_manager read scoped to the project's own campaigns on its own connection.
+          - path: /projects/:projectId/linkedin-ads/audience
           # Reddit keyword performance read (LFXV2-2665): the KEYWORD breakdown on the same
           # reporting contract as reddit-ads/audience, campaign_manager likewise.
           - path: /projects/:projectId/reddit-ads/keywords
@@ -236,6 +239,8 @@ spec:
           - path: /projects/:projectId/meta-ads/campaign-ref
           - path: /projects/:projectId/reddit-ads/campaign-ref
           - path: /projects/:projectId/twitter-ads/campaign-ref
+          # LinkedIn twin (LFXV2-2665), same read and permission.
+          - path: /projects/:projectId/linkedin-ads/campaign-ref
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

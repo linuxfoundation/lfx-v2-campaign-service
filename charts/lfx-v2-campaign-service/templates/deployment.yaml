@@ -95,6 +95,34 @@
     {{- fail "TWITTER_METRICS_ENABLED is on with more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1). The X stats-job features' per-account limits (job budget, write pacer) are per process, so each replica would multiply them against X ad accounts shared across foundations. Run one replica while the flag is on (the runtime lease also refuses non-owner pods)." }}
   {{- end }}
 {{- end }}
+{{- /*
+  Guard: the Reddit reporting budget needs ONE replica — ALWAYS, not only with a flag on.
+
+  Every request to Reddit's reports operation (POST /ad_accounts/{id}/reports) spends from one
+  quota, the `ads-reporting` policy: 60 requests per 60 s per ad account. The ledger that keeps
+  this service under it (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those for
+  the audience read) is process-local, so N replicas could send up to N × 45 a minute against one
+  account.
+
+  Not keyed on REDDIT_METRICS_ENABLED, because that flag does not cover all of the traffic: it
+  gates the campaign metrics read and the audience read, but the Reddit ACCOUNT MONITOR
+  (connection-reddit-ads/account-monitor → RedditDispatcher.ListAccountCampaignMetrics →
+  reddit.Client.ListAccountCampaigns) is ungated, always routed, and reads the same reports
+  operation. So any replica can spend the budget whenever the monitor can serve — which is
+  always. (X differs: TWITTER_METRICS_ENABLED gates the X monitor too, and a runtime lease
+  confines its stats jobs to one pod, so the X guard above can stay flag-scoped.)
+
+  This costs the default deploy nothing: the chart ships replicaCount: 1 and no HPA, and the
+  Recreate strategy's migration-ordering guarantee (TestDeploymentUsesRecreateStrategy) already
+  rests on one replica. There is no runtime lease behind it, so it cannot see an out-of-band scale
+  or an external HPA (ArgoCD ignores /spec/replicas); a shared ledger is what would lift it.
+*/}}
+{{- $redditReplicas := int (default 1 .Values.replicaCount) }}
+{{- $redditAutoscaleMax := 1 }}
+{{- with .Values.autoscaling }}{{- if .enabled }}{{- $redditAutoscaleMax = int (default 2 .maxReplicas) }}{{- end }}{{- end }}
+{{- if or (gt $redditReplicas 1) (gt $redditAutoscaleMax 1) }}
+  {{- fail "more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1) is refused: the Reddit reporting budget (45 of an ad account's 60 report requests a minute) is kept per process, and the always-on Reddit account monitor spends it whatever REDDIT_METRICS_ENABLED says, so each replica would multiply it against the account-wide quota. Run one replica until the ledger is shared." }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

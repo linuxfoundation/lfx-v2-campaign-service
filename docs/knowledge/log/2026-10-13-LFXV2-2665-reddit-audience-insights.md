@@ -32,3 +32,22 @@ audience reads. See [Reddit Audience Insights](../architecture/audience-insights
 - **Kubernetes concepts.** `kubernetes/httproute.md` and `kubernetes/ruleset.md` now list
   `(meta-ads|reddit-ads|twitter-ads)/audience`, and `kubernetes/deployment.md` says
   `REDDIT_METRICS_ENABLED` also gates the audience read, not only `ReadMetrics`.
+- **PR #306 review, second round.** (1) An unsent attempt no longer spends a reporting slot: the
+  client refreshes the token and builds the request first and takes the slot immediately before
+  the send, and `ReportBudgets.acquire` checks `ctx.Err()` before every take, including after each
+  wait (`TestReportBudgets_UnsentAttemptsSpendNothing`). (2) A scope with both a foreign-account
+  and an unrecorded campaign now returns new `domain.ErrCampaignProvenanceMixed` joined with
+  `ErrCampaignProvenanceUnknown` and `ErrCampaignAccountMismatch`, and the service answers a 409
+  naming both remedies instead of the mismatch text alone. (3) The per-process ledger is guarded
+  in the chart: `templates/deployment.yaml` refuses `REDDIT_METRICS_ENABLED` (effective value,
+  either env input or a secret) with `replicaCount` > 1 or autoscaling past one, the X guard's twin
+  (`TestDeploymentRefusesRedditReportsOnMultipleReplicas`). Also: the API catalog and chart now
+  list the Reddit and LinkedIn audience routes together after the merge of `main`.
+- **PR #306 review, third round.** (1) The Reddit replica guard is now UNCONDITIONAL: the Reddit
+  account monitor is ungated, always routed and spends the same per-process reports ledger, so
+  `REDDIT_METRICS_ENABLED` did not cover all the traffic. Gating the monitor instead was rejected
+  (a shipped, flag-free feature would turn into a 400). The default deploy (`replicaCount: 1`, no
+  HPA, Recreate) is unaffected. The X guard's test now checks which guard refused. (2) A pre-send
+  dial failure now releases its reporting slot (`ReportBudgets.reserve` returns a release func);
+  any other send error keeps it. (3) The Reddit concept's chart row lists the whole routed family
+  `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`, as does the LinkedIn concept's.

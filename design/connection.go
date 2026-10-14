@@ -1481,8 +1481,8 @@ func microsoftKeywordsWindowEnum() {
 // ─── Connection service ───
 
 // localCampaignRefMethod declares a DB-only campaign-ref method for a platform whose ids are
-// not Google's int64 decimal: resolve-meta-ads-campaign, resolve-reddit-ads-campaign and
-// resolve-twitter-ads-campaign (LFXV2-2665). Same payload shape, result type, error set, auth
+// not Google's int64 decimal: resolve-meta-ads-campaign, resolve-reddit-ads-campaign,
+// resolve-twitter-ads-campaign and resolve-linkedin-ads-campaign (LFXV2-2665). Same payload shape, result type, error set, auth
 // and HTTP shape as resolve-microsoft-ads-campaign — only the id rule, its example and the
 // prose differ. The Google and Microsoft methods are left as written so their contract is
 // byte-identical; the service mirrors each id rule (internal/service/connection_keywords.go).
@@ -1750,6 +1750,9 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			Response("ServiceUnavailable", StatusServiceUnavailable)
 		})
 	})
+
+	// The LinkedIn audience read (LFXV2-2665) is declared in design/linkedin_audience.go.
+	linkedInAdsAudienceMethod()
 
 	Method("get-microsoft-ads-keywords", func() {
 		Description("Read Microsoft Advertising keyword performance for this project's own campaigns, in " +
@@ -2037,6 +2040,13 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		`^[A-Za-z0-9]+$`, 64,
 		"The X/Twitter campaign id to resolve. Letters and digits, at most 64 characters.",
 		"8wxyz")
+	// LinkedIn joined the twins in LFXV2-2665. A LinkedIn campaign id is a `long`: the Pattern is
+	// its shape, and linkedin.ValidateCampaignID (applied by the service) adds the int64 range a
+	// regexp cannot state — internal/apivalidation pins that the decoder is necessary, not sufficient.
+	localCampaignRefMethod("resolve-linkedin-ads-campaign", "LinkedIn", "linkedin-ads",
+		`^[1-9][0-9]{0,18}$`, 19,
+		"The LinkedIn campaign id to resolve: a positive 64-bit integer (a LinkedIn `long`) — digits only, no leading zero, at most 9223372036854775807. The Pattern states only the shape; an id past the int64 range is refused 400 by the service before any lookup.",
+		"868353296")
 
 	Method("list-meta-ads-accounts", func() {
 		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +

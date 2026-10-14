@@ -58,9 +58,16 @@ blocks are Reddit's own.
   headroom for Ads Manager and other tools), and at most 24 for this read (its context is marked
   `withInsightsReports`), so the metrics read and monitor always keep 21. An attempt waits for a slot
   only if one frees before its deadline; otherwise nothing is sent and it fails with
-  `ErrReportBudgetExhausted`, which fails the whole read (503, fixed text). The ledger is PER
-  PROCESS: with several replicas the account-wide figure multiplies, and a shared ledger would be
-  needed to claim it account-wide.
+  `ErrReportBudgetExhausted`, which fails the whole read (503, fixed text). Only an attempt that is
+  actually sent spends a slot: the client refreshes the token and builds the request FIRST and takes
+  the slot immediately before the send, and `acquire` refuses a done context before every take
+  (before the first and after each wait), so a failed refresh or a cancelled caller costs nothing.
+  A pre-send dial failure (DNS, connection refused, no route — `isPreSendDialError`) is proven
+  unsent, so the client hands its slot back (`ReportBudgets.reserve`'s release); any other send
+  error may have reached Reddit and keeps its slot. The ledger is PER PROCESS: with several
+  replicas the account-wide figure multiplies, and the always-on Reddit account monitor spends it
+  too, so the chart refuses more than one replica whatever `REDDIT_METRICS_ENABLED` says (see
+  [Deployment](../kubernetes/deployment.md)); a shared ledger is what would lift that.
 - **Identical concurrent reads share one upstream read** (`internal/dispatch/reddit_report_guard.go`):
   keyed by account, window, UTC day and the sorted campaign set, single-flight with leader-context
   re-lead (as the X audience guard), and a successful result reused for 60 s. Failures are never
@@ -69,7 +76,9 @@ blocks are Reddit's own.
   LF system fallback, and the client reads only the connection's own `account_id`. Any campaign in
   scope whose recorded creation account differs is `ErrCampaignAccountMismatch` (409) for the whole
   read. A campaign that records NO creation account is refused too —
-  `ErrCampaignProvenanceUnknown` joined with the mismatch (409, re-dispatch remedy), stricter than
+  `ErrCampaignProvenanceUnknown` joined with the mismatch (409, re-dispatch remedy); a scope with
+  BOTH a foreign and an unrecorded campaign is `ErrCampaignProvenanceMixed` joined with both (409
+  naming both remedies), never just the first fault found. Stricter than
   the Meta/X reads: Reddit ids are unique only within an account, so after the connection is
   re-pointed such a row could name another advertiser's campaign. A stored id that is not a valid
   Reddit campaign id is `ErrAudienceScopeInvalid` (409). All before Reddit is contacted.
@@ -95,7 +104,7 @@ blocks are Reddit's own.
 | Service | `internal/service/connection_reddit_audience.go` (`GetRedditAdsAudience`, window subset, `classifyInsightsErrorFor`); `Orchestrator.ReadRedditAudienceInsights` + `RedditAudienceReader` in `orchestrator.go` |
 | Dispatch | `internal/dispatch/reddit_audience.go` (`AudienceEnabled`, `ReadRedditAudienceInsights`, `redditScopeForAccount`) |
 | Platform | `internal/platform/reddit/audience.go` (`GetAudienceInsights`) on the shared broken-down reader `report_breakdown.go`, which the [keyword performance read](keyword-performance-reddit.md) also uses |
-| Chart | `httproute.yaml` `(meta-ads|reddit-ads|twitter-ads)/audience`; `ruleset.yaml` entry; `parity_test.go` rows |
+| Chart | `httproute.yaml` `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` (the whole routed audience family; this read is the `reddit-ads` member); `ruleset.yaml` entry; `parity_test.go` rows |
 
 ## Not verified
 

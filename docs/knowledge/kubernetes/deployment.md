@@ -44,9 +44,11 @@ would otherwise land in the log. What survives is enough for the thing being
 diagnosed — whether a proxy and key are configured at all.
 
 `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED` is a plain feature gate, defaulting to `"false"`
-(LFXV2-2665): it opts a cluster in to removing keywords from a Reddit ad group's targeting,
-which writes the whole targeting object back and has not been exercised against a live ad
-account. Only exactly `"true"` enables it; the keyword-targeting read is not gated.
+(LFXV2-2665): it opts a cluster in to BOTH Reddit ad-group targeting writes — removing keywords
+(`remove-keyword-targeting`) and adding negative keywords to `excluded_keywords`
+(`add-negative-keywords`). Each writes the whole targeting object back, which has not been
+exercised against a live ad account. Only exactly `"true"` enables them; the keyword-targeting
+read is not gated.
 
 `REDDIT_METRICS_ENABLED` is likewise a plain (non-secret) value, defaulting to
 `"false"`. It is a feature gate rather than a credential: the Reddit reporting
@@ -100,6 +102,24 @@ list renders `app.environment` first and `app.extraEnv` after it and Kubernetes 
 name's LAST occurrence: the last `app.extraEnv` entry wins, an `app.environment` entry counts its
 `value` when the key is present and its `valueFrom` otherwise, and a `valueFrom` on the effective
 entry (unreadable at render time) counts as on (`TestDeploymentRefusesXStatsJobsOnMultipleReplicas`).
+
+A second render-time guard refuses more than one replica UNCONDITIONALLY — `replicaCount` > 1 or
+`autoscaling.enabled` with `maxReplicas` > 1, whatever any flag says
+(`TestDeploymentRefusesRedditReportsOnMultipleReplicas`). The Reddit reporting budget
+(`internal/platform/reddit/report_budget.go`, 45 of an ad account's 60 report requests a minute)
+is a per-process ledger, so N replicas could send N × 45. It is not keyed on
+`REDDIT_METRICS_ENABLED` because that flag gates only the Reddit metrics and audience reads: the
+Reddit account monitor (`connection-reddit-ads/account-monitor` →
+`RedditDispatcher.ListAccountCampaignMetrics` → `reddit.Client.ListAccountCampaigns`) is ungated,
+always routed, and spends the same reports quota. (X differs: `TWITTER_METRICS_ENABLED` gates the
+X monitor too, and a runtime lease confines its stats jobs to one pod.) Gating the monitor behind
+the flag instead was rejected: it is a shipped, flag-free feature (with its own alert rules, `internal/service/rules/monitor_reddit.go`),
+and gating it would turn its working answer into a 400. The default deploy is unaffected — the chart ships
+`replicaCount: 1` and no HPA, and the Recreate rollout's migration ordering
+(`TestDeploymentUsesRecreateStrategy`) already rests on one replica. There is no runtime lease
+behind this guard, so it cannot see an out-of-band scale or an external HPA; a shared ledger is
+what would lift it. Because it refuses every multi-replica render, the X guard's test now judges
+each case by WHICH guard's message appears.
 
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while

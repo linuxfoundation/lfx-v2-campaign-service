@@ -240,11 +240,12 @@ func TestUpdateCampaignBid_RefusedStatesBeforeTheClaim(t *testing.T) {
 	}
 }
 
-// Google Ads and LinkedIn have no BidWriter today. A registered dispatcher without the
-// capability is what exercises the type assertion; each platform's real dispatcher is held to it
-// by the dispatch package's compile-time checks.
+// Google Ads has no BidWriter today (LinkedIn gained one in LFXV2-2665). A registered dispatcher
+// without the capability is what exercises the type assertion, so the platform label is only a
+// label here; each platform's real dispatcher is held to it by the dispatch package's
+// compile-time checks.
 func TestUpdateCampaignBid_UnsupportedPlatformIsBadRequest(t *testing.T) {
-	for _, p := range []model.Provider{model.ProviderGoogleAds, model.ProviderLinkedInAds} {
+	for _, p := range []model.Provider{model.ProviderGoogleAds} {
 		t.Run(string(p), func(t *testing.T) {
 			camp := bidCampaign()
 			camp.Platform = p
@@ -307,6 +308,41 @@ func TestUpdateCampaignBid_DispatcherSentinelsMapToStatuses(t *testing.T) {
 				t.Errorf("the claim lock was released %d times, want exactly 1", camps.releases)
 			}
 		})
+	}
+}
+
+// An ADOPTED campaign's refusal (ErrBidAdoptedCampaign, joined with ErrBidUnwritable as the
+// LinkedIn adapter returns it) gets its own 409 naming adoption and where the bid is managed —
+// not the generic text about strategies and ad groups, ad sets or line items, which LinkedIn
+// does not have. A plain ErrBidUnwritable keeps the generic text.
+func TestUpdateCampaignBid_AdoptedCampaignHasItsOwnConflictText(t *testing.T) {
+	cases := []struct {
+		name        string
+		err         error
+		want, never string
+	}{
+		{"adopted (LinkedIn)", fmt.Errorf("x: %w: %w", domain.ErrBidAdoptedCampaign, ErrBidUnwritable), "was adopted", "ad group"},
+		{"plain unwritable", ErrBidUnwritable, "ad group, ad set or line item", "was adopted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := budgetService(t, bidCampaign(), &bidWriterDispatcher{err: tc.err})
+			_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+			var conflict *briefs.ConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("want 409, got %T: %v", err, err)
+			}
+			if !strings.Contains(conflict.Message, tc.want) || strings.Contains(conflict.Message, tc.never) {
+				t.Errorf("message = %q, want it to contain %q and not %q", conflict.Message, tc.want, tc.never)
+			}
+		})
+	}
+	if s, _ := budgetService(t, bidCampaign(), &bidWriterDispatcher{err: fmt.Errorf("%w: %w", domain.ErrBidAdoptedCampaign, ErrBidUnwritable)}); s != nil {
+		_, err := s.UpdateCampaignBid(context.Background(), bidPayload(1, "cpc", "3"))
+		var conflict *briefs.ConflictError
+		if errors.As(err, &conflict) && !strings.Contains(conflict.Message, "Campaign Manager") {
+			t.Errorf("the adopted 409 does not say where a LinkedIn bid is managed: %q", conflict.Message)
+		}
 	}
 }
 

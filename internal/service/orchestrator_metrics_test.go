@@ -405,7 +405,7 @@ func (d upstreamCapableDispatcher) ReadAudienceInsights(context.Context, string,
 
 // AddNegativeKeywords returns ONE outcome per requested keyword, for the same reason as
 // ApplyKeywordActions below: a short slice fails the success arm with unconfirmedOutcomeCountError.
-func (d upstreamCapableDispatcher) AddNegativeKeywords(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+func (d upstreamCapableDispatcher) AddNegativeKeywords(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, keywords []model.NegativeKeyword, _ string) ([]model.NegativeKeywordOutcome, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -504,7 +504,7 @@ func (d upstreamCapableDispatcher) ReadMetaAdSets(context.Context, string, model
 	return &model.MetaAdSets{}, nil
 }
 
-func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string, model.Provider, *model.Campaign, string, string) (*model.MetaAdSetStatusResult, error) {
+func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string, model.Provider, *model.Campaign, string, string, MetaAdSetBeforeWrite) (*model.MetaAdSetStatusResult, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
@@ -621,7 +621,7 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			name: "negative keywords",
 			op:   opNegativeKeywords,
 			call: func(ctx context.Context, o *Orchestrator) error {
-				_, err := o.AddNegativeKeywords(ctx, "p1", platform, campaign, []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}})
+				_, err := o.AddNegativeKeywords(ctx, "p1", platform, campaign, []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}}, "")
 				return err
 			},
 		},
@@ -655,7 +655,7 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			name: "toggle meta ad set status",
 			op:   opToggleMetaAdSetStatus,
 			call: func(ctx context.Context, o *Orchestrator) error {
-				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused)
+				_, err := o.ToggleMetaAdSetStatus(ctx, "p1", platform, campaign, "888", model.MetaAdSetStatusPaused, nil)
 				return err
 			},
 		},

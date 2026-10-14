@@ -75,6 +75,44 @@ create has no confirmed campaign to attach to. The calls:
 4. [SetAdExtensionsAssociations](https://learn.microsoft.com/en-us/advertising/campaign-management-service/setadextensionsassociations?view=bingads-13)
    with `AssociationType` `Campaign`.
 
+## Strict response decoding
+
+Every 2xx body must actually answer before it counts. Each rule below fails closed:
+
+- **Lookup.** `AdExtensionAssociationCollection` must be present as an array. `[]`, `[null]`
+  and empty slots mean none. An omitted field, `null` or a non-array is a failed lookup, and
+  nothing is uploaded. Associations with no `AdExtension`, or with an explicit `Type` other than
+  `ImageAdExtension`, are skipped. An image association that reaches the entity check counts only
+  when its `EntityId` is this campaign and its `AssociationType` is `Campaign`; otherwise it
+  fails the lookup and is never treated as AlreadyAttached. Every image association is checked
+  before any is trusted, and the first valid id is returned only when no other entry fails.
+- **AddAdExtensions errors vs. truncation.** Only actual error evidence counts toward a definite
+  rejection. That evidence is the whole-wire `AnyErrors` tallies, so an error beyond the
+  16-entry retention window still counts. Truncation or null-only placeholders with a null
+  identity stay UNCONFIRMED, because they explain nothing.
+- **Association success.** A `PartialErrors` array that is present but carries no codes (for
+  example `[null]`) is UNCONFIRMED, not success.
+- **Raw-body integrity.** Every image-extension response body passes `identityjson.Check`
+  before it is decoded. That rejects malformed UTF-8, unpaired surrogates, and keys declared
+  twice, including under the case fold. Without it, a duplicate key could mark a field present
+  from one spelling and decode it empty from the other. An untrustworthy lookup fails, and
+  nothing is uploaded; an untrustworthy mutation body is UNCONFIRMED.
+- **AddMedia.** `PartialErrors` beside `MediaIds` is decoded. A null id is a definite rejection
+  only on whole-wire `AnyErrors` evidence, so a rejection past the 16-entry window still counts.
+  Null placeholders, or a null id with no explanation, are UNCONFIRMED.
+  A returned id next to any error entry is also UNCONFIRMED. The id is recorded, and the attach
+  stops before AddAdExtensions.
+- **AddAdExtensions.** `NestedPartialErrors` is `BatchErrorCollection[]`. It is decoded with
+  `boundedNestedErrorItems`, the same decoder as geo, and both the collection-level codes and
+  each nested `BatchErrors` are classified. A null identity with any error is definite. An
+  identity returned alongside errors is UNCONFIRMED: its id is recorded, and the attach stops
+  before association.
+- **SetAdExtensionsAssociations.** The presence of `PartialErrors` is tracked as in
+  `updateStatusResponse`. `null` or `[]` confirms success; an omitted field or a top-level
+  `null` is UNCONFIRMED.
+- **Error text.** An association failure's message makes no claim about whether the
+  extension is attached. The NOT attached / UNCONFIRMED step wording decides that.
+
 ## Recording and outcomes
 
 The ids are written to the persisted result as `imageMediaId` and `imageAdExtensionId`, the
