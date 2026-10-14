@@ -832,11 +832,13 @@ type Campaign struct {
 	// campaign created before this field existed, an adopted campaign, or a Google
 	// Ads or email campaign — never read as `automatic`.
 	BiddingStrategy *string
-	// The manual max cost-per-click bid this service most recently set, in the AD
-	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
-	// with manual bidding, then whatever update-campaign-bid set. A request the
-	// platform confirmed, never an observation — a bid changed in the platform's
-	// own UI is not reflected. ABSENT when this service never set one.
+	// The manual max cost-per-click bid this service most recently set, in the
+	// currency the provider expects: the ad account's own currency for Microsoft
+	// Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the
+	// starting bid of a campaign created with manual bidding, then whatever
+	// update-campaign-bid set. A request the platform confirmed, never an
+	// observation — a bid changed in the platform's own UI is not reflected.
+	// ABSENT when this service never set one.
 	MaxCpcBid *float64
 	// Optimistic-concurrency version
 	Version int64

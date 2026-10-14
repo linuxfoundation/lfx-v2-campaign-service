@@ -256,7 +256,7 @@ var Campaign = Type("campaign", func() {
 		Enum("automatic", "manual")
 		Example("manual")
 	})
-	Attribute("max_cpc_bid", Float64, "The manual max cost-per-click bid this service most recently set, in the AD ACCOUNT's own currency (NOT USD): the starting bid of a campaign created with manual bidding, then whatever update-campaign-bid set. A request the platform confirmed, never an observation — a bid changed in the platform's own UI is not reflected. ABSENT when this service never set one.", func() {
+	Attribute("max_cpc_bid", Float64, "The manual max cost-per-click bid this service most recently set, in the currency the provider expects: the ad account's own currency for Microsoft Advertising, Meta, Reddit and X (NOT USD), and USD for LinkedIn: the starting bid of a campaign created with manual bidding, then whatever update-campaign-bid set. A request the platform confirmed, never an observation — a bid changed in the platform's own UI is not reflected. ABSENT when this service never set one.", func() {
 		Example(1.25)
 	})
 	Attribute("version", Int64, "Optimistic-concurrency version")
