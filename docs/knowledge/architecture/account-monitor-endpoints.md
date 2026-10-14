@@ -222,7 +222,8 @@ window**: the read stamps the Insights `since`/`until` it SENT on every row
 (`MetricsWindowStart`/`MetricsWindowEnd`), and `EvaluateMetaMonitor` takes no clock and paces
 against exactly those days; it used to take a `now` captured before the read, which a request
 crossing UTC midnight put one day away from the spend. A row with no window is
-`pacing_unknown`. See
+`pacing_unknown`. Flight timestamps are parsed whole (Graph's `-0700` layout or RFC 3339) and
+anything else — `"2026-10-01garbage"` included — is an unreadable date. See
 [2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md](../log/2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md).
 
 ## Correctness bugs found during local differential verification

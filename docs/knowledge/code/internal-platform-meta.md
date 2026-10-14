@@ -764,10 +764,13 @@ Graph error) fails the monitor like its sibling reads. **Flight from the ad sets
 the campaign-list row has no dates and a lifetime budget could not be paced. The same read takes
 the active ad sets' window: when they all share one it becomes the row's flight (and a lifetime
 budget is paced on it); when they disagree, or one's `start_time` is absent/null/malformed or its
-`end_time` null/malformed, the lifetime budget stays unknown — an absent `end_time` is an
+`end_time` null/malformed, the budget stays unknown, daily or lifetime — an absent `end_time` is an
 open-ended flight, and an open-ended window differs from a bounded one with the same start. A
 daily ad-set budget is likewise used only with one shared window, since daily pacing now counts
-the flight's days in the window too. An unknown budget is 0/0, which `metaPacingPct` already reports as not
+the flight's days in the window too. "Malformed" is decided by `dateOnly`, which parses the WHOLE
+timestamp as Graph's `2006-01-02T15:04:05-0700` or RFC 3339 and takes the date as written; it used
+to check only the first 10 characters, so `"2026-10-01garbage"` passed as a flight date (it serves
+the campaign list's `start_time`/`stop_time` too). An unknown budget is 0/0, which `metaPacingPct` already reports as not
 computable. A negative campaign-level budget is unreadable (`FetchFailed`), never "no budget" sent
 to the ad-set fallback. `rules/monitor_meta.go` changed in two ways: its action-item text prints
 money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`; and lifetime

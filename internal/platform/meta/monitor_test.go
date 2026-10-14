@@ -391,6 +391,17 @@ func TestDateOnly(t *testing.T) {
 		{"empty", "", ""},
 		{"not a real calendar date", "0000-00-00T00:00:00-0800", ""},
 		{"malformed prefix", "not-a-date00", ""},
+		// The WHOLE timestamp must parse (PR #316 review): a valid date with trailing text, a
+		// bare date, or a time with no offset is not a Meta timestamp and is refused.
+		{"graph layout with positive offset", "2026-10-31T23:59:59+0000", "2026-10-31"},
+		{"RFC 3339 with Z", "2026-10-01T09:00:00Z", "2026-10-01"},
+		{"RFC 3339 with colon offset", "2026-10-01T09:00:00-07:00", "2026-10-01"},
+		{"date as written, not converted to UTC", "2026-10-01T23:30:00-0800", "2026-10-01"},
+		{"date followed by garbage", "2026-10-01garbage", ""},
+		{"timestamp followed by garbage", "2026-10-01T09:00:00-0700xyz", ""},
+		{"bare date", "2026-10-01", ""},
+		{"no offset", "2026-10-01T09:00:00", ""},
+		{"impossible time", "2026-10-01T25:00:00-0700", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

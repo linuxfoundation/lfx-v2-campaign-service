@@ -5,7 +5,8 @@ campaign-level budgets, but `CreateCampaign` puts the budget on the ad set, so e
 service creates read `pacing_unknown` and could never raise an under/overspend item. When an
 admitted campaign has neither campaign-level budget, `fetchAccountAdSetBudgets` makes ONE
 account-level paged read (`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time`,
-20 × 500 cap, `identityjson` before decode) and sums the `ACTIVE` ad sets per campaign; mixed
+20 × 500 cap, `identityjson` before decode) and sums the ad sets per campaign — only when every
+one is `ACTIVE`; any other status leaves the campaign unknown (see the pacing-review entry); mixed
 daily/lifetime, an explicit `null`, an active ad set with no budget, a page-cap hit or an
 untrustworthy body all leave those campaigns unknown, never a partial sum; a failed request still
 fails the endpoint. (2) `minorUnitsToWhole` divided by 100 unconditionally, reading JPY/KRW budgets
@@ -21,8 +22,10 @@ and `code/internal-platform-meta.md`.
 
 PR #316 review follow-up: the ad-set read also takes `start_time`/`end_time`, because
 `CreateCampaign` writes the flight on the ad set and a lifetime ABO campaign had no dates to pace
-against. The active ad sets' shared window becomes the row's flight; differing or unreadable
-windows leave a lifetime budget unknown (daily pacing is unaffected). Meta's action-item text now
+against. The ad sets' shared window becomes the row's flight; differing or unreadable windows
+leave the budget unknown — lifetime and, since the later pacing-review fixes
+(`2026-10-13-LFXV2-2665-meta-monitor-pacing-review.md`), daily too, because daily pacing now
+counts the flight's days in the window. Meta's action-item text now
 prints money as "N.NN in account currency" (`metaMoney`) rather than `$`, since spend and budgets
 are in the ad account's currency.
 

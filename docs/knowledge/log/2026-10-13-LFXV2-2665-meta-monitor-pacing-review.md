@@ -27,6 +27,12 @@ the row is `pacing_unknown`, never a false alert.
   first and returned a `transportError`; the read now takes it undecoded through a `rawBody` sink,
   and a body that is not valid JSON is an `adSetBudgetsUnreadableError` — budgets unknown,
   delivery metrics kept.
+- **Flight timestamps are parsed whole.** `dateOnly` validated only the first 10 characters, so
+  `"2026-10-01garbage"` was read as a flight date. It now parses the whole value as Graph's
+  `2006-01-02T15:04:05-0700` or RFC 3339 and returns the date as written; anything else is "" (an
+  unknown date, which leaves an ABO budget unknown). `docs/api-catalog.md` now states that any
+  non-ACTIVE ad set makes an ABO campaign `pacing_unknown` and that daily ABO budgets also need a
+  shared, readable window.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid at or above
   `float64(math.MaxInt64)` is refused exactly as `budgetToMinorUnits` refuses it, instead of
   converting to an implementation-defined (possibly negative) minor-unit bid.

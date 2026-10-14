@@ -374,6 +374,8 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 		{"a null start_time is unknown", []string{life(`"start_time":null`)}, 0, 0, "", ""},
 		{"a null end_time is unknown", []string{life(`"start_time":"2026-10-01T09:00:00-0700","end_time":null`)}, 0, 0, "", ""},
 		{"a malformed start_time is unknown", []string{life(`"start_time":"0000-00-00T00:00:00-0700"`)}, 0, 0, "", ""},
+		{"a start_time with trailing text is unknown", []string{life(`"start_time":"2026-10-01garbage","end_time":"2026-10-31T23:59:59+0000"`)}, 0, 0, "", ""},
+		{"an end_time with trailing text is unknown", []string{daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-31T23:59:59+0000xyz"`)}, 0, 0, "", ""},
 		{"daily ad sets sharing a window show it", []string{daily(oct), daily(oct)}, 20, 0, "2026-10-01", "2026-10-31"},
 		{"daily ad sets with differing windows are unknown", []string{daily(oct), daily(nov)}, 0, 0, "", ""},
 		{"a daily ad set with no start_time is unknown", []string{`"daily_budget":"1000","end_time":"2026-10-31T23:59:59+0000"`}, 0, 0, "", ""},

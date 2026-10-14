@@ -466,20 +466,25 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 	return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights exceeded %d pages; too many rows to enumerate", monitorMaxPages)
 }
 
-// dateOnly validates and truncates a Meta ISO-8601 timestamp ("2026-01-15T00:00:00-0800") to
-// its YYYY-MM-DD date component, matching model.AccountCampaignMetrics.StartDate/EndDate's
-// date-only contract. It parses the 10-char prefix as an actual calendar date rather than
-// merely slicing it, so a malformed timestamp (e.g. "0000-00-00...") does not silently pass
-// through as a fabricated date — empty/malformed input yields "" (round-31+ review).
+// metaTimestampLayouts are the timestamp forms dateOnly accepts: Graph's documented default,
+// "2026-01-15T00:00:00-0800" (the layout CreateCampaign writes, client.go), and RFC 3339
+// ("…+00:00" / "…Z") — the same pair the settings readback parses (dispatch/meta_settings.go).
+var metaTimestampLayouts = []string{"2006-01-02T15:04:05-0700", time.RFC3339}
+
+// dateOnly parses a WHOLE Meta timestamp in one of metaTimestampLayouts and returns its
+// YYYY-MM-DD date as written (in the timestamp's own offset), matching
+// model.AccountCampaignMetrics.StartDate/EndDate's date-only contract. Anything else — empty,
+// truncated, a non-calendar date ("0000-00-00…"), or a valid date followed by trailing text
+// ("2026-10-01garbage") — yields "", the unknown-date representation. It used to validate only
+// the first 10 characters, so a malformed timestamp with a plausible prefix was read as a flight
+// date (PR #316 review).
 func dateOnly(s string) string {
-	if len(s) < 10 {
-		return ""
+	for _, layout := range metaTimestampLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Format("2006-01-02")
+		}
 	}
-	prefix := s[:10]
-	if _, err := time.Parse("2006-01-02", prefix); err != nil {
-		return ""
-	}
-	return prefix
+	return ""
 }
 
 // adSetBudgetTotal is the sum of one campaign's ad-set budgets, in the account currency's minor
