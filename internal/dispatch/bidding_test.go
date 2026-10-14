@@ -361,7 +361,8 @@ func TestMicrosoft_InvalidBiddingFailsBeforeAnyUpstreamCall(t *testing.T) {
 // TestPreflightCreate_WrongTypedBiddingIsA400OnEveryLanePlatform (PR #332 review): a `bidding`
 // whose fields have the wrong JSON type must be the promised synchronous 400, not a decode failure
 // left to Dispatch (a 202 and a failed job). Every OTHER field's type error keeps its old answer,
-// ErrPreflightNotApplicable, and null bidding fields are accepted as absent.
+// ErrPreflightNotApplicable. Only an ABSENT bidding field defaults: an explicit null (bidding,
+// strategy or bidAmount) or an empty strategy is a 400, and `{}` or an omitted bidding is automatic.
 func TestPreflightCreate_WrongTypedBiddingIsA400OnEveryLanePlatform(t *testing.T) {
 	lanes := []struct {
 		key, budgetField string

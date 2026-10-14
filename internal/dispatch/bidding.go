@@ -22,7 +22,9 @@ import (
 //
 //	"bidding": {"strategy": "automatic" | "manual", "bidAmount": 1.25}
 //
-// OMITTED (or null) means automatic: the platform sets every bid. MANUAL creates the campaign
+// OMITTED means automatic: the platform sets every bid. Only a genuinely ABSENT field defaults —
+// an explicit `"bidding": null`, `"strategy": null` or `""`, or `"bidAmount": null` is a 400 (see
+// biddingConfig and checkBiddingShape). MANUAL creates the campaign
 // with a manual max cost-per-click bid of bidAmount, in the account currency's MAJOR units (the
 // same unit as the config's budget, no FX), and in EXACTLY the shape the bid lever
 // (update-campaign-bid) accepts on that platform — so the lever, which refuses every

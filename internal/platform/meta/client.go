@@ -3185,7 +3185,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, err
 		}
 		// A daily budget under BidCapDailyBudgetMultiple x the bid is refused by Meta at the
-		// ad-set POST, after the campaign exists — so refuse it here, in exact minor units.
+		// ad-set POST, after the campaign exists — so refuse it here, in exact minor units. The
+		// product is checked BEFORE it is formed (PR #332 review): with a large fallback offset a
+		// legal bid encodes near int64's limit, and an overflowing 5x would wrap negative and pass
+		// every budget. A required budget that int64 cannot hold is refused as too large.
+		if !in.LifetimeBudget && bidCapMinor > math.MaxInt64/BidCapDailyBudgetMultiple {
+			return nil, &bidAmountError{msg: fmt.Sprintf("the bid is too large: the daily budget Meta requires for it (%d times the bid) cannot be represented at the ad account currency's minor-unit scale", BidCapDailyBudgetMultiple)}
+		}
 		if !in.LifetimeBudget && budgetMinor < BidCapDailyBudgetMultiple*bidCapMinor {
 			return nil, &bidAmountError{msg: fmt.Sprintf("a link-click bid cap needs a daily budget of at least %d times the bid (Meta's minimum)", BidCapDailyBudgetMultiple)}
 		}

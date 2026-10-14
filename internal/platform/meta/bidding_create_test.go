@@ -155,3 +155,39 @@ func TestCreateCampaign_BidCapBudgetMinimumIsComparedInEncodedMinorUnits(t *test
 		})
 	}
 }
+
+// TestBidEncoders_RefuseAScaledValuePastInt64 (PR #332 review): both bid encoders refuse a scaled
+// value that does not fit an int64 BEFORE converting it — an out-of-range float64 → int64 conversion
+// is implementation-defined — mirroring budgetToMinorUnits.
+func TestBidEncoders_RefuseAScaledValuePastInt64(t *testing.T) {
+	const hugeOffset = int64(1e13) // 1e6 x 1e13 = 1e19 > MaxInt64 (~9.22e18)
+	if _, err := CreateBidMinorUnits(1e6, hugeOffset); !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "too large to encode") {
+		t.Fatalf("CreateBidMinorUnits = %v, want a too-large refusal", err)
+	}
+	if _, err := bidToMinorUnits(1e6, hugeOffset); !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "too large to encode") {
+		t.Fatalf("bidToMinorUnits = %v, want a too-large refusal", err)
+	}
+	// Just inside the bound still encodes.
+	if minor, err := CreateBidMinorUnits(1e6, int64(1e12)); err != nil || minor != 1e18 {
+		t.Fatalf("CreateBidMinorUnits(1e6, 1e12) = %d, %v; want 1e18", minor, err)
+	}
+}
+
+// TestCreateCampaign_BidCapBudgetMinimumCannotOverflow (PR #332 review): with a fallback offset of
+// 2e12, a 1e6 bid encodes to 2e18 minor units and 5x that wraps int64 negative — under which ANY
+// budget would pass. The required budget is checked before it is formed and refused as too large,
+// before the ad set is created.
+func TestCreateCampaign_BidCapBudgetMinimumCannotOverflow(t *testing.T) {
+	adsetCap := newBodyCapture()
+	srv := metaFieldServer(t, adsetCap, newBodyCapture())
+	defer srv.Close()
+	in := metaFieldInput()
+	in.Budget, in.BidCap = 1, 1e6
+	_, err := biddingClient(srv.URL, int64(2e12)).CreateCampaign(context.Background(), in)
+	if !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "cannot be represented") {
+		t.Fatalf("err = %v, want the unrepresentable-required-budget refusal", err)
+	}
+	if adsetCap.get() != nil {
+		t.Fatal("an ad set was sent for a refused bid")
+	}
+}

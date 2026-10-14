@@ -4285,13 +4285,14 @@ type CampaignCreateInputRequestBody struct {
 	// used to get Microsoft's EnhancedCpc default and is now MaxClicks, so
 	// update-campaign-bid answers 409 for it; a LinkedIn campaign created with no
 	// bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment.
-	// The bid lever applies only to campaigns created with strategy manual.
-	// LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding
-	// MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn
-	// campaigns optimise for clicks because MAX_CONVERSION, the only automated
-	// target of WEBSITE_CONVERSION, needs a conversion association this service
-	// doesn't create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION.
-	// `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad
+	// Manual-created campaigns are immediately eligible for the bid lever;
+	// eligibility follows the platform's current strategy. LinkedIn automatic
+	// creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with
+	// costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for
+	// clicks because MAX_CONVERSION, the only automated target of
+	// WEBSITE_CONVERSION, needs a conversion association this service doesn't
+	// create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual`
+	// requires `bidAmount`, the starting max cost-per-click bid in the ad
 	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
 	// and a whole number of micro-units; it creates the campaign in the shape
 	// update-campaign-bid accepts. Per platform, a manual bid must also be:

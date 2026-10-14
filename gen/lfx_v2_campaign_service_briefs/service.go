@@ -71,9 +71,10 @@ type Service interface {
 	// "invalid campaign config: <configKey>.bidding: ...". Bidding defaults
 	// changed in LFXV2-2665: a Microsoft campaign created without bidding is
 	// MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK;
-	// the bid lever applies only to campaigns created with strategy manual. Every
-	// other dispatch failure, including an imageAssetId that does not exist for
-	// this brief, still arrives later, as the job's own result.
+	// manual-created campaigns are immediately eligible for the bid lever, and
+	// eligibility follows the platform's current strategy. Every other dispatch
+	// failure, including an imageAssetId that does not exist for this brief, still
+	// arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
@@ -285,40 +286,44 @@ type Service interface {
 	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
 	// first and then the ad group's: with Campaign Budget Optimization on (as on
 	// every campaign this service creates) the ad group's strategy must match the
-	// campaign's, so both must be MANUAL_BIDDING. THE BID LEVER APPLIES ONLY TO
-	// CAMPAIGNS CREATED WITH STRATEGY MANUAL: since LFXV2-2665 a Microsoft
-	// campaign created without `bidding` (and without cpcBid) is MaxClicks, not
-	// Microsoft's EnhancedCpc default, so this endpoint answers 409 for it, and a
-	// LinkedIn one is WEBSITE_VISIT + MAX_CLICK. CAMPAIGNS THIS SERVICE CREATES:
-	// one created with the dispatch config's `bidding.strategy` `manual`
-	// (create-campaigns) is created in exactly the shape this endpoint accepts on
-	// its platform — Microsoft EnhancedCpc with the ad group's CpcBid, Meta a
-	// link-click bid cap, Reddit MANUAL_BIDDING CPC on campaign and ad group, X
-	// MAX per link click, LinkedIn CPC with optimizationTargetType NONE and
-	// unitCost — so it can be re-bid here. One created with AUTOMATIC bidding (the
-	// default) is refused (409) until an operator moves it to a manual per-click
-	// bid in the platform's own UI: Microsoft MaxClicks, Meta
-	// LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO, LinkedIn WEBSITE_VISIT +
-	// MAX_CLICK. Either way the guard decides on what the platform REPORTS, never
-	// on what was created. On every adapter but LinkedIn the amount is in the AD
-	// ACCOUNT's own currency, not USD, and this service neither knows nor converts
-	// it; the LinkedIn adapter writes USD and refuses (409) a campaign whose bid
-	// is in any other or an unreported currency. Microsoft Advertising, Reddit,
-	// Meta, X and LinkedIn today: a campaign on any other platform is refused with
-	// 400. **409** when the change is refused BEFORE the platform is written, so
-	// nothing has changed: the campaign is unprovisioned; it belongs to a
-	// different ad account than the project's connection now resolves to, or does
-	// not record which ad account it was created under; its bid strategy is
-	// automated, a target, or unreported; or the bid could not be addressed (no
-	// recorded ad group, ad set or line item, one reporting another campaign or
-	// deleted, or one bidding in a unit other than `bid_type`). None is retryable.
-	// **400** for a request fault: a non-positive, non-finite or out-of-range bid,
-	// an unknown bid type, a platform with no bid-write capability wired, or a bid
-	// the campaign's platform refuses on its own minimum or maximum — the response
-	// names what it was. **503** when the platform could not be reached or did not
-	// confirm — including a throttled Meta, X or LinkedIn write, which is never
-	// retried in-call; the row is unchanged. Setting the same bid twice converges,
-	// but verify the bid in the ad platform before retrying.
+	// campaign's, so both must be MANUAL_BIDDING. ELIGIBILITY FOLLOWS THE
+	// PLATFORM'S CURRENT STRATEGY, not how the campaign was created: campaigns
+	// created with strategy manual are immediately eligible, an automatic one an
+	// operator later switches to a manual per-click bid becomes eligible, and a
+	// manual one switched to automatic becomes ineligible. Since LFXV2-2665 a
+	// Microsoft campaign created without `bidding` (and without cpcBid) is
+	// MaxClicks, not Microsoft's EnhancedCpc default, so this endpoint answers 409
+	// for it until switched, and a LinkedIn one is WEBSITE_VISIT + MAX_CLICK.
+	// CAMPAIGNS THIS SERVICE CREATES: one created with the dispatch config's
+	// `bidding.strategy` `manual` (create-campaigns) is created in exactly the
+	// shape this endpoint accepts on its platform — Microsoft EnhancedCpc with the
+	// ad group's CpcBid, Meta a link-click bid cap, Reddit MANUAL_BIDDING CPC on
+	// campaign and ad group, X MAX per link click, LinkedIn CPC with
+	// optimizationTargetType NONE and unitCost — so it can be re-bid here. One
+	// created with AUTOMATIC bidding (the default) is refused (409) until an
+	// operator moves it to a manual per-click bid in the platform's own UI:
+	// Microsoft MaxClicks, Meta LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO,
+	// LinkedIn WEBSITE_VISIT + MAX_CLICK. Either way the guard decides on what the
+	// platform REPORTS, never on what was created. On every adapter but LinkedIn
+	// the amount is in the AD ACCOUNT's own currency, not USD, and this service
+	// neither knows nor converts it; the LinkedIn adapter writes USD and refuses
+	// (409) a campaign whose bid is in any other or an unreported currency.
+	// Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any
+	// other platform is refused with 400. **409** when the change is refused
+	// BEFORE the platform is written, so nothing has changed: the campaign is
+	// unprovisioned; it belongs to a different ad account than the project's
+	// connection now resolves to, or does not record which ad account it was
+	// created under; its bid strategy is automated, a target, or unreported; or
+	// the bid could not be addressed (no recorded ad group, ad set or line item,
+	// one reporting another campaign or deleted, or one bidding in a unit other
+	// than `bid_type`). None is retryable. **400** for a request fault: a
+	// non-positive, non-finite or out-of-range bid, an unknown bid type, a
+	// platform with no bid-write capability wired, or a bid the campaign's
+	// platform refuses on its own minimum or maximum — the response names what it
+	// was. **503** when the platform could not be reached or did not confirm —
+	// including a throttled Meta, X or LinkedIn write, which is never retried
+	// in-call; the row is unchanged. Setting the same bid twice converges, but
+	// verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
@@ -865,13 +870,14 @@ type CampaignCreateInput struct {
 	// used to get Microsoft's EnhancedCpc default and is now MaxClicks, so
 	// update-campaign-bid answers 409 for it; a LinkedIn campaign created with no
 	// bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment.
-	// The bid lever applies only to campaigns created with strategy manual.
-	// LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding
-	// MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn
-	// campaigns optimise for clicks because MAX_CONVERSION, the only automated
-	// target of WEBSITE_CONVERSION, needs a conversion association this service
-	// doesn't create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION.
-	// `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad
+	// Manual-created campaigns are immediately eligible for the bid lever;
+	// eligibility follows the platform's current strategy. LinkedIn automatic
+	// creates an objectiveType WEBSITE_VISIT campaign bidding MAX_CLICK with
+	// costType CPM (decision 2026-10-13: automatic LinkedIn campaigns optimise for
+	// clicks because MAX_CONVERSION, the only automated target of
+	// WEBSITE_CONVERSION, needs a conversion association this service doesn't
+	// create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION. `manual`
+	// requires `bidAmount`, the starting max cost-per-click bid in the ad
 	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
 	// and a whole number of micro-units; it creates the campaign in the shape
 	// update-campaign-bid accepts. Per platform, a manual bid must also be:

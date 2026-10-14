@@ -111,3 +111,18 @@ budget and bid in hundredths before the account currency was known. That refused
 bid 1 with budget 4.6 encodes to 5 minor units, which meets 5 × 1. The client already compares in
 the encoded minor units at the account currency's offset, before its first mutating call, so the
 pre-check no longer attempts it.
+
+**Meta overflow guards (PR #332 review).**
+- Both bid encoders now refuse a scaled value that does not fit an int64 before converting it, the
+  same way `budgetToMinorUnits` does. These are `CreateBidMinorUnits` and the lever's
+  `bidToMinorUnits`. Converting an out-of-range float64 to int64 is implementation-defined. The fix
+  keeps the budget's int64 bound so PR #316's exact-minor-units helper can replace both later.
+- The 5× budget minimum is now checked before the product is formed: `bidCapMinor >
+  MaxInt64/5` is refused as too large. With a fallback offset of 2e12 a 1e6 bid encodes to 2e18,
+  and 5 × that wrapped negative, so any budget passed.
+
+**Bid-lever eligibility wording (PR #332 review).** The catalog and design text now say that
+manual-created campaigns are immediately eligible, and that eligibility follows the platform's
+current strategy. An automatic campaign an operator switches to a manual per-click bid becomes
+eligible; the reverse becomes ineligible. Comments that still said an explicit null defaults to
+automatic now say only an absent field defaults.

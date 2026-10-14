@@ -847,3 +847,8 @@ ad set), so the strategy lives on the ad set, not the campaign.
 only with `ReconcileByName`) adds a "bid NOT applied to reused ad set" step. A daily budget under
 `BidCapDailyBudgetMultiple` (5) × the bid is refused before any mutation — the Ad Set reference's
 `LOWEST_COST_WITH_BID_CAP` minimum, "Clicks/Actions: 5x the bid_amount".
+
+Both bid encoders (`CreateBidMinorUnits`, `bidToMinorUnits`) refuse a scaled value at or past
+int64's limit BEFORE converting it, as `budgetToMinorUnits` does, and the create path refuses a bid
+whose 5× required daily budget cannot be represented (`bidCapMinor > MaxInt64/5`) before forming
+the product, so a huge fallback offset cannot wrap the comparison negative (PR #332 review).
