@@ -335,13 +335,11 @@ func TestMigration000020_ScopesTheIndexToGoogleAds(t *testing.T) {
 // Empty is the resting state: TestMigrations_AllowedVersionGapsAreStillOpen fails on a stale
 // entry, so the merge that closes a gap cannot be green while its excuse survives.
 var allowedVersionGaps = map[int]string{
-	// 43 — OPEN (LFXV2-2665). 000043-000046 (per-provider adoption binding indexes) are claimed by
-	// PR #328 (fix/LFXV2-2665-adoption-binding-indexes); this branch's
-	// 000047_campaigns_bidding_strategy_column sits above them. MERGE ORDER OBLIGATION: this branch
-	// merges AFTER #328, rebased onto it (then delete this entry). This entry only keeps the
-	// contiguity test green; TestMigration000047_RequiresItsPredecessorsEmbedded is the guard that
-	// fails while the order is wrong.
-	43: "000043-000046 claimed by fix/LFXV2-2665-adoption-binding-indexes (unmerged); 000047 is the bidding_strategy column",
+	// 43 — REMOVED (LFXV2-2665). 000043-000046 (per-provider adoption binding indexes) were
+	// claimed by PR #328 while it was unmerged, and this entry excused the gap below this branch's
+	// 000047_campaigns_bidding_strategy_column. #328 has merged, so 000043-000046 exist in the tree
+	// ahead of 000047 and the merge-order obligation is discharged in the direction it required;
+	// TestMigration000047_RequiresItsPredecessorsEmbedded now passes.
 	// 19 — REMOVED (LFXV2-3056). 000019_audience_actor_columns was claimed by PR #103
 	// (LFXV2-3055) while it was unmerged, and this entry excused the gap so this branch could
 	// stay green ahead of it. #103 has merged, so 000019 exists in the tree and the ordering

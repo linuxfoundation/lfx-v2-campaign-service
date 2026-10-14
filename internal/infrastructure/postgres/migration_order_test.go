@@ -11,8 +11,8 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/migrations"
 )
 
-// TestMigration000047_RequiresItsPredecessorsEmbedded is a MERGE-ORDER guard (LFXV2-2665), and it
-// is red on purpose until its predecessors exist.
+// TestMigration000047_RequiresItsPredecessorsEmbedded is a MERGE-ORDER guard (LFXV2-2665). It was
+// red on the bidding branch until #328 merged; it now pins that the order stays right.
 //
 // 000047_campaigns_bidding_strategy_column was numbered above 000043-000046, which the PR
 // fix/LFXV2-2665-adoption-binding-indexes (#328) claims. golang-migrate records the highest
@@ -20,9 +20,7 @@ import (
 // 000043-000046 would, once deployed, skip those four forever. allowedVersionGaps excuses the gap so
 // the contiguity test can stay green on a branch ahead of its sibling — which is exactly why it
 // cannot catch the wrong merge order. This test can: it reads the EMBEDDED migrations (what the
-// binary actually applies) and fails while version 47 is present and any of 43-46 is absent. The
-// bidding PR is therefore held as a draft until #328 merges and is rebased onto it; this test then
-// passes, and TestMigrations_AllowedVersionGapsAreStillOpen forces the stale gap entry out.
+// binary actually applies) and fails while version 47 is present and any of 43-46 is absent.
 func TestMigration000047_RequiresItsPredecessorsEmbedded(t *testing.T) {
 	present := map[int]bool{}
 	ups, err := fs.Glob(migrations.FS, "*.up.sql")

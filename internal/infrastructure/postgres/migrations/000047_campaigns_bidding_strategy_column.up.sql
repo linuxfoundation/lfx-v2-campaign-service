@@ -10,9 +10,9 @@
 -- (fix/LFXV2-2665-adoption-binding-indexes) claims 000043-000046 (per-provider binding indexes).
 -- THIS MIGRATION MUST APPLY AFTER 000043-000046. golang-migrate records the highest applied version
 -- and never applies a lower one afterwards, so if 000047 reached a database first, 000043-000046
--- would be skipped forever. The bidding PR therefore depends on #328 and is merged only after it,
--- rebased onto it; TestMigration000047_RequiresItsPredecessorsEmbedded fails while the embedded
--- migrations carry 000047 without 000043-000046, so CI enforces the order.
+-- would be skipped forever. #328 merged first, so 000043-000046 precede this file on main;
+-- TestMigration000047_RequiresItsPredecessorsEmbedded fails if the embedded migrations ever carry
+-- 000047 without 000043-000046.
 --
 -- What it records. A REQUEST the create path sent, never an observation: an operator can
 -- switch the strategy in the ad platform afterwards, and the bid lever reads the platform

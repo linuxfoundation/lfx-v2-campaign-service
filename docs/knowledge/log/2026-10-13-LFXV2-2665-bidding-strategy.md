@@ -62,10 +62,10 @@ manual create also writes its starting bid to `max_cpc_bid`. The upsert fills bo
 while they are empty. The campaign resource now returns `bidding_strategy` and `max_cpc_bid`.
 **Migration order: 000047 must apply after 000043–000046.** Those four belong to #328
 (`fix/LFXV2-2665-adoption-binding-indexes`). golang-migrate never applies a lower version after a
-higher one, so this PR depends on #328 and merges only after it, rebased onto it. The gap sits in
-`allowedVersionGaps`, which only keeps the contiguity test green. The real guard is
-`TestMigration000047_RequiresItsPredecessorsEmbedded`: it fails while the embedded migrations carry
-000047 without 000043–000046, so CI stays red until the rebase.
+higher one, so this PR was held until #328 merged and then merged main. The temporary
+`allowedVersionGaps` entry is now removed. `TestMigration000047_RequiresItsPredecessorsEmbedded`
+remains as the guard: it fails if the embedded migrations ever carry 000047 without
+000043–000046.
 
 **The bid is recorded only when it was applied.** Each client reports `BidApplied`, which is true
 when the run created the entity carrying the bid:
