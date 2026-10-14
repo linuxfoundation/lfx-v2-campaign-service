@@ -4,8 +4,10 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -68,11 +70,21 @@ func DispatchFailureMessage(p model.Provider, derr error, preCreate bool) string
 	if msg, ok := domain.AsPreflightRefusal(derr); ok {
 		return msg
 	}
-	if domain.IsTokenRefreshFailure(derr) {
+	// A refresh that ended because THIS call was cancelled or ran out of time says nothing
+	// about the credential, so "may need re-authorizing" would send an operator to repair a
+	// connection that may be fine. It falls through to the generic string instead.
+	if domain.IsTokenRefreshFailure(derr) && !errors.Is(derr, context.Canceled) && !errors.Is(derr, context.DeadlineExceeded) {
 		return fmt.Sprintf("%s token refresh failed, so nothing was sent; the connection may need re-authorizing", p)
 	}
 	if status, ok := domain.UpstreamStatus(derr); ok {
-		return fmt.Sprintf("%s refused the create (HTTP %d); nothing was created", p, status)
+		// The status may come from a READ that preceded the create (a find-existing lookup, a
+		// geo resolve, a portal GET), not from the create itself, so neither sentence claims
+		// the create was refused. 5xx and 429 are the platform declining to answer, which a
+		// retry can clear; any other status is the platform refusing the request.
+		if status >= 500 || status == http.StatusTooManyRequests {
+			return fmt.Sprintf("%s answered HTTP %d before anything was created (a retry may succeed); nothing was created", p, status)
+		}
+		return fmt.Sprintf("%s refused the request (HTTP %d) before anything was created; nothing was created", p, status)
 	}
 	return genericDispatchFailure
 }

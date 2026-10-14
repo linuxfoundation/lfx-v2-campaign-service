@@ -6,6 +6,9 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
 )
 
 // PreflightRefusal is a create refusal THIS SERVICE authored and raised before anything was
@@ -90,6 +93,46 @@ func AsPreflightRefusal(err error) (string, bool) {
 		return r.msg, true
 	}
 	return "", false
+}
+
+// maxCallerValueRunes bounds how much of one caller-supplied value a refusal may quote.
+const maxCallerValueRunes = 64
+
+// callerValueWithheld replaces a caller value that is shaped like something that can carry a
+// secret.
+const callerValueWithheld = "(value withheld)"
+
+// CallerValue renders a caller-supplied scalar (a date, an id, a keyword) for a refusal that
+// may reach the job result verbatim (PreflightRefusal). Caller input is not upstream text, but
+// it is not ours either: an "id" field can hold a pasted URL whose query carries a token, and a
+// value can be arbitrarily long or carry control characters. So, modelled on the dispatchers'
+// safeAssetIDForError:
+//
+//   - a value containing "://", "?", "#", "@" or any whitespace is not shown at all — those are
+//     the shapes of a URL, a query, a userinfo credential or a multi-line paste, and no field
+//     these refusals quote legitimately contains one;
+//   - otherwise it is cut to maxCallerValueRunes (marked with "…"), every non-graphic rune is
+//     replaced with U+FFFD, and the result is quoted.
+//
+// Every caller-supplied value formatted into a PreflightRefusal must go through this.
+func CallerValue(s string) string {
+	if strings.Contains(s, "://") || strings.ContainsAny(s, "?#@") || strings.IndexFunc(s, unicode.IsSpace) >= 0 {
+		return callerValueWithheld
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if n == maxCallerValueRunes {
+			b.WriteString("…")
+			break
+		}
+		if !unicode.IsGraphic(r) {
+			r = unicode.ReplacementChar
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strconv.Quote(b.String())
 }
 
 // UpstreamStatusCarrier is implemented by a platform client's HTTP error type: the platform

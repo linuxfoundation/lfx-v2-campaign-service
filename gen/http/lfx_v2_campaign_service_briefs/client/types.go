@@ -4121,15 +4121,16 @@ type PlatformResultResponseBody struct {
 	// Failure reason (present when not ok). For a failed campaign dispatch it says
 	// WHY without quoting the platform: a refusal this service raised before
 	// anything was sent is given verbatim (e.g. a missing Reddit conversion pixel,
-	// or a budget under the platform minimum); anything else is a fixed sentence
-	// per class, naming at most a connection reason token or the HTTP status the
-	// platform answered — no connection, connection unusable, credentials
-	// undecryptable, token refresh failed, refused by the platform (status only),
-	// or could not be confirmed (something may have been created; verify before
-	// retrying). An unclassified failure reads "platform campaign creation
-	// failed". Never contains a platform response body, URL, query or token.
-	// Google Ads dispatch failures are not yet classified beyond the connection
-	// classes.
+	// or a budget under the platform minimum), with any caller value it names
+	// quoted, truncated, or withheld when it looks like a URL; anything else is a
+	// fixed sentence per class, naming at most a connection reason token or the
+	// HTTP status the platform answered — no connection, connection unusable,
+	// credentials undecryptable, token refresh failed, refused or not answered by
+	// the platform before anything was created (HTTP status only), or could not be
+	// confirmed (something may have been created; verify before retrying). An
+	// unclassified failure reads "platform campaign creation failed". Never
+	// contains a platform response body, URL, query or token. Google Ads dispatch
+	// failures are not yet classified beyond the connection classes.
 	Error *string `form:"error,omitempty" json:"error,omitempty" xml:"error,omitempty"`
 	// Deep link to this campaign's email in the HubSpot editor. Present only for
 	// the email (HubSpot) channel, and only once the portal that created it is

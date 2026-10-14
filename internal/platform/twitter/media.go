@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // Creative images for an AUTHORED promoted-only tweet (LFXV2-2665).
@@ -123,7 +125,7 @@ func validateImageInput(img *ImageInput) error {
 	switch img.MIME {
 	case "image/png", "image/jpeg":
 	default:
-		return fmt.Errorf("invalid creative image: type %q is not image/png or image/jpeg", img.MIME)
+		return fmt.Errorf("invalid creative image: type %s is not image/png or image/jpeg", domain.CallerValue(img.MIME))
 	}
 	// The stored asset was sniffed at upload; this re-check costs one look at 512 bytes and
 	// keeps the client correct for a caller that is not the dispatcher.

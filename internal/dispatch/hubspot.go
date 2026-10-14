@@ -555,7 +555,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// HubSpot call), so a conflict fails cleanly with nothing created.
 	for _, s := range suppressionIDs {
 		if slices.Contains(sendListIDs, s) {
-			return nil, notCreated(domain.PreflightRefusalf("hubspot: the audience send list %q is also in its suppression set — the send would exclude that entire list", s))
+			return nil, notCreated(domain.PreflightRefusalf("hubspot: the audience send list %s is also in its suppression set — the send would exclude that entire list", domain.CallerValue(s)))
 		}
 	}
 

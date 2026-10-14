@@ -257,7 +257,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// See stampProvenance for why this is a defer on the named return, not a per-return call.
 	defer func() { res.stampProvenance(camp) }()
 	if res.status != model.StatusActive {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is %s, not active", brief.ProjectID, res.status))
+		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is %s, not active", domain.CallerValue(brief.ProjectID), domain.CallerValue(string(res.status))))
 	}
 
 	var creds linkedinCreds
@@ -283,7 +283,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	orgID := strings.TrimSpace(res.providerConfig["org_id"])
 	accountID := strings.TrimSpace(res.accountID)
 	if accountID == "" || orgID == "" {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is missing account id or org id", brief.ProjectID))
+		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is missing account id or org id", domain.CallerValue(brief.ProjectID)))
 	}
 
 	var cfg linkedinConfig
@@ -332,7 +332,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	// passes the guard but reaches the client as a different (padded) account.
 	adAccountID := strings.TrimSpace(cfg.AdAccountID)
 	if adAccountID != "" && adAccountID != accountID {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin adAccountId %q does not match the connection's account %q — cross-account campaigns are not allowed", adAccountID, accountID))
+		return nil, notCreated(domain.PreflightRefusalf("linkedin adAccountId %s does not match the connection's account %s — cross-account campaigns are not allowed", domain.CallerValue(adAccountID), domain.CallerValue(accountID)))
 	}
 
 	// hsToken is a documented TOP-LEVEL config envelope field (docs/api-catalog.md);

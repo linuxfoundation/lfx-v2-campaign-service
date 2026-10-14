@@ -78,7 +78,7 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 	}
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("%w: redditConfig: imageAssetId %s is not a valid asset id", domain.ErrCreateConfigInvalid, safeAssetIDForError(raw))
+		return "", fmt.Errorf("%w: redditConfig: imageAssetId %s is not a valid asset id", domain.ErrCreateConfigInvalid, domain.CallerValue(raw))
 	}
 	return parsed.String(), nil
 }

@@ -22,4 +22,21 @@ retained row's status and the job aggregate are unchanged. Only the message chan
 that called the reason token "log-only" were updated, and
 `TestOrchestrator_PreCreateFailureLogsAClassifiedReason`, whose trip-wire required exactly
 that, now asserts that the token appears and the error text does not. Google Ads clients are
-not marked (owner: Shiv), so for Google only the shared classes apply.
+not marked (Google Ads is owned separately), so for Google only the shared classes apply.
+
+Pre-PR review follow-ups, folded into the same change:
+
+- Caller input is no longer copied raw into a verbatim refusal. `domain.CallerValue` quotes
+  each caller or connection value, cuts it to 64 runes, replaces non-graphic runes, and
+  withholds it entirely when it looks like a URL, query, userinfo or multi-line paste. Every
+  marked refusal and every shared validator whose text reaches one uses it.
+  `TestDispatch_RefusalsNeverEchoHostileCallerInput` sends `https://x.com/a?token=SECRET-208`,
+  an over-long value and a newline through X's tweet id and LinkedIn's image URN.
+- The upstream-status sentence no longer claims the create was refused, because the status can
+  come from a read before it (a geo resolve, a portal GET, a find-existing lookup). A 4xx reads
+  "refused the request (HTTP n) before anything was created". A 5xx or 429 reads "answered
+  HTTP n before anything was created (a retry may succeed)".
+- A token refresh that ended with `context.Canceled`/`DeadlineExceeded` falls through to the
+  generic string instead of "may need re-authorizing".
+- X's `validateDate` and `validateImageInput` refusals are now marked.
+

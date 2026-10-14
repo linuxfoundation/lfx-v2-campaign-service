@@ -1598,14 +1598,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Parse for calendar validity (rejects e.g. 2026-02-31), not just format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
 	if err != nil {
-		return nil, domain.PreflightRefusalf("invalid start date: %s -- expected a valid YYYY-MM-DD", in.StartDate)
+		return nil, domain.PreflightRefusalf("invalid start date: %s -- expected a valid YYYY-MM-DD", domain.CallerValue(in.StartDate))
 	}
 	endDate, err := time.Parse("2006-01-02", in.EndDate)
 	if err != nil {
-		return nil, domain.PreflightRefusalf("invalid end date: %s -- expected a valid YYYY-MM-DD", in.EndDate)
+		return nil, domain.PreflightRefusalf("invalid end date: %s -- expected a valid YYYY-MM-DD", domain.CallerValue(in.EndDate))
 	}
 	if !endDate.After(startDate) {
-		return nil, domain.PreflightRefusalf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+		return nil, domain.PreflightRefusalf("end date %s must be after start date %s", domain.CallerValue(in.EndDate), domain.CallerValue(in.StartDate))
 	}
 
 	// Validate the registration URL before any mutating call: it becomes the ad
@@ -1623,7 +1623,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	objParams, objOK := redditObjectiveParams[objective]
 	if !objOK {
-		return nil, domain.PreflightRefusalf("unsupported Reddit objective: %s", objective)
+		return nil, domain.PreflightRefusalf("unsupported Reddit objective: %s", domain.CallerValue(objective))
 	}
 
 	// Resolve the effective optimization goal. Most objectives carry a static goal
@@ -1634,7 +1634,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if objective == "video_views" {
 		videoGoal := strings.ToUpper(strings.TrimSpace(in.VideoGoal))
 		if !validVideoGoals[videoGoal] {
-			return nil, domain.PreflightRefusalf("invalid video goal %q for objective video_views: must be one of VIDEO_VIEW_6S, VIDEO_VIEW_15S", in.VideoGoal)
+			return nil, domain.PreflightRefusalf("invalid video goal %s for objective video_views: must be one of VIDEO_VIEW_6S, VIDEO_VIEW_15S", domain.CallerValue(in.VideoGoal))
 		}
 		optimizationGoal = videoGoal
 	}
@@ -1718,7 +1718,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		} else if canonical, ok := redditCTAs[strings.ToUpper(cta)]; ok {
 			postCTA = canonical
 		} else {
-			return nil, domain.PreflightRefusalf("invalid Reddit call to action %q: must be one of %s", in.CallToAction, redditCTAList())
+			return nil, domain.PreflightRefusalf("invalid Reddit call to action %s: must be one of %s", domain.CallerValue(in.CallToAction), redditCTAList())
 		}
 
 		// Headline: prefer the first ad variant's headline (already the operator's
@@ -1745,7 +1745,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("reddit account ID is required")
 	}
 	if !accountIDRe.MatchString(accountID) {
-		return nil, domain.PreflightRefusalf("invalid reddit account ID %q: must contain only letters, digits, and underscores", accountID)
+		return nil, domain.PreflightRefusalf("invalid reddit account ID %s: must contain only letters, digits, and underscores", domain.CallerValue(accountID))
 	}
 	label := c.account.Label
 	if label == "" {
@@ -1764,7 +1764,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			continue
 		}
 		if !geoCodeRE.MatchString(g) || !iso3166Alpha2[g] {
-			return nil, domain.PreflightRefusalf("invalid geo target %q: must be an ISO 3166-1 alpha-2 country code", g)
+			return nil, domain.PreflightRefusalf("invalid geo target %s: must be an ISO 3166-1 alpha-2 country code", domain.CallerValue(g))
 		}
 		geos = append(geos, g)
 	}

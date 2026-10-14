@@ -3206,10 +3206,10 @@ var tweetIDRe = regexp.MustCompile(`^[1-9][0-9]{0,18}$`)
 // before any mutating call. label is "start" or "end" for the error message.
 func validateDate(label, date string) error {
 	if !dateRe.MatchString(date) {
-		return fmt.Errorf("invalid %s date format: %s — expected YYYY-MM-DD", label, date)
+		return fmt.Errorf("invalid %s date format: %s — expected YYYY-MM-DD", label, domain.CallerValue(date))
 	}
 	if _, err := time.Parse("2006-01-02", date); err != nil {
-		return fmt.Errorf("invalid %s date: %s is not a real calendar date", label, date)
+		return fmt.Errorf("invalid %s date: %s is not a real calendar date", label, domain.CallerValue(date))
 	}
 	return nil
 }
@@ -3271,14 +3271,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if toMicroCurrency(in.BudgetUsd) <= 0 {
 		return nil, domain.PreflightRefusalf("invalid budget: %g rounds to zero micro-units", in.BudgetUsd)
 	}
+	// validateDate and validateImageInput (below) are pure, service-authored checks that
+	// render caller values through domain.CallerValue, so their refusals are operator-safe.
 	if err := validateDate("start", in.StartDate); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 	if err := validateDate("end", in.EndDate); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 	if in.EndDate <= in.StartDate {
-		return nil, domain.PreflightRefusalf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+		return nil, domain.PreflightRefusalf("end date %s must be after start date %s", domain.CallerValue(in.EndDate), domain.CallerValue(in.StartDate))
 	}
 	// X requires a line-item start_time in the FUTURE. A past start is only caught at the
 	// line-item POST, AFTER the campaign is already created — leaving a retained orphan.
@@ -3291,7 +3293,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// through the whole create flow.
 	if start, perr := time.Parse(time.RFC3339, toIso8601Utc(in.StartDate)); perr == nil {
 		if !start.After(c.timeFn().UTC().Add(minStartLead)) {
-			return nil, domain.PreflightRefusalf("start date %s is too soon (X requires a start_time in the future; it must be at least %s ahead of now to survive the create flow; the date is sent as %s)", in.StartDate, minStartLead, toIso8601Utc(in.StartDate))
+			return nil, domain.PreflightRefusalf("start date %s is too soon (X requires a start_time in the future; it must be at least %s ahead of now to survive the create flow; the date is sent as %s)", domain.CallerValue(in.StartDate), minStartLead, domain.CallerValue(toIso8601Utc(in.StartDate)))
 		}
 	}
 
@@ -3314,14 +3316,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	in.TweetID = strings.TrimSpace(in.TweetID)
 	if in.TweetID != "" {
 		if !tweetIDRe.MatchString(in.TweetID) {
-			return nil, domain.PreflightRefusalf("invalid tweet id: %q must be a numeric X Tweet id", in.TweetID)
+			return nil, domain.PreflightRefusalf("invalid tweet id: %s must be a numeric X Tweet id", domain.CallerValue(in.TweetID))
 		}
 		// The 1–19 digit shape still admits values above the max positive int64
 		// snowflake (e.g. 9999999999999999999); parse to reject those before any
 		// mutating call rather than letting X reject tweet_ids after the campaign
 		// and line item exist.
 		if _, perr := strconv.ParseInt(in.TweetID, 10, 64); perr != nil {
-			return nil, domain.PreflightRefusalf("invalid tweet id: %q is out of range for an X Tweet id", in.TweetID)
+			return nil, domain.PreflightRefusalf("invalid tweet id: %s is out of range for an X Tweet id", domain.CallerValue(in.TweetID))
 		}
 	}
 
@@ -3360,7 +3362,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return nil, domain.PreflightRefusalf("invalid creative image: an image is attached only to an authored tweet, so it requires tweetText and no tweetId")
 		}
 		if err := validateImageInput(in.Image); err != nil {
-			return nil, err
+			return nil, domain.WrapPreflightRefusal(err)
 		}
 	}
 
@@ -3380,13 +3382,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// account-scoped request path (accountURL), so a value with '/', '?', '#',
 		// or whitespace/control chars could redirect this POST to a different
 		// account path. Reject anything outside the safe alphanumeric charset.
-		return nil, domain.PreflightRefusalf("invalid account config: account_id %q must contain only letters and digits", c.account.AccountID)
+		return nil, domain.PreflightRefusalf("invalid account config: account_id %s must contain only letters and digits", domain.CallerValue(c.account.AccountID))
 	}
 	if c.account.FundingInstrumentID == "" {
 		return nil, domain.PreflightRefusalf("invalid account config: funding_instrument_id must not be empty")
 	}
 	if !accountIDRe.MatchString(c.account.FundingInstrumentID) {
-		return nil, domain.PreflightRefusalf("invalid account config: funding_instrument_id %q must contain only letters and digits", c.account.FundingInstrumentID)
+		return nil, domain.PreflightRefusalf("invalid account config: funding_instrument_id %s must contain only letters and digits", domain.CallerValue(c.account.FundingInstrumentID))
 	}
 
 	// Compose and validate the entity names before ANY network call: even with

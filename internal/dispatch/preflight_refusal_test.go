@@ -61,7 +61,7 @@ func TestDispatch_PreflightRefusalsAreOperatorSafe(t *testing.T) {
 				conn.ProviderConfig = map[string]string{}
 				return NewRedditDispatcher(fakeConnReader{conn: conn}, identityEncryptor{}, reddit.WithHTTPClient(hc))
 			},
-			config: `{"redditConfig":{"budgetUsd":500,"geoTargets":["us"],"startDate":"2027-01-04","endDate":"2027-01-18"}}`,
+			config: `{"redditConfig":{"budgetUsd":500,"geoTargets":["us"],"startDate":"2099-01-04","endDate":"2099-01-18"}}`,
 			want:   "reddit requires a conversion pixel id and none is configured: add it to this project's Reddit connection (Reddit Ads → Events Manager lists the account's pixel)",
 		},
 		{
@@ -96,7 +96,17 @@ func TestDispatch_PreflightRefusalsAreOperatorSafe(t *testing.T) {
 				return NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithHTTPClient(hc))
 			},
 			config: `{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-10","endDate":"2099-03-01","tweetId":"1234567890"}}`,
-			want:   "end date 2099-03-01 must be after start date 2099-03-10",
+			want:   `end date "2099-03-01" must be after start date "2099-03-10"`,
+		},
+		{
+			// validateDate is a shared helper; its refusal is marked at the CreateCampaign call.
+			name:     "x start date not on the calendar",
+			provider: model.ProviderTwitterAds,
+			build: func(hc *http.Client) refusalDispatcher {
+				return NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithHTTPClient(hc))
+			},
+			config: `{"twitterConfig":{"budgetAmount":500,"startDate":"2099-02-30","endDate":"2099-03-10","tweetId":"1234567890"}}`,
+			want:   `invalid start date: "2099-02-30" is not a real calendar date`,
 		},
 		{
 			name:     "microsoft budget over the maximum",
@@ -176,7 +186,7 @@ func TestDispatch_UpstreamRefusalReportsStatusNotBody(t *testing.T) {
 		wantPreCreate bool
 		want          string
 	}{
-		{"definite 4xx refusal", http.StatusBadRequest, true, "meta-ads refused the create (HTTP 400); nothing was created"},
+		{"definite 4xx refusal", http.StatusBadRequest, true, "meta-ads refused the request (HTTP 400) before anything was created; nothing was created"},
 		{"ambiguous 5xx stays unconfirmed", http.StatusInternalServerError, false, "meta-ads campaign creation could not be confirmed (the platform answered HTTP 500)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -247,5 +257,73 @@ func TestDispatch_TokenRefreshFailureIsClassified(t *testing.T) {
 	}
 	if strings.Contains(got, "SECRET") || strings.Contains(got, "invalid_grant") || strings.Contains(got, "access_token") {
 		t.Errorf("job result error %q leaks the token endpoint's response", got)
+	}
+}
+
+// TestDispatch_RefusalsNeverEchoHostileCallerInput: a marked refusal is copied into the job
+// result verbatim, so any CALLER value it names must go through domain.CallerValue. A field
+// that should hold an id can hold a pasted URL whose query carries a token, an arbitrarily
+// long value, or a multi-line paste. Real X and LinkedIn dispatches, refused before anything
+// is sent, with each shape in the field the refusal names.
+func TestDispatch_RefusalsNeverEchoHostileCallerInput(t *testing.T) {
+	const hostileURL = "https://x.com/a?token=SECRET-208"
+	long := strings.Repeat("a", 200)
+	xCfg := func(tweetID string) string {
+		b, _ := json.Marshal(map[string]any{"twitterConfig": map[string]any{
+			"budgetAmount": 500, "startDate": "2099-03-01", "endDate": "2099-03-10", "tweetId": tweetID,
+		}})
+		return string(b)
+	}
+	liCfg := func(urn string) string {
+		b, _ := json.Marshal(map[string]any{"linkedInConfig": map[string]any{
+			"budgetUsd": 100, "startDate": "2099-01-01", "endDate": "2099-02-01",
+			"geoTargets":        []map[string]string{{"label": "United States", "urn": "urn:li:geo:103644278"}},
+			"targetingProfile":  "cloud-native",
+			"targetingProfiles": []map[string]any{{"id": "cloud-native", "label": "Cloud Native", "skills": []string{"urn:li:skill:1"}}},
+			"variants":          []map[string]string{{"introText": "Join us — it's great", "headline": "KubeCon 2099", "ImageURN": urn}},
+		}})
+		return string(b)
+	}
+	x := func(hc *http.Client) refusalDispatcher {
+		return NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithHTTPClient(hc))
+	}
+	li := func(hc *http.Client) refusalDispatcher {
+		return NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithHTTPClient(hc))
+	}
+	for _, tc := range []struct {
+		name     string
+		provider model.Provider
+		build    func(*http.Client) refusalDispatcher
+		config   string
+		want     string // a fragment the refusal must still carry
+	}{
+		{"x tweet id is a secret-bearing URL", model.ProviderTwitterAds, x, xCfg(hostileURL), "invalid tweet id: (value withheld)"},
+		{"x tweet id is over-long", model.ProviderTwitterAds, x, xCfg(long), `invalid tweet id: "` + strings.Repeat("a", 64) + `…"`},
+		{"x tweet id spans lines", model.ProviderTwitterAds, x, xCfg("123\nSECRET-208"), "invalid tweet id: (value withheld)"},
+		{"linkedin image urn is a secret-bearing URL", model.ProviderLinkedInAds, li, liCfg(hostileURL), "variant-1 image URN (value withheld) is malformed"},
+		{"linkedin image urn spans lines", model.ProviderLinkedInAds, li, liCfg("urn:li:image:1\nSECRET-208"), "variant-1 image URN (value withheld) is malformed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := &noSendTransport{}
+			_, err := tc.build(&http.Client{Transport: tr}).Dispatch(context.Background(), testBrief(), tc.provider, json.RawMessage(tc.config))
+			if err == nil {
+				t.Fatal("expected a pre-flight refusal")
+			}
+			if _, ok := domain.AsPreflightRefusal(err); !ok {
+				t.Fatalf("expected a marked refusal, got %v", err)
+			}
+			got := service.DispatchFailureMessage(tc.provider, err, true)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("job result error = %q, want it to contain %q", got, tc.want)
+			}
+			for _, leak := range []string{"SECRET", "://", strings.Repeat("a", 65), "\n"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("job result error %q contains %q from the caller's input", got, leak)
+				}
+			}
+			if n := tr.sent.Load(); n != 0 {
+				t.Errorf("%d request(s) sent before a pre-flight refusal", n)
+			}
+		})
 	}
 }

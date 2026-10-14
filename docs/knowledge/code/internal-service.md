@@ -2201,8 +2201,12 @@ calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoti
   system connection missing → no connection (`ErrConnectionAbsent`) → decrypt fault → LF
   system / own connection unusable (with the `unusableConnectionReason` token) → a
   `domain.PreflightRefusal`, **echoed verbatim** → token refresh failed
-  (`domain.TokenRefreshFailure`) → platform refused the create (status only,
-  `domain.UpstreamStatusCarrier`) → the generic string.
+  (`domain.TokenRefreshFailure`, unless the chain is `context.Canceled`/`DeadlineExceeded`:
+  a cancelled refresh says nothing about the credential and falls through) → an upstream
+  status (`domain.UpstreamStatusCarrier`, status only): "refused the request (HTTP n) before
+  anything was created" for a 4xx, or "answered HTTP n before anything was created (a retry
+  may succeed)" for a 5xx or 429. The status may come from a read that preceded the create,
+  so neither sentence says the create was refused → the generic string.
 - The connection arms precede the refusal arm so that a chain carrying credential-derived text
   can never be echoed, even if someone wraps it as a refusal.
 

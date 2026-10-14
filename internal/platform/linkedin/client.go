@@ -1732,18 +1732,18 @@ var dateRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 //   - eod=true: end-of-day UTC (23:59:59.999); errors if in the past.
 func (c *Client) toMs(dateStr string, eod bool) (int64, error) {
 	if !dateRE.MatchString(dateStr) {
-		return 0, fmt.Errorf("invalid date format: %s — expected YYYY-MM-DD", dateStr)
+		return 0, fmt.Errorf("invalid date format: %s — expected YYYY-MM-DD", domain.CallerValue(dateStr))
 	}
 	t, err := time.ParseInLocation("2006-01-02", dateStr, time.UTC)
 	if err != nil {
-		return 0, fmt.Errorf("invalid date: %s", dateStr)
+		return 0, fmt.Errorf("invalid date: %s", domain.CallerValue(dateStr))
 	}
 	nowMs := c.now().UTC().UnixMilli()
 	if eod {
 		end := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, int(999*time.Millisecond), time.UTC)
 		endMs := end.UnixMilli()
 		if endMs <= nowMs {
-			return 0, fmt.Errorf("end date %s is in the past", dateStr)
+			return 0, fmt.Errorf("end date %s is in the past", domain.CallerValue(dateStr))
 		}
 		return endMs, nil
 	}
@@ -1790,7 +1790,7 @@ func (c *Client) validateSchedule(startDate, endDate string) (startMs, endMs int
 		return 0, 0, err
 	}
 	if endMs <= startMs {
-		return 0, 0, fmt.Errorf("end date (%s) must be after start date (%s)", endDate, startDate)
+		return 0, 0, fmt.Errorf("end date (%s) must be after start date (%s)", domain.CallerValue(endDate), domain.CallerValue(startDate))
 	}
 	return startMs, endMs, nil
 }
@@ -2297,7 +2297,7 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 		// branch below for both names.)
 		assembledIncludeFacets := len(nonBlankFacets(p.Skills)) + len(nonBlankFacets(p.Groups)) + len(nonBlankFacets(jobFunctions))
 		if assembledIncludeFacets == 0 {
-			return fmt.Errorf("LinkedIn targeting profile %q would yield empty targeting criteria (no skills, groups, or job functions) — refusing to create a campaign with no targeting", lookup)
+			return fmt.Errorf("LinkedIn targeting profile %s would yield empty targeting criteria (no skills, groups, or job functions) — refusing to create a campaign with no targeting", domain.CallerValue(lookup))
 		}
 		// Validate facet URN shapes up front (skills, groups, employer exclusions),
 		// so a malformed value fails here rather than after the campaign group is
@@ -2317,7 +2317,7 @@ func (c *Client) validatePrerequisites(accountID, profile string) error {
 	// aliased "cloud-native" profile must exist even for "custom" here — only the
 	// lower-level builder tolerates its absence. So do NOT special-case custom:
 	// require the (aliased) profile to be present in the runtime config.
-	return fmt.Errorf("LinkedIn targeting profile %q not found in runtime config — refusing to start campaign creation", lookup)
+	return fmt.Errorf("LinkedIn targeting profile %s not found in runtime config — refusing to start campaign creation", domain.CallerValue(lookup))
 }
 
 // validateRegistrationURL rejects a registration URL before any permanent
@@ -2528,7 +2528,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// campaign (permanent resources) already exist. An empty ImageURN stays
 		// allowed.
 		if variant.ImageURN != "" && !imageURNRE.MatchString(variant.ImageURN) {
-			return nil, domain.PreflightRefusalf("variant-%d image URN %q is malformed: expected an Images-API urn:li:image:<id> (the legacy urn:li:digitalmediaAsset form is not accepted by the Posts API)", i+1, variant.ImageURN)
+			return nil, domain.PreflightRefusalf("variant-%d image URN %s is malformed: expected an Images-API urn:li:image:<id> (the legacy urn:li:digitalmediaAsset form is not accepted by the Posts API)", i+1, domain.CallerValue(variant.ImageURN))
 		}
 		// A stored image is validated here too, so it is refused before any POST however the
 		// client is called (images.go).
@@ -2538,7 +2538,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 			img, ok := in.Images[variant.ImageAssetID]
 			if !ok {
-				return nil, domain.PreflightRefusalf("variant-%d names stored image asset %s, which was not supplied", i+1, variant.ImageAssetID)
+				return nil, domain.PreflightRefusalf("variant-%d names stored image asset %s, which was not supplied", i+1, domain.CallerValue(variant.ImageAssetID))
 			}
 			if err := ValidateImage(img); err != nil {
 				return nil, fmt.Errorf("variant-%d image asset %s: %w", i+1, variant.ImageAssetID, err)
@@ -2587,7 +2587,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// caller can pass a malformed URN. Reject it up front rather than sending an
 		// invalid location to LinkedIn only after the campaign group is created.
 		if !geoURNRE.MatchString(g.URN) {
-			return nil, domain.PreflightRefusalf("invalid geo target URN %q: expected urn:li:geo:<id>", g.URN)
+			return nil, domain.PreflightRefusalf("invalid geo target URN %s: expected urn:li:geo:<id>", domain.CallerValue(g.URN))
 		}
 		geoURNs = append(geoURNs, g.URN)
 	}

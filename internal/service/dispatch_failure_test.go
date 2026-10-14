@@ -100,10 +100,35 @@ func TestDispatchFailureMessage_Classes(t *testing.T) {
 			want:      "reddit-ads token refresh failed, so nothing was sent; the connection may need re-authorizing",
 		},
 		{
-			name:      "definite upstream refusal: status only",
+			// A refresh this call abandoned says nothing about the credential.
+			name:      "cancelled token refresh is not a credential verdict",
+			err:       &preCreateWrap{domain.MarkTokenRefreshFailure(fmt.Errorf("token: %w", context.Canceled))},
+			preCreate: true,
+			want:      genericDispatchFailure,
+		},
+		{
+			name:      "timed-out token refresh is not a credential verdict",
+			err:       &preCreateWrap{domain.MarkTokenRefreshFailure(fmt.Errorf("token: %w", context.DeadlineExceeded))},
+			preCreate: true,
+			want:      genericDispatchFailure,
+		},
+		{
+			name:      "definite 4xx before anything was created: status only",
 			err:       &preCreateWrap{fmt.Errorf("create: %w", &statusErr{status: 400, body: secretCause})},
 			preCreate: true,
-			want:      "reddit-ads refused the create (HTTP 400); nothing was created",
+			want:      "reddit-ads refused the request (HTTP 400) before anything was created; nothing was created",
+		},
+		{
+			name:      "5xx before anything was created is retryable, not a refusal",
+			err:       &preCreateWrap{fmt.Errorf("geo resolve: %w", &statusErr{status: 503, body: secretCause})},
+			preCreate: true,
+			want:      "reddit-ads answered HTTP 503 before anything was created (a retry may succeed); nothing was created",
+		},
+		{
+			name:      "429 before anything was created is retryable, not a refusal",
+			err:       &preCreateWrap{fmt.Errorf("lookup: %w", &statusErr{status: 429, body: secretCause})},
+			preCreate: true,
+			want:      "reddit-ads answered HTTP 429 before anything was created (a retry may succeed); nothing was created",
 		},
 		{
 			name:      "unconfirmed with a status: status only",
@@ -250,5 +275,27 @@ func TestOrchestrator_UnconfirmedFailureStaysUnconfirmed(t *testing.T) {
 	}
 	if row.Status != model.CampaignStatusUnconfirmed {
 		t.Errorf("retained row status = %q, want %q (unchanged by #208)", row.Status, model.CampaignStatusUnconfirmed)
+	}
+}
+
+// TestCallerValue pins how a caller-supplied scalar may appear in an operator-safe refusal.
+func TestCallerValue(t *testing.T) {
+	long := strings.Repeat("a", 100)
+	for _, tc := range []struct{ in, want string }{
+		{"2099-01-04", `"2099-01-04"`},
+		{"urn:li:image:C4E10AQ", `"urn:li:image:C4E10AQ"`},
+		{"https://x.com/a?token=SECRET-208", "(value withheld)"},
+		{"x?token=SECRET", "(value withheld)"},
+		{"frag#SECRET", "(value withheld)"},
+		{"user@SECRET", "(value withheld)"},
+		{"line1\nSECRET", "(value withheld)"},
+		{"tab\tSECRET", "(value withheld)"},
+		{long, `"` + strings.Repeat("a", 64) + `…"`},
+		{"bell\x07", "\"bell\uFFFD\""},
+		{"", `""`},
+	} {
+		if got := domain.CallerValue(tc.in); got != tc.want {
+			t.Errorf("CallerValue(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
