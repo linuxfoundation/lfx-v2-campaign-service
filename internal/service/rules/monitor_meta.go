@@ -34,10 +34,13 @@ const (
 
 // EvaluateMetaMonitor mirrors buildCampaignMetrics' pacing calc and buildMetaActionItems.
 //
-// now is the single snapshot time the service layer takes before evaluating every row (see
-// GetBriefMetrics's `now := s.now()` convention) — Meta's pacing formula needs "now" to derive
-// elapsed flight days.
-func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+// It takes no clock and no `days`: every row carries the Insights window its spend covers
+// (MetricsWindowStart/MetricsWindowEnd, the bounds the read sent), and pacing is computed over
+// exactly those days. It used to take a `now` the service layer captured BEFORE the upstream
+// read, while the read took its own clock reading for since/until — a request crossing UTC
+// midnight then paced one day's plan against the next day's spend (PR #316 review). A row with
+// no readable window is pacing unknown.
+func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 	out := make([]model.AccountMonitorRow, 0, len(rows))
 	items := make([]model.AccountMonitorActionItem, 0)
 
@@ -51,8 +54,8 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 		// computed 0. Meta had the guard below written already, but metaPacingPct returned false
 		// from every one of its four returns, so it was never taken: a budget-less Meta campaign
 		// got pacingPct 0 and the "underspending" label, exactly as Google's did.
-		pacingPct, computable := metaPacingPct(m, days, now)
-		expected, _ := metaExpectedSpend(m, days, now)
+		pacingPct, computable := metaPacingPct(m)
+		expected, _ := metaExpectedSpend(m)
 		if !computable {
 			row := unknownPacingRow(m)
 			out = append(out, row)
@@ -71,73 +74,101 @@ func EvaluateMetaMonitor(rows []model.AccountCampaignMetrics, days int, now time
 }
 
 // metaPacingPct computes the pacing percentage, spend over metaExpectedSpend.
-func metaPacingPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
-	expected, ok := metaExpectedSpend(m, days, now)
+func metaPacingPct(m model.AccountCampaignMetrics) (float64, bool) {
+	expected, ok := metaExpectedSpend(m)
 	if !ok {
 		return 0, false
 	}
 	return math.Round(m.Spend / expected * 100), true
 }
 
-// metaExpectedSpend is the spend the campaign's plan expects over the requested window:
-// schedule-based when a total budget and a start time are both known, else a flat
-// dailyBudget*days expectation. ok=false (expected 0) when nothing can be expected.
+// metaExpectedSpend is the spend the campaign's plan expects over the Insights window its spend
+// covers, and ok=false (expected 0) when that cannot be established. Spend and expectation must
+// describe the SAME days (PR #316 review), so both branches count only the days of the window
+// the flight ran on:
+//
+//   - Lifetime (TotalBudget): the budget spread evenly over the flight, times the flight's days
+//     in the window — LinkedIn's linkedinPacingPct proration, in calendar days. It used to be
+//     the plan since the flight STARTED, so a 9,000 / 90-day campaign on day 60 read with days=7
+//     compared ~700 of window spend against ~5,900 and reported 12%. It needs both ends of the
+//     flight: an open-ended lifetime flight (no end date) has no length to spread the budget
+//     over — treating it as ending today expected the WHOLE budget at once — so it is unknown.
+//   - Daily (BudgetDay): the daily budget times the flight's days in the window. It used to be
+//     BudgetDay*days whatever the flight, so a campaign started 7 days ago spending its full
+//     budget read 23% on a 30-day request — a false underspend. An unknown start or end is
+//     taken as the window's own edge: a daily budget needs no flight length, and a campaign
+//     reporting no dates is paced over the whole window as before.
+//
+// EndDate is a day the flight still runs on (CreateCampaign writes end_time as 23:59:59 of it),
+// so it is counted inclusively. A window the flight does not overlap at all (not started, or
+// ended before the window) is not computable: a zero spend there is correct, not underspending.
 //
 // The second return says whether the figure is COMPUTABLE. It used to be an `unknown` flag that
 // no return path ever set, so the caller's guard on it was dead and a campaign with neither
-// budget reached the ladder carrying 0 — reported as underspending. Now the no-budget path says
-// so, and the caller reports PacingUnknown.
-//
-// THE LIFETIME BRANCH PACES THE REQUESTED WINDOW, not the flight to date (PR #316 review). m.Spend
-// is the Insights spend over the last `days` days only (fetchAccountCampaignInsights' time_range),
-// so the expectation must cover the same span: the lifetime budget spread evenly over the flight,
-// times the days of the window the flight actually ran on. It used to be the expectation since
-// the flight STARTED — a 9,000 / 90-day campaign on day 60 read with days=7 compared ~700 of
-// window spend against ~5,900 of flight-to-date plan and reported 12%, a false underspend on
-// every lifetime campaign past its first week. This is LinkedIn's linkedinPacingPct proration
-// (budget / flight days × window days), in calendar days: the window is the `days` UTC days
-// ending today inclusive (the Insights range), and EndDate is a day the flight still runs on, so
-// the flight ends when that day does. An open-ended flight runs through today. A window the
-// flight does not overlap (it has not started, or ended before the window) is not computable: a
-// zero spend there is correct, not underspending.
-func metaExpectedSpend(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
+// budget reached the ladder carrying 0 — reported as underspending.
+func metaExpectedSpend(m model.AccountCampaignMetrics) (float64, bool) {
+	since := parseMonitorDate(m.MetricsWindowStart)
+	until := parseMonitorDate(m.MetricsWindowEnd)
+	if since.IsZero() || until.IsZero() || until.Before(since) {
+		return 0, false // no window the spend is known to cover
+	}
+	windowEnd := until.AddDate(0, 0, 1) // exclusive: the window's last day is in it
 	start := parseMonitorDate(m.StartDate)
 	end := parseMonitorDate(m.EndDate)
-	if m.TotalBudget > 0 && !start.IsZero() {
-		utcNow := now.UTC()
-		today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
-		windowStart := today.AddDate(0, 0, -(days - 1))
-		windowEnd := today.AddDate(0, 0, 1) // exclusive: today is in the window
-		flightEnd := windowEnd
-		if !end.IsZero() {
-			flightEnd = end.AddDate(0, 0, 1)
-		}
-		if !flightEnd.After(start) {
+	var flightEnd time.Time // exclusive
+	if !end.IsZero() {
+		flightEnd = end.AddDate(0, 0, 1)
+	}
+
+	if m.TotalBudget > 0 {
+		if start.IsZero() || flightEnd.IsZero() || !flightEnd.After(start) {
 			return 0, false
 		}
-		totalFlightDays := math.Round(flightEnd.Sub(start).Hours() / 24)
-		effStart, effEnd := start, flightEnd
-		if windowStart.After(effStart) {
-			effStart = windowStart
-		}
-		if windowEnd.Before(effEnd) {
-			effEnd = windowEnd
-		}
-		if !effEnd.After(effStart) {
+		flightDays := wholeDays(start, flightEnd)
+		windowDays := overlapDays(start, flightEnd, since, windowEnd)
+		if windowDays <= 0 {
 			return 0, false
 		}
-		windowDays := math.Round(effEnd.Sub(effStart).Hours() / 24)
-		expected := m.TotalBudget / totalFlightDays * windowDays
-		if expected > 0 {
-			return expected, true
-		}
-		return 0, false
+		return positiveOrUnknown(m.TotalBudget / flightDays * windowDays)
 	}
 	if m.BudgetDay > 0 {
-		expected := m.BudgetDay * float64(days)
-		if expected > 0 {
-			return expected, true
+		if start.IsZero() {
+			start = since
 		}
+		if flightEnd.IsZero() {
+			flightEnd = windowEnd
+		}
+		windowDays := overlapDays(start, flightEnd, since, windowEnd)
+		if windowDays <= 0 {
+			return 0, false
+		}
+		return positiveOrUnknown(m.BudgetDay * windowDays)
+	}
+	return 0, false
+}
+
+// wholeDays is the number of calendar days in [from, to), both UTC midnights.
+func wholeDays(from, to time.Time) float64 { return math.Round(to.Sub(from).Hours() / 24) }
+
+// overlapDays is the number of calendar days [aStart, aEnd) and [bStart, bEnd) share, 0 when
+// they do not overlap.
+func overlapDays(aStart, aEnd, bStart, bEnd time.Time) float64 {
+	from, to := aStart, aEnd
+	if bStart.After(from) {
+		from = bStart
+	}
+	if bEnd.Before(to) {
+		to = bEnd
+	}
+	if !to.After(from) {
+		return 0
+	}
+	return wholeDays(from, to)
+}
+
+func positiveOrUnknown(v float64) (float64, bool) {
+	if v > 0 {
+		return v, true
 	}
 	return 0, false
 }

@@ -3306,6 +3306,51 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 	}
 }
 
+// TestMeta_ListAccountCampaignMetrics_CarriesTheInsightsWindow: every row carries the
+// since/until the Insights read SENT, so the rules layer paces against exactly the days the spend
+// covers instead of re-deriving a window from a clock of its own (PR #316 review). The client's
+// clock is pinned 1s before UTC midnight; the window must be the one the read sent at that
+// instant, on a delivered row and on a zero-delivery one alike.
+func TestMeta_ListAccountCampaignMetrics_CarriesTheInsightsWindow(t *testing.T) {
+	var mu sync.Mutex
+	var insightsQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"111","name":"A","status":"ACTIVE","daily_budget":"1000"},{"id":"222","name":"B","status":"ACTIVE","daily_budget":"1000"}],"paging":{}}`))
+		case strings.HasSuffix(r.URL.Path, "/insights"):
+			mu.Lock()
+			insightsQuery = r.URL.Query().Get("time_range")
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"data":[{"campaign_id":"111","impressions":"10","clicks":"1","spend":"5"}],"paging":{}}`))
+		default: // the account currency read
+			_, _ = w.Write([]byte(`{"currency":"USD","id":"act_777"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	clock := func() time.Time { return time.Date(2026, 7, 30, 23, 59, 59, 0, time.UTC) }
+	d := NewMetaDispatcher(&scopedConnReader{
+		rows: map[string]*model.Connection{"cncf": activeMetaConn(goodMetaCreds)},
+	}, identityEncryptor{}, meta.WithBaseURL(srv.URL), meta.WithClock(clock))
+
+	rows, err := d.ListAccountCampaignMetrics(context.Background(), "cncf", model.ProviderMetaAds, "act_777", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaignMetrics: %v", err)
+	}
+	if insightsQuery != `{"since":"2026-07-24","until":"2026-07-30"}` {
+		t.Fatalf("insights time_range = %s", insightsQuery)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	for _, r := range rows {
+		if r.MetricsWindowStart != "2026-07-24" || r.MetricsWindowEnd != "2026-07-30" {
+			t.Errorf("row %s window = %q..%q, want the read's 2026-07-24..2026-07-30", r.PlatformCampaignID, r.MetricsWindowStart, r.MetricsWindowEnd)
+		}
+	}
+}
+
 // TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority pins WHICH row the guard
 // compares against, using two projects whose stored accounts DIFFER so that the second
 // project is load-bearing rather than decoration.

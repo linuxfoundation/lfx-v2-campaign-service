@@ -86,7 +86,7 @@ func TestBudgetlessCampaignIsPacingUnknown_AllPlatforms(t *testing.T) {
 			return EvaluateGoogleMonitor(r, 10)
 		}},
 		{"meta", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return EvaluateMetaMonitor(r, 10, now)
+			return EvaluateMetaMonitor(withMetaWindow(r, 10, now))
 		}},
 		{"linkedin", "ACTIVE", func(r []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
 			return EvaluateLinkedInMonitor(r, 10, now)

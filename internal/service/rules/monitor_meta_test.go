@@ -10,6 +10,30 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
+// withMetaWindow sets on every row the Insights window the Meta read would send for `days` at
+// `now` — `days` UTC calendar days ending on now's date, inclusive — the way
+// meta.Client.ListAccountCampaigns stamps MetricsWindowStart/MetricsWindowEnd on each row.
+func withMetaWindow(rows []model.AccountCampaignMetrics, days int, now time.Time) []model.AccountCampaignMetrics {
+	until := now.UTC()
+	since := until.AddDate(0, 0, -(days - 1))
+	out := make([]model.AccountCampaignMetrics, len(rows))
+	for i, m := range rows {
+		m.MetricsWindowStart, m.MetricsWindowEnd = since.Format("2006-01-02"), until.Format("2006-01-02")
+		out[i] = m
+	}
+	return out
+}
+
+// metaPct is metaPacingPct for one row read over `days` ending at `now`.
+func metaPct(m model.AccountCampaignMetrics, days int, now time.Time) (float64, bool) {
+	return metaPacingPct(withMetaWindow([]model.AccountCampaignMetrics{m}, days, now)[0])
+}
+
+// evalMeta is EvaluateMetaMonitor over rows read over `days` ending at `now`.
+func evalMeta(rows []model.AccountCampaignMetrics, days int, now time.Time) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
+	return EvaluateMetaMonitor(withMetaWindow(rows, days, now))
+}
+
 // TestMetaPacingPct_ScheduleBranch pins the TotalBudget+start-date branch: the lifetime budget is
 // spread evenly over the flight (EndDate inclusive) and the expectation covers only the days of
 // the requested window the flight ran on, because m.Spend covers only that window.
@@ -21,7 +45,7 @@ func TestMetaPacingPct_ScheduleBranch(t *testing.T) {
 		EndDate:     "2026-06-24", // 20-day flight, 06-05..06-24 inclusive
 		Spend:       100,
 	}
-	pct, computable := metaPacingPct(m, 10, now)
+	pct, computable := metaPct(m, 10, now)
 	// window 06-06..06-15 = 10 flight days; expected = 200/20*10 = 100; spend 100 → 100%.
 	if !computable {
 		t.Fatalf("computable = false, want true")
@@ -43,11 +67,11 @@ func TestMetaPacingPct_LifetimePacesTheWindowNotTheFlightToDate(t *testing.T) {
 		Spend:       700,
 	}
 	now := time.Date(2026, 7, 30, 15, 0, 0, 0, time.UTC) // flight day 60
-	pct, computable := metaPacingPct(m, 7, now)
+	pct, computable := metaPct(m, 7, now)
 	if !computable || pct != 100 {
 		t.Fatalf("pct = %v (computable %v), want 100: 700 spent against 9000/90*7 = 700 expected", pct, computable)
 	}
-	rows, items := EvaluateMetaMonitor([]model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+	rows, items := evalMeta([]model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
 		Impressions: 10000, Clicks: 100, TotalBudget: 9000, StartDate: "2026-06-01", EndDate: "2026-08-29", Spend: 700}}, 7, now)
 	if rows[0].PacingLabel == model.MonitorPacingUnderspending {
 		t.Errorf("an on-plan lifetime campaign is labelled underspending: %+v", rows[0])
@@ -61,10 +85,10 @@ func TestMetaPacingPct_LifetimePacesTheWindowNotTheFlightToDate(t *testing.T) {
 	// Half the plan in the window is 50%, and the text names the window's plan, not the whole
 	// lifetime budget.
 	m.Spend = 350
-	if pct, _ := metaPacingPct(m, 7, now); pct != 50 {
+	if pct, _ := metaPct(m, 7, now); pct != 50 {
 		t.Errorf("pct = %v, want 50", pct)
 	}
-	_, items = EvaluateMetaMonitor([]model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+	_, items = evalMeta([]model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
 		Impressions: 10000, Clicks: 100, TotalBudget: 9000, StartDate: "2026-06-01", EndDate: "2026-08-29", Spend: 300}}, 7, now)
 	mustContainIssue(t, items, "(300.00 in account currency of 700.00 in account currency)", model.MonitorPriorityMed)
 }
@@ -75,23 +99,112 @@ func TestMetaPacingPct_LifetimeWindowEdges(t *testing.T) {
 	m := model.AccountCampaignMetrics{TotalBudget: 1000, StartDate: "2026-07-27", EndDate: "2026-08-05", Spend: 400} // 10 days
 	now := time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
 	// window 07-24..07-30, flight from 07-27: 4 overlapping days → expected 400.
-	if pct, ok := metaPacingPct(m, 7, now); !ok || pct != 100 {
+	if pct, ok := metaPct(m, 7, now); !ok || pct != 100 {
 		t.Errorf("partial overlap: pct = %v (ok %v), want 100", pct, ok)
 	}
 	notStarted := m
 	notStarted.StartDate, notStarted.EndDate = "2026-08-10", "2026-08-20"
-	if _, ok := metaPacingPct(notStarted, 7, now); ok {
+	if _, ok := metaPct(notStarted, 7, now); ok {
 		t.Error("a flight that starts after the window was paced; its zero spend is correct, not underspending")
 	}
 	ended := m
 	ended.StartDate, ended.EndDate = "2026-06-01", "2026-07-10"
-	if _, ok := metaPacingPct(ended, 7, now); ok {
+	if _, ok := metaPct(ended, 7, now); ok {
 		t.Error("a flight that ended before the window was paced")
 	}
-	openEnded := model.AccountCampaignMetrics{TotalBudget: 300, StartDate: "2026-07-01", Spend: 70}
-	// open-ended: the flight runs through today, 07-01..07-30 = 30 days; window 7 days → 70.
-	if pct, ok := metaPacingPct(openEnded, 7, now); !ok || pct != 100 {
-		t.Errorf("open-ended: pct = %v (ok %v), want 100", pct, ok)
+}
+
+// TestMetaPacingPct_LifetimeEndDateIsInclusive: EndDate is a day the flight still runs on
+// (CreateCampaign writes end_time as 23:59:59 of it). A window that reaches only the flight's
+// last day expects that day's share; treating EndDate as an exclusive midnight dropped it, so
+// the window did not overlap the flight at all (PR #316 review).
+func TestMetaPacingPct_LifetimeEndDateIsInclusive(t *testing.T) {
+	m := model.AccountCampaignMetrics{TotalBudget: 1000, StartDate: "2026-07-21", EndDate: "2026-07-30", Spend: 100} // 10 days
+	now := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
+	// window 07-30..08-05: only 07-30, the flight's last day, is in it → expected 100.
+	if pct, ok := metaPct(m, 7, now); !ok || pct != 100 {
+		t.Errorf("last-day overlap: pct = %v (ok %v), want 100 (1000/10 × 1 day)", pct, ok)
+	}
+}
+
+// TestMetaPacingPct_OpenEndedLifetimeIsUnknown: a lifetime budget with no end date has no flight
+// length to spread it over. Reading the flight as "ends today" expected the WHOLE budget at once
+// on a flight's first day — a false underspend — so it is pacing unknown (PR #316 review).
+func TestMetaPacingPct_OpenEndedLifetimeIsUnknown(t *testing.T) {
+	now := time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
+	for _, start := range []string{"2026-07-30", "2026-07-01", "2026-01-01"} {
+		m := model.AccountCampaignMetrics{TotalBudget: 3000, StartDate: start, Spend: 100}
+		if pct, ok := metaPct(m, 7, now); ok {
+			t.Errorf("open-ended lifetime from %s paced at %v%%, want pacing unknown", start, pct)
+		}
+	}
+	rows, items := evalMeta([]model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+		Impressions: 1000, Clicks: 10, TotalBudget: 3000, StartDate: "2026-07-30", Spend: 100}}, 7, now)
+	if !rows[0].Metrics.PacingUnknown {
+		t.Errorf("row = %+v, want PacingUnknown for an open-ended lifetime flight", rows[0])
+	}
+	for _, it := range items {
+		if strContains(it.Issue, "Underspending") || strContains(it.Issue, "Budget ") {
+			t.Errorf("pacing item for an open-ended lifetime flight: %q", it.Issue)
+		}
+	}
+}
+
+// TestMetaPacingPct_DailyCountsOnlyTheFlightsDaysInTheWindow: a daily budget is expected only on
+// the days of the window the flight ran on. A campaign started 7 days ago spending its full
+// daily budget, read with days=30, used to be expected to spend for all 30 days and read ~23% —
+// a false underspend on every new campaign (PR #316 review). A flight that ended inside the
+// window is cut at its (inclusive) end the same way, and one outside the window is unknown.
+func TestMetaPacingPct_DailyCountsOnlyTheFlightsDaysInTheWindow(t *testing.T) {
+	now := time.Date(2026, 7, 30, 15, 0, 0, 0, time.UTC)
+	started := model.AccountCampaignMetrics{BudgetDay: 50, StartDate: "2026-07-24", Spend: 350} // 07-24..07-30 = 7 days
+	if pct, ok := metaPct(started, 30, now); !ok || pct != 100 {
+		t.Errorf("started 7 days ago, days=30: pct = %v (ok %v), want 100 (350 of 50 × 7)", pct, ok)
+	}
+	rows, items := evalMeta([]model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+		Impressions: 10000, Clicks: 100, BudgetDay: 50, StartDate: "2026-07-24", Spend: 350}}, 30, now)
+	if rows[0].PacingLabel == model.MonitorPacingUnderspending || rows[0].Metrics.PacingUnknown {
+		t.Errorf("a new campaign spending its full daily budget = %+v, want paced, not underspending", rows[0])
+	}
+	for _, it := range items {
+		if strContains(it.Issue, "Underspending") {
+			t.Errorf("unexpected underspending item: %q", it.Issue)
+		}
+	}
+
+	ended := model.AccountCampaignMetrics{BudgetDay: 50, StartDate: "2026-01-01", EndDate: "2026-07-20", Spend: 250} // 07-16..07-20 in a 15-day window
+	if pct, ok := metaPct(ended, 15, now); !ok || pct != 100 {
+		t.Errorf("ended inside the window: pct = %v (ok %v), want 100 (250 of 50 × 5)", pct, ok)
+	}
+	future := model.AccountCampaignMetrics{BudgetDay: 50, StartDate: "2026-08-10", Spend: 0}
+	if _, ok := metaPct(future, 30, now); ok {
+		t.Error("a daily flight that starts after the window was paced; its zero spend is correct, not underspending")
+	}
+}
+
+// TestEvaluateMetaMonitor_PacesTheReadsOwnWindow: the evaluator takes no clock; it paces against
+// the window stamped on the row — the since/until the Insights read actually sent. The service
+// used to capture `now` before the read while the read took its own clock reading, so a request
+// crossing UTC midnight paced one day's plan against the next day's spend (PR #316 review).
+// Here the read ran just after midnight on 07-31: the window is 07-25..07-31 and the flight
+// started on 07-31, so exactly one flight day is in the window. A pre-midnight `now` (07-30)
+// would have put the flight wholly outside the window.
+func TestEvaluateMetaMonitor_PacesTheReadsOwnWindow(t *testing.T) {
+	row := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE", Impressions: 1000, Clicks: 10,
+		BudgetDay: 40, StartDate: "2026-07-31", Spend: 40, MetricsWindowStart: "2026-07-25", MetricsWindowEnd: "2026-07-31"}
+	rows, _ := EvaluateMetaMonitor([]model.AccountCampaignMetrics{row})
+	if rows[0].Metrics.PacingUnknown || rows[0].PacingPct != 100 {
+		t.Errorf("row = %+v, want 100%%: 40 spent on the window's one flight day at 40/day", rows[0])
+	}
+
+	// A row with no window states no days its spend covers: pacing unknown, never a guess.
+	for _, w := range [][2]string{{"", ""}, {"2026-07-25", ""}, {"", "2026-07-31"}, {"2026-07-31", "2026-07-25"}, {"bad", "2026-07-31"}} {
+		r := row
+		r.MetricsWindowStart, r.MetricsWindowEnd = w[0], w[1]
+		out, _ := EvaluateMetaMonitor([]model.AccountCampaignMetrics{r})
+		if !out[0].Metrics.PacingUnknown {
+			t.Errorf("window %q..%q: row = %+v, want PacingUnknown", w[0], w[1], out[0])
+		}
 	}
 }
 
@@ -100,7 +213,7 @@ func TestMetaPacingPct_LifetimeWindowEdges(t *testing.T) {
 func TestMetaPacingPct_FlatDailyBudgetBranch(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	m := model.AccountCampaignMetrics{BudgetDay: 10, Spend: 45}
-	pct, computable := metaPacingPct(m, 5, now)
+	pct, computable := metaPct(m, 5, now)
 	// expected = 10*5 = 50, spend/expected*100 = 90.
 	if !computable {
 		t.Fatalf("computable = false, want true")
@@ -119,7 +232,7 @@ func TestMetaPacingPct_FlatDailyBudgetBranch(t *testing.T) {
 func TestMetaPacingPct_NoBudgetIsNotComputable(t *testing.T) {
 	now := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	m := model.AccountCampaignMetrics{} // no budget info at all
-	pct, computable := metaPacingPct(m, 10, now)
+	pct, computable := metaPct(m, 10, now)
 	if pct != 0 {
 		t.Errorf("pct = %v, want 0 for a campaign with no budget information", pct)
 	}
@@ -138,7 +251,7 @@ func TestMetaLabel_OverspendingBandNeverUsesThe130Member(t *testing.T) {
 	rows := []model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "c", BudgetDay: 100, Spend: 105}, // pct = 105
 	}
-	out, _ := EvaluateMetaMonitor(rows, 1, now)
+	out, _ := evalMeta(rows, 1, now)
 	if len(out) != 1 {
 		t.Fatalf("got %d rows, want 1", len(out))
 	}
@@ -186,7 +299,7 @@ func TestMetaActionItems(t *testing.T) {
 		row.BudgetDay = 10
 		row.Spend = 60
 		// Through the evaluator, so the denominator is the one pacing itself used.
-		_, items := EvaluateMetaMonitor([]model.AccountCampaignMetrics{row}, 30, time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC))
+		_, items := evalMeta([]model.AccountCampaignMetrics{row}, 30, time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC))
 		mustContainIssue(t, items, "Underspending", model.MonitorPriorityMed)
 		found := false
 		for _, it := range items {
@@ -264,7 +377,7 @@ func TestEvaluateMetaMonitor_SkipsFetchFailedRows(t *testing.T) {
 	rows := []model.AccountCampaignMetrics{
 		{PlatformCampaignID: "1", Name: "Failed Fetch", Status: "ACTIVE", TotalBudget: 500, FetchFailed: true},
 	}
-	out, items := EvaluateMetaMonitor(rows, 30, now)
+	out, items := evalMeta(rows, 30, now)
 	if len(out) != 1 {
 		t.Fatalf("got %d rows, want 1 — a FetchFailed row must still be returned: %+v", len(out), out)
 	}

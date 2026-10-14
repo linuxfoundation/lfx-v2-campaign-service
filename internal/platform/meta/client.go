@@ -1523,6 +1523,15 @@ func isMutatingMethod(method string) bool {
 	}
 }
 
+// rawBody is an `out` for do that receives a 2xx body's bytes UNDECODED. Every other `out` is
+// json.Unmarshal'd inside do, where a syntax-invalid 2xx becomes a transportError — the right
+// answer for a create (it may have committed) but not for a read whose caller can degrade an
+// unreadable answer more narrowly than failing the whole call. fetchAccountAdSetBudgets is that
+// caller: a body it cannot decode leaves only the ad-set budgets unknown (PR #316 review).
+// Everything before the decode — status, throttle, size and read-error classification — is
+// unchanged.
+type rawBody struct{ b []byte }
+
 // doRequest performs a Graph API call and decodes the JSON body into out.
 // It honors ctx via http.NewRequestWithContext. A 429 (rate-limited) response is
 // retried up to retryMax times with a bounded backoff (honoring Retry-After when
@@ -1882,6 +1891,11 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 			return apiErr
 		}
 
+		if sink, ok := out.(*rawBody); ok {
+			// The caller classifies the bytes itself — see rawBody.
+			sink.b = raw
+			return nil
+		}
 		if out != nil {
 			if err := json.Unmarshal(raw, out); err != nil {
 				// A 2xx we can't decode is AMBIGUOUS: Meta committed the mutation but we

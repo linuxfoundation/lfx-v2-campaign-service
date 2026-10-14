@@ -1440,6 +1440,8 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 			TotalBudget:        r.LifetimeBudget,
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
+			MetricsWindowStart: r.MetricsSince,
+			MetricsWindowEnd:   r.MetricsUntil,
 			FetchFailed:        r.FetchFailed,
 		})
 	}

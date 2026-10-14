@@ -466,7 +466,9 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
   the account preflight plus `resolveCurrencyOffset` (the
   create/budget scale), then `bidToMinorUnits`: finite, positive, at most 1,000,000, at least one
   minor unit, and no finer than one (the same decimal `fractionalMinorUnits` check — a ¥1.4 bid is
-  refused, never written as ¥1, #235); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
+  refused, never written as ¥1, #235), with the same overflow guard as `budgetToMinorUnits` (a
+  scaled product at or above `float64(math.MaxInt64)` is refused, never converted to an
+  implementation-defined, possibly negative, minor-unit bid); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
   currency wraps `ErrAccountCurrencyUnresolvable`.
 - `GetAdSetBid(ctx, adSetID)` — `GET /{id}?fields=id,campaign_id,bid_strategy,billing_event,optimization_goal,bid_amount`;
   a pure read; an answer for another ad set is an error; a non-numeric id is `ErrInvalidAdSetID`
@@ -743,7 +745,14 @@ campaign-level budget and used to be `PacingUnknown` forever. When any admitted,
 campaign has neither a positive `daily_budget` nor `lifetime_budget`, `fetchAccountAdSetBudgets`
 makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500`
 (`id` is the duplicate-row proof), bounded at `monitorAdSetMaxPages` (20) × 500, every body through
-`identityjson.Check` before decoding, and sums `effective_status == ACTIVE` ad sets per campaign.
+`identityjson.Check` before decoding, and sums the ad sets per campaign when every one is
+`effective_status == ACTIVE`; any other status (paused, campaign-paused, archived, in review)
+leaves that campaign unknown, because its Insights spend still carries what a stopped ad set spent
+earlier in the window and when it stopped is not on this read. Meta's default edge omits DELETED
+ad sets, so one deleted inside the window is not seen — a residual only ad-set-level Insights
+could close. The body is taken undecoded through `do`'s `rawBody` sink, so a syntax-invalid 2xx
+is an `adSetBudgetsUnreadableError` (budgets unknown, metrics kept) rather than a
+`transportError` that failed the whole monitor.
 A CBO campaign keeps its own budget. Per-ad-set defects (explicit `null`, non-string, fractional or
 negative amount, both or neither budget on an active ad set, an absent, null, non-string or
 malformed `effective_status` — decoded as raw JSON so a bad status cannot fail the whole row's decode) make
@@ -756,14 +765,21 @@ the campaign-list row has no dates and a lifetime budget could not be paced. The
 the active ad sets' window: when they all share one it becomes the row's flight (and a lifetime
 budget is paced on it); when they disagree, or one's `start_time` is absent/null/malformed or its
 `end_time` null/malformed, the lifetime budget stays unknown — an absent `end_time` is an
-open-ended flight, and an open-ended window differs from a bounded one with the same start. Daily pacing (budget x days) does not read the flight, so a daily campaign
-keeps its budget either way. An unknown budget is 0/0, which `metaPacingPct` already reports as not
+open-ended flight, and an open-ended window differs from a bounded one with the same start. A
+daily ad-set budget is likewise used only with one shared window, since daily pacing now counts
+the flight's days in the window too. An unknown budget is 0/0, which `metaPacingPct` already reports as not
 computable. A negative campaign-level budget is unreadable (`FetchFailed`), never "no budget" sent
 to the ad-set fallback. `rules/monitor_meta.go` changed in two ways: its action-item text prints
 money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`; and lifetime
 pacing (`metaExpectedSpend`) prorates the budget over the flight (end date inclusive) and expects
 only the requested window's flight days — spend covers only that window, so the old
 flight-to-date expectation reported every lifetime campaign past its first week as underspending.
+An open-ended lifetime flight is unknown (no length to prorate over), and daily pacing expects
+`BudgetDay` only on the window's flight days (an unreported start or end is the window's edge).
+The window is the read's own: `fetchAccountCampaignInsights` returns the `since`/`until` it sent,
+`ListAccountCampaigns` stamps them on every row (`MetricsSince`/`MetricsUntil`, carried to
+`model.AccountCampaignMetrics.MetricsWindowStart`/`End`), and `EvaluateMetaMonitor(rows)` takes no
+clock — so a request crossing UTC midnight cannot pace against different days than its spend.
 
 See [internal/platform/meta](../../../internal/platform/meta).
 

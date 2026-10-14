@@ -54,13 +54,21 @@ type AccountCampaignRow struct {
 	// whole units, so the pacing ratio the rules layer computes compares like with like.
 	SpendUSD float64
 	// DailyBudget / LifetimeBudget are the campaign's budget in whole account-currency units:
-	// the CAMPAIGN's own field when it has one (CBO), otherwise the sum of its ACTIVE ad sets'
-	// budgets (ABO — the shape CreateCampaign produces). 0 means unknown or unset; the rules
+	// the CAMPAIGN's own field when it has one (CBO), otherwise the sum of its ad sets' budgets
+	// (ABO — the shape CreateCampaign produces), used only when every ad set is ACTIVE and they
+	// share one flight. 0 means unknown or unset; the rules
 	// layer reads a row with neither as PacingUnknown. See ListAccountCampaigns.
 	DailyBudget    float64
 	LifetimeBudget float64
 	StartDate      string
 	EndDate        string
+	// MetricsSince / MetricsUntil are the Insights `time_range` (YYYY-MM-DD, both inclusive) the
+	// row's delivery and spend cover — the SAME bounds on every row of one read, taken from one
+	// clock reading (fetchAccountCampaignInsights). The rules layer paces against exactly these
+	// days rather than re-deriving a window from its own clock, which could fall on the other
+	// side of a UTC midnight from the read (PR #316 review).
+	MetricsSince string
+	MetricsUntil string
 	// FetchFailed marks a row whose insights lookup could not be matched/parsed — this
 	// dispatcher-level method never fabricates a zero-metrics row for a fetch failure.
 	FetchFailed bool
@@ -71,7 +79,7 @@ type AccountCampaignRow struct {
 // campaign-list read for status/budget/schedule fields insights does not carry, one account
 // currency read (budgets are minor units of THAT currency — see minorToWhole), and, only when an
 // admitted campaign reports no campaign-level budget, one account-level ad-set budget read
-// (fetchAccountAdSetBudgets) that supplies it from the campaign's ACTIVE ad sets. Unlike the
+// (fetchAccountAdSetBudgets) that supplies it from the campaign's ad sets when all are ACTIVE. Unlike the
 // BFF, which logs a warning and silently drops rows past its first page, both reads here
 // walk every page (LFXV2-2519 Part 3): pagination is a pre-cutover fix, not one of the
 // threshold/labeling quirks ported over from the BFF.
@@ -113,7 +121,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
 	offset, currencyKnown := currencyOffsetFor(currency)
-	insightsByID, failedInsightIDs, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
+	insightsByID, failedInsightIDs, window, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +138,9 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			StartDate:   cm.StartDate,
 			EndDate:     cm.EndDate,
 			FetchFailed: cm.FetchFailed,
+			// Every row, delivered or not: a zero-delivery row's zero spend covers the same days.
+			MetricsSince: window.since,
+			MetricsUntil: window.until,
 		}
 		if currencyKnown {
 			row.DailyBudget = minorToWhole(cm.DailyMinor, offset)
@@ -172,8 +183,8 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		if !errors.As(err, &unreadable) {
 			return nil, err
 		}
-		// The read completed but cannot be trusted whole (page cap, a body identityjson
-		// refuses, an unattributable row): every campaign that needed it stays at unknown
+		// The read completed but cannot be trusted whole (page cap, a body that is not valid
+		// JSON or that identityjson refuses, an unattributable row): every campaign that needed it stays at unknown
 		// pacing. Pacing against a partial sum would understate the budget and raise a false
 		// overspend alert.
 		return rows, nil
@@ -187,10 +198,14 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		case t.dailyMinor > 0 && t.lifetimeMinor > 0:
 			// Mixed pacing models under one campaign: no single expectation is honest.
 		case t.dailyMinor > 0:
-			rows[i].DailyBudget = float64(t.dailyMinor) / float64(offset)
-			// Daily pacing (budget x days) does not read the flight, but the row should still
-			// show the ad sets' flight when they agree on one.
+			// Daily pacing expects the budget only on the days of the window the flight ran on
+			// (PR #316 review: a campaign started inside the window used to be expected to spend
+			// for every requested day, a false underspend). The flight is the ad sets' — the
+			// campaign-list row has no dates for an ABO campaign — so a daily budget is used only
+			// with the active ad sets' shared window; without one, the days the summed budget
+			// could have been spent on are not known, and the budget is left unknown.
 			if t.windowSet && !t.windowUnknown {
+				rows[i].DailyBudget = float64(t.dailyMinor) / float64(offset)
 				rows[i].StartDate, rows[i].EndDate = t.start, t.end
 			}
 		case t.lifetimeMinor > 0:
@@ -325,6 +340,9 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 	return nil, fmt.Errorf("list account campaigns exceeded %d pages; too many campaigns to enumerate", monitorMaxPages)
 }
 
+// insightsWindow is the Insights time_range one account-monitor read used, YYYY-MM-DD inclusive.
+type insightsWindow struct{ since, until string }
+
 type metaInsightsRow struct {
 	Impressions int64
 	Clicks      int64
@@ -353,10 +371,14 @@ type metaInsightsRow struct {
 // cross-platform consistency wins over exact preset-parity with a behavior this port is
 // already changing. See docs/knowledge/architecture/account-monitor-endpoints.md for the same
 // note next to the ticket history.
-func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, map[string]struct{}, error) {
+//
+// The since/until it sent are returned as an insightsWindow: they are the one clock reading the
+// whole monitor read is paced against (see AccountCampaignRow.MetricsSince).
+func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, map[string]struct{}, insightsWindow, error) {
 	end := c.timeNow().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
-	timeRange := `{"since":"` + start.Format("2006-01-02") + `","until":"` + end.Format("2006-01-02") + `"}`
+	window := insightsWindow{since: start.Format("2006-01-02"), until: end.Format("2006-01-02")}
+	timeRange := `{"since":"` + window.since + `","until":"` + window.until + `"}`
 
 	out := make(map[string]metaInsightsRow, monitorPageSize)
 	failed := make(map[string]struct{})
@@ -382,10 +404,10 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			} `json:"paging"`
 		}
 		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-			return nil, nil, fmt.Errorf("list account campaign insights: %w", err)
+			return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights: %w", err)
 		}
 		if resp.Data == nil {
-			return nil, nil, &transportError{
+			return nil, nil, insightsWindow{}, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
 				Err:    fmt.Errorf("account insights returned a 2xx response with no data field"),
@@ -399,7 +421,7 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			// row belonged to as a legitimate zero-activity omission, so the whole read is
 			// rejected instead (round-31 review, same class as the LinkedIn pivot-value fix).
 			if row.CampaignID == "" {
-				return nil, nil, &transportError{
+				return nil, nil, insightsWindow{}, &transportError{
 					Method: http.MethodGet,
 					Path:   path,
 					Err:    fmt.Errorf("account insights returned a row with no campaign_id"),
@@ -430,18 +452,18 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			out[row.CampaignID] = metaInsightsRow{Impressions: impressions, Clicks: clicks, SpendUSD: spend}
 		}
 		if resp.Paging.Next == "" {
-			return out, failed, nil // fully enumerated
+			return out, failed, window, nil // fully enumerated
 		}
 		after = strings.TrimSpace(resp.Paging.Cursors.After)
 		if after == "" {
-			return nil, nil, fmt.Errorf("list account campaign insights has more pages but no cursor; cannot guarantee every campaign was enumerated")
+			return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights has more pages but no cursor; cannot guarantee every campaign was enumerated")
 		}
 		if _, dup := seen[after]; dup {
-			return nil, nil, fmt.Errorf("list account campaign insights did not terminate (repeated paging cursor)")
+			return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights did not terminate (repeated paging cursor)")
 		}
 		seen[after] = struct{}{}
 	}
-	return nil, nil, fmt.Errorf("list account campaign insights exceeded %d pages; too many rows to enumerate", monitorMaxPages)
+	return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights exceeded %d pages; too many rows to enumerate", monitorMaxPages)
 }
 
 // dateOnly validates and truncates a Meta ISO-8601 timestamp ("2026-01-15T00:00:00-0800") to
@@ -460,15 +482,16 @@ func dateOnly(s string) string {
 	return prefix
 }
 
-// adSetBudgetTotal is the sum of one campaign's ACTIVE ad-set budgets, in the account
-// currency's minor units. unknown marks a campaign at least one of whose active ad sets could
-// not be read as exactly one positive budget — its total is then not a statement about the
-// campaign and is never used.
+// adSetBudgetTotal is the sum of one campaign's ad-set budgets, in the account currency's minor
+// units. unknown marks a campaign at least one of whose ad sets is not ACTIVE, or could not be
+// read as exactly one positive budget — its total is then not a statement about the campaign and
+// is never used.
 //
 // start/end are the flight (YYYY-MM-DD) every budgeted active ad set shares; windowSet says one
 // was seen, windowUnknown that one was unreadable (absent/null/malformed start_time, malformed or
 // null end_time) or that two active ad sets disagree. An absent end_time is an open-ended flight
-// ("" end). The window is tracked apart from `unknown`: it decides only lifetime pacing.
+// ("" end). The window is tracked apart from `unknown`: without one shared window neither a daily
+// nor a lifetime total is used, since both are paced against the days the flight ran.
 type adSetBudgetTotal struct {
 	dailyMinor    int64
 	lifetimeMinor int64
@@ -548,9 +571,12 @@ type adSetBudgetWire struct {
 //
 //	GET /{accountID}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500
 //
-// and sums the budgets of the ACTIVE ones (effective_status == ACTIVE: an ad set that is paused
-// itself, or under a paused campaign, is not spending and its budget is not part of what the
-// campaign is expected to spend) per campaign_id. `id` is requested beyond the four fields the
+// and sums their budgets per campaign_id. Every ad set must be ACTIVE: a campaign with any ad set
+// in another effective_status (paused itself, under a paused campaign, archived, in review …) is
+// unknown, because the campaign's Insights spend still carries what that ad set spent in the
+// window before it stopped, and when it stopped is not on this read (PR #316 review). Meta's
+// default edge read omits DELETED ad sets, so one deleted inside the window is not seen here —
+// a residual this read cannot close without ad-set-level Insights. `id` is requested beyond the four fields the
 // sum needs because it is the only proof a row is not a repeat — a duplicated row would double
 // a budget. start_time/end_time are requested because CreateCampaign writes the FLIGHT on the ad
 // set too, and a lifetime budget is paced against it: the active ad sets' shared window becomes
@@ -558,11 +584,13 @@ type adSetBudgetWire struct {
 // one) has no honest flight, so its lifetime budget stays unknown (see adSetBudgetTotal).
 //
 // The walk is bounded by monitorAdSetMaxPages; a `paging.next` on the last allowed page is an
-// adSetBudgetsUnreadableError, never a partial sum. Every 2xx body passes identityjson.Check as
-// raw bytes before it is decoded, like every other Meta read that attributes rows.
+// adSetBudgetsUnreadableError, never a partial sum. Every 2xx body is taken undecoded (rawBody)
+// and must be valid JSON and pass identityjson.Check before it is decoded, like every other Meta
+// read that attributes rows; a body that fails either is an adSetBudgetsUnreadableError, so only
+// the budgets are lost, never the monitor's delivery metrics.
 //
-// Per-ad-set defects mark only that ad set's CAMPAIGN unknown: an explicit null, a non-string or
-// unparseable or negative budget, both a daily and a lifetime budget (Meta documents them as
+// Per-ad-set defects mark only that ad set's CAMPAIGN unknown: a non-ACTIVE ad set, an explicit
+// null, a non-string or unparseable or negative budget, both a daily and a lifetime budget (Meta documents them as
 // mutually exclusive), neither (an active ad set under a campaign with no budget of its own has
 // nothing to pace against), or an unreadable effective_status. A row that cannot be attributed
 // at all — no canonical id or campaign_id, or an id seen twice — fails the whole read.
@@ -578,12 +606,19 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
-		var raw json.RawMessage
-		if err := c.doRequest(ctx, http.MethodGet, path, nil, &raw); err != nil {
+		// rawBody, not a json.RawMessage: decoding inside doRequest turned a syntax-invalid 2xx
+		// into a transportError that failed the WHOLE monitor, metrics included, instead of
+		// leaving only these budgets unknown (PR #316 review). The bytes are classified here.
+		var body rawBody
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &body); err != nil {
 			return nil, fmt.Errorf("list account ad-set budgets: %w", err)
 		}
+		raw := body.b
 		unreadable := func(format string, args ...any) error {
 			return &adSetBudgetsUnreadableError{err: fmt.Errorf("page %d: "+format, append([]any{page}, args...)...)}
+		}
+		if !json.Valid(raw) {
+			return nil, unreadable("the response is not valid JSON")
 		}
 		if err := identityjson.Check(raw); err != nil {
 			return nil, unreadable("%v", err)
@@ -621,6 +656,14 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 				continue
 			}
 			if status != StatusActive {
+				// A paused (or otherwise non-ACTIVE) ad set's budget is not part of what the
+				// campaign is expected to spend NOW — but the campaign-level Insights spend still
+				// includes whatever it spent in the window before it stopped (PR #316 review: two
+				// ad sets at 10/day for 7 days, one then paused, read 140 spent against 70
+				// expected — a false overspend). When it stopped is not on this read, so its
+				// share of the window cannot be prorated: the campaign's ad-set budget is
+				// unknown rather than compared against spend from a different set of ad sets.
+				t.unknown = true
 				continue
 			}
 			t.addWindow(adSetWindow(w.StartTime, w.EndTime))

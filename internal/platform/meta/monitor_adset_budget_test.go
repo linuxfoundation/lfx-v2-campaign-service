@@ -33,11 +33,21 @@ func monitorList(rows ...string) string {
 	return `{"data":[` + strings.Join(rows, ",") + `],"paging":{}}`
 }
 
-// adSetRow is one account-level /adsets row; budgets is raw JSON members ("" omits both).
+// adSetFlight is the flight CreateCampaign writes on every ad set it makes.
+const adSetFlight = `"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-31T23:59:59+0000"`
+
+// monitorAdSetRow is one account-level /adsets row; budgets is raw JSON members ("" omits both).
+// A row whose members name neither start_time nor end_time gets adSetFlight, the flight every ad
+// set CreateCampaign makes carries — a budget is paced only against a known flight.
 func monitorAdSetRow(id, campaignID, effectiveStatus, budgets string) string {
-	if budgets != "" {
-		budgets = "," + budgets
+	if !strings.Contains(budgets, "start_time") && !strings.Contains(budgets, "end_time") {
+		if budgets == "" {
+			budgets = adSetFlight
+		} else {
+			budgets += "," + adSetFlight
+		}
 	}
+	budgets = "," + budgets
 	return fmt.Sprintf(`{"id":"%s","campaign_id":"%s","effective_status":"%s"%s}`, id, campaignID, effectiveStatus, budgets)
 }
 
@@ -94,10 +104,10 @@ func TestListAccountCampaigns_CBOBudget_NoAdSetRead(t *testing.T) {
 	}
 }
 
-// The shape CreateCampaign produces: no campaign-level budget, the amount on the ad set. Only
-// ACTIVE ad sets count; a paused ad set, one under a paused campaign, and another campaign's ad
-// sets are not part of this campaign's expected spend. A CBO campaign in the same account keeps
-// its campaign-level budget even though its ad sets appear in the account-level read.
+// The shape CreateCampaign produces: no campaign-level budget, the amount on the ad set. The
+// campaign's ad sets are summed, and another campaign's ad sets are not part of its expected
+// spend. A CBO campaign in the same account keeps its campaign-level budget even though its ad
+// sets appear in the account-level read.
 func TestListAccountCampaigns_ABOBudget_SumsActiveAdSets(t *testing.T) {
 	rows, rec := listMonitorRows(t, monitorFixture{
 		campaigns: []string{monitorList(
@@ -110,8 +120,6 @@ func TestListAccountCampaigns_ABOBudget_SumsActiveAdSets(t *testing.T) {
 		adSets: []string{`{"data":[` + strings.Join([]string{
 			monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`),
 			monitorAdSetRow("9002", "111", "ACTIVE", `"daily_budget":"2500","lifetime_budget":"0"`),
-			monitorAdSetRow("9003", "111", "PAUSED", `"daily_budget":"99900"`),
-			monitorAdSetRow("9004", "111", "CAMPAIGN_PAUSED", `"daily_budget":"99900"`),
 			monitorAdSetRow("9005", "222", "ACTIVE", `"lifetime_budget":"300000","start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-31T23:59:59+0000"`),
 			monitorAdSetRow("9006", "333", "ACTIVE", ""),
 		}, ",") + `],"paging":{}}`},
@@ -131,6 +139,31 @@ func TestListAccountCampaigns_ABOBudget_SumsActiveAdSets(t *testing.T) {
 	}
 	if strings.Contains(got[0], "tok-secret-abc") {
 		t.Errorf("ad-set read leaked the access token: %s", got[0])
+	}
+}
+
+// A paused ad set's budget is not what the campaign is expected to spend now, but the campaign's
+// Insights spend still includes what it spent in the window before it stopped — and when it
+// stopped is not on the read. Summing only the active ad sets compared 140 spent against 70
+// expected (two ad sets at 10/day for a week, one then paused): a false overspend (PR #316
+// review). Any non-ACTIVE ad set leaves the campaign's ad-set budget unknown; a campaign whose
+// ad sets are all ACTIVE beside it is unaffected.
+func TestListAccountCampaigns_ABOBudget_NonActiveAdSetIsUnknown(t *testing.T) {
+	for _, status := range []string{"PAUSED", "CAMPAIGN_PAUSED", "ARCHIVED", "IN_PROCESS", "WITH_ISSUES"} {
+		t.Run(status, func(t *testing.T) {
+			rows, _ := listMonitorRows(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, ""), monitorCampaign("222", StatusActive, ""))},
+				insights:  []string{insightsFor("111", "222")},
+				currency:  usdAccount,
+				adSets: []string{monitorList(
+					monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`),
+					monitorAdSetRow("9002", "111", status, `"daily_budget":"1000"`),
+					monitorAdSetRow("9003", "222", "ACTIVE", `"daily_budget":"4000"`),
+				)},
+			})
+			assertBudgets(t, rows["111"], 0, 0)
+			assertBudgets(t, rows["222"], 40, 0)
+		})
 	}
 }
 
@@ -200,6 +233,11 @@ func TestListAccountCampaigns_ABOBudget_UntrustworthyReadLeavesUnknown(t *testin
 		{"row with no campaign_id", monitorList(`{"id":"9001","effective_status":"ACTIVE","daily_budget":"1000"}`)},
 		{"row with no id", monitorList(`{"campaign_id":"111","effective_status":"ACTIVE","daily_budget":"1000"}`)},
 		{"next page with no cursor", `{"data":[],"paging":{"next":"https://graph.facebook.com/next"}}`},
+		// Syntax-invalid JSON in a 200 used to fail inside doRequest's decode as a transportError,
+		// which bypassed this fallback and failed the whole monitor, metrics included (PR #316
+		// review).
+		{"syntax-invalid JSON", `{"data":[` + monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`)},
+		{"not JSON at all", `<html>upstream proxy error</html>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, _ := listMonitorRows(t, monitorFixture{
@@ -308,8 +346,9 @@ func TestListAccountCampaigns_DuplicateCurrencyKeyIsAnError(t *testing.T) {
 // A lifetime budget is paced against its flight, and CreateCampaign writes the flight on the AD
 // SET — the campaign-list row has no dates for it (PR #316 review). The active ad sets' shared
 // window becomes the row's flight; disagreeing or unreadable windows leave the lifetime budget
-// unknown rather than paced against the wrong schedule. Daily pacing does not read the flight,
-// so a daily campaign keeps its budget either way.
+// unknown rather than paced against the wrong schedule. Daily pacing is limited to the days the
+// flight ran in the window too (PR #316 review), so a daily budget is likewise used only with one
+// shared window.
 func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 	const (
 		oct     = `"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-31T23:59:59+0000"`
@@ -336,7 +375,9 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 		{"a null end_time is unknown", []string{life(`"start_time":"2026-10-01T09:00:00-0700","end_time":null`)}, 0, 0, "", ""},
 		{"a malformed start_time is unknown", []string{life(`"start_time":"0000-00-00T00:00:00-0700"`)}, 0, 0, "", ""},
 		{"daily ad sets sharing a window show it", []string{daily(oct), daily(oct)}, 20, 0, "2026-10-01", "2026-10-31"},
-		{"daily ad sets with differing windows keep their budget", []string{daily(oct), daily(nov)}, 20, 0, "", ""},
+		{"daily ad sets with differing windows are unknown", []string{daily(oct), daily(nov)}, 0, 0, "", ""},
+		{"a daily ad set with no start_time is unknown", []string{`"daily_budget":"1000","end_time":"2026-10-31T23:59:59+0000"`}, 0, 0, "", ""},
+		{"an open-ended daily ad set keeps its budget", []string{daily(openEnd)}, 10, 0, "2026-10-01", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rowsJSON := make([]string, 0, len(tc.adSets))

@@ -326,11 +326,10 @@ func (s *ConnectionService) MonitorLinkedinAdsAccount(ctx context.Context, p *co
 // MonitorMetaAdsAccount reads every campaign visible on a Meta Ads account, live from the
 // platform, with pacing and action items derived by the ported rule engine.
 func (s *ConnectionService) MonitorMetaAdsAccount(ctx context.Context, p *conn.MonitorMetaAdsAccountPayload) (*conn.AccountMonitor, error) {
-	now := time.Now()
+	// No clock here: each row carries the Insights window its spend covers, and the rules pace
+	// against exactly those days (see rules.EvaluateMetaMonitor).
 	return s.monitorAccount(ctx, p.ProjectID, p.AccountID, p.Days, model.ProviderMetaAds, metaAdsMonitorDiscovery,
-		func(rows []model.AccountCampaignMetrics) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem) {
-			return rules.EvaluateMetaMonitor(rows, p.Days, now)
-		})
+		rules.EvaluateMetaMonitor)
 }
 
 // MonitorMicrosoftAdsAccount reads every live campaign on a Microsoft Advertising account, with

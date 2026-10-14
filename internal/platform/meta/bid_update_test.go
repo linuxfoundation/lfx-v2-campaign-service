@@ -38,6 +38,10 @@ func TestBidToMinorUnits(t *testing.T) {
 		{-1, 100, 0, true},
 		{math.NaN(), 100, 0, true},
 		{math.Inf(1), 100, 0, true},
+		// The product overflows int64 although the amount is within metaMaxBid: refused, never
+		// converted to an implementation-defined (negative) minor-unit bid (PR #316 review).
+		{1_000_000, 10_000_000_000_000, 0, true},
+		{1, math.MaxInt64, 0, true}, // exactly float64(math.MaxInt64): the boundary is refused too
 	} {
 		got, err := bidToMinorUnits(tc.amount, tc.offset)
 		if tc.refused {

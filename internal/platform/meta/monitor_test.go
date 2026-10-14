@@ -116,8 +116,14 @@ func TestListAccountCampaigns_InsightsWindow_UsesCallerDaysNotHardcoded30(t *tes
 	fixedNow := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, AccountConfig{}, WithBaseURL(srv.URL), WithClock(func() time.Time { return fixedNow }))
 
-	if _, err := c.ListAccountCampaigns(context.Background(), "act_123", 7); err != nil {
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 7)
+	if err != nil {
 		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	// The rows carry the bounds the read SENT, so the rules layer paces against exactly the days
+	// the spend covers rather than re-deriving them from its own clock (PR #316 review).
+	if len(rows) != 1 || rows[0].MetricsSince != "2026-09-11" || rows[0].MetricsUntil != "2026-09-17" {
+		t.Errorf("rows = %+v, want MetricsSince/MetricsUntil 2026-09-11/2026-09-17, the time_range sent", rows)
 	}
 
 	var insightsURI string

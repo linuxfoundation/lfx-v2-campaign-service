@@ -96,6 +96,13 @@ type AccountCampaignMetrics struct {
 	// delivery-judges a window must use the ranges when they are set. Empty when the platform
 	// does not report per-line-item flights or the campaign has none.
 	FlightRanges []FlightRange
+	// MetricsWindowStart/MetricsWindowEnd are Meta only: the Insights `time_range` (YYYY-MM-DD,
+	// both inclusive) the row's Spend covers — the bounds the read SENT, the same on every row of
+	// one read. Meta's rule engine paces against exactly these days rather than re-deriving a
+	// window from a clock of its own, which a request crossing UTC midnight would put one day
+	// away from the spend. Empty for every other platform.
+	MetricsWindowStart string
+	MetricsWindowEnd   string
 	// PacingUnknown is true when pacing could not be computed at all: either the flight dates
 	// were unavailable (e.g. Google Ads rows this port does not schedule-bound, or a platform
 	// row with no runSchedule/start_time), or the campaign has no usable budget to pace

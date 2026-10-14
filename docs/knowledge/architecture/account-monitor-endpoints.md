@@ -188,27 +188,41 @@ every campaign this service creates had no budget, read `pacing_unknown`, and co
 raise an under- or overspend item. When an admitted campaign has neither campaign-level
 budget, the read now makes ONE account-level paged call,
 `GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time`,
-and sums the `ACTIVE` ad sets' budgets per campaign (a paused ad set, or one under a paused
-campaign, is excluded; a CBO campaign keeps its own budget). It fails closed: daily and
+and sums the ad sets' budgets per campaign when every one of them is `ACTIVE` (a CBO campaign
+keeps its own budget). Any ad set in another `effective_status` — paused, under a paused campaign,
+archived, in review — makes its campaign `pacing_unknown`: the campaign's Insights spend still
+includes what that ad set spent in the window before it stopped, and when it stopped is not on the
+read, so summing only the active budgets compared spend from more ad sets than the expectation
+covered (a false overspend). It fails closed: daily and
 lifetime ad sets mixed under one campaign, an active ad set with no budget or an explicit
 `null` one, and any answer that cannot be trusted whole — the 20 × 500 page cap hit, a body
 that fails `identityjson`, an unattributable or repeated row — leave the campaigns that
-needed it `pacing_unknown`, never paced against a partial sum; only a failed request fails
-the endpoint. **Account currency**: the BFF divided every minor-unit budget by 100, so a
+needed it `pacing_unknown`, never paced against a partial sum — a syntax-invalid 2xx body
+included, which the client hands back undecoded (`rawBody`) so it lands here rather than as a
+transport error; only a failed request fails the endpoint. **Account currency**: the BFF divided every minor-unit budget by 100, so a
 JPY/KRW budget read 100x too small (and its campaign as wildly overspending). One
 `?fields=currency` read per request now supplies the offset the create path uses (1 for
 zero-decimal currencies); a currency outside the supported map leaves budgets unknown.
 The FLIGHT is on the ad set too, so the same read supplies it: when every active ad set
 shares one `start_time`/`end_time` window it becomes the row's flight and a lifetime budget is
-paced on it; differing or unreadable windows leave a lifetime budget `pacing_unknown` (daily
-pacing does not read the flight). An unknown budget arrives as 0/0, which the rules already report
+paced on it; differing or unreadable windows leave the budget `pacing_unknown`, daily or
+lifetime, since both are paced against the flight's days. An unknown budget arrives as 0/0, which the rules already report
 as not computable, and a negative campaign-level budget is unreadable rather than "no budget".
 Meta's action-item text now prints money as "N.NN in account currency", like X's, instead of `$`.
 **Lifetime pacing paces the window** (CBO and ABO alike): spend is the last `days` only, so the
 expectation is now the lifetime budget spread over the flight (end date inclusive) times the
 window's flight days — LinkedIn's proration — instead of the plan since the flight started, which
 read a 9,000 / 90-day campaign on day 60 with `days=7` at ~12% when it was on plan. A window the
-flight does not overlap is `pacing_unknown`. See
+flight does not overlap is `pacing_unknown`, and so is an open-ended lifetime flight (no end date:
+no length to spread the budget over — reading it as "ends today" expected the whole budget at
+once). **Daily pacing counts the flight's days too**: `BudgetDay` times the days of the window the
+flight ran on (start and end inclusive; an unreported date is the window's own edge), not
+`BudgetDay × days` — a campaign started 7 days ago at full budget read ~23% on `days=30`. **One
+window**: the read stamps the Insights `since`/`until` it SENT on every row
+(`MetricsWindowStart`/`MetricsWindowEnd`), and `EvaluateMetaMonitor` takes no clock and paces
+against exactly those days; it used to take a `now` captured before the read, which a request
+crossing UTC midnight put one day away from the spend. A row with no window is
+`pacing_unknown`. See
 [2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md](../log/2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md).
 
 ## Correctness bugs found during local differential verification
