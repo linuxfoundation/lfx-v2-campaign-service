@@ -1221,7 +1221,10 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	// count rather than a boolean so a renderer can say how much of the account is missing.
 	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
 		Minimum(0)
-		Example(2)
+		// 0, not a non-zero count: Goa composes every account-monitor response example from
+		// attribute examples, and the campaign rows beside these totals all carry fetch_failed's
+		// example (false), so any other value here would publish a count no row backs.
+		Example(0)
 	})
 	Required("spend", "impressions", "clicks", "campaign_count", "unmeasured_campaigns")
 })

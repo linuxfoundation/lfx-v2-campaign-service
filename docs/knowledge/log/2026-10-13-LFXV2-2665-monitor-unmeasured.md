@@ -16,3 +16,10 @@ PR review (#319): a 2xx report whose body is not valid JSON was classed `other`,
 now carries `errUndecodable2xxResponse` inside the same `transportError` (still ambiguous for
 mutating callers, same message text) and classes as `decode`; a 2xx body that could not be read
 stays `other`.
+
+PR review (#319, published example): `unmeasured_campaigns` carried `Example(2)`, so every
+generated account-monitor response example reported 2 unmeasured campaigns beside campaign rows
+that all read `fetch_failed: false`. The example is now 0, and
+`TestPublishedAccountMonitorTotalsExamplesArePossible` checks each response example's totals
+against the campaigns array beside them — `unmeasured_campaigns` must equal the number of
+`fetch_failed=true` rows — rather than only bounding it by `campaign_count`.

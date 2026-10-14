@@ -10883,7 +10883,7 @@ definitions:
                 conversions: 212.5
                 impressions: 184200
                 spend: 1842.55
-                unmeasured_campaigns: 2
+                unmeasured_campaigns: 0
         required:
             - account_id
             - days
@@ -11116,7 +11116,7 @@ definitions:
             unmeasured_campaigns:
                 type: integer
                 description: 'How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns'' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.'
-                example: 2
+                example: 0
                 format: int64
                 minimum: 0
         example:
@@ -11125,7 +11125,7 @@ definitions:
             conversions: 212.5
             impressions: 184200
             spend: 1842.55
-            unmeasured_campaigns: 2
+            unmeasured_campaigns: 0
         required:
             - spend
             - impressions

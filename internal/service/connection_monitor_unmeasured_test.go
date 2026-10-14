@@ -278,16 +278,25 @@ func TestMonitorMicrosoftAdsAccount_DispatcherDecodeClassIsWarned(t *testing.T) 
 
 // Every published ad-monitor totals example is a response the service could produce:
 // unmeasured_campaigns is present, non-negative, and no more than campaign_count — the rows it
-// counts are a subset of the rows campaign_count counts.
+// counts are a subset of the rows campaign_count counts. Where the totals sit beside the campaigns
+// array they sum (every account-monitor response example), unmeasured_campaigns must also equal
+// the number of rows in THAT array with fetch_failed=true: a bound alone let the examples publish
+// a non-zero count beside campaign rows that all read fetch_failed=false.
 func TestPublishedAccountMonitorTotalsExamplesArePossible(t *testing.T) {
 	for _, spec := range hubspotMonitorSpecs {
 		t.Run(spec, func(t *testing.T) {
-			seen := 0
+			seen, enclosed := 0, 0
 			for path, ex := range hubspotMonitorSpecExamples(t, spec) {
 				hubspotMonitorVisit(ex, func(v any) {
 					n, ok := v.(map[string]any)
 					if !ok {
 						return
+					}
+					if totals, ok := n["totals"].(map[string]any); ok {
+						if rows, ok := n["campaigns"].([]any); ok {
+							enclosed++
+							checkUnmeasuredAgainstCampaigns(t, path, totals, rows)
+						}
 					}
 					cc, hasCC := n["campaign_count"].(float64)
 					if !hasCC {
@@ -307,6 +316,30 @@ func TestPublishedAccountMonitorTotalsExamplesArePossible(t *testing.T) {
 			if seen == 0 {
 				t.Fatalf("no account-monitor totals example found in %s; the scan is vacuous", spec)
 			}
+			if enclosed == 0 {
+				t.Fatalf("no account-monitor example with totals beside campaigns found in %s; the scan is vacuous", spec)
+			}
 		})
+	}
+}
+
+// checkUnmeasuredAgainstCampaigns pins one response example's totals to the campaigns array it
+// sits beside: unmeasured_campaigns counts exactly the rows that say fetch_failed=true.
+func checkUnmeasuredAgainstCampaigns(t *testing.T, path string, totals map[string]any, rows []any) {
+	t.Helper()
+	failed := 0
+	for _, r := range rows {
+		if row, ok := r.(map[string]any); ok && row["fetch_failed"] == true {
+			failed++
+		}
+	}
+	u, ok := totals["unmeasured_campaigns"].(float64)
+	if !ok {
+		t.Errorf("%s: totals beside campaigns without unmeasured_campaigns: %v", path, totals)
+		return
+	}
+	if u != float64(failed) {
+		t.Errorf("%s: totals.unmeasured_campaigns = %v, but %d of the %d campaign rows beside it have fetch_failed=true",
+			path, u, failed, len(rows))
 	}
 }
