@@ -186,3 +186,27 @@ func TestReddit_ReadRedditKeywordPerformance_RefreshReusesTheRead(t *testing.T) 
 		t.Errorf("reporting requests = %d, want 1", n)
 	}
 }
+
+// The guard is keyed on the TRIMMED bound account — the id the scope was checked against — not the
+// connection's raw value, so a padded account id caches under the same key as the clean one.
+func TestReddit_ReadRedditKeywordPerformance_GuardKeyUsesTrimmedAccount(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+	s := newRedditAudienceServer(t)
+	c := activeRedditConn(goodRedditCreds)
+	c.AccountID = "  " + c.AccountID + " "
+	d := s.dispatcher(fakeConnReader{conn: c})
+	if _, err := d.ReadRedditKeywordPerformance(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, redditScope("t3_c")); err != nil {
+		t.Fatalf("ReadRedditKeywordPerformance: %v", err)
+	}
+	want := redditReportKey("t2_acct", model.MetricsWindowLast30Days, d.keywords.now(), []string{"t3_c"})
+	d.keywords.mu.Lock()
+	_, ok := d.keywords.cache[want]
+	keys := make([]string, 0, len(d.keywords.cache))
+	for k := range d.keywords.cache {
+		keys = append(keys, k)
+	}
+	d.keywords.mu.Unlock()
+	if !ok {
+		t.Errorf("guard cache keys = %q, want %q (the trimmed account)", keys, want)
+	}
+}

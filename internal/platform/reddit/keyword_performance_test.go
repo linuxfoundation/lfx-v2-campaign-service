@@ -113,6 +113,18 @@ func TestGetKeywordPerformance_FailsClosed(t *testing.T) {
 		{"overlong keyword", func(id string) string {
 			return audienceReport(audienceRow(id, "keyword", `"`+strings.Repeat("a", maxKeywordTextLen+1)+`"`, 1, 0, 1))
 		}},
+		{"overlong multibyte keyword (201 runes)", func(id string) string {
+			return audienceReport(audienceRow(id, "keyword", `"`+strings.Repeat("語", maxKeywordTextLen+1)+`"`, 1, 0, 1))
+		}},
+		{"line separator U+2028 (Zl)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u2028x"`, 1, 0, 1)) }},
+		{"paragraph separator U+2029 (Zp)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u2029x"`, 1, 0, 1)) }},
+		{"bidi override U+202E (Cf)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u202ex"`, 1, 0, 1)) }},
+		{"bidi embedding U+202A (Cf)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u202ax"`, 1, 0, 1)) }},
+		{"bidi isolate U+2066 (Cf)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u2066x"`, 1, 0, 1)) }},
+		{"bidi isolate end U+2069 (Cf)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u2069x"`, 1, 0, 1)) }},
+		{"zero-width space U+200B (Cf)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u200bx"`, 1, 0, 1)) }},
+		{"zero-width joiner U+200D (Cf)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\u200dx"`, 1, 0, 1)) }},
+		{"BOM U+FEFF (Cf)", func(id string) string { return audienceReport(audienceRow(id, "keyword", `"CANARY\ufeffx"`, 1, 0, 1)) }},
 		{"duplicate keyword row", func(id string) string {
 			r := audienceRow(id, "keyword", `"k"`, 1, 0, 1)
 			return audienceReport(r, r)
@@ -159,10 +171,15 @@ func TestGetKeywordPerformance_RefusedBeforeAnyRequest(t *testing.T) {
 		{"invalid id", model.MetricsWindowLast30Days, []string{"t3_a,campaign:id==t3_x"}, ErrReportScopeInvalid},
 		{"too many", model.MetricsWindowLast30Days, tooMany, ErrReportScopeTooLarge},
 		{"unmapped window", model.MetricsWindowLast14Days, []string{"t3_a"}, ErrUnsupportedWindow},
+		{"unaddressable bound account", model.MetricsWindowLast30Days, []string{"t3_a"}, ErrInvalidAccountID},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &audienceStub{answer: healthyKeywords}
-			kp, err := newAudienceClient(t, s).GetKeywordPerformance(context.Background(), tc.window, tc.scope)
+			c := newAudienceClient(t, s)
+			if tc.name == "unaddressable bound account" {
+				c.account.AccountID = "t2/../x"
+			}
+			kp, err := c.GetKeywordPerformance(context.Background(), tc.window, tc.scope)
 			if !errors.Is(err, tc.want) || kp != nil {
 				t.Errorf("got (%+v, %v), want %v", kp, err, tc.want)
 			}
@@ -170,6 +187,37 @@ func TestGetKeywordPerformance_RefusedBeforeAnyRequest(t *testing.T) {
 				t.Errorf("Reddit was contacted %d time(s)", n)
 			}
 		})
+	}
+}
+
+// A keyword is bounded in CHARACTERS, as the removal's MaxLength(200) is: 200 multibyte runes (600
+// bytes) are accepted, read and returned verbatim; the 201-rune refusal is in FailsClosed.
+func TestGetKeywordPerformance_LengthCountsRunesNotBytes(t *testing.T) {
+	kw := strings.Repeat("語", maxKeywordTextLen)
+	s := &audienceStub{answer: func(id, _ string) (int, string) {
+		return http.StatusOK, audienceReport(audienceRow(id, "keyword", `"`+kw+`"`, 10, 1, 100))
+	}}
+	kp, err := newAudienceClient(t, s).GetKeywordPerformance(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a"})
+	if err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	if len(kp.Rows) != 1 || kp.Rows[0].Text != kw {
+		t.Fatalf("rows = %+v, want the 200-rune keyword verbatim", kp.Rows)
+	}
+}
+
+// The breakdown key is matched case-insensitively, as the counters in the same row are: a
+// `"Keyword"` echo is read, not refused as missing.
+func TestGetKeywordPerformance_BreakdownKeyIsCaseInsensitive(t *testing.T) {
+	s := &audienceStub{answer: func(id, _ string) (int, string) {
+		return http.StatusOK, audienceReport(audienceRow(id, "Keyword", `"service mesh"`, 10, 1, 100))
+	}}
+	kp, err := newAudienceClient(t, s).GetKeywordPerformance(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a"})
+	if err != nil {
+		t.Fatalf("GetKeywordPerformance: %v", err)
+	}
+	if len(kp.Rows) != 1 || kp.Rows[0].Text != "service mesh" {
+		t.Fatalf("rows = %+v, want the keyword read under a case-folded key", kp.Rows)
 	}
 }
 

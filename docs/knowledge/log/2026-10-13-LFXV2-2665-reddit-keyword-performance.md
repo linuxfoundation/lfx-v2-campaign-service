@@ -12,11 +12,18 @@ Reddit Ads API v3 `KEYWORD` report breakdown, top 50 by impressions with `trunca
 - **Shared reader.** The audience read's request, refusal and decode steps moved to
   `internal/platform/reddit/report_breakdown.go` (renamed `MaxReportCampaigns`,
   `ErrReportScopeTooLarge`/`ErrReportScopeInvalid`); the dispatcher's gate/credential/scope prelude
-  is shared as `redditReportClient`. Same 8-campaign cap (one report per campaign), own connection
+  is shared as `redditReportClient`, which takes the read's enable func and checks it first (so a
+  read built on it cannot ship ungated) and returns the trimmed bound account id that keys each
+  read's guard. Same 8-campaign cap (one report per campaign), own connection
   only, bound account only, fail-closed decoding, `REDDIT_METRICS_ENABLED` gate before the scope
   lookup. The keyword read's 409s use `ErrKeywordReportScope*`.
-- **Keyword text** is kept verbatim but a blank, over-200-byte, invalid-UTF-8, control-character
-  or `<`/`>` value fails the read; a `null` keyword is a row with no `text`.
+- **Keyword text** is kept verbatim but a blank, over-200-character (runes, as the removal's Goa
+  `MaxLength(200)` counts), invalid-UTF-8, control-character, invisible-formatting (Unicode `Cf`:
+  zero-width, bidi), line/paragraph-separator (`Zl`/`Zp`) or `<`/`>` value fails the read; a `null`
+  keyword is a row with no `text`.
+- **Breakdown key case.** The shared reader matches the breakdown value's key case-insensitively
+  (`rowKeyFold`), as the old audience struct decode did and as the row's counters still are; the
+  refactor had briefly made it case-sensitive.
 - Chart route regex, RuleSet entry and parity rows for `reddit-ads/keywords`; API catalog row; the
   keyword-targeting concept now points at this read instead of saying there are no per-keyword
   metrics.
@@ -27,7 +34,9 @@ Reddit Ads API v3 `KEYWORD` report breakdown, top 50 by impressions with `trunca
   the send, after the token refresh, and a pre-send dial failure releases it; the chart's
   unconditional single-replica guard covers it; and it has its own single-flight guard with a 60 s
   success cache. Tests: the keyword read's Mixed-provenance cases in `reddit_keywords_test.go`
-  (dispatch and service) and `TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts`.
+  (dispatch and service) and `TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts`, whose dial
+  case counts reservations through a test-only `ReportBudgets.onReserve` hook to prove a slot was
+  taken and then released.
 - Verified only against Reddit's published schema, not a live account.
 - `kubernetes/httproute.md`, `kubernetes/ruleset.md` and `kubernetes/deployment.md` list
   `reddit-ads/keywords` and say `REDDIT_METRICS_ENABLED` gates the keyword read too.

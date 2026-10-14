@@ -355,12 +355,24 @@ func TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts(t *testing.T) {
 		deadURL := dead.URL
 		dead.Close() // nothing listens there now: every dial is refused
 		b := NewReportBudgets(time.Minute, 100, 100)
+		var reserved, reservedInsights atomic.Int32
+		b.onReserve = func(_ string, insights bool) {
+			reserved.Add(1)
+			if insights {
+				reservedInsights.Add(1)
+			}
+		}
 		_, err := budgetClient(t, deadURL, b).GetKeywordPerformance(context.Background(), model.MetricsWindowToday, []string{"t3_a"})
 		if err == nil || !isPreSendDialError(err) {
 			t.Fatalf("error = %v, want a pre-send dial failure", err)
 		}
+		// A slot WAS reserved — on the insight sub-budget, right before the send — and handed
+		// back: the ledger is empty only because of the release, not because none was taken.
+		if reserved.Load() != 1 || reservedInsights.Load() != 1 {
+			t.Fatalf("reserved %d (insights %d), want exactly 1 insight slot taken before the dial", reserved.Load(), reservedInsights.Load())
+		}
 		if all, ins := b.used("t2_test"); all != 0 || ins != 0 {
-			t.Errorf("ledger = %d/%d after a refused connection, want 0/0", all, ins)
+			t.Errorf("ledger = %d/%d after a refused connection, want 0/0 (the reserved slot released)", all, ins)
 		}
 	})
 }

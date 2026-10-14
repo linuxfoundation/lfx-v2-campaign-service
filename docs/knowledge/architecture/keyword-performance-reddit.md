@@ -57,10 +57,18 @@ From Reddit's published Ads API v3 OpenAPI document (read as described in
   impressions, then campaign id, then text; capped at 50 with `truncated`, like the Google and
   Microsoft keyword reads.
 - **Keyword text is kept verbatim** — phrases, punctuation, non-ASCII — but a blank value, one over
-  200 bytes (the removal's own bound), invalid UTF-8, a control character, or `<` / `>` fails the
-  read rather than being published. A `null` keyword is a row with no `text` (delivery attributed
+  200 CHARACTERS (runes — the removal's own bound, Goa `MaxLength(200)`, which counts runes, so a
+  200-character CJK keyword is read, not refused for its 600 bytes), invalid UTF-8, a control
+  character, an invisible formatting character (Unicode `Cf`: zero-width U+200B–U+200D and U+FEFF,
+  bidi embeddings/overrides U+202A–U+202E and isolates U+2066–U+2069), a line or paragraph
+  separator (U+2028/U+2029), or `<` / `>` fails the read rather than being published. A `null` keyword is a row with no `text` (delivery attributed
   to no keyword).
-- **Gated by `REDDIT_METRICS_ENABLED`** (default off), checked before the scope lookup.
+- **Gated by `REDDIT_METRICS_ENABLED`** (default off), checked before the scope lookup (the
+  orchestrator asks `KeywordsEnabled`) and again as the FIRST step of the shared dispatcher prelude
+  `redditReportClient`, which takes the read's enable func — so a read built on the prelude cannot
+  ship ungated.
+- **Breakdown key matched case-insensitively** (`"keyword"` or `"Keyword"`), as `encoding/json`
+  matches the row's counters; two keys differing only in case are refused by `identityjson.Check`.
 
 ## Acting on a keyword
 

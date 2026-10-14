@@ -745,8 +745,11 @@ sum.
 [Reddit Keyword Performance](../architecture/keyword-performance-reddit.md)): the shared reader with
 the single `KEYWORD` breakdown — one report per campaign — then one `KeywordRow` per (campaign,
 keyword), ranked by impressions, campaign id, text (unattributed last), capped at `MaxKeywordRows`
-(50) with `Truncated`. `keywordTextErr` keeps text verbatim but refuses blank, over-200-byte,
-invalid-UTF-8, control-character and `<`/`>` values. Tests: `keyword_performance_test.go`.
+(50) with `Truncated`. `keywordTextErr` keeps text verbatim but refuses blank, over-200-character
+(runes, as the removal's Goa `MaxLength(200)` counts), invalid-UTF-8, control-character, Unicode
+`Cf` (zero-width, bidi), `Zl`/`Zp` (U+2028/U+2029) and `<`/`>` values. The breakdown value's row key
+is matched case-insensitively (`rowKeyFold`), like the counters `encoding/json` decodes from the
+same row. Tests: `keyword_performance_test.go`.
 
 ### Reporting budget (`report_budget.go`, PR #306)
 

@@ -182,6 +182,45 @@ func TestGetAudienceInsights_EmptyReportIsZeroDelivery(t *testing.T) {
 	}
 }
 
+// The breakdown key is matched case-insensitively, as the row's counters are (encoding/json): a
+// `"Gender"` echo is the gender value, not a missing breakdown. (Two keys differing only in case
+// are refused earlier, by identityjson.Check.)
+func TestGetAudienceInsights_BreakdownKeyIsCaseInsensitive(t *testing.T) {
+	s := &audienceStub{answer: func(id, breakdown string) (int, string) {
+		if breakdown == "GENDER" {
+			return http.StatusOK, audienceReport(audienceRow(id, "Gender", `"female"`, 600, 30, 3_000_000))
+		}
+		return healthyAudience(id, breakdown)
+	}}
+	ai, err := newAudienceClient(t, s).GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a"})
+	if err != nil {
+		t.Fatalf("GetAudienceInsights: %v", err)
+	}
+	found := false
+	for _, b := range ai.Buckets {
+		if b.Dimension == AudienceDimensionGender && b.Value == "female" && b.Impressions == 600 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("buckets = %+v, want the female gender bucket read under a case-folded key", ai.Buckets)
+	}
+}
+
+// A row carrying the breakdown key twice, differing only in case, is refused whole (identityjson),
+// so the case-insensitive lookup never has to choose between two values.
+func TestGetAudienceInsights_CaseFoldedDuplicateBreakdownKeyRefused(t *testing.T) {
+	s := &audienceStub{answer: func(id, breakdown string) (int, string) {
+		if breakdown == "GENDER" {
+			return http.StatusOK, audienceReport(strings.TrimSuffix(audienceRow(id, "gender", `"female"`, 1, 0, 1), "}") + `,"Gender":"male"}`)
+		}
+		return healthyAudience(id, breakdown)
+	}}
+	if ai, err := newAudienceClient(t, s).GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a"}); err == nil {
+		t.Fatalf("got %+v, want a refusal", ai)
+	}
+}
+
 // Every untrustworthy response fails the WHOLE read: no partial buckets, and no upstream value
 // (CANARY) or account id in the error.
 func TestGetAudienceInsights_FailsClosed(t *testing.T) {

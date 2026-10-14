@@ -18,8 +18,9 @@ const (
 	// MaxKeywordRows caps the keyword read's rows, ranked by impressions, as the Google and
 	// Microsoft keyword reads cap theirs; KeywordPerformance.Truncated says when more exist.
 	MaxKeywordRows = 50
-	// maxKeywordTextLen bounds a reported keyword, matching the 200 the keyword-targeting removal
-	// (remove-keyword-targeting) accepts for the same text.
+	// maxKeywordTextLen bounds a reported keyword in CHARACTERS (runes), matching the removal
+	// (remove-keyword-targeting), whose Goa MaxLength(200) counts runes too — so a multibyte
+	// keyword the removal accepts is never refused here for its byte length.
 	maxKeywordTextLen = 200
 )
 
@@ -31,22 +32,28 @@ var keywordBreakdown = reportBreakdown{dimension: "keyword", breakdown: "KEYWORD
 
 // keywordTextErr admits keyword text verbatim — spaces, punctuation and non-ASCII letters included,
 // since targeted keywords are phrases ("service mesh") — while refusing what could not be a keyword
-// and could carry markup or break a log line: invalid UTF-8, a control character, `<` or `>`, a
-// blank value, or one longer than maxKeywordTextLen bytes. A refused value fails the whole read.
+// and could carry markup, hide text or break a log line: invalid UTF-8, a control character (Cc),
+// an invisible format character (Cf: zero-width U+200B–U+200D and U+FEFF, the bidi overrides and
+// isolates U+202A–U+202E and U+2066–U+2069), a line or paragraph separator (Zl U+2028, Zp U+2029),
+// `<` or `>`, a blank value, or one longer than maxKeywordTextLen characters. A refused value fails
+// the whole read.
 func keywordTextErr(v string) error {
 	switch {
 	case strings.TrimSpace(v) == "":
 		return fmt.Errorf("keyword is blank (%d bytes)", len(v))
-	case len(v) > maxKeywordTextLen:
-		return fmt.Errorf("keyword is longer than %d bytes (%d bytes)", maxKeywordTextLen, len(v))
 	case !utf8.ValidString(v):
 		return fmt.Errorf("keyword is not valid UTF-8 (%d bytes)", len(v))
+	case utf8.RuneCountInString(v) > maxKeywordTextLen:
+		return fmt.Errorf("keyword is longer than %d characters (%d characters)", maxKeywordTextLen, utf8.RuneCountInString(v))
 	case strings.ContainsAny(v, "<>"):
 		return fmt.Errorf("keyword contains markup characters (%d bytes)", len(v))
 	}
 	for _, r := range v {
 		if unicode.IsControl(r) {
 			return fmt.Errorf("keyword contains a control character (%d bytes)", len(v))
+		}
+		if unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return fmt.Errorf("keyword contains an invisible formatting or separator character (%d bytes)", len(v))
 		}
 	}
 	return nil

@@ -60,8 +60,10 @@ var (
 // TwitterDispatcher.ReadTwitterAudienceInsights step for step with ONE deliberate difference — the
 // credential:
 //
-//  1. The window is checked BEFORE credentials are resolved (the caller has already checked the
-//     flag), so the refusal is the same 400 whatever the connection's state. The window set is the
+//  0. The read's gate (enabled: AudienceEnabled / KeywordsEnabled, both REDDIT_METRICS_ENABLED)
+//     comes first, INSIDE the prelude, so a read built on it cannot ship ungated. A caller that
+//     skips the orchestrator's earlier check is still refused before anything else is looked at.
+//  1. The window is checked BEFORE credentials are resolved, so the refusal is the same 400 whatever the connection's state. The window set is the
 //     campaign metrics read's (reddit.ValidateMetricsWindow).
 //  2. Credentials resolve through resolveOwned: the project's OWN connection only, never the LF
 //     system fallback — the account monitor's rule (resolveMonitorClient), not the Meta/X audience
@@ -83,23 +85,29 @@ var (
 // successful one reused for a minute; and every report attempt spends from the ad account's
 // process-wide reporting budget (reddit/report_budget.go) — a read that cannot get its slots
 // before its deadline fails whole.
-func (d *RedditDispatcher) redditReportClient(ctx context.Context, op, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope, s redditReportSentinels) (*reddit.Client, []string, error) {
+//
+// It returns the client, the scope's campaign ids and the TRIMMED bound account id — the one the
+// scope was checked against, and the one each read keys its guard on.
+func (d *RedditDispatcher) redditReportClient(ctx context.Context, op, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope, enabled func() error, s redditReportSentinels) (*reddit.Client, []string, string, error) {
+	if err := enabled(); err != nil {
+		return nil, nil, "", err
+	}
 	if werr := reddit.ValidateMetricsWindow(window); werr != nil {
-		return nil, nil, fmt.Errorf("%s: %w", op, errors.Join(domain.ErrMetricsWindowUnsupported, werr))
+		return nil, nil, "", fmt.Errorf("%s: %w", op, errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}
 	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	accountID := strings.TrimSpace(res.accountID)
 	if verr := reddit.ValidateAccountID(accountID); verr != nil {
-		return nil, nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, verr)
+		return nil, nil, "", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, verr)
 	}
 	campaignIDs, err := redditScopeForAccount(scope, accountID, op, s.invalid)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	return client, campaignIDs, nil
+	return client, campaignIDs, accountID, nil
 }
 
 // classifyRedditReportError re-tags a broken-down read's client refusals with the read's domain
@@ -120,14 +128,11 @@ func classifyRedditReportError(op string, err error, s redditReportSentinels) er
 // COMMUNITY report breakdowns over window, confined to the campaigns in scope (redditReportClient).
 func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error) {
 	const op = "read reddit audience insights"
-	if err := d.AudienceEnabled(); err != nil {
-		return nil, err
-	}
-	client, campaignIDs, err := d.redditReportClient(ctx, op, projectID, platform, window, scope, redditAudienceSentinels)
+	client, campaignIDs, accountID, err := d.redditReportClient(ctx, op, projectID, platform, window, scope, d.AudienceEnabled, redditAudienceSentinels)
 	if err != nil {
 		return nil, err
 	}
-	ai, err := d.audience.read(ctx, client.AccountID(), window, campaignIDs, func(callCtx context.Context) (*reddit.AudienceInsights, error) {
+	ai, err := d.audience.read(ctx, accountID, window, campaignIDs, func(callCtx context.Context) (*reddit.AudienceInsights, error) {
 		return client.GetAudienceInsights(callCtx, window, campaignIDs)
 	})
 	if err != nil {
@@ -154,14 +159,11 @@ func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, proje
 // (redditReportClient) and capped at reddit.MaxKeywordRows by impressions.
 func (d *RedditDispatcher) ReadRedditKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditKeywordPerformance, error) {
 	const op = "read reddit keyword performance"
-	if err := d.KeywordsEnabled(); err != nil {
-		return nil, err
-	}
-	client, campaignIDs, err := d.redditReportClient(ctx, op, projectID, platform, window, scope, redditKeywordSentinels)
+	client, campaignIDs, accountID, err := d.redditReportClient(ctx, op, projectID, platform, window, scope, d.KeywordsEnabled, redditKeywordSentinels)
 	if err != nil {
 		return nil, err
 	}
-	kp, err := d.keywords.read(ctx, client.AccountID(), window, campaignIDs, func(callCtx context.Context) (*reddit.KeywordPerformance, error) {
+	kp, err := d.keywords.read(ctx, accountID, window, campaignIDs, func(callCtx context.Context) (*reddit.KeywordPerformance, error) {
 		return client.GetKeywordPerformance(callCtx, window, campaignIDs)
 	})
 	if err != nil {

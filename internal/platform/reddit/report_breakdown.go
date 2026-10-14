@@ -212,7 +212,7 @@ func (c *Client) readBreakdownReport(ctx context.Context, r *breakdownRead, camp
 			if err := row.validate(campaignID); err != nil {
 				return breakdownDecodeError(fmt.Errorf("page %d row %d: %w", page, i, err))
 			}
-			value, verr := breakdownValue(keys[b.rowKey], b)
+			value, verr := breakdownValue(rowKeyFold(keys, b.rowKey), b)
 			if verr != nil {
 				return breakdownDecodeError(fmt.Errorf("page %d row %d: %w", page, i, verr))
 			}
@@ -247,6 +247,22 @@ func decodeBreakdownRows(data json.RawMessage) ([]json.RawMessage, error) {
 		return nil, errors.New("\"data\" has no \"metrics\" array")
 	}
 	return *env.Metrics, nil
+}
+
+// rowKeyFold returns the row's value under key, matched case-INSENSITIVELY — as encoding/json
+// matches the counters decoded into reportRow from the same row — so a `"Gender"` echo is read
+// like `"gender"` rather than refused as missing. At most one key can match: identityjson.Check has
+// already refused the page if two keys of a row differ only in case.
+func rowKeyFold(keys map[string]json.RawMessage, key string) json.RawMessage {
+	if v, ok := keys[key]; ok {
+		return v
+	}
+	for k, v := range keys {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return nil
 }
 
 // breakdownValue reads one breakdown value: an absent key is an error (the report was not grouped

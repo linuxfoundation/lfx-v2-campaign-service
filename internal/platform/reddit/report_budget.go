@@ -78,6 +78,9 @@ type ReportBudgets struct {
 	now             func() time.Time
 	// sleep waits d or until ctx ends. Swapped in tests.
 	sleep func(ctx context.Context, d time.Duration) error
+	// onReserve, when set, is called after each slot is taken. Tests only: it lets a test prove a
+	// slot was reserved and then released, not merely that the ledger ended empty.
+	onReserve func(accountID string, insights bool)
 
 	mu        sync.Mutex
 	byAccount map[string]*accountReportLedger
@@ -130,6 +133,9 @@ func (b *ReportBudgets) reserve(ctx context.Context, accountID string, insights 
 		}
 		at, wait, ok := b.tryTake(accountID, insights)
 		if ok {
+			if b.onReserve != nil {
+				b.onReserve(accountID, insights)
+			}
 			var once sync.Once
 			return func() { once.Do(func() { b.release(accountID, insights, at) }) }, nil
 		}
