@@ -315,6 +315,68 @@ func TestReportBudgets_PreSendDialFailureReleasesTheSlot(t *testing.T) {
 	}
 }
 
+// The keyword performance read sends through the same slot discipline as every report read: a
+// cancelled context or a failed token refresh takes no slot and sends nothing, and a pre-send dial
+// failure hands its slot back. One campaign is one KEYWORD report, so no sibling attempt is in
+// flight to muddy the count.
+func TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts(t *testing.T) {
+	t.Run("cancelled context", func(t *testing.T) {
+		var sent atomic.Int32
+		srv := pagedThrottledServer(t, &sent)
+		b := NewReportBudgets(time.Minute, 100, 100)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := budgetClient(t, srv.URL, b).GetKeywordPerformance(ctx, model.MetricsWindowToday, []string{"t3_a"}); err == nil {
+			t.Fatal("GetKeywordPerformance on a cancelled context succeeded")
+		}
+		if all, ins := b.used("t2_test"); all != 0 || ins != 0 || sent.Load() != 0 {
+			t.Errorf("ledger %d/%d, sent %d; want 0/0/0", all, ins, sent.Load())
+		}
+	})
+	t.Run("token refresh fails", func(t *testing.T) {
+		var sent atomic.Int32
+		srv := pagedThrottledServer(t, &sent)
+		tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+		}))
+		t.Cleanup(tok.Close)
+		b := NewReportBudgets(time.Minute, 100, 100)
+		c := NewClient(testCreds, testAccount, WithBaseURL(srv.URL+"/api/v3"), WithTokenURL(tok.URL),
+			WithNowFunc(fixedRedditClock()), WithReportBudgets(b), withRetryBaseDelay(time.Millisecond))
+		if _, err := c.GetKeywordPerformance(context.Background(), model.MetricsWindowToday, []string{"t3_a"}); err == nil {
+			t.Fatal("GetKeywordPerformance with a failing token refresh succeeded")
+		}
+		if all, ins := b.used("t2_test"); all != 0 || ins != 0 || sent.Load() != 0 {
+			t.Errorf("ledger %d/%d, sent %d; want 0/0/0", all, ins, sent.Load())
+		}
+	})
+	t.Run("pre-send dial failure", func(t *testing.T) {
+		dead := httptest.NewServer(http.NotFoundHandler())
+		deadURL := dead.URL
+		dead.Close() // nothing listens there now: every dial is refused
+		b := NewReportBudgets(time.Minute, 100, 100)
+		var reserved, reservedInsights atomic.Int32
+		b.onReserve = func(_ string, insights bool) {
+			reserved.Add(1)
+			if insights {
+				reservedInsights.Add(1)
+			}
+		}
+		_, err := budgetClient(t, deadURL, b).GetKeywordPerformance(context.Background(), model.MetricsWindowToday, []string{"t3_a"})
+		if err == nil || !isPreSendDialError(err) {
+			t.Fatalf("error = %v, want a pre-send dial failure", err)
+		}
+		// A slot WAS reserved — on the insight sub-budget, right before the send — and handed
+		// back: the ledger is empty only because of the release, not because none was taken.
+		if reserved.Load() != 1 || reservedInsights.Load() != 1 {
+			t.Fatalf("reserved %d (insights %d), want exactly 1 insight slot taken before the dial", reserved.Load(), reservedInsights.Load())
+		}
+		if all, ins := b.used("t2_test"); all != 0 || ins != 0 {
+			t.Errorf("ledger = %d/%d after a refused connection, want 0/0 (the reserved slot released)", all, ins)
+		}
+	})
+}
+
 // release hands back exactly the slot it was issued for, once.
 func TestReportBudgets_ReleaseIsExactAndIdempotent(t *testing.T) {
 	b, _ := fakeLedger(5, 5)

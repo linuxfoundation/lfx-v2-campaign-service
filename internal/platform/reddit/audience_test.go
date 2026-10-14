@@ -182,6 +182,45 @@ func TestGetAudienceInsights_EmptyReportIsZeroDelivery(t *testing.T) {
 	}
 }
 
+// The breakdown key is matched case-insensitively, as the row's counters are (encoding/json): a
+// `"Gender"` echo is the gender value, not a missing breakdown. (Two keys differing only in case
+// are refused earlier, by identityjson.Check.)
+func TestGetAudienceInsights_BreakdownKeyIsCaseInsensitive(t *testing.T) {
+	s := &audienceStub{answer: func(id, breakdown string) (int, string) {
+		if breakdown == "GENDER" {
+			return http.StatusOK, audienceReport(audienceRow(id, "Gender", `"female"`, 600, 30, 3_000_000))
+		}
+		return healthyAudience(id, breakdown)
+	}}
+	ai, err := newAudienceClient(t, s).GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a"})
+	if err != nil {
+		t.Fatalf("GetAudienceInsights: %v", err)
+	}
+	found := false
+	for _, b := range ai.Buckets {
+		if b.Dimension == AudienceDimensionGender && b.Value == "female" && b.Impressions == 600 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("buckets = %+v, want the female gender bucket read under a case-folded key", ai.Buckets)
+	}
+}
+
+// A row carrying the breakdown key twice, differing only in case, is refused whole (identityjson),
+// so the case-insensitive lookup never has to choose between two values.
+func TestGetAudienceInsights_CaseFoldedDuplicateBreakdownKeyRefused(t *testing.T) {
+	s := &audienceStub{answer: func(id, breakdown string) (int, string) {
+		if breakdown == "GENDER" {
+			return http.StatusOK, audienceReport(strings.TrimSuffix(audienceRow(id, "gender", `"female"`, 1, 0, 1), "}") + `,"Gender":"male"}`)
+		}
+		return healthyAudience(id, breakdown)
+	}}
+	if ai, err := newAudienceClient(t, s).GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a"}); err == nil {
+		t.Fatalf("got %+v, want a refusal", ai)
+	}
+}
+
 // Every untrustworthy response fails the WHOLE read: no partial buckets, and no upstream value
 // (CANARY) or account id in the error.
 func TestGetAudienceInsights_FailsClosed(t *testing.T) {
@@ -273,7 +312,7 @@ func TestGetAudienceInsights_UpstreamFailureRedactsAccount(t *testing.T) {
 	}
 }
 
-// A report still paging after audienceMaxPages is refused rather than truncated.
+// A report still paging after breakdownMaxPages is refused rather than truncated.
 func TestGetAudienceInsights_PageCapRefuses(t *testing.T) {
 	page := 0
 	var mu sync.Mutex
@@ -289,14 +328,14 @@ func TestGetAudienceInsights_PageCapRefuses(t *testing.T) {
 		return http.StatusOK, `{"data":{"metrics":[]},"pagination":{"next_url":"` + next + `"}}`
 	}}
 	_, err := newAudienceClient(t, s).GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, []string{"t3_a"})
-	if !errors.Is(err, errAudiencePageCap) {
+	if !errors.Is(err, errBreakdownPageCap) {
 		t.Fatalf("error = %v, want the page cap refusal", err)
 	}
 }
 
 // Refusals decided before Reddit is contacted.
 func TestGetAudienceInsights_RefusedBeforeAnyRequest(t *testing.T) {
-	tooMany := make([]string, MaxAudienceCampaigns+1)
+	tooMany := make([]string, MaxReportCampaigns+1)
 	for i := range tooMany {
 		tooMany[i] = "t3_" + strings.Repeat("a", i+1)
 	}
@@ -307,9 +346,9 @@ func TestGetAudienceInsights_RefusedBeforeAnyRequest(t *testing.T) {
 		scope   []string
 		want    error
 	}{
-		{"empty scope never widens", model.MetricsWindowLast30Days, "t2_test", nil, ErrAudienceScopeInvalid},
-		{"malformed campaign id", model.MetricsWindowLast30Days, "t2_test", []string{"t3_a", "t3_a,campaign:id==t3_x"}, ErrAudienceScopeInvalid},
-		{"scope too large", model.MetricsWindowLast30Days, "t2_test", tooMany, ErrAudienceScopeTooLarge},
+		{"empty scope never widens", model.MetricsWindowLast30Days, "t2_test", nil, ErrReportScopeInvalid},
+		{"malformed campaign id", model.MetricsWindowLast30Days, "t2_test", []string{"t3_a", "t3_a,campaign:id==t3_x"}, ErrReportScopeInvalid},
+		{"scope too large", model.MetricsWindowLast30Days, "t2_test", tooMany, ErrReportScopeTooLarge},
 		{"unsupported window", model.MetricsWindowYesterday, "t2_test", []string{"t3_a"}, ErrUnsupportedWindow},
 		{"unaddressable bound account", model.MetricsWindowLast30Days, "t2/../x", []string{"t3_a"}, ErrInvalidAccountID},
 	} {
@@ -328,9 +367,9 @@ func TestGetAudienceInsights_RefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-// The fan-out is bounded: never more than audienceReportConcurrency reports in flight.
+// The fan-out is bounded: never more than reportBreakdownConcurrency reports in flight.
 func TestGetAudienceInsights_BoundsConcurrency(t *testing.T) {
-	ids := make([]string, MaxAudienceCampaigns)
+	ids := make([]string, MaxReportCampaigns)
 	for i := range ids {
 		ids[i] = "t3_" + strings.Repeat("c", i+1)
 	}
@@ -338,10 +377,10 @@ func TestGetAudienceInsights_BoundsConcurrency(t *testing.T) {
 	if _, err := newAudienceClient(t, s).GetAudienceInsights(context.Background(), model.MetricsWindowLast30Days, ids); err != nil {
 		t.Fatalf("GetAudienceInsights: %v", err)
 	}
-	if got := s.maxIn.Load(); got > audienceReportConcurrency || got < 2 {
-		t.Errorf("max in flight = %d, want 2..%d", got, audienceReportConcurrency)
+	if got := s.maxIn.Load(); got > reportBreakdownConcurrency || got < 2 {
+		t.Errorf("max in flight = %d, want 2..%d", got, reportBreakdownConcurrency)
 	}
-	if n := len(s.requests()); n != MaxAudienceCampaigns*len(audienceBreakdowns) {
+	if n := len(s.requests()); n != MaxReportCampaigns*len(audienceBreakdowns) {
 		t.Errorf("requests = %d", n)
 	}
 }

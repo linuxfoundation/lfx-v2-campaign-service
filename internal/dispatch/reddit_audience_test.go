@@ -56,7 +56,7 @@ func newRedditAudienceServer(t *testing.T) *redditAudienceServer {
 		}
 		id := strings.TrimPrefix(req.Data.Filter, "campaign:id==")
 		key := strings.ToLower(strings.Join(req.Data.Breakdowns, ""))
-		val := map[string]string{"gender": `"female"`, "country": `"US"`, "community": `"kubernetes"`}[key]
+		val := map[string]string{"gender": `"female"`, "country": `"US"`, "community": `"kubernetes"`, "keyword": `"service mesh"`}[key]
 		_, _ = io.WriteString(w, `{"data":{"metrics":[{"campaign_id":"`+id+`","impressions":1000,"clicks":40,"spend":2500000,"`+key+`":`+val+`}]},"pagination":{}}`)
 	}))
 	t.Cleanup(s.api.Close)
@@ -137,7 +137,7 @@ func TestReddit_ReadRedditAudienceInsights_RefusedBeforeAnyRequest(t *testing.T)
 	noAccount.AccountID = ""
 	badAccount := activeRedditConn(goodRedditCreds)
 	badAccount.AccountID = "t2/acct"
-	tooMany := make([]string, reddit.MaxAudienceCampaigns+1)
+	tooMany := make([]string, reddit.MaxReportCampaigns+1)
 	for i := range tooMany {
 		tooMany[i] = "t3_" + strings.Repeat("c", i+1)
 	}

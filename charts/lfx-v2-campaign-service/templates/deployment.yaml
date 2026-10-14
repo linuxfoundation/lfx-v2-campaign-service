@@ -101,11 +101,11 @@
   Every request to Reddit's reports operation (POST /ad_accounts/{id}/reports) spends from one
   quota, the `ads-reporting` policy: 60 requests per 60 s per ad account. The ledger that keeps
   this service under it (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those for
-  the audience read) is process-local, so N replicas could send up to N × 45 a minute against one
+  the audience and keyword performance reads) is process-local, so N replicas could send up to N × 45 a minute against one
   account.
 
   Not keyed on REDDIT_METRICS_ENABLED, because that flag does not cover all of the traffic: it
-  gates the campaign metrics read and the audience read, but the Reddit ACCOUNT MONITOR
+  gates the campaign metrics read and the audience and keyword performance reads, but the Reddit ACCOUNT MONITOR
   (connection-reddit-ads/account-monitor → RedditDispatcher.ListAccountCampaignMetrics →
   reddit.Client.ListAccountCampaigns) is ungated, always routed, and reads the same reports
   operation. So any replica can spend the budget whenever the monitor can serve — which is

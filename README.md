@@ -182,9 +182,9 @@ openssl rand -base64 32
   a typo) fails closed, and
   `GET .../campaigns/{campaign_id}/metrics` answers 400 "not
   supported for this campaign's platform" for a Reddit campaign. It
-  also gates the Reddit audience read
-  (`GET /projects/{project_id}/reddit-ads/audience`), which answers 400
-  "not supported" while off.
+  also gates the Reddit audience and keyword performance reads
+  (`GET /projects/{project_id}/reddit-ads/audience` and
+  `.../reddit-ads/keywords`), which answer 400 "not supported" while off.
   Off by default because no request has yet been made against a live
   Reddit ad account (LFXV2-3282). The request and response shapes now
   follow Reddit's official public OpenAPI document, but behaviour a

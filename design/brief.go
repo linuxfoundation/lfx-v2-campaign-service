@@ -858,6 +858,51 @@ var RedditAdsAudience = Type("reddit-ads-audience", func() {
 	})
 })
 
+// RedditAdsKeyword is one (campaign, keyword) pair of the Reddit keyword performance read: the
+// Microsoft/Google keyword row's counters where they map, without their criterion handles. Reddit's
+// KEYWORD report breakdown returns the keyword TEXT only ("The keyword for the ad.") — no id, match
+// type or status — so the row is READ-ONLY: nothing on it addresses a mutation. The keyword-targeting
+// read/removal (get-keyword-targeting / remove-keyword-targeting) is where a Reddit keyword is acted on.
+var RedditAdsKeyword = Type("reddit-ads-keyword", func() {
+	Attribute("campaign_id", String, "The Reddit campaign this keyword served under (Reddit's id; resolve it to this service's campaign with reddit-ads/campaign-ref)", func() { Example("t3_abc123") })
+	Attribute("text", String, "Reddit's KEYWORD report value, verbatim (\"The keyword for the ad.\"). ABSENT when Reddit reported an explicit null — delivery it attributed to no keyword, such as community or interest targeting. Not an identifier: Reddit reports no keyword id, so this row cannot address a keyword action; it has not been verified to equal the ad group's targeting entry byte for byte.", func() {
+		MaxLength(200)
+		Example("service mesh")
+	})
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(4820) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(311) })
+	Attribute("cost_micros", Int64, "Spend over the window (Reddit's SPEND, already micro-units) in the ad account's own currency. This service performs no FX conversion and does not read the currency.", func() { Example(1284000) })
+	Attribute("ctr", Float64, "Clicks/Impressions as a fraction, 0 when Impressions is 0", func() { Example(0.0645) })
+	Required("campaign_id", "impressions", "clicks", "cost_micros", "ctr")
+	Example(redditKeywordExample)
+})
+
+// redditKeywordExample is a possible row (ctr = clicks/impressions), shared by the row type and the
+// envelope so the two cannot disagree.
+var redditKeywordExample = map[string]any{
+	"campaign_id": "t3_abc123", "text": "service mesh",
+	"impressions": 4820, "clicks": 311, "cost_micros": 1284000, "ctr": 311.0 / 4820.0,
+}
+
+// RedditAdsKeywords is the project-scoped Reddit keyword performance read: the Google/Microsoft
+// keyword envelope's window, rows, row_count and truncated. No saved-report fields (the read is
+// live) and no conversions (the Reddit metrics reads request none).
+var RedditAdsKeywords = Type("reddit-ads-keywords", func() {
+	Attribute("window", String, "The reporting window these counters cover, as UTC days (the Reddit campaign metrics read's range for the same window)", redditAudienceWindowEnum)
+	Attribute("rows", ArrayOf(RedditAdsKeyword), "One row per (campaign, keyword) across the campaigns this project owns, ordered by impressions descending, then campaign_id, then text (a text-less row last among equals), and capped at 50 — see `truncated`.", func() {
+		Example([]map[string]any{redditKeywordExample})
+	})
+	Attribute("row_count", Int, "How many rows are in `rows`.", func() { Example(1) })
+	Attribute("truncated", Boolean, "True when this project's campaigns have more (campaign, keyword) rows than were returned. The rows are the TOP ones by impressions — do not total them as the project's whole spend.", func() { Example(false) })
+	Required("window", "rows", "row_count", "truncated")
+	Example(map[string]any{
+		"window":    "last_30_days",
+		"rows":      []map[string]any{redditKeywordExample},
+		"row_count": 1,
+		"truncated": false,
+	})
+})
+
 // HubSpotCampaign is one LF HubSpot marketing campaign.
 //
 // The `hs_utm` token is the point of this type: it is what makes a send attributable to a
