@@ -827,7 +827,9 @@ timestamp, or that is at or after the cutoff — unless `created_time` is readab
 `updated_time` is within `creationStampTolerance` (60s) of it. Meta stamps `updated_time` at
 creation, so without that exception every campaign or ad set CREATED inside the window looked
 edited and a campaign this service just created could never be paced; an absent or unreadable
-`created_time` keeps the conservative verdict. The CAMPAIGN's verdict also gates the ad-set
+`created_time` keeps the conservative verdict, and an `updated_time` BEFORE a readable
+`created_time` is inconsistent and counts as edited — checked first, since the negative difference
+would otherwise always fall inside the tolerance. The CAMPAIGN's verdict also gates the ad-set
 fallback: pausing and resuming only the campaign leaves its ad sets ACTIVE with an old
 `updated_time`, so without the gate the paused days were expected to spend (a false underspend);
 a campaign edited in the window gets no ad-set budget. Whether a STATUS change moves a campaign's

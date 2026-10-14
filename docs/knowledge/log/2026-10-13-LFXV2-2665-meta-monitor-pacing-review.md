@@ -112,6 +112,10 @@ the row is `pacing_unknown`, never a false alert.
   `pacing_unknown`. That a status change moves the campaign's `updated_time` is not explicitly
   documented by Meta and is unverified live; if it does not, a pause/resume stays invisible — noted
   in `code/internal-platform-meta.md`.
+- **`updated_time` before `created_time` is unknown.** The difference was negative, always
+  inside the 60s tolerance, so an object with inconsistent stamps passed as "never edited".
+  `editedSince` now treats it as edited, before the cutoff and tolerance checks, for a CBO
+  campaign, an ad set, and the campaign gating the ad-set fallback.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against

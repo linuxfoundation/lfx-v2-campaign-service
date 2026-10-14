@@ -877,3 +877,46 @@ func TestListAccountCampaigns_CampaignEditedInWindowBlocksAdSetFallback(t *testi
 		})
 	}
 }
+
+// An updated_time BEFORE created_time is inconsistent data. The difference is negative, which
+// always fell inside the 60s tolerance, so the object passed as "never edited" and bypassed the
+// fail-closed guard (PR #316 review). It is now unknown — inside the window or before it — for a
+// CBO campaign, for an ad set, and for the campaign gating the ad-set fallback.
+func TestListAccountCampaigns_UpdatedBeforeCreatedIsUnknown(t *testing.T) {
+	for _, stamps := range []string{
+		`"created_time":"2026-10-05T10:00:00+0000","updated_time":"2026-10-05T09:59:59+0000"`,
+		`"created_time":"2026-10-05T10:00:00+0000","updated_time":"2026-10-01T00:00:00+0000"`,
+		`"created_time":"2026-06-01T00:00:00+0000","updated_time":"2026-05-01T00:00:00+0000"`,
+	} {
+		t.Run("CBO campaign "+stamps, func(t *testing.T) {
+			rows, _ := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, `"daily_budget":"5000",`+stamps))},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+			})
+			assertBudgets(t, rows["111"], 0, 0)
+		})
+		t.Run("ad set "+stamps, func(t *testing.T) {
+			rows, _ := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, ""))},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+				adSets:    []string{monitorList(monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000",`+stamps))},
+			})
+			assertBudgets(t, rows["111"], 0, 0)
+		})
+		t.Run("campaign gating the ad-set fallback "+stamps, func(t *testing.T) {
+			rows, _ := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, stamps), monitorCampaign("222", StatusActive, ""))},
+				insights:  []string{insightsFor("111", "222")},
+				currency:  usdAccount,
+				adSets: []string{monitorList(
+					monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`),
+					monitorAdSetRow("9002", "222", "ACTIVE", `"daily_budget":"4000"`),
+				)},
+			})
+			assertBudgets(t, rows["111"], 0, 0)
+			assertBudgets(t, rows["222"], 40, 0)
+		})
+	}
+}

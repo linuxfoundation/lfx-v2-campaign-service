@@ -638,6 +638,7 @@ const creationStampTolerance = 60 * time.Second
 
 // editedSince reports whether an object's budget may have been EDITED inside the spend window:
 //   - updated_time unknown (zero): true — fail closed;
+//   - updated_time before a known created_time: true — inconsistent, fail closed;
 //   - updated_time before cutoff: false — nothing changed during the window;
 //   - otherwise true, unless created_time is known and updated_time is within
 //     creationStampTolerance of it: then the object was CREATED inside the window and never
@@ -649,6 +650,13 @@ const creationStampTolerance = 60 * time.Second
 // See budgetEditCutoff.
 func editedSince(updated, created, cutoff time.Time) bool {
 	if updated.IsZero() {
+		return true
+	}
+	// An updated_time BEFORE a known created_time is impossible for a real edit history; it is
+	// inconsistent data, and read as unknown (edited). Checked before the cutoff and the
+	// tolerance: the difference would be negative, always inside the tolerance, and the object
+	// would pass as "never edited", bypassing this guard (PR #316 review).
+	if !created.IsZero() && updated.Before(created) {
 		return true
 	}
 	if updated.Before(cutoff) {
