@@ -294,7 +294,7 @@ func TestCallerValue(t *testing.T) {
 		{"token=SECRET", "(value withheld)"},
 		{"a&SECRET", "(value withheld)"},
 		{"dGhpcyBpcyBhIHNlY3JldCB0b2tlbiBTRUNSRVQyMDg", "(value withheld)"},     // base64, 43 chars
-		{"ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123", "(value withheld)"},     // prefixed token
+		{"ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123", "(value withheld)"},     // secretlint-disable-line -- intentional fake prefixed token
 		{"0123456789abcdef0123456789abcdef01234567", "(value withheld)"},        // 40-char hex
 		{"x" + "SECRET2080000000000000000000000000000/+_-", "(value withheld)"}, // base64 alphabet
 		{"//events.example/reset/SECRET-208", "(value withheld)"},               // protocol-relative URL

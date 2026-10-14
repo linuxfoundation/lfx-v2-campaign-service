@@ -303,7 +303,7 @@ func TestDispatch_RefusalsNeverEchoHostileCallerInput(t *testing.T) {
 		{"x tweet id is over-long", model.ProviderTwitterAds, x, xCfg(long), `invalid tweet id: "` + strings.Repeat("a", 64) + `…"`},
 		{"x tweet id spans lines", model.ProviderTwitterAds, x, xCfg("123\nSECRET-208"), "invalid tweet id: (value withheld)"},
 		{"x tweet id is a bare query", model.ProviderTwitterAds, x, xCfg("access_token=SECRET-208&scope=ads"), "invalid tweet id: (value withheld)"},
-		{"x tweet id is a long opaque token", model.ProviderTwitterAds, x, xCfg("ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123"), "invalid tweet id: (value withheld)"},
+		{"x tweet id is a long opaque token", model.ProviderTwitterAds, x, xCfg("ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123"), "invalid tweet id: (value withheld)"}, // secretlint-disable-line -- intentional fake token, asserting it is withheld
 		{"x tweet id is a protocol-relative URL", model.ProviderTwitterAds, x, xCfg("//events.example/reset/SECRET-208"), "invalid tweet id: (value withheld)"},
 		{"x tweet id is a percent-encoded payload", model.ProviderTwitterAds, x, xCfg("SECRET%2F208"), "invalid tweet id: (value withheld)"},
 		{"linkedin image urn is a protocol-relative URL", model.ProviderLinkedInAds, li, liCfg("//events.example/reset/SECRET-208"), "variant-1 image URN (value withheld) is malformed"},
