@@ -17,36 +17,54 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
-var _ service.RedditAudienceReader = (*RedditDispatcher)(nil)
+var (
+	_ service.RedditAudienceReader = (*RedditDispatcher)(nil)
+	_ service.RedditKeywordReader  = (*RedditDispatcher)(nil)
+)
 
-// redditAudienceEnabled gates the Reddit audience read on REDDIT_METRICS_ENABLED, the flag the
-// Reddit campaign metrics read already uses, because the audience read runs on the same reporting
-// operation (POST /ad_accounts/{id}/reports) — matched to Reddit's published OpenAPI document but
-// never exercised against a live ad account — and adds breakdowns to it, which is more of that
-// contract, not less. Only the exact value "true" enables it, read per call; disabled, the read
-// answers the same 400 as a platform with no audience read, before any credential is resolved or
-// request made.
-func redditAudienceEnabled() error {
+// redditReportsEnabled gates the Reddit broken-down reads (audience and keyword performance) on
+// REDDIT_METRICS_ENABLED, the flag the Reddit campaign metrics read already uses, because they run
+// on the same reporting operation (POST /ad_accounts/{id}/reports) — matched to Reddit's published
+// OpenAPI document but never exercised against a live ad account — and add breakdowns to it, which
+// is more of that contract, not less. Only the exact value "true" enables them, read per call;
+// disabled, a read answers the same 400 as a platform without it, before any credential is
+// resolved or request made.
+func redditReportsEnabled(read string) error {
 	if os.Getenv(constants.EnvRedditMetricsEnabled) != "true" {
-		return fmt.Errorf("reddit audience insights are disabled (%s is not \"true\") until the reporting contract is exercised against a live ad account: %w",
-			constants.EnvRedditMetricsEnabled, domain.ErrKeywordInsightsUnsupported)
+		return fmt.Errorf("reddit %s are disabled (%s is not \"true\") until the reporting contract is exercised against a live ad account: %w",
+			read, constants.EnvRedditMetricsEnabled, domain.ErrKeywordInsightsUnsupported)
 	}
 	return nil
 }
 
 // AudienceEnabled implements service.RedditAudienceReader: the gate the orchestrator checks BEFORE
 // the scope lookup. ReadRedditAudienceInsights re-checks it for a caller that skips the orchestrator.
-func (d *RedditDispatcher) AudienceEnabled() error { return redditAudienceEnabled() }
+func (d *RedditDispatcher) AudienceEnabled() error { return redditReportsEnabled("audience insights") }
 
-// ReadRedditAudienceInsights implements service.RedditAudienceReader: Reddit's GENDER, COUNTRY and
-// COMMUNITY report breakdowns over window, confined to the campaigns in scope.
+// KeywordsEnabled implements service.RedditKeywordReader, AudienceEnabled's twin.
+func (d *RedditDispatcher) KeywordsEnabled() error { return redditReportsEnabled("keyword insights") }
+
+// redditReportSentinels are the domain sentinels one broken-down read reports its scope refusals
+// under: the audience read's (ErrAudienceScope*) or the keyword read's (ErrKeywordReportScope*),
+// each with its own fixed, client-safe 409 text.
+type redditReportSentinels struct {
+	tooLarge, invalid error
+}
+
+var (
+	redditAudienceSentinels = redditReportSentinels{tooLarge: domain.ErrAudienceScopeTooLarge, invalid: domain.ErrAudienceScopeInvalid}
+	redditKeywordSentinels  = redditReportSentinels{tooLarge: domain.ErrKeywordReportScopeTooLarge, invalid: domain.ErrKeywordReportScopeInvalid}
+)
+
+// redditReportClient is the shared prelude of the Reddit broken-down reads, mirroring
+// TwitterDispatcher.ReadTwitterAudienceInsights step for step with ONE deliberate difference — the
+// credential:
 //
-// It mirrors TwitterDispatcher.ReadTwitterAudienceInsights step for step, with ONE deliberate
-// difference — the credential:
-//
-//  1. The flag, then the window, are checked BEFORE credentials are resolved, so both refusals are
-//     the same 400 whatever the connection's state. The window set is the campaign metrics read's
-//     (reddit.ValidateMetricsWindow).
+//  0. The read's gate (enabled: AudienceEnabled / KeywordsEnabled, both REDDIT_METRICS_ENABLED)
+//     comes first, INSIDE the prelude, so a read built on it cannot ship ungated. A caller that
+//     skips the orchestrator's earlier check is still refused before anything else is looked at.
+//  1. The window is checked BEFORE credentials are resolved, so the refusal is the same 400 whatever the connection's state. The window set is the
+//     campaign metrics read's (reddit.ValidateMetricsWindow).
 //  2. Credentials resolve through resolveOwned: the project's OWN connection only, never the LF
 //     system fallback — the account monitor's rule (resolveMonitorClient), not the Meta/X audience
 //     reads' project-then-system resolution. A project with no Reddit connection of its own is
@@ -61,27 +79,56 @@ func (d *RedditDispatcher) AudienceEnabled() error { return redditAudienceEnable
 //     prove it is not exactly that after the connection was re-pointed. ANY mismatch or unknown
 //     refuses the whole read (409) BEFORE Reddit is contacted, rather than dropping the entry.
 //
-// The CACHED client is used, as by the metrics read, so the read reuses the connection's OAuth
-// access token rather than minting one per call. The call runs through d.audience: an identical
-// concurrent read is joined and a successful one reused for a minute (redditReportGuard), and
-// every report attempt spends from the ad account's process-wide reporting budget
-// (reddit/report_budget.go) — a read that cannot get its slots before its deadline fails whole.
-func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error) {
-	if err := redditAudienceEnabled(); err != nil {
-		return nil, err
+// The CACHED client is returned, as for the metrics read, so a read reuses the connection's OAuth
+// access token rather than minting one per call. Each read then runs its call through its own
+// redditReportGuard (d.audience / d.keywords): an identical concurrent read is joined and a
+// successful one reused for a minute; and every report attempt spends from the ad account's
+// process-wide reporting budget (reddit/report_budget.go) — a read that cannot get its slots
+// before its deadline fails whole.
+//
+// It returns the client, the scope's campaign ids and the TRIMMED bound account id — the one the
+// scope was checked against, and the one each read keys its guard on.
+func (d *RedditDispatcher) redditReportClient(ctx context.Context, op, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope, enabled func() error, s redditReportSentinels) (*reddit.Client, []string, string, error) {
+	if err := enabled(); err != nil {
+		return nil, nil, "", err
 	}
 	if werr := reddit.ValidateMetricsWindow(window); werr != nil {
-		return nil, fmt.Errorf("read reddit audience insights: %w", errors.Join(domain.ErrMetricsWindowUnsupported, werr))
+		return nil, nil, "", fmt.Errorf("%s: %w", op, errors.Join(domain.ErrMetricsWindowUnsupported, werr))
 	}
 	client, res, err := d.resolveRedditClientWithCreds(ctx, projectID, platform, d.creds.resolveOwned)
 	if err != nil {
-		return nil, err
+		return nil, nil, "", err
 	}
 	accountID := strings.TrimSpace(res.accountID)
 	if verr := reddit.ValidateAccountID(accountID); verr != nil {
-		return nil, fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, verr)
+		return nil, nil, "", fmt.Errorf("%w: %w", domain.ErrConnectionNotUsable, verr)
 	}
-	campaignIDs, err := redditScopeForAccount(scope, accountID, "read reddit audience insights")
+	campaignIDs, err := redditScopeForAccount(scope, accountID, op, s.invalid)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return client, campaignIDs, accountID, nil
+}
+
+// classifyRedditReportError re-tags a broken-down read's client refusals with the read's domain
+// sentinels; every upstream failure is returned unclassified (→ 503).
+func classifyRedditReportError(op string, err error, s redditReportSentinels) error {
+	switch {
+	case errors.Is(err, reddit.ErrReportScopeTooLarge):
+		return fmt.Errorf("%w: %w", s.tooLarge, err)
+	case errors.Is(err, reddit.ErrReportScopeInvalid):
+		return fmt.Errorf("%w: %w", s.invalid, err)
+	case errors.Is(err, reddit.ErrUnsupportedWindow):
+		return fmt.Errorf("%s: %w: %w", op, domain.ErrMetricsWindowUnsupported, err)
+	}
+	return fmt.Errorf("%s: %w", op, err)
+}
+
+// ReadRedditAudienceInsights implements service.RedditAudienceReader: Reddit's GENDER, COUNTRY and
+// COMMUNITY report breakdowns over window, confined to the campaigns in scope (redditReportClient).
+func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error) {
+	const op = "read reddit audience insights"
+	client, campaignIDs, accountID, err := d.redditReportClient(ctx, op, projectID, platform, window, scope, d.AudienceEnabled, redditAudienceSentinels)
 	if err != nil {
 		return nil, err
 	}
@@ -89,15 +136,7 @@ func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, proje
 		return client.GetAudienceInsights(callCtx, window, campaignIDs)
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, reddit.ErrAudienceScopeTooLarge):
-			return nil, fmt.Errorf("%w: %w", domain.ErrAudienceScopeTooLarge, err)
-		case errors.Is(err, reddit.ErrAudienceScopeInvalid):
-			return nil, fmt.Errorf("%w: %w", domain.ErrAudienceScopeInvalid, err)
-		case errors.Is(err, reddit.ErrUnsupportedWindow):
-			return nil, fmt.Errorf("read reddit audience insights: %w: %w", domain.ErrMetricsWindowUnsupported, err)
-		}
-		return nil, fmt.Errorf("read reddit audience insights: %w", err)
+		return nil, classifyRedditReportError(op, err, redditAudienceSentinels)
 	}
 	buckets := make([]model.RedditAudienceBucket, 0, len(ai.Buckets))
 	for _, b := range ai.Buckets {
@@ -115,25 +154,54 @@ func (d *RedditDispatcher) ReadRedditAudienceInsights(ctx context.Context, proje
 	return &model.RedditAudienceInsights{Window: window, Buckets: buckets}, nil
 }
 
+// ReadRedditKeywordPerformance implements service.RedditKeywordReader: Reddit's KEYWORD report
+// breakdown over window, one row per (campaign, keyword), confined to the campaigns in scope
+// (redditReportClient) and capped at reddit.MaxKeywordRows by impressions.
+func (d *RedditDispatcher) ReadRedditKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditKeywordPerformance, error) {
+	const op = "read reddit keyword performance"
+	client, campaignIDs, accountID, err := d.redditReportClient(ctx, op, projectID, platform, window, scope, d.KeywordsEnabled, redditKeywordSentinels)
+	if err != nil {
+		return nil, err
+	}
+	kp, err := d.keywords.read(ctx, accountID, window, campaignIDs, func(callCtx context.Context) (*reddit.KeywordPerformance, error) {
+		return client.GetKeywordPerformance(callCtx, window, campaignIDs)
+	})
+	if err != nil {
+		return nil, classifyRedditReportError(op, err, redditKeywordSentinels)
+	}
+	rows := make([]model.RedditKeywordRow, 0, len(kp.Rows))
+	for _, r := range kp.Rows {
+		rows = append(rows, model.RedditKeywordRow{
+			CampaignID:  r.CampaignID,
+			Text:        r.Text,
+			Impressions: r.Impressions,
+			Clicks:      r.Clicks,
+			CostMicros:  r.CostMicros,
+			Ctr:         r.Ctr,
+		})
+	}
+	return &model.RedditKeywordPerformance{Window: window, Rows: rows, Truncated: kp.Truncated}, nil
+}
+
 // redditScopeForAccount is twitterScopeForAccount for Reddit, but STRICTER about provenance: the
 // campaign ids in scope, provided every entry's recorded creation account (redditCreationAccountID)
 // is present AND is the account the connection resolves to. The X and Meta reads let an unrecorded
-// account through; this read does not, because nothing else bounds it — Reddit ids are only unique
-// within an account, and a legacy row read on a re-pointed connection would publish another
-// campaign's audience as this project's. An unrecorded account is
-// ErrCampaignAccountMismatch joined with ErrCampaignProvenanceUnknown (409, remedy: re-dispatch);
-// a different one is ErrCampaignAccountMismatch (409); a scope with BOTH is all three of
-// ErrCampaignProvenanceMixed, ErrCampaignProvenanceUnknown and ErrCampaignAccountMismatch joined
-// (409, naming both remedies), never just one of the two faults. A stored id that is not a usable Reddit
-// campaign id is ErrAudienceScopeInvalid (409). All refused before any request, never dropped.
-func redditScopeForAccount(scope []model.ProjectCampaignScope, accountID, op string) ([]string, error) {
+// account through; these reads do not, because nothing else bounds them — Reddit ids are only
+// unique within an account, and a legacy row read on a re-pointed connection would publish another
+// campaign's numbers as this project's. An unrecorded account is ErrCampaignAccountMismatch joined
+// with ErrCampaignProvenanceUnknown (409, remedy: re-dispatch); a different one is
+// ErrCampaignAccountMismatch (409); a scope with BOTH is all three of ErrCampaignProvenanceMixed,
+// ErrCampaignProvenanceUnknown and ErrCampaignAccountMismatch joined (409, naming both remedies),
+// never just one of the two faults. A stored id that is not a usable Reddit campaign id is refused
+// as invalid (the read's own 409 sentinel). All refused before any request, never dropped.
+func redditScopeForAccount(scope []model.ProjectCampaignScope, accountID, op string, invalid error) ([]string, error) {
 	current := strings.TrimSpace(accountID)
 	ids := make([]string, 0, len(scope))
 	unknown, foreign := 0, 0
 	for _, s := range scope {
 		if verr := reddit.ValidateCampaignID(s.PlatformCampaignID); verr != nil {
 			return nil, fmt.Errorf("%s: a campaign in scope has a malformed reddit campaign id (%d bytes): %w",
-				op, len(s.PlatformCampaignID), domain.ErrAudienceScopeInvalid)
+				op, len(s.PlatformCampaignID), invalid)
 		}
 		switch created := redditCreationAccountID(&model.Campaign{Result: s.Result}); {
 		case created == "":
@@ -162,7 +230,7 @@ func redditScopeForAccount(scope []model.ProjectCampaignScope, accountID, op str
 	if len(ids) == 0 {
 		// Unreachable from the orchestrator, which answers an empty scope without calling the
 		// adapter — refused here anyway so the guarantee does not rest on one caller.
-		return nil, fmt.Errorf("%s: no campaigns in scope: %w", op, domain.ErrAudienceScopeInvalid)
+		return nil, fmt.Errorf("%s: no campaigns in scope: %w", op, invalid)
 	}
 	return ids, nil
 }

@@ -222,6 +222,10 @@ type Client struct {
 	// get-reddit-ads-audience endpoint.
 	GetRedditAdsAudienceDoer goahttp.Doer
 
+	// GetRedditAdsKeywords Doer is the HTTP client used to make requests to the
+	// get-reddit-ads-keywords endpoint.
+	GetRedditAdsKeywordsDoer goahttp.Doer
+
 	// ResolveGoogleAdsCampaign Doer is the HTTP client used to make requests to
 	// the resolve-google-ads-campaign endpoint.
 	ResolveGoogleAdsCampaignDoer goahttp.Doer
@@ -378,6 +382,7 @@ func NewClient(
 		GetMicrosoftAdsKeywordsDoer:     doer,
 		GetMicrosoftAdsAudienceDoer:     doer,
 		GetRedditAdsAudienceDoer:        doer,
+		GetRedditAdsKeywordsDoer:        doer,
 		ResolveGoogleAdsCampaignDoer:    doer,
 		ResolveMicrosoftAdsCampaignDoer: doer,
 		ResolveMetaAdsCampaignDoer:      doer,
@@ -1631,6 +1636,30 @@ func (c *Client) GetRedditAdsAudience() goa.Endpoint {
 		resp, err := c.GetRedditAdsAudienceDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-reddit-ads-audience", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// GetRedditAdsKeywords returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords server.
+func (c *Client) GetRedditAdsKeywords() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeGetRedditAdsKeywordsRequest(c.encoder)
+		decodeResponse = DecodeGetRedditAdsKeywordsResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildGetRedditAdsKeywordsRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.GetRedditAdsKeywordsDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
 		}
 		return decodeResponse(resp)
 	}

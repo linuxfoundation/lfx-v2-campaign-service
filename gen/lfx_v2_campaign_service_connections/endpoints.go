@@ -67,6 +67,7 @@ type Endpoints struct {
 	GetMicrosoftAdsKeywords     goa.Endpoint
 	GetMicrosoftAdsAudience     goa.Endpoint
 	GetRedditAdsAudience        goa.Endpoint
+	GetRedditAdsKeywords        goa.Endpoint
 	ResolveGoogleAdsCampaign    goa.Endpoint
 	ResolveMicrosoftAdsCampaign goa.Endpoint
 	ResolveMetaAdsCampaign      goa.Endpoint
@@ -147,6 +148,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsAudience:     NewGetMicrosoftAdsAudienceEndpoint(s, a.JWTAuth),
 		GetRedditAdsAudience:        NewGetRedditAdsAudienceEndpoint(s, a.JWTAuth),
+		GetRedditAdsKeywords:        NewGetRedditAdsKeywordsEndpoint(s, a.JWTAuth),
 		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignEndpoint(s, a.JWTAuth),
 		ResolveMicrosoftAdsCampaign: NewResolveMicrosoftAdsCampaignEndpoint(s, a.JWTAuth),
 		ResolveMetaAdsCampaign:      NewResolveMetaAdsCampaignEndpoint(s, a.JWTAuth),
@@ -225,6 +227,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetMicrosoftAdsKeywords = m(e.GetMicrosoftAdsKeywords)
 	e.GetMicrosoftAdsAudience = m(e.GetMicrosoftAdsAudience)
 	e.GetRedditAdsAudience = m(e.GetRedditAdsAudience)
+	e.GetRedditAdsKeywords = m(e.GetRedditAdsKeywords)
 	e.ResolveGoogleAdsCampaign = m(e.ResolveGoogleAdsCampaign)
 	e.ResolveMicrosoftAdsCampaign = m(e.ResolveMicrosoftAdsCampaign)
 	e.ResolveMetaAdsCampaign = m(e.ResolveMetaAdsCampaign)
@@ -1440,6 +1443,30 @@ func NewGetRedditAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) 
 			return nil, err
 		}
 		return s.GetRedditAdsAudience(ctx, p)
+	}
+}
+
+// NewGetRedditAdsKeywordsEndpoint returns an endpoint function that calls the
+// method "get-reddit-ads-keywords" of service
+// "lfx-v2-campaign-service-connections".
+func NewGetRedditAdsKeywordsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetRedditAdsKeywordsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetRedditAdsKeywords(ctx, p)
 	}
 }
 

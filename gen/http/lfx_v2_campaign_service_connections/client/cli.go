@@ -1956,6 +1956,44 @@ func BuildGetRedditAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetRedditAd
 	return v, nil
 }
 
+// BuildGetRedditAdsKeywordsPayload builds the payload for the
+// lfx-v2-campaign-service-connections get-reddit-ads-keywords endpoint from
+// CLI flags.
+func BuildGetRedditAdsKeywordsPayload(lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsProjectID *string, lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow *string, lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsBearerToken *string) (*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow != nil {
+			window = lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow
+			if !(*lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "today" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "last_7_days" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "last_30_days" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "this_month" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildResolveGoogleAdsCampaignPayload builds the payload for the
 // lfx-v2-campaign-service-connections resolve-google-ads-campaign endpoint
 // from CLI flags.
