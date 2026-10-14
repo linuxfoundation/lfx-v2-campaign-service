@@ -185,9 +185,12 @@ func linkedinAccountMonitorExample() map[string]any {
 	}}, false)
 }
 
-// Meta: a daily budget is paced as budget_day*days: 960/(80*30) = 40% (underspending). A
-// lifetime budget is prorated over the elapsed flight: 5900 over Sep 1–Oct 30 (59 days) is
-// 100/day, 35 days elapsed by Oct 5, so 2800/3500 = 80% (normal). No conversions measured.
+// Meta: both budgets are paced over the read's own Insights window, the 30 UTC days Sep 6–Oct 5
+// inclusive, counting only the days the flight ran in it. A daily budget whose flight covers the
+// whole window: 960/(80*30) = 40% (underspending). A lifetime budget is spread over its flight
+// (end inclusive): 5900 over Sep 1–Oct 30 (60 days), 30 of them in the window, so 2950 expected
+// and 2360/2950 = 80% (normal). Money in action items is in the account currency, never "$". No
+// conversions measured.
 func metaAccountMonitorExample() map[string]any {
 	return accountMonitorExample("act_8666746580", []map[string]any{
 		{
@@ -198,13 +201,13 @@ func metaAccountMonitorExample() map[string]any {
 		},
 		{
 			"platform_campaign_id": "120210000000000002", "name": "KubeCon NA 2026 - Retargeting", "status": "ACTIVE",
-			"spend": 2800.0, "impressions": 150000, "clicks": 2400,
+			"spend": 2360.0, "impressions": 150000, "clicks": 2400,
 			"budget_day": 0.0, "total_budget": 5900.0, "start_date": "2026-09-01", "end_date": "2026-10-30",
 			"pacing_pct": 80.0, "pacing_label": "normal",
 		},
 	}, []map[string]any{{
 		"campaign_id": "120210000000000001", "campaign_name": "KubeCon NA 2026 - Prospecting", "priority": "MED",
-		"issue":  "Underspending: 40% of budget used ($960.00 of $2400.00)",
+		"issue":  "Underspending: 40% of budget used (960.00 in account currency of 2400.00 in account currency)",
 		"action": "Broaden audience targeting or increase bid cap to improve delivery",
 	}}, false)
 }

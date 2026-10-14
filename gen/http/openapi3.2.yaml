@@ -10519,7 +10519,7 @@ paths:
                                     - action: Broaden audience targeting or increase bid cap to improve delivery
                                       campaign_id: "120210000000000001"
                                       campaign_name: KubeCon NA 2026 - Prospecting
-                                      issue: 'Underspending: 40% of budget used ($960.00 of $2400.00)'
+                                      issue: 'Underspending: 40% of budget used (960.00 in account currency of 2400.00 in account currency)'
                                       priority: MED
                                 campaigns:
                                     - budget_day: 80
@@ -10550,7 +10550,7 @@ paths:
                                       pacing_pct: 80
                                       pacing_unknown: false
                                       platform_campaign_id: "120210000000000002"
-                                      spend: 2800
+                                      spend: 2360
                                       start_date: "2026-09-01"
                                       status: ACTIVE
                                       total_budget: 5900
@@ -10559,7 +10559,7 @@ paths:
                                     campaign_count: 2
                                     clicks: 3720
                                     impressions: 238000
-                                    spend: 3760
+                                    spend: 3320
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'

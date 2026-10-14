@@ -66,6 +66,15 @@ the row is `pacing_unknown`, never a false alert.
 - **Spend must be a plain decimal.** `parseMonitorSpend` first requires `^[0-9]+(\.[0-9]+)?$`, so
   hex floats, exponents (`1e2` — Meta sends plain decimals), underscores, signs and bare dots make
   the row `FetchFailed`.
+- **Published Meta monitor example follows the new pacing.** Merging main's per-platform
+  monitor examples (#319): the Meta 200 example in `design/account_monitor_examples.go` is now
+  what `EvaluateMetaMonitor` produces over the read's own window (Sep 6–Oct 5): the lifetime row
+  spends 2360 of a 2950 window plan (5900 over a 60-day inclusive flight, 30 days in the window)
+  for 80%, and the underspending text prints account-currency money, not `$`.
+  `TestPublishedAccountMonitorExamplesMatchTheirOperation` stamps that window on the example rows,
+  as the dispatcher does. Main's `TestListAccountCampaigns_FailedRowIsDecode` now gives its
+  campaigns a campaign-level budget, since a budget-less one would send the read to the ad-set
+  fallback its fixture does not serve.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against
