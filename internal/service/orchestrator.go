@@ -2931,6 +2931,22 @@ type TwitterAudienceReader interface {
 	ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error)
 }
 
+// RedditAudienceReader is an OPTIONAL dispatcher capability: Reddit's GENDER, COUNTRY and
+// COMMUNITY report breakdowns for the campaigns a project OWNS. Type-asserted like
+// TwitterAudienceReader, so a dispatcher without it — every platform but Reddit — yields
+// ErrKeywordInsightsUnsupported → 400. Separate from TwitterAudienceReader because the dimensions
+// and result type differ. scope carries KeywordInsightsReader's contract: never empty from the
+// orchestrator, and the adapter refuses the whole read on any provenance mismatch rather than
+// dropping entries.
+//
+// AudienceEnabled is TwitterAudienceReader's gate, for its reason: asked BEFORE the scope lookup,
+// so a disabled read is the documented 400 for a project with no Reddit campaigns too, not a 200
+// with empty buckets.
+type RedditAudienceReader interface {
+	AudienceEnabled() error
+	ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error)
+}
+
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
 // existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
 // clean ErrKeywordActionsUnsupported → 400.
@@ -3145,6 +3161,35 @@ func (o *Orchestrator) ReadTwitterAudienceInsights(ctx context.Context, projectI
 		func(ai *model.TwitterAudienceInsights) {
 			if ai.Buckets == nil {
 				ai.Buckets = []model.TwitterAudienceBucket{}
+			}
+		})
+}
+
+// ReadRedditAudienceInsights reads Reddit audience breakdowns across the project's OWN campaigns.
+// ReadTwitterAudienceInsights' shape exactly — capability check, gate, then readScopedAudience
+// (empty scope answers empty WITHOUT contacting Reddit) — only the capability and result type differ.
+func (o *Orchestrator) ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.RedditAudienceInsights, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(RedditAudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	if err := reader.AudienceEnabled(); err != nil {
+		return nil, err
+	}
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error) {
+			return reader.ReadRedditAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.RedditAudienceInsights {
+			return &model.RedditAudienceInsights{Window: window, Buckets: []model.RedditAudienceBucket{}}
+		},
+		func(ai *model.RedditAudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.RedditAudienceBucket{}
 			}
 		})
 }

@@ -15194,6 +15194,141 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-reddit-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read Reddit Ads audience insights — gender, country and community (subreddit), the Reddit Ads API v3 report breakdowns GENDER, COUNTRY and COMMUNITY — for this project''s own campaigns, live from POST /ad_accounts/{id}/reports on the connected ad account. Reddit offers no AGE breakdown, so there is no age dimension. Read from the project''s OWN connection only (never the LF system account) and its bound ad account only, and scoped to the campaigns this service holds for the project: one report per campaign per breakdown, each filtered to that campaign (campaign:id==<id>) with every returned row checked against it. A campaign that does not record which ad account it was created under is 409 (re-dispatch it). At most 8 campaigns (more is 409). Every report request — each page and each 429 retry — first takes a slot in the ad account''s per-process reporting budget (45 per 60 seconds of Reddit''s documented 60, at most 24 of them for this read, shared with the Reddit metrics read and account monitor); a read that cannot get its slots before its deadline is 503 with nothing partial. Identical concurrent reads share one upstream read, and a successful read is reused for 60 seconds within the same UTC day. A pure read-through; nothing is persisted. A project with no Reddit campaigns of its own receives an empty `buckets` array and Reddit is not contacted. All three breakdowns must load or the request fails (503): each covers the same traffic independently, and one presented without the others is a partial picture. Spend is in the account''s own currency; no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless REDDIT_METRICS_ENABLED is "true", like the Reddit metrics reads that share the reporting contract.'
+            operationId: lfx-v2-campaign-service-connections#get-reddit-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.
+                    example: this_month
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+                  example: this_month
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RedditAdsAudience'
+                            example:
+                                bucket_count: 3
+                                buckets:
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: gender
+                                      impressions: 9000
+                                      value: female
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: country
+                                      impressions: 9000
+                                      value: US
+                                    - clicks: 270
+                                      cost_micros: 2700000
+                                      ctr: 0.03
+                                      dimension: community
+                                      impressions: 9000
+                                      value: kubernetes
+                                window: last_30_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/reddit-ads/campaign-ref:
         get:
             tags:
@@ -22156,6 +22291,123 @@ components:
                     - Rerum tempora est.
             required:
                 - list_ids
+        RedditAdsAudience:
+            type: object
+            properties:
+                bucket_count:
+                    type: integer
+                    description: How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.
+                    example: 3
+                    format: int64
+                buckets:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RedditAdsAudienceBucket'
+                    description: Every bucket across the three breakdowns, discriminated by `dimension`. Ordered by dimension (gender, country, community), then impressions descending, then value (a value-less bucket last among equals).
+                    example:
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: gender
+                          impressions: 9000
+                          value: female
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: country
+                          impressions: 9000
+                          value: US
+                        - clicks: 270
+                          cost_micros: 2700000
+                          ctr: 0.03
+                          dimension: community
+                          impressions: 9000
+                          value: kubernetes
+                window:
+                    type: string
+                    description: The reporting window these counters cover, as UTC days (the Reddit campaign metrics read's range for the same window)
+                    example: this_month
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+            example:
+                bucket_count: 3
+                buckets:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: gender
+                      impressions: 9000
+                      value: female
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: country
+                      impressions: 9000
+                      value: US
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: community
+                      impressions: 9000
+                      value: kubernetes
+                window: last_30_days
+            required:
+                - window
+                - buckets
+                - bucket_count
+        RedditAdsAudienceBucket:
+            type: object
+            properties:
+                clicks:
+                    type: integer
+                    description: Clicks over the window
+                    example: 742
+                    format: int64
+                cost_micros:
+                    type: integer
+                    description: Spend over the window (Reddit's SPEND) in micro-units of the ad account's own currency. This service performs no FX conversion and does not read the currency.
+                    example: 3120000
+                    format: int64
+                ctr:
+                    type: number
+                    description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                    example: 0.0578
+                    format: double
+                dimension:
+                    type: string
+                    description: 'Which Reddit report breakdown this bucket belongs to: gender (GENDER), country (COUNTRY) or community (COMMUNITY, the subreddit)'
+                    example: gender
+                    enum:
+                        - gender
+                        - country
+                        - community
+                impressions:
+                    type: integer
+                    description: Impressions over the window
+                    example: 12840
+                    format: int64
+                value:
+                    type: string
+                    description: 'Reddit''s breakdown value, verbatim (a gender, a country code or a subreddit name). ABSENT when Reddit reported an explicit null for this dimension: traffic Reddit did not attribute to any value, kept so the dimension''s buckets still total its traffic. A value outside a conservative charset fails the read rather than being returned.'
+                    example: US
+                    pattern: ^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$
+            example:
+                clicks: 270
+                cost_micros: 2700000
+                ctr: 0.03
+                dimension: community
+                impressions: 9000
+                value: kubernetes
+            required:
+                - dimension
+                - impressions
+                - clicks
+                - cost_micros
+                - ctr
         RedditAdsConnection:
             type: object
             properties:
