@@ -24,3 +24,8 @@ in-flight claim after an operator clear; the operator's job-less clear is the se
 `ClearDispatchClaim`. And `reconcileRef` caps values in runes at 1024 (it dropped values over
 256 BYTES, which lost legitimate 255-character multibyte LinkedIn names), truncating with a
 `<key>Truncated` flag instead of dropping.
+
+Third follow-up, same review: `docs/channel-connections-schema.md` and the postgres concept still
+named "a concurrent `DeleteDispatchClaim`" as a way the claim row disappears before the upsert's
+INSERT arm. With the job-keyed release only an operator clear (`ClearDispatchClaim`, or by hand)
+can do that; both now say so, and that another row on the slot yields `ErrDispatchClaimLost`.

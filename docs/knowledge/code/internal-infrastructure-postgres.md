@@ -758,8 +758,11 @@ Three consequences follow, and they are what the SQL encodes:
   soft-deleted in the first place — `CampaignStatusDeletable` is a whitelist of settled
   statuses.) The upsert's INSERT arm stamps `created_by` too, but only for the case where the
   claim row is gone by the time the upsert runs: an operator clearing an apparently-stuck
-  claim, or a concurrent `DeleteDispatchClaim`. Both arms setting it is what keeps the column
-  populated on every path that can create the row.
+  claim (`ClearDispatchClaim`, or by hand). Another job's `DeleteDispatchClaim` cannot do it — a
+  release deletes only the releasing job's own pending row, so it is a no-op on anyone else's
+  claim — and the owning job releases only on a path that never upserts. If another row holds
+  the slot by then, neither arm runs (`ErrDispatchClaimLost`). Both arms setting it is what keeps
+  the column populated on every path that can create the row.
 - **The claim stamps BOTH actor columns from one placeholder** (`$5, $5`), matching
   `createBriefQuery`. At creation the author IS the last mover, and leaving `updated_by` NULL
   would make "untouched since it was made" indistinguishable from "we never recorded who" —
