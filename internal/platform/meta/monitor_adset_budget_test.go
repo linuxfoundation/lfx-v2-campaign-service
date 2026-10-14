@@ -417,7 +417,7 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 				rowsJSON = append(rowsJSON, monitorAdSetRow(fmt.Sprintf("%d", 9001+i), "111", "ACTIVE", b))
 			}
 			// The campaign-list row carries no dates, as for a campaign CreateCampaign made.
-			campaign := `{"id":"111","name":"Campaign 111","status":"ACTIVE"}`
+			campaign := `{"id":"111","name":"Campaign 111","status":"ACTIVE",` + settledUpdate + `}`
 			rows, _ := listMonitorRows(t, monitorFixture{
 				campaigns: []string{monitorList(campaign)},
 				insights:  []string{insightsFor("111")},
@@ -833,6 +833,47 @@ func TestListAccountCampaigns_CreatedInWindowUntouchedIsPaced(t *testing.T) {
 				want = 10
 			}
 			assertBudgets(t, rows["111"], want, 0)
+		})
+	}
+}
+
+// The CAMPAIGN's edit guard covers the ad-set fallback too (PR #316 review). Pausing and later
+// resuming only the campaign in Ads Manager moves the campaign's updated_time, not its ad sets':
+// they read ACTIVE and untouched, so the paused days were counted as days that should have
+// spent — 33% pacing and a false underspend. A campaign edited in the window (by the same
+// editedSince rule: cutoff, created_time, 60s tolerance) has no ad-set budget; it stays unknown.
+// A campaign created in the window and never touched still gets its ad-set budget.
+func TestListAccountCampaigns_CampaignEditedInWindowBlocksAdSetFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, stamps string
+		wantDaily    float64
+	}{
+		{"campaign paused and resumed inside the window", `"created_time":"2026-06-01T00:00:00+0000","updated_time":"2026-10-09T08:00:00+0000"`, 0},
+		{"campaign updated_time unreadable", `"created_time":"2026-06-01T00:00:00+0000","updated_time":null`, 0},
+		{"campaign created in the window, untouched", `"created_time":"2026-10-05T10:00:00+0000","updated_time":"2026-10-05T10:00:20+0000"`, 10},
+		{"campaign untouched since before the window", `"created_time":"2026-06-01T00:00:00+0000","updated_time":"2026-06-01T00:00:00+0000"`, 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, rec := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(
+					monitorCampaign("111", StatusActive, tc.stamps),
+					monitorCampaign("222", StatusActive, ""),
+				)},
+				insights: []string{insightsFor("111", "222")},
+				currency: usdAccount,
+				adSets: []string{monitorList(
+					monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`),
+					monitorAdSetRow("9002", "222", "ACTIVE", `"daily_budget":"4000"`),
+				)},
+			})
+			assertBudgets(t, rows["111"], tc.wantDaily, 0)
+			assertBudgets(t, rows["222"], 40, 0)
+			if rows["111"].FetchFailed || rows["111"].Impressions != 1000 {
+				t.Errorf("row 111 = %+v, want delivery kept and not FetchFailed", rows["111"])
+			}
+			if got := adSetRequests(rec); len(got) != 1 {
+				t.Errorf("ad-set reads = %v, want one (campaign 222 still needs it)", got)
+			}
 		})
 	}
 }

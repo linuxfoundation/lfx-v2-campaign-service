@@ -195,7 +195,12 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			row.FailureClass = model.MonitorFailureDecode
 		}
 		if row.Impressions > 0 || row.Status == StatusActive || row.FetchFailed {
-			if currencyKnown && !row.FetchFailed && !positiveMinor(cm.DailyMinor) && !positiveMinor(cm.LifetimeMinor) {
+			// The CAMPAIGN's own edit guard applies to the ad-set fallback too (PR #316 review):
+			// pausing and resuming only the campaign moves the campaign's updated_time but not
+			// its ad sets', which still read ACTIVE — so the paused days would be counted as days
+			// that should have spent (a false underspend). A campaign edited in the window has
+			// no ad-set budget either; it stays unknown.
+			if currencyKnown && !row.FetchFailed && !budgetEdited && !positiveMinor(cm.DailyMinor) && !positiveMinor(cm.LifetimeMinor) {
 				needAdSetBudget = append(needAdSetBudget, len(rows))
 			}
 			rows = append(rows, row)

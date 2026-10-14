@@ -105,6 +105,13 @@ the row is `pacing_unknown`, never a false alert.
   now: absent is no bound, an empty `stop_time` is "no end", and an empty `start_time`, `null`, a
   non-string or a malformed value leaves the campaign-level budget unknown (not `FetchFailed`),
   as an unreadable ad-set window does.
+- **The campaign's edit guard covers the ad-set fallback.** Pausing and resuming only the
+  campaign leaves its ad sets ACTIVE and their `updated_time` unchanged, so the paused days were
+  counted as days that should have spent (33%, a false underspend). A campaign edited in the window
+  (same `editedSince` rule: cutoff, `created_time`, 60s tolerance) now gets no ad-set budget and is
+  `pacing_unknown`. That a status change moves the campaign's `updated_time` is not explicitly
+  documented by Meta and is unverified live; if it does not, a pause/resume stays invisible — noted
+  in `code/internal-platform-meta.md`.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against

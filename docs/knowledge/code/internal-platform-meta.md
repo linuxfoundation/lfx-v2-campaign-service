@@ -827,7 +827,14 @@ timestamp, or that is at or after the cutoff — unless `created_time` is readab
 `updated_time` is within `creationStampTolerance` (60s) of it. Meta stamps `updated_time` at
 creation, so without that exception every campaign or ad set CREATED inside the window looked
 edited and a campaign this service just created could never be paced; an absent or unreadable
-`created_time` keeps the conservative verdict. A CBO campaign so edited keeps its budget unknown (no ad-set fallback); an
+`created_time` keeps the conservative verdict. The CAMPAIGN's verdict also gates the ad-set
+fallback: pausing and resuming only the campaign leaves its ad sets ACTIVE with an old
+`updated_time`, so without the gate the paused days were expected to spend (a false underspend);
+a campaign edited in the window gets no ad-set budget. Whether a STATUS change moves a campaign's
+`updated_time` is not explicitly documented — Meta's Campaign reference describes the field only
+as the last time the campaign was updated — and is not verified against a live account; if it
+does not, this gate cannot see a pause/resume, a known residual. The guard is the conservative
+choice either way. A CBO campaign so edited keeps its budget unknown (no ad-set fallback); an
 ACTIVE ad set so edited makes its campaign's ad-set total unknown. `updated_time` moves on any
 edit, not only a budget change, so this errs towards unknown. Meta's ad-account `/activities` edge
 (AdActivity, with budget-update event types carrying old and new values) could reconstruct the
