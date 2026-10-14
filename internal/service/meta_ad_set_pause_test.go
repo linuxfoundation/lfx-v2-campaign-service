@@ -704,8 +704,8 @@ func TestToggleCampaignStatus_HeldAdSetRefusals(t *testing.T) {
 // never that the ad set is still paused. Exact texts, both operations, both branches.
 func TestAdSetRecordErr_AdviceIsOperationSpecific(t *testing.T) {
 	const (
-		pauseAdvice  = "re-read the ad sets — if deliberately_paused is absent, pause the ad set here again; until it is recorded, a campaign resume would re-activate it"
-		resumeAdvice = "re-read the ad sets — if deliberately_paused is still true, resume the ad set here again to clear it; it is ACTIVE on Meta, and until the record is cleared a campaign resume is refused with 409"
+		pauseAdvice  = "re-read the ad sets — if deliberately_paused is false, pause the ad set here again; until it is recorded, a campaign resume would re-activate it. Re-read the campaign for a fresh ETag before retrying"
+		resumeAdvice = "re-read the ad sets — if deliberately_paused is still true, resume the ad set here again to clear it; it is ACTIVE on Meta, and until the record is cleared a campaign resume is refused with 409. Re-read the campaign for a fresh ETag before retrying"
 	)
 	for _, tc := range []struct {
 		name    string
@@ -730,11 +730,33 @@ func TestAdSetRecordErr_AdviceIsOperationSpecific(t *testing.T) {
 			}
 		})
 	}
-	// The resume advice never says the ad set is still paused, nor tells a resume "if it is not shown".
-	for _, verbErr := range []error{errMetaAdSetClaimLost, errMetaAdSetRecordUnknown, errors.New("db down"), domain.ErrPreconditionFailed} {
-		msg := errMessage(adSetRecordErr(verbErr, true, "resumed"))
-		if strings.Contains(msg, "leaves this ad set paused") || strings.Contains(msg, "is not shown") || !strings.Contains(msg, "still true") {
-			t.Fatalf("resume advice %q", msg)
+	// EVERY branch — row changed (409), lost claim, unknown write, failed write — ends with the
+	// operation's own advice, including the campaign re-read for a fresh ETag (the ad-set read
+	// returns none). Exact texts for the two branches not pinned above.
+	for _, tc := range []struct {
+		err  error
+		verb string
+		want string
+		code int
+	}{
+		{domain.ErrPreconditionFailed, "paused", "the ad set WAS paused on Meta, but this campaign was modified or deleted by another request meanwhile, so the change was not recorded: " + pauseAdvice, 409},
+		{domain.ErrPreconditionFailed, "resumed", "the ad set WAS resumed on Meta, but this campaign was modified or deleted by another request meanwhile, so the change was not recorded: " + resumeAdvice, 409},
+		{errors.New("db down"), "paused", "the ad set WAS paused on Meta, but recording it on the campaign failed: " + pauseAdvice, 503},
+		{errors.New("db down"), "resumed", "the ad set WAS resumed on Meta, but recording it on the campaign failed: " + resumeAdvice, 503},
+	} {
+		err := adSetRecordErr(tc.err, true, tc.verb)
+		if got := errMessage(err); !isStatus(err, tc.code) || got != tc.want {
+			t.Fatalf("message =\n%q\nwant\n%q", got, tc.want)
+		}
+	}
+	// The read always returns the flag as a boolean, so no message may speak of it being absent or
+	// not shown, and the resume advice never says the ad set is still paused.
+	for _, e := range []error{errMetaAdSetClaimLost, errMetaAdSetRecordUnknown, errors.New("db down"), domain.ErrPreconditionFailed} {
+		for _, verb := range []string{"paused", "resumed"} {
+			msg := errMessage(adSetRecordErr(e, true, verb))
+			if strings.Contains(msg, "absent") || strings.Contains(msg, "not shown") || strings.Contains(msg, "leaves this ad set paused") || !strings.Contains(msg, "fresh ETag") {
+				t.Fatalf("%s advice %q", verb, msg)
+			}
 		}
 	}
 }

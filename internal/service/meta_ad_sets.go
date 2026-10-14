@@ -638,17 +638,21 @@ func adSetRecordErr(err error, applied bool, verb string) error {
 // brought in line with Meta's confirmed outcome. It is operation-specific, because the same
 // flag means opposite things:
 //
-//   - after a PAUSE the record should be SET: an ABSENT deliberately_paused means it is missing,
-//     and a campaign resume would then re-activate the ad set — so pause it again;
-//   - after a RESUME the record should be CLEARED: an absent flag means the clear succeeded and
-//     nothing is to be done; a flag STILL present is a stale hold over an ad set that is now
-//     ACTIVE, and while it stands a campaign resume is refused with 409 — so resume the ad set
-//     again to clear it.
+//   - after a PAUSE the record should be SET: deliberately_paused is always a boolean in the read,
+//     so a missing record reads FALSE — and a campaign resume would then re-activate the ad set,
+//     so pause it again;
+//   - after a RESUME the record should be CLEARED: false means the clear succeeded and nothing is
+//     to be done; a flag STILL true is a stale hold over an ad set that is now ACTIVE, and while
+//     it stands a campaign resume is refused with 409 — so resume the ad set again to clear it.
+//
+// Every variant ends by telling the caller to re-read the CAMPAIGN for a fresh ETag: the ad-set
+// read returns none, and the row's version may have moved (a record write bumps it), so a retry
+// with the old If-Match would be a 412.
 func adSetRecordAdvice(verb string) string {
 	if verb == "resumed" {
-		return "re-read the ad sets — if deliberately_paused is still true, resume the ad set here again to clear it; it is ACTIVE on Meta, and until the record is cleared a campaign resume is refused with 409"
+		return "re-read the ad sets — if deliberately_paused is still true, resume the ad set here again to clear it; it is ACTIVE on Meta, and until the record is cleared a campaign resume is refused with 409. Re-read the campaign for a fresh ETag before retrying"
 	}
-	return "re-read the ad sets — if deliberately_paused is absent, pause the ad set here again; until it is recorded, a campaign resume would re-activate it"
+	return "re-read the ad sets — if deliberately_paused is false, pause the ad set here again; until it is recorded, a campaign resume would re-activate it. Re-read the campaign for a fresh ETag before retrying"
 }
 
 // answerUnconfirmedAdSetWrite answers a Meta write whose outcome is unknown: the fixed 503, with

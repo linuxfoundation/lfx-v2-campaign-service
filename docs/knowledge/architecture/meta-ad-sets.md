@@ -225,12 +225,15 @@ the trap `ReplaceCampaign`'s own connection reuse avoids. Each step is bounded b
    Every answer where the record could not be brought in line with Meta's confirmed outcome
    (`adSetRecordErr`: lost claim, unknown write, failed write, row changed) ends with advice
    that depends on the OPERATION, because the flag means opposite things. After a pause, re-read
-   `deliberately_paused` and, if it is ABSENT, pause again, since a campaign resume would
-   otherwise re-activate the ad set. After a resume, an absent flag means the clear succeeded;
-   only a flag STILL true needs another resume of the ad set. The message says the ad set is
-   ACTIVE and that a campaign resume is refused with 409 while that stale hold stands — never
-   that the ad set is still paused (`TestAdSetRecordErr_AdviceIsOperationSpecific` pins the exact
-   texts).
+   `deliberately_paused` (always a boolean in the read, so a missing record reads `false`) and,
+   if it is `false`, pause again, since a campaign resume would otherwise re-activate the ad set.
+   After a resume, `false` means the clear succeeded; only a flag STILL `true` needs another
+   resume of the ad set. The message says the ad set is ACTIVE and that a campaign resume is
+   refused with 409 while that stale hold stands, never that the ad set is still paused. Every
+   variant, including the row-changed 409, ends by telling the caller to re-read the CAMPAIGN for
+   a fresh ETag before retrying: the ad-set read returns none, and a record write may have bumped
+   the version, so the old If-Match would get a 412
+   (`TestAdSetRecordErr_AdviceIsOperationSpecific` pins the exact texts for every branch).
 
 Anything else is "unknown". The state that must never arise is a pause on record over an ad set
 that was never paused (`deliberately_paused` while it serves), so a pause whose record may have
