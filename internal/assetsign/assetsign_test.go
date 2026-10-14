@@ -153,17 +153,60 @@ func TestVerifyRejectsExpiredAndOverlongExpiry(t *testing.T) {
 		t.Fatal("an expired URL must not verify")
 	}
 
-	// A VALIDLY signed URL whose expiry is further away than MaxTTL is refused: a leaked key
-	// must not be able to mint long-lived URLs this service honours.
-	far := now.Add(MaxTTL + time.Minute).Unix()
+	// A VALIDLY signed URL whose expiry is further away than MaxTTL+MaxClockSkew is refused: a
+	// leaked key must not be able to mint long-lived URLs this service honours.
+	far := now.Add(MaxTTL + MaxClockSkew + time.Second).Unix()
 	farSig := base64.RawURLEncoding.EncodeToString(s.mac(p, b, a, far))
 	if s.Verify(p, b, a, far, farSig) {
-		t.Fatal("a signature over an expiry beyond MaxTTL must not verify")
+		t.Fatal("a signature over an expiry beyond MaxTTL+MaxClockSkew must not verify")
 	}
-	edge := now.Add(MaxTTL).Unix()
+	edge := now.Add(MaxTTL + MaxClockSkew).Unix()
 	edgeSig := base64.RawURLEncoding.EncodeToString(s.mac(p, b, a, edge))
 	if !s.Verify(p, b, a, edge, edgeSig) {
-		t.Fatal("an expiry exactly MaxTTL away should verify")
+		t.Fatal("an expiry exactly MaxTTL+MaxClockSkew away should verify")
+	}
+}
+
+// TestVerifyToleratesClockSkewBetweenPods: the pod that mints a URL and the pod that serves it
+// have independent clocks. A 60m URL (the TTL ceiling) minted by a pod whose clock LEADS the
+// serving pod's must still verify there; one minted by a pod that LAGS must verify until its
+// (earlier) expiry; and in both directions an expiry already past on the verifier is refused.
+func TestVerifyToleratesClockSkewBetweenPods(t *testing.T) {
+	serverNow := time.Unix(1_800_000_000, 0)
+	base, err := New(testKey(7), "https://lfx-api.example.org", "60m")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	verifier := base.WithClock(func() time.Time { return serverNow })
+
+	for _, skew := range []time.Duration{time.Second, 30 * time.Second, MaxClockSkew, -time.Second, -MaxClockSkew} {
+		t.Run(skew.String(), func(t *testing.T) {
+			minter := base.WithClock(func() time.Time { return serverNow.Add(skew) })
+			raw, exp, err := minter.Mint(testProject, testBrief, testAsset)
+			if err != nil {
+				t.Fatalf("Mint: %v", err)
+			}
+			p, b, a, e, sig := parts(t, raw)
+			if !verifier.Verify(p, b, a, e, sig) {
+				t.Fatalf("a %s-skewed 60m URL was refused by the serving pod", skew)
+			}
+			// Past its expiry on the VERIFIER's clock it is refused, whichever pod led.
+			late := base.WithClock(func() time.Time { return exp })
+			if late.Verify(p, b, a, e, sig) {
+				t.Fatal("an expiry already reached on the verifier must be refused")
+			}
+		})
+	}
+
+	// Skew beyond the allowance is refused, so the allowance is a bound, not a bypass.
+	minter := base.WithClock(func() time.Time { return serverNow.Add(MaxClockSkew + time.Second) })
+	raw, _, err := minter.Mint(testProject, testBrief, testAsset)
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	p, b, a, e, sig := parts(t, raw)
+	if verifier.Verify(p, b, a, e, sig) {
+		t.Fatal("a 60m URL from a pod more than MaxClockSkew ahead must be refused")
 	}
 }
 
@@ -252,6 +295,22 @@ func TestNewConfiguration(t *testing.T) {
 		{name: "ttl too short", key: testKey(1), base: "https://lfx-api.example.org", ttl: "10s", wantErr: true},
 		{name: "ttl garbage", key: testKey(1), base: "https://lfx-api.example.org", ttl: "soon", wantErr: true},
 		{name: "ttl max", key: testKey(1), base: "https://lfx-api.example.org", ttl: "60m"},
+		{name: "ttl min", key: testKey(1), base: "https://lfx-api.example.org", ttl: "5m"},
+		{name: "ttl below the 5m floor", key: testKey(1), base: "https://lfx-api.example.org", ttl: "4m59s", wantErr: true},
+		{name: "ttl 1m (the old floor) is now refused", key: testKey(1), base: "https://lfx-api.example.org", ttl: "1m", wantErr: true},
+		// Partial combinations (#310 review): every SUPPLIED value is validated even when the
+		// feature would be off because its other half is missing.
+		{name: "malformed key, no base", key: "not base64!!", wantErr: true},
+		{name: "short key, no base", key: short, wantErr: true},
+		{name: "no key, http base", base: "http://lfx-api.example.org", wantErr: true},
+		{name: "no key, base with path", base: "https://lfx-api.example.org/x", wantErr: true},
+		{name: "no key, base with userinfo", base: "https://u:p@lfx-api.example.org", wantErr: true},
+		{name: "ttl too long, both unset", ttl: "61m", wantErr: true},
+		{name: "ttl too short, both unset", ttl: "1m", wantErr: true},
+		{name: "ttl garbage, key only", key: testKey(1), ttl: "soon", wantErr: true},
+		{name: "valid key, no base, valid ttl is off", key: testKey(1), ttl: "10m", wantOff: true},
+		{name: "no key, valid base, valid ttl is off", base: "https://lfx-api.example.org", ttl: "10m", wantOff: true},
+		{name: "valid ttl alone is off", ttl: "30m", wantOff: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -272,5 +331,34 @@ func TestNewConfiguration(t *testing.T) {
 				t.Fatalf("signer enabled = %v, want off = %v", s != nil, tc.wantOff)
 			}
 		})
+	}
+}
+
+// Every unusable value is reported at once, not just the first, so an operator fixing a broken
+// rollout does not discover them one restart at a time.
+func TestNewReportsEveryUnusableValue(t *testing.T) {
+	_, err := New("not base64!!", "http://lfx-api.example.org", "2h")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"signing key", "https", "TTL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestValidateIDs(t *testing.T) {
+	if err := ValidateIDs(testProject, testBrief, testAsset); err != nil {
+		t.Fatalf("valid ids refused: %v", err)
+	}
+	for name, in := range map[string][3]string{
+		"project": {"a/b", testBrief, testAsset},
+		"brief":   {testProject, "x", testAsset},
+		"asset":   {testProject, testBrief, "x"},
+	} {
+		if ValidateIDs(in[0], in[1], in[2]) == nil {
+			t.Errorf("%s: invalid id accepted", name)
+		}
 	}
 }
