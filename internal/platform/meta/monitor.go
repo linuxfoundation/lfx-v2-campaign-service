@@ -340,6 +340,23 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 	return nil, fmt.Errorf("list account campaigns exceeded %d pages; too many campaigns to enumerate", monitorMaxPages)
 }
 
+// parseMonitorSpend parses an Insights `spend` string. strconv.ParseFloat accepts "NaN", "Inf",
+// "-1.5" and hex floats, none of which is a spend: a negative, NaN or infinite value reaching the
+// rules layer would be paced as a real reading — NaN even lands in a band (PR #316 review). So
+// only a finite, non-negative value is accepted; anything else is an error, which the caller
+// records as a per-row parse failure (the row is FetchFailed). The error carries the length,
+// never the upstream bytes, like parseMetricInt.
+func parseMonitorSpend(s string) (float64, error) {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("spend is not a number (%d bytes)", len(s))
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0, fmt.Errorf("spend is not a finite non-negative amount (%d bytes)", len(s))
+	}
+	return v, nil
+}
+
 // insightsWindow is the Insights time_range one account-monitor read used, YYYY-MM-DD inclusive.
 type insightsWindow struct{ since, until string }
 
@@ -435,7 +452,7 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			var spend float64
 			var errS error
 			if row.Spend != "" {
-				spend, errS = strconv.ParseFloat(row.Spend, 64)
+				spend, errS = parseMonitorSpend(row.Spend)
 			}
 			if errI != nil || errC != nil || errS != nil {
 				// Per-row parse failure: skip this row rather than fail the whole read, but

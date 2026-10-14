@@ -45,6 +45,13 @@ the row is `pacing_unknown`, never a false alert.
   too small and fractional, and is what is encoded, for budgets and bids alike. The settings
   readback encodes the recorded amount the same way. The `MetaConfig` create contract in
   `docs/api-catalog.md` now says a fraction of a minor unit is refused at create too, not rounded.
+- **Insights spend must be a finite, non-negative amount.** `fetchAccountCampaignInsights`
+  accepted any `strconv.ParseFloat` result, so a negative, NaN or ±Inf `spend` could reach
+  pacing (now also on the ABO path). `parseMonitorSpend` refuses them and the row is
+  `FetchFailed`, as for any per-row parse failure; the counters already refused negatives through
+  `parseMetricInt`. The `docs/api-catalog.md` settings-readback entry and
+  `code/internal-dispatch.md` now say the recorded budget is encoded exactly, with the legacy
+  `round(amount × offset)` fallback only for a fractional row from before #235.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against

@@ -3338,8 +3338,12 @@ func TestMeta_ListAccountCampaignMetrics_CarriesTheInsightsWindow(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListAccountCampaignMetrics: %v", err)
 	}
-	if insightsQuery != `{"since":"2026-07-24","until":"2026-07-30"}` {
-		t.Fatalf("insights time_range = %s", insightsQuery)
+	// Copied under the lock: the handler writes it on the httptest server's goroutine.
+	mu.Lock()
+	gotRange := insightsQuery
+	mu.Unlock()
+	if gotRange != `{"since":"2026-07-24","until":"2026-07-30"}` {
+		t.Fatalf("insights time_range = %s", gotRange)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))

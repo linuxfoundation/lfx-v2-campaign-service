@@ -457,3 +457,48 @@ func TestListAccountCampaigns_NegativeCampaignBudgetIsUnreadable(t *testing.T) {
 		})
 	}
 }
+
+// An Insights spend that is not a finite, non-negative amount is a parse failure, not a reading:
+// strconv.ParseFloat accepts "NaN", "Inf" and negatives, and such a value used to reach pacing —
+// now through the ABO path too (PR #316 review). The row is FetchFailed, never paced; the
+// counters are held to the same rule. A clean campaign beside it is unaffected.
+func TestListAccountCampaigns_InsightsSpendMustBeFiniteNonNegative(t *testing.T) {
+	for _, tc := range []struct{ name, field, value string }{
+		{"negative spend", "spend", "-5.00"},
+		{"NaN spend", "spend", "NaN"},
+		{"+Inf spend", "spend", "Inf"},
+		{"-Inf spend", "spend", "-Inf"},
+		{"infinity spelled out", "spend", "+Infinity"},
+		{"overflowing spend", "spend", "1e400"},
+		{"negative impressions", "impressions", "-1"},
+		{"negative clicks", "clicks", "-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := map[string]string{"campaign_id": "111", "impressions": "1000", "clicks": "10", "spend": "5"}
+			row[tc.field] = tc.value
+			bad := fmt.Sprintf(`{"campaign_id":"%s","impressions":"%s","clicks":"%s","spend":"%s"}`, row["campaign_id"], row["impressions"], row["clicks"], row["spend"])
+			good := `{"campaign_id":"222","impressions":"1000","clicks":"10","spend":"5"}`
+			rows, _ := listMonitorRows(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, ""), monitorCampaign("222", StatusActive, ""))},
+				insights:  []string{`{"data":[` + bad + `,` + good + `],"paging":{}}`},
+				currency:  usdAccount,
+				adSets: []string{monitorList(
+					monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`),
+					monitorAdSetRow("9002", "222", "ACTIVE", `"daily_budget":"1000"`),
+				)},
+			})
+			if r := rows["111"]; !r.FetchFailed || r.SpendUSD != 0 {
+				t.Errorf("row 111 = %+v, want FetchFailed with no spend for %s=%q", r, tc.field, tc.value)
+			}
+			if r := rows["222"]; r.FetchFailed || r.SpendUSD != 5 || r.DailyBudget != 10 {
+				t.Errorf("row 222 = %+v, want an untouched clean row", r)
+			}
+		})
+	}
+	if v, err := parseMonitorSpend("0"); err != nil || v != 0 {
+		t.Errorf("parseMonitorSpend(\"0\") = %v, %v; want a zero spend accepted", v, err)
+	}
+	if v, err := parseMonitorSpend("12.34"); err != nil || v != 12.34 {
+		t.Errorf("parseMonitorSpend(\"12.34\") = %v, %v; want 12.34", v, err)
+	}
+}

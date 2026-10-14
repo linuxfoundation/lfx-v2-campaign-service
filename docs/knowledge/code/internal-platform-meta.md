@@ -789,6 +789,10 @@ The window is the read's own: `fetchAccountCampaignInsights` returns the `since`
 `ListAccountCampaigns` stamps them on every row (`MetricsSince`/`MetricsUntil`, carried to
 `model.AccountCampaignMetrics.MetricsWindowStart`/`End`), and `EvaluateMetaMonitor(rows)` takes no
 clock — so a request crossing UTC midnight cannot pace against different days than its spend.
+The monitor's Insights `spend` goes through `parseMonitorSpend`, which accepts only a finite,
+non-negative amount (`strconv.ParseFloat` alone admits `NaN`, `Inf` and negatives); anything else
+is a per-row parse failure and the row is `FetchFailed`, never paced. The counters already refuse
+negatives through `parseMetricInt`.
 
 See [internal/platform/meta](../../../internal/platform/meta).
 
