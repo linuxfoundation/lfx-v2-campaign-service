@@ -2085,6 +2085,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
 		// and the orphaned upstream id; keep the id in the result.
+		if errors.Is(uerr, domain.ErrPlatformCampaignAlreadyBound) {
+			// A GENUINE duplicate, not an unknown outcome: the platform resolved this dispatch
+			// to an upstream campaign another live brief already binds (LinkedIn reuses a
+			// same-name campaign in its group). The claim stays held — a retry would resolve
+			// to the same campaign again — and the job names the conflict instead of claiming
+			// a creation it cannot vouch for.
+			slog.ErrorContext(ctx, "dispatch resolved to an upstream campaign already bound to another brief — pending claim retained",
+				"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID)
+			res.Error = "the upstream campaign this dispatch resolved to is already bound to another brief; rename the campaign or unbind the other brief, then clear the pending claim"
+			res.CampaignID = campaign.PlatformCampaignID
+			return res
+		}
 		slog.ErrorContext(ctx, "persist campaign failed after upstream create — pending claim retained",
 			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr)
 		res.Error = "created upstream campaign but failed to record it; see logs"
@@ -2947,8 +2959,10 @@ type NegativeKeywordAdder interface {
 	// AddNegativeKeywords returns exactly one outcome per requested keyword, in request
 	// order, or an error when the platform answered nothing per keyword. campaign is the
 	// persisted row, so the adapter can enforce provisioning and the account-identity
-	// invariant BEFORE the platform is contacted.
-	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
+	// invariant BEFORE the platform is contacted. revision is Reddit's compare-and-set token
+	// (the fingerprint get-keyword-targeting returned) and must be empty for every other
+	// platform; each adapter validates it.
+	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error)
 }
 
 // KeywordTargetingReader is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): read the
@@ -3272,7 +3286,7 @@ func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }
 // order, and the call gets the mutation timeout. The outcome-count check is the same contract:
 // one outcome per requested keyword, or the response cannot be zipped back onto the request.
 // A short slice is UNCONFIRMED, because the add was already issued when it is detected.
-func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	if campaign == nil {
 		return nil, ErrCampaignNotProvisioned
 	}
@@ -3287,7 +3301,7 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
 	start := time.Now()
-	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords)
+	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords, revision)
 	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
 	if aerr != nil {
 		return nil, aerr

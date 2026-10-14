@@ -8426,19 +8426,20 @@ func unmarshalKeywordTargetingRemovalResultResponseBodyToLfxv2campaignservicebri
 // *MetaAdSetResponseBody.
 func unmarshalMetaAdSetResponseBodyToLfxv2campaignservicebriefsMetaAdSet(v *MetaAdSetResponseBody) *lfxv2campaignservicebriefs.MetaAdSet {
 	res := &lfxv2campaignservicebriefs.MetaAdSet{
-		ID:              *v.ID,
-		Listed:          *v.Listed,
-		Name:            v.Name,
-		Status:          v.Status,
-		EffectiveStatus: v.EffectiveStatus,
-		BidStrategy:     v.BidStrategy,
-		BudgetType:      v.BudgetType,
-		BudgetAmount:    v.BudgetAmount,
-		Impressions:     *v.Impressions,
-		Clicks:          *v.Clicks,
-		CostMicros:      *v.CostMicros,
-		Ctr:             *v.Ctr,
-		Recorded:        *v.Recorded,
+		ID:                 *v.ID,
+		Listed:             *v.Listed,
+		Name:               v.Name,
+		Status:             v.Status,
+		EffectiveStatus:    v.EffectiveStatus,
+		BidStrategy:        v.BidStrategy,
+		BudgetType:         v.BudgetType,
+		BudgetAmount:       v.BudgetAmount,
+		Impressions:        *v.Impressions,
+		Clicks:             *v.Clicks,
+		CostMicros:         *v.CostMicros,
+		Ctr:                *v.Ctr,
+		Recorded:           *v.Recorded,
+		DeliberatelyPaused: *v.DeliberatelyPaused,
 	}
 
 	return res

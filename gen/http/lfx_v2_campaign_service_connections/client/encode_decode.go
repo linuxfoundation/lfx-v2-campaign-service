@@ -11482,6 +11482,209 @@ func DecodeResolveTwitterAdsCampaignResponse(decoder func(*http.Response) goahtt
 	}
 }
 
+// BuildResolveLinkedinAdsCampaignRequest instantiates a HTTP request object
+// with method and path set to call the "lfx-v2-campaign-service-connections"
+// service "resolve-linkedin-ads-campaign" endpoint
+func (c *Client) BuildResolveLinkedinAdsCampaignRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", "*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ResolveLinkedinAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeResolveLinkedinAdsCampaignRequest returns an encoder for requests sent
+// to the lfx-v2-campaign-service-connections resolve-linkedin-ads-campaign
+// server.
+func EncodeResolveLinkedinAdsCampaignRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", "*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		values.Add("platform_campaign_id", p.PlatformCampaignID)
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeResolveLinkedinAdsCampaignResponse returns a decoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-linkedin-ads-campaign endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+// DecodeResolveLinkedinAdsCampaignResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeResolveLinkedinAdsCampaignResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ResolveLinkedinAdsCampaignResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			err = ValidateResolveLinkedinAdsCampaignResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			res := NewResolveLinkedinAdsCampaignPlatformCampaignResolutionOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ResolveLinkedinAdsCampaignBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			err = ValidateResolveLinkedinAdsCampaignBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			return nil, NewResolveLinkedinAdsCampaignBadRequest(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ResolveLinkedinAdsCampaignServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			err = ValidateResolveLinkedinAdsCampaignServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			return nil, NewResolveLinkedinAdsCampaignServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ResolveLinkedinAdsCampaignInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			err = ValidateResolveLinkedinAdsCampaignInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			return nil, NewResolveLinkedinAdsCampaignInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ResolveLinkedinAdsCampaignNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			err = ValidateResolveLinkedinAdsCampaignNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			return nil, NewResolveLinkedinAdsCampaignNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			err = ValidateResolveLinkedinAdsCampaignPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			return nil, NewResolveLinkedinAdsCampaignPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ResolveLinkedinAdsCampaignUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			err = ValidateResolveLinkedinAdsCampaignUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			return nil, NewResolveLinkedinAdsCampaignUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "resolve-linkedin-ads-campaign", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildListMetaAdsAccountsRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "list-meta-ads-accounts" endpoint

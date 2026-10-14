@@ -1052,6 +1052,22 @@ type ResolveTwitterAdsCampaignResponseBody struct {
 	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
 }
 
+// ResolveLinkedinAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body.
+type ResolveLinkedinAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
+	// How many matches were found.
+	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
+}
+
 // ListMetaAdsAccountsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body.
@@ -5022,6 +5038,72 @@ type ResolveTwitterAdsCampaignPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ResolveTwitterAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "BadRequest" error.
+type ResolveLinkedinAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ResolveLinkedinAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ResolveLinkedinAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "NotFound" error.
+type ResolveLinkedinAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ResolveLinkedinAdsCampaignUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -11733,6 +11815,99 @@ func NewResolveTwitterAdsCampaignUnauthorized(body *ResolveTwitterAdsCampaignUna
 	return v
 }
 
+// NewResolveLinkedinAdsCampaignPlatformCampaignResolutionOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint result from a HTTP "OK" response.
+func NewResolveLinkedinAdsCampaignPlatformCampaignResolutionOK(body *ResolveLinkedinAdsCampaignResponseBody) *lfxv2campaignserviceconnections.PlatformCampaignResolution {
+	v := &lfxv2campaignserviceconnections.PlatformCampaignResolution{
+		PlatformCampaignID: *body.PlatformCampaignID,
+		MatchCount:         *body.MatchCount,
+	}
+	v.Matches = make([]*lfxv2campaignserviceconnections.CampaignRef, len(body.Matches))
+	for i, val := range body.Matches {
+		if val == nil {
+			v.Matches[i] = nil
+			continue
+		}
+		v.Matches[i] = unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(val)
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint BadRequest error.
+func NewResolveLinkedinAdsCampaignBadRequest(body *ResolveLinkedinAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint ServiceUnavailable error.
+func NewResolveLinkedinAdsCampaignServiceUnavailable(body *ResolveLinkedinAdsCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint InternalServerError error.
+func NewResolveLinkedinAdsCampaignInternalServerError(body *ResolveLinkedinAdsCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint NotFound error.
+func NewResolveLinkedinAdsCampaignNotFound(body *ResolveLinkedinAdsCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint PayloadTooLarge error.
+func NewResolveLinkedinAdsCampaignPayloadTooLarge(body *ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint Unauthorized error.
+func NewResolveLinkedinAdsCampaignUnauthorized(body *ResolveLinkedinAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewListMetaAdsAccountsResultOK builds a
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint result from a HTTP "OK" response.
@@ -14212,6 +14387,28 @@ func ValidateResolveRedditAdsCampaignResponseBody(body *ResolveRedditAdsCampaign
 // ValidateResolveTwitterAdsCampaignResponseBody runs the validations defined
 // on ResolveTwitterAdsCampaignResponseBody
 func ValidateResolveTwitterAdsCampaignResponseBody(body *ResolveTwitterAdsCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Matches == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("matches", "body"))
+	}
+	if body.MatchCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_count", "body"))
+	}
+	for _, e := range body.Matches {
+		if e != nil {
+			if err2 := validateCampaignRefResponseBody(e, "body.matches[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignResponseBody runs the validations defined
+// on ResolveLinkedinAdsCampaignResponseBody
+func ValidateResolveLinkedinAdsCampaignResponseBody(body *ResolveLinkedinAdsCampaignResponseBody) (err error) {
 	if body.PlatformCampaignID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
 	}
@@ -18992,6 +19189,80 @@ func ValidateResolveTwitterAdsCampaignPayloadTooLargeResponseBody(body *ResolveT
 // ValidateResolveTwitterAdsCampaignUnauthorizedResponseBody runs the
 // validations defined on ResolveTwitterAdsCampaignUnauthorizedResponseBody
 func ValidateResolveTwitterAdsCampaignUnauthorizedResponseBody(body *ResolveTwitterAdsCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignBadRequestResponseBody runs the
+// validations defined on ResolveLinkedinAdsCampaignBadRequestResponseBody
+func ValidateResolveLinkedinAdsCampaignBadRequestResponseBody(body *ResolveLinkedinAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// ResolveLinkedinAdsCampaignServiceUnavailableResponseBody
+func ValidateResolveLinkedinAdsCampaignServiceUnavailableResponseBody(body *ResolveLinkedinAdsCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// ResolveLinkedinAdsCampaignInternalServerErrorResponseBody
+func ValidateResolveLinkedinAdsCampaignInternalServerErrorResponseBody(body *ResolveLinkedinAdsCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignNotFoundResponseBody runs the validations
+// defined on ResolveLinkedinAdsCampaignNotFoundResponseBody
+func ValidateResolveLinkedinAdsCampaignNotFoundResponseBody(body *ResolveLinkedinAdsCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignPayloadTooLargeResponseBody runs the
+// validations defined on ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody
+func ValidateResolveLinkedinAdsCampaignPayloadTooLargeResponseBody(body *ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignUnauthorizedResponseBody runs the
+// validations defined on ResolveLinkedinAdsCampaignUnauthorizedResponseBody
+func ValidateResolveLinkedinAdsCampaignUnauthorizedResponseBody(body *ResolveLinkedinAdsCampaignUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}

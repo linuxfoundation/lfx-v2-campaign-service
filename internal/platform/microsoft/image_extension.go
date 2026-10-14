@@ -19,6 +19,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -230,6 +232,15 @@ type adExtensionAssociationsQuery struct {
 	EntityIds       []json.Number `json:"EntityIds"`
 }
 
+// adExtensionAssociationsQueryResponse is the (subset of the) GetAdExtensionsAssociations 200
+// body. Each association's EntityId and AssociationType are decoded, not just its extension,
+// because the lookup's answer is "THIS campaign already has an image extension" — an extension
+// the response attributes to some other entity, or to no entity, proves nothing about this one.
+//
+// The collection field's PRESENCE is tracked (sawCollection) for the same reason
+// updateStatusResponse tracks PartialErrors: `{}` and `{"AdExtensionAssociationCollection":[]}`
+// both decode to an empty slice, but only the second answered the question. An unanswered lookup
+// read as "none" is how a retry uploads a second image.
 type adExtensionAssociationsQueryResponse struct {
 	AdExtensionAssociationCollection []*struct {
 		AdExtensionAssociations []*struct {
@@ -237,9 +248,31 @@ type adExtensionAssociationsQueryResponse struct {
 				Id   *json.Number `json:"Id"`
 				Type string       `json:"Type"`
 			} `json:"AdExtension"`
+			AssociationType string       `json:"AssociationType"`
+			EntityId        *json.Number `json:"EntityId"`
 		} `json:"AdExtensionAssociations"`
 	} `json:"AdExtensionAssociationCollection"`
 	PartialErrors boundedErrorItems `json:"PartialErrors"`
+	sawCollection bool
+}
+
+// UnmarshalJSON records whether AdExtensionAssociationCollection was present as an ARRAY (an
+// empty array and an array of null slots are Microsoft's documented "none"; an omitted field or
+// a literal null answered nothing), then decodes normally.
+func (r *adExtensionAssociationsQueryResponse) UnmarshalJSON(data []byte) error {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	type alias adExtensionAssociationsQueryResponse
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*r = adExtensionAssociationsQueryResponse(decoded)
+	raw, ok := probe["AdExtensionAssociationCollection"]
+	r.sawCollection = ok && len(bytes.TrimSpace(raw)) > 0 && bytes.TrimSpace(raw)[0] == '['
+	return nil
 }
 
 type msImageMedia struct {
@@ -253,8 +286,11 @@ type addMediaRequest struct {
 	Media     []msImageMedia `json:"Media"`
 }
 
+// addMediaResponse decodes PartialErrors beside MediaIds: a null id slot that a PartialError
+// explains is a DEFINITE rejection, and only an unexplained one is errNoID/UNCONFIRMED.
 type addMediaResponse struct {
-	MediaIds boundedNumberIDs `json:"MediaIds"`
+	MediaIds      boundedNumberIDs  `json:"MediaIds"`
+	PartialErrors boundedErrorItems `json:"PartialErrors"`
 }
 
 type msImageAdExtension struct {
@@ -273,7 +309,10 @@ type addAdExtensionsResponse struct {
 	AdExtensionIdentities []*struct {
 		Id *json.Number `json:"Id"`
 	} `json:"AdExtensionIdentities"`
-	NestedPartialErrors boundedErrorItems `json:"NestedPartialErrors"`
+	// NestedPartialErrors is BatchErrorCollection[]: a failure can sit at the collection level
+	// OR inside a collection's own BatchErrors, so the nested decoder geo.go uses is used here
+	// too, and both levels are classified.
+	NestedPartialErrors boundedNestedErrorItems `json:"NestedPartialErrors"`
 }
 
 type adExtensionIDToEntityID struct {
@@ -287,8 +326,31 @@ type setAdExtensionsAssociationsRequest struct {
 	AssociationType                     string                    `json:"AssociationType"`
 }
 
+// setAdExtensionsAssociationsResponse tracks PartialErrors' PRESENCE exactly as
+// updateStatusResponse does: `{"PartialErrors":null}` or `[]` is Microsoft affirming no item
+// failed, while `{}` or a top-level null never answered, and must not read as a confirmed
+// association.
 type setAdExtensionsAssociationsResponse struct {
-	PartialErrors boundedErrorItems `json:"PartialErrors"`
+	PartialErrors    boundedErrorItems `json:"PartialErrors"`
+	sawPartialErrors bool
+}
+
+func (r *setAdExtensionsAssociationsResponse) UnmarshalJSON(data []byte) error {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if _, ok := probe["PartialErrors"]; !ok {
+		return nil
+	}
+	type alias setAdExtensionsAssociationsResponse
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	r.PartialErrors = decoded.PartialErrors
+	r.sawPartialErrors = true
+	return nil
 }
 
 // ---- the operation ----------------------------------------------------------
@@ -344,13 +406,7 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 		Media:     []msImageMedia{{Type: "Image", MediaType: mediaTypeGenericImage, Data: data}},
 	}, false)
 	if err == nil {
-		r.MediaID, err = firstEntityID(body, "MediaIds", func(b []byte) ([]*json.Number, []msErrorItem, error) {
-			var resp addMediaResponse
-			if uerr := json.Unmarshal(b, &resp); uerr != nil {
-				return nil, nil, uerr
-			}
-			return resp.MediaIds, nil, nil
-		})
+		r.MediaID, err = mediaIdentity(body)
 	}
 	if err != nil {
 		return r, classifyImageStep("microsoft-ads image extension: image upload", err)
@@ -368,17 +424,7 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 		}},
 	}, false)
 	if err == nil {
-		r.AdExtensionID, err = firstEntityID(body, "AdExtensionIdentities", func(b []byte) ([]*json.Number, []msErrorItem, error) {
-			var resp addAdExtensionsResponse
-			if uerr := json.Unmarshal(b, &resp); uerr != nil {
-				return nil, nil, uerr
-			}
-			ids := make([]*json.Number, 0, 1)
-			if len(resp.AdExtensionIdentities) > 0 && resp.AdExtensionIdentities[0] != nil {
-				ids = append(ids, resp.AdExtensionIdentities[0].Id)
-			}
-			return ids, resp.NestedPartialErrors.Items, nil
-		})
+		r.AdExtensionID, err = adExtensionIdentity(body)
 	}
 	if err != nil {
 		return r, classifyImageStep("microsoft-ads image extension: extension create (the uploaded media is unused)", err)
@@ -393,16 +439,23 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 	}, false)
 	if err == nil {
 		var resp setAdExtensionsAssociationsResponse
-		switch uerr := json.Unmarshal(body, &resp); {
+		switch uerr := decodeTrusted(body, &resp); {
 		case uerr != nil:
 			// A 2xx we cannot read: the association may have committed.
 			err = fmt.Errorf("decode AdExtensionsAssociations/Set response (%v): %w", uerr, errNoID)
+		case !resp.sawPartialErrors:
+			// A 2xx that never said whether the item failed: not a confirmation.
+			err = fmt.Errorf("AdExtensionsAssociations/Set response omitted PartialErrors: %w", errNoID)
 		case resp.PartialErrors.AnyErrors:
 			err = fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
+		case len(resp.PartialErrors.Items) > 0:
+			// Present but malformed (`[null]`, `[{}]`): entries that carry no code neither confirm
+			// nor reject, so it is not the empty-error success — mirrors putUpdateOutcome.
+			err = fmt.Errorf("AdExtensionsAssociations/Set PartialErrors present but carried no error codes: %w", errNoID)
 		}
 	}
 	if err != nil {
-		return r, classifyImageStep("microsoft-ads image extension: campaign association (the extension exists but is not attached)", err)
+		return r, classifyImageStep("microsoft-ads image extension: campaign association", err)
 	}
 	r.Steps = append(r.Steps, fmt.Sprintf("Image extension associated with campaign %s", campaignID))
 	return r, nil
@@ -412,6 +465,11 @@ func (c *Client) AttachCampaignImage(ctx context.Context, campaignID string, in 
 // the campaign, or "" when there is none. A read (idempotent). Any association whose
 // extension id is unusable, or a PartialError on the read, is an error rather than
 // "absent": treating it as absent would upload a second image the lookup could not rule out.
+//
+// An association is accepted only when it names THIS campaign at Campaign level (EntityId ==
+// campaign, AssociationType == "Campaign"). Anything else fails the lookup — the caller then
+// refuses to upload — rather than being skipped or accepted: the request asked about exactly one
+// campaign, so a response that answers about something else is not an answer to trust either way.
 func (c *Client) findCampaignImageExtension(ctx context.Context, account, campaign json.Number) (string, error) {
 	body, err := c.doRequest(ctx, http.MethodPost, "AdExtensionsAssociations/Query", adExtensionAssociationsQuery{
 		AccountId:       account,
@@ -423,12 +481,20 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 		return "", err
 	}
 	var resp adExtensionAssociationsQueryResponse
-	if uerr := json.Unmarshal(body, &resp); uerr != nil {
-		return "", fmt.Errorf("decode AdExtensionsAssociations/Query response: %w", errNoID)
+	if uerr := decodeTrusted(body, &resp); uerr != nil {
+		return "", fmt.Errorf("decode AdExtensionsAssociations/Query response (%v): %w", uerr, errNoID)
 	}
 	if resp.PartialErrors.AnyErrors {
 		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
 	}
+	if !resp.sawCollection {
+		return "", fmt.Errorf("AdExtensionsAssociations/Query response omitted AdExtensionAssociationCollection: %w", errNoID)
+	}
+	// EVERY image association is validated before any is trusted: returning at the first valid
+	// one would leave a later misattributed or unusable entry unchecked, and a mixed response
+	// would then read as AlreadyAttached. The first valid id is kept and returned only once the
+	// whole response has passed.
+	found := ""
 	for _, coll := range resp.AdExtensionAssociationCollection {
 		if coll == nil {
 			continue
@@ -442,12 +508,98 @@ func (c *Client) findCampaignImageExtension(ctx context.Context, account, campai
 			if a.AdExtension.Type != "" && a.AdExtension.Type != adExtensionTypeImage {
 				continue
 			}
+			if a.AssociationType != associationTypeCampaign || numberID(a.EntityId) != campaign.String() {
+				return "", fmt.Errorf("an image extension association was returned for an entity other than campaign %s: %w", campaign, errNoID)
+			}
 			id := numberID(a.AdExtension.Id)
 			if id == "" {
 				return "", fmt.Errorf("an image extension is associated with the campaign but its id is unusable: %w", errNoID)
 			}
+			if found == "" {
+				found = id
+			}
+		}
+	}
+	return found, nil
+}
+
+// adExtensionIdentity extracts the created extension id from an AddAdExtensions 200 body,
+// classifying BOTH levels of NestedPartialErrors:
+//
+//   - no errors anywhere + a usable id → success;
+//   - an actual error code anywhere on the wire + NO usable id → a DEFINITE rejection
+//     (errPartialFailure): Microsoft explained the empty slot. Truncation or null-only
+//     placeholders are not an explanation and stay UNCONFIRMED (errNoID);
+//   - any error entry (even a null placeholder or a truncated array) + a usable id → NOT clean
+//     success. The extension exists, but Microsoft also
+//     reported failures against it, so the outcome is UNCONFIRMED (errNoID) and the id is still
+//     returned so the extension can be found;
+//   - no id and no explaining error, or an unreadable body → errNoID (UNCONFIRMED).
+func adExtensionIdentity(body []byte) (string, error) {
+	var resp addAdExtensionsResponse
+	if err := decodeTrusted(body, &resp); err != nil {
+		return "", fmt.Errorf("decode AdExtensionIdentities response (%v): %w", err, errNoID)
+	}
+	id := ""
+	if len(resp.AdExtensionIdentities) > 0 && resp.AdExtensionIdentities[0] != nil {
+		id = numberID(resp.AdExtensionIdentities[0].Id)
+	}
+	// EVIDENCE and INCOMPLETENESS are kept apart. Only evidence — an actual code anywhere on the
+	// wire, counted by the decoders' whole-array AnyErrors tallies so an error past the retention
+	// cap still counts — can make a null identity a DEFINITE rejection. Truncation or null-only
+	// placeholders explain nothing, so a null identity with only those stays UNCONFIRMED: calling
+	// it definite would invite a retry that creates a second extension.
+	nested := resp.NestedPartialErrors
+	evidence := nested.AnyErrors
+	incomplete := nested.Truncated || nestedTruncated(nested.Items) || len(nested.Items) > 0
+	switch {
+	case id == "" && evidence:
+		return "", fmt.Errorf("%w: %s", errPartialFailure, nestedErrorCodes(nested.Items))
+	case id != "" && (evidence || incomplete):
+		return id, fmt.Errorf("extension %s was returned alongside nested error entries (%s): %w", id, nestedErrorCodes(nested.Items), errNoID)
+	case id == "":
+		return "", fmt.Errorf("AdExtensionIdentities %w", errNoID)
+	}
+	return id, nil
+}
+
+// decodeTrusted refuses a body encoding/json would decode WITHOUT error into something other
+// than what its bytes say — malformed UTF-8, an unpaired surrogate escape, or a key declared twice
+// (including under the decoder's case fold) — and only then decodes it. Every presence probe in
+// this file reads an exact map key while the struct decode is case-folded and last-key-wins, so
+// `{"AdExtensionAssociationCollection":[...],"adextensionassociationcollection":[]}` would
+// otherwise mark the field present from one spelling and decode it empty from the other: a lookup
+// answering "none" that licenses a second AddMedia. The adoption reads apply the same check.
+func decodeTrusted(body []byte, v any) error {
+	if err := identityjson.Check(body); err != nil {
+		return err
+	}
+	return json.Unmarshal(body, v)
+}
+
+// mediaIdentity extracts the created MediaId from an AddMedia 200 body. A usable id is success
+// only when PartialErrors carries no entry at all: this call sends ONE item, so an error entry is
+// positionally about that item, and an id returned alongside one is not a confirmed upload — the
+// id is kept (so the media can be found) but errNoID makes it UNCONFIRMED and the later steps stop,
+// as adExtensionIdentity does for an identity beside nested errors. A null id is a DEFINITE rejection only on error EVIDENCE — the whole-wire PartialErrors.AnyErrors
+// tally, so an error past the 16-entry retention window still counts (and its code is still
+// reported when retained); null placeholders or an unexplained null id are UNCONFIRMED (errNoID).
+func mediaIdentity(body []byte) (string, error) {
+	var resp addMediaResponse
+	if err := decodeTrusted(body, &resp); err != nil {
+		return "", fmt.Errorf("decode MediaIds response (%v): %w", err, errNoID)
+	}
+	if len(resp.MediaIds) > 0 {
+		if id := numberID(resp.MediaIds[0]); id != "" {
+			pe := resp.PartialErrors
+			if pe.AnyErrors || pe.Truncated || len(pe.Items) > 0 {
+				return id, fmt.Errorf("media %s was returned alongside error entries (%s): %w", id, partialErrorCodes(pe.Items), errNoID)
+			}
 			return id, nil
 		}
 	}
-	return "", nil
+	if resp.PartialErrors.AnyErrors {
+		return "", fmt.Errorf("%w: %s", errPartialFailure, partialErrorCodes(resp.PartialErrors.Items))
+	}
+	return "", fmt.Errorf("MediaIds %w", errNoID)
 }

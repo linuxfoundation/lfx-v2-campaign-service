@@ -1052,6 +1052,22 @@ type ResolveTwitterAdsCampaignResponseBody struct {
 	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`
 }
 
+// ResolveLinkedinAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body.
+type ResolveLinkedinAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches" json:"matches" xml:"matches"`
+	// How many matches were found.
+	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`
+}
+
 // ListMetaAdsAccountsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body.
@@ -5028,6 +5044,72 @@ type ResolveTwitterAdsCampaignUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ResolveLinkedinAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "BadRequest" error.
+type ResolveLinkedinAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ResolveLinkedinAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ResolveLinkedinAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "NotFound" error.
+type ResolveLinkedinAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ResolveLinkedinAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ListMetaAdsAccountsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "list-meta-ads-accounts"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -7287,6 +7369,29 @@ func NewResolveRedditAdsCampaignResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewResolveTwitterAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveTwitterAdsCampaignResponseBody {
 	body := &ResolveTwitterAdsCampaignResponseBody{
+		PlatformCampaignID: res.PlatformCampaignID,
+		MatchCount:         res.MatchCount,
+	}
+	if res.Matches != nil {
+		body.Matches = make([]*CampaignRefResponseBody, len(res.Matches))
+		for i, val := range res.Matches {
+			if val == nil {
+				body.Matches[i] = nil
+				continue
+			}
+			body.Matches[i] = marshalLfxv2campaignserviceconnectionsCampaignRefToCampaignRefResponseBody(val)
+		}
+	} else {
+		body.Matches = []*CampaignRefResponseBody{}
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignResponseBody builds the HTTP response body from
+// the result of the "resolve-linkedin-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveLinkedinAdsCampaignResponseBody {
+	body := &ResolveLinkedinAdsCampaignResponseBody{
 		PlatformCampaignID: res.PlatformCampaignID,
 		MatchCount:         res.MatchCount,
 	}
@@ -11631,6 +11736,72 @@ func NewResolveTwitterAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserv
 	return body
 }
 
+// NewResolveLinkedinAdsCampaignBadRequestResponseBody builds the HTTP response
+// body from the result of the "resolve-linkedin-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ResolveLinkedinAdsCampaignBadRequestResponseBody {
+	body := &ResolveLinkedinAdsCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ResolveLinkedinAdsCampaignServiceUnavailableResponseBody {
+	body := &ResolveLinkedinAdsCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ResolveLinkedinAdsCampaignInternalServerErrorResponseBody {
+	body := &ResolveLinkedinAdsCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignNotFoundResponseBody builds the HTTP response
+// body from the result of the "resolve-linkedin-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ResolveLinkedinAdsCampaignNotFoundResponseBody {
+	body := &ResolveLinkedinAdsCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody {
+	body := &ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveLinkedinAdsCampaignUnauthorizedResponseBody {
+	body := &ResolveLinkedinAdsCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewListMetaAdsAccountsBadRequestResponseBody builds the HTTP response body
 // from the result of the "list-meta-ads-accounts" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -13236,6 +13407,18 @@ func NewResolveRedditAdsCampaignPayload(projectID string, platformCampaignID str
 // endpoint payload.
 func NewResolveTwitterAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload {
 	v := &lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignPayload builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint payload.
+func NewResolveLinkedinAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload {
+	v := &lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload{}
 	v.ProjectID = projectID
 	v.PlatformCampaignID = platformCampaignID
 	v.BearerToken = bearerToken

@@ -449,6 +449,10 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	if err != nil {
 		return err
 	}
+	// An ADOPTED row is un-paused in Campaign Manager, as on every platform (linkedin_adopt.go).
+	if liStatus == linkedin.StatusActive && linkedInAdopted(campaign) {
+		return errLinkedInAdoptedActivate(campaign)
+	}
 	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(linkedInCreationAccountID(campaign)))
 	if err != nil {
 		return err
@@ -473,7 +477,15 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	// activating only the campaign would not serve (a DRAFT creative never serves, and the
 	// creative's effective status is gated by the campaign). The client discovers the
 	// creatives (LinkedIn persists only a count) and lifts each DRAFT→ACTIVE (or holds PAUSED).
-	if uerr := client.UpdateCampaignAndCreativesStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
+	//
+	// An ADOPTED row (only ever PAUSE here — ACTIVATE was refused above) addresses the campaign
+	// ALONE, as the siblings do: its creatives are not this service's, and pausing them too would
+	// leave each to be re-activated by hand when the campaign is un-paused in Campaign Manager.
+	update := client.UpdateCampaignAndCreativesStatus
+	if linkedInAdopted(campaign) {
+		update = client.UpdateCampaignStatus
+	}
+	if uerr := update(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
 		// An activate refused up front because the campaign has no servable creatives is a
 		// local/state error (the platform mutation never ran), so classify it as
 		// ErrCampaignNotProvisioned → 409, not the default 503. Mirrors reddit/meta.

@@ -230,10 +230,12 @@ func (c *Client) fetchAccountCampaignAnalytics(ctx context.Context, accountID st
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
-	// pivotValue/pivotValues is NOT a projectable field on this schema (LinkedIn rejects it
-	// with a 400 "Projected field \"pivotValue\" not present in schema ...AdAnalyticsV8" the
-	// moment it's listed here) — it's returned automatically because `pivot=CAMPAIGN` is set,
-	// the same way the BFF's fields list (linkedin-ads.service.ts:894) never requests it either.
+	// The legacy SINGULAR `pivotValue` is NOT a projectable field on this schema (LinkedIn
+	// rejects it with a 400 "Projected field \"pivotValue\" not present in schema
+	// ...AdAnalyticsV8"), so it is not listed here; this read relies on pivotValues arriving with
+	// `pivot=CAMPAIGN`, the same way the BFF's fields list (linkedin-ads.service.ts:894) never
+	// requests it. The PLURAL `pivotValues` is a documented projectable field (ads-reporting,
+	// "Requesting specific metrics in the Analytics Finder"), which the audience read projects.
 	u.RawQuery = "q=analytics" +
 		"&pivot=CAMPAIGN" +
 		"&timeGranularity=ALL" +
@@ -301,9 +303,10 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 		// (ListAccountCampaigns) would then read as "every listed campaign had zero activity"
 		// instead of "the analytics read failed" (round-24 review).
 		Elements *[]struct {
-			// PivotValues arrives automatically once `pivot=CAMPAIGN` is set — it is not, and
-			// cannot be, requested via `fields` (see the RawQuery comment above). Mirrors the
-			// BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
+			// PivotValues is not named in this read's `fields`; it relies on the field arriving
+			// with `pivot=CAMPAIGN`, as the BFF's does. Only the legacy SINGULAR `pivotValue` is
+			// unprojectable — the plural is a documented `fields` value (see the RawQuery comment
+			// above). Mirrors the BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
 			PivotValues []string `json:"pivotValues"`
 			Impressions int64    `json:"impressions"`
 			Clicks      int64    `json:"clicks"`
