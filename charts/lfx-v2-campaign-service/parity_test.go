@@ -466,7 +466,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
-		// The Meta, Reddit and X audience reads (LFXV2-2665); LinkedIn has none.
+		// The Meta, Reddit, X and LinkedIn audience reads (LFXV2-2665).
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},
 		{"/projects/p1/twitter-ads/audience", true},
@@ -474,13 +474,16 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/reddit-ads/audience", true},
 		{"/projects/p1/reddit-ads/audience/x", false},
 		{"/projects/p1/reddit-ads/audiences", false},
-		{"/projects/p1/linkedin-ads/audience", false},
-		// The Meta, Reddit and X twins (LFXV2-2665).
+		{"/projects/p1/linkedin-ads/audience", true},
+		{"/projects/p1/linkedin-ads/audience/x", false},
+		{"/projects/p1/linkedin-ads/audiences", false},
+		// The Meta, Reddit, X and LinkedIn twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref", true},
 		{"/projects/p1/twitter-ads/campaign-ref", true},
+		{"/projects/p1/linkedin-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref/x", false},
-		{"/projects/p1/linkedin-ads/campaign-ref", false},
+		{"/projects/p1/linkedin-ads/campaign-ref/x", false},
 		{"/projects/p1/hubspot-ads/campaign-ref", false},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it
@@ -519,7 +522,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-hubspot/account-monitor/x", false},
 		// --- rejected: keywords/audience on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
-		{"/projects/p1/linkedin-ads/audience", false},
+		{"/projects/p1/linkedin-ads/keywords", false},
 		// --- rejected: per-provider /metrics (2026-10-13) ---
 		// The chart used to route and rule /{provider}/metrics for five providers, but no
 		// design/ method serves that path — metrics are served per campaign and per brief,

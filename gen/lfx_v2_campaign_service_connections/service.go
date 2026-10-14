@@ -202,6 +202,25 @@ type Service interface {
 	// counter. Disabled (400 not supported) unless TWITTER_METRICS_ENABLED is
 	// "true", like the X account monitor that shares the stats-jobs contract.
 	GetTwitterAdsAudience(context.Context, *GetTwitterAdsAudiencePayload) (res *TwitterAdsAudience, err error)
+	// Read LinkedIn professional demographics — job function, seniority, industry,
+	// company size and country — for this project's own campaigns, live from
+	// LinkedIn's Ad Analytics API. Scoped to the campaigns this service holds for
+	// the project, NOT to the connected ad account, and read from the project's
+	// OWN connection only (never the LF system account) and only the account that
+	// connection is bound to. LinkedIn serves MEMBER_* pivots only through its
+	// single-pivot Analytics finder, so the read issues one Ad Analytics request
+	// per (pivot, campaign), each filtered to that one campaign and the bound
+	// account, and sums the answers; at most 10 campaigns (50 requests), because
+	// the account is shared across foundations and the read must fit one request
+	// budget. A pure read-through; nothing is persisted. A project with no
+	// LinkedIn campaigns of its own receives an empty `buckets` array and LinkedIn
+	// is not contacted. All five pivots must load or the request fails (503).
+	// Values are LinkedIn URNs, verbatim, not names. Every counter is APPROXIMATE
+	// (see `approximate`): LinkedIn drops values under 3 events, withholds values
+	// for ads reaching too few members, keeps only the top 100 values per creative
+	// per day, and delays demographics 12-24 hours. Cost is USD (costInUsd). No
+	// conversions. Not gated: LinkedIn has no metrics feature flag.
+	GetLinkedinAdsAudience(context.Context, *GetLinkedinAdsAudiencePayload) (res *LinkedinAdsAudience, err error)
 	// Read Microsoft Advertising keyword performance for this project's own
 	// campaigns, in the same row shape as get-google-ads-keywords. Scoped to the
 	// campaigns this service holds for the project, NOT to the connected ad
@@ -337,6 +356,19 @@ type Service interface {
 	// than choose. A malformed id is refused with 400 before any lookup. Not a
 	// list endpoint under rule 3: a keyed lookup for one supplied id.
 	ResolveTwitterAdsCampaign(context.Context, *ResolveTwitterAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
+	// Resolve one LinkedIn campaign id to this service's own campaign and brief.
+	// The LinkedIn twin of resolve-microsoft-ads-campaign: same payload shape,
+	// result and errors. A pure READ of this service's own tables: LinkedIn is
+	// never contacted, no connection is resolved, and nothing is mutated. Scoped
+	// to the project's own campaigns by the same `project_id` predicate, so it
+	// cannot answer whether ANOTHER project holds a given id. **An unowned id is
+	// 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one
+	// entry:** migration 000020's unique index covers Google Ads only, so a
+	// project whose connection was re-pointed between accounts can hold two live
+	// rows with the same id. A caller receiving more than one must refuse rather
+	// than choose. A malformed id is refused with 400 before any lookup. Not a
+	// list endpoint under rule 3: a keyed lookup for one supplied id.
+	ResolveLinkedinAdsCampaign(context.Context, *ResolveLinkedinAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the
 	// connection's account_id. Accounts Meta reports as disabled, unsettled or
@@ -586,7 +618,7 @@ const ServiceName = "lfx-v2-campaign-service-connections"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [70]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-twitter-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
+var MethodNames = [72]string{"create-google-ads", "get-google-ads", "update-google-ads", "delete-google-ads", "test-google-ads", "set-credential-google-ads", "create-linkedin-ads", "get-linkedin-ads", "update-linkedin-ads", "delete-linkedin-ads", "test-linkedin-ads", "set-credential-linkedin-ads", "create-meta-ads", "get-meta-ads", "update-meta-ads", "delete-meta-ads", "test-meta-ads", "set-credential-meta-ads", "create-reddit-ads", "get-reddit-ads", "update-reddit-ads", "delete-reddit-ads", "test-reddit-ads", "set-credential-reddit-ads", "create-twitter-ads", "get-twitter-ads", "update-twitter-ads", "delete-twitter-ads", "test-twitter-ads", "set-credential-twitter-ads", "create-microsoft-ads", "get-microsoft-ads", "update-microsoft-ads", "delete-microsoft-ads", "test-microsoft-ads", "set-credential-microsoft-ads", "create-hubspot", "get-hubspot", "update-hubspot", "delete-hubspot", "test-hubspot", "set-credential-hubspot", "list-google-ads-accounts", "get-google-ads-keywords", "get-google-ads-audience", "get-meta-ads-audience", "get-twitter-ads-audience", "get-linkedin-ads-audience", "get-microsoft-ads-keywords", "get-microsoft-ads-audience", "get-reddit-ads-audience", "resolve-google-ads-campaign", "resolve-microsoft-ads-campaign", "resolve-meta-ads-campaign", "resolve-reddit-ads-campaign", "resolve-twitter-ads-campaign", "resolve-linkedin-ads-campaign", "list-meta-ads-accounts", "list-linkedin-ads-accounts", "list-microsoft-ads-accounts", "list-twitter-ads-accounts", "list-reddit-ads-accounts", "list-hubspot-emails", "search-hubspot-campaigns", "create-hubspot-campaign", "monitor-google-ads-account", "monitor-linkedin-ads-account", "monitor-meta-ads-account", "monitor-reddit-ads-account", "monitor-microsoft-ads-account", "monitor-twitter-ads-account", "monitor-hubspot-account"}
 
 type AccessibleAccount struct {
 	// Account identifier in the ad platform's OWN namespace, ready to store as the
@@ -993,6 +1025,18 @@ type GetHubspotPayload struct {
 	BearerToken *string
 	// Project UUID or slug that scopes the connection
 	ProjectID string
+}
+
+// GetLinkedinAdsAudiencePayload is the payload type of the
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience method.
+type GetLinkedinAdsAudiencePayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// Reporting window; defaults to last_30_days when omitted. yesterday and
+	// last_14_days are not available on LinkedIn.
+	Window *string
 }
 
 // GetLinkedinAdsPayload is the payload type of the
@@ -1444,6 +1488,60 @@ type InternalServerError struct {
 	Code string
 	// Error message
 	Message string
+}
+
+// LinkedinAdsAudience is the result type of the
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience method.
+type LinkedinAdsAudience struct {
+	// The reporting window these counters cover, as UTC calendar days (LinkedIn's
+	// Ad Analytics dateRange is UTC) — the same days the LinkedIn campaign metrics
+	// read uses for the same window name
+	Window string
+	// Every bucket across the five pivots, discriminated by `dimension`. Ordered
+	// by dimension (job_function, seniority, industry, company_size, country),
+	// then impressions descending, then value. Each dimension covers the same
+	// traffic independently, so total within one dimension only — and even then
+	// the total is BELOW the campaigns' own totals: LinkedIn drops values with
+	// fewer than 3 events, withholds values for ads reaching too few members, and
+	// returns only the top 100 values per creative per day.
+	Buckets []*LinkedinAdsAudienceBucket
+	// How many buckets are in `buckets`, across all dimensions.
+	BucketCount int
+	// Always true: LinkedIn documents professional-demographic metrics as
+	// APPROXIMATE (privacy protection), privacy-thresholded (values under 3 events
+	// dropped, values for ads reaching too few members withheld, top 100 values
+	// per creative per day) and delayed 12-24 hours. Present every counter as an
+	// estimate, never as an exact measurement, and do not reconcile it against the
+	// campaign metrics read.
+	Approximate bool
+}
+
+type LinkedinAdsAudienceBucket struct {
+	// Which LinkedIn Ad Analytics professional-demographic pivot this bucket
+	// belongs to: job_function (MEMBER_JOB_FUNCTION), seniority
+	// (MEMBER_SENIORITY), industry (MEMBER_INDUSTRY), company_size
+	// (MEMBER_COMPANY_SIZE) or country (MEMBER_COUNTRY_V2)
+	Dimension string
+	// LinkedIn's pivot value for this bucket, VERBATIM — a URN such as
+	// urn:li:function:8, urn:li:seniority:5, urn:li:industry:4 or
+	// urn:li:geo:103644278 (company_size values are passed through as LinkedIn
+	// reports them). NOT resolved to a name: LinkedIn resolves each URN type
+	// through its Standardized Data APIs (/functions, /seniorities, /industries,
+	// /geo), which this read does not call. A value outside a conservative charset
+	// fails the read rather than being returned.
+	Value string
+	// Impressions over the window — APPROXIMATE (LinkedIn's privacy approximation
+	// for professional demographics)
+	Impressions int64
+	// Clicks over the window — APPROXIMATE
+	Clicks int64
+	// Spend over the window in micro-units of USD (LinkedIn's costInUsd times
+	// 10^6, the same unit the LinkedIn campaign metrics read reports) —
+	// APPROXIMATE, and per LinkedIn not adjusted for over-delivery on a
+	// demographic pivot.
+	CostMicros int64
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr float64
 }
 
 // LinkedinAdsConnection is the result type of the
@@ -2081,6 +2179,21 @@ type ResolveGoogleAdsCampaignPayload struct {
 	ProjectID string
 	// The Google Ads campaign id to resolve. Digits only, no leading zero, and
 	// within int64.
+	PlatformCampaignID string
+}
+
+// ResolveLinkedinAdsCampaignPayload is the payload type of the
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// method.
+type ResolveLinkedinAdsCampaignPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Project UUID or slug that scopes the connection
+	ProjectID string
+	// The LinkedIn campaign id to resolve: a positive 64-bit integer (a LinkedIn
+	// `long`) — digits only, no leading zero, at most 9223372036854775807. The
+	// Pattern states only the shape; an id past the int64 range is refused 400 by
+	// the service before any lookup.
 	PlatformCampaignID string
 }
 

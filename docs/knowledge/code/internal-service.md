@@ -604,9 +604,15 @@ unusable-connection 409 messages name the campaign's platform (Google's wording 
 
 `AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
 is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
-persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft only; any other
-platform is 400 at the handler, and a Microsoft dispatcher without the capability is 400 via
-`Orchestrator.AddNegativeKeywords`'s type assertion on the new optional `NegativeKeywordAdder`.
+persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft Advertising,
+Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler, and a
+dispatcher without the capability is 400 via `Orchestrator.AddNegativeKeywords`'s type assertion on
+the optional `NegativeKeywordAdder`. The payload's optional `revision` (Reddit's compare-and-set
+token) is passed through untouched; each adapter validates it. Reddit/X-only refusals map to fixed
+messages: a stale revision (`ErrKeywordTargetingChanged`), the excluded-keyword cap
+(`ErrNegativeKeywordLimit`) and an unaddressable ad group / line item
+(`ErrKeywordTargetingUnaddressable`) are 409, and the 404 / unusable-connection 409 name the
+campaign's own platform.
 The orchestrator applies the same mutation timeout and the same outcome-count check
 (`unconfirmedOutcomeCountError`, whose message no longer claims every batch is atomic), and
 records the `negative_keywords` upstream op. `classifyNegativeKeywordError` mirrors the keyword
@@ -2073,11 +2079,13 @@ the same subset); then `Orchestrator.ReadRedditAudienceInsights`, which type-ass
 `account_currency`. Tests: `reddit_audience_test.go`, including
 `TestPublishedRedditAudienceExamplesArePossible` over every generated OpenAPI document.
 
-## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
+## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X, LinkedIn)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
-`ResolveRedditAdsCampaign` and `ResolveTwitterAdsCampaign` (`GET .../{platform}/campaign-ref`)
-map one platform campaign id to this service's own campaign + brief. All five are one helper,
+`ResolveRedditAdsCampaign`, `ResolveTwitterAdsCampaign` and `ResolveLinkedinAdsCampaign`
+(`GET .../{platform}/campaign-ref`; LinkedIn's id rule is `linkedin.ValidateCampaignID`, a positive
+int64 with no leading zero — stricter than the decoder's Pattern, which cannot state the range) map one platform campaign id to this service's own campaign + brief.
+All six are one helper,
 `resolvePlatformCampaignRef(ctx, projectID, platform, id, validateID)` in
 `connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any
 lookup), then the backend check (503 when not wired), then the project-scoped DB read (500 on a
@@ -2128,9 +2136,33 @@ and `toggle_meta_ad_set_status`). The orchestrator checks the capability before 
 a non-Meta row is 400 whatever its state. The toggle follows `ToggleCampaignStatus`'s
 concurrency contract — If-Match (428/412 against the loaded row), validation and
 `SupportsMetaAdSetToggle` before `ClaimCampaignVersion`, an UNCONFIRMED outcome holding the lock
-for `unconfirmedLockCooldown` and answering a 503 with fixed text, as every money lever does — but
-persists nothing: a 200's ETag is the unchanged version, checked with `VerifyClaimedVersion` after
-an APPLIED write. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
+for `unconfirmedLockCooldown` and answering a 503 with fixed text, as every money lever does. It
+persists one thing: the deliberate-pause record of the campaign's RECORDED ad set
+(`model.WithMetaUserPausedAdSet` on the row's `Result`, via `persistMetaAdSetRecord` →
+`ReplaceCampaign` on the claim holder's connection). A PAUSE records it through the dispatcher's
+`beforeWrite` hook before the write is sent (so an UNCONFIRMED pause stays on record) or after
+`ALREADY_IN_STATE`, and withdraws it if the write definitely changed nothing; only a CONFIRMED
+resume clears it. Every record write goes through `writeMetaAdSetRecord`, which reconciles a
+commit marked `domain.ErrWriteOutcomeUnknown` (the guarded write redone and re-read on the
+CLAIMED connection; if that connection is unusable, the claim is released and re-taken first) and, while a pause record may have landed, always lets the pause be sent. When it is written the ETag is the new version; otherwise a 200's ETag is the
+unchanged version, checked with `VerifyClaimedVersion` after an APPLIED write. Hand-added ad sets
+and adopted rows record nothing. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 
+
+## LinkedIn audience read (`connection_linkedin_audience.go`, LFXV2-2665)
+
+`GetLinkedinAdsAudience` (`GET .../linkedin-ads/audience`) is the LinkedIn sibling, kept in its own
+file together with its capability (`LinkedInAudienceReader`) and
+`Orchestrator.ReadLinkedInAudienceInsights`, so `orchestrator.go` is untouched. Same order as the
+Meta read: system scope refused (404); `resolveLinkedInAudienceWindow` accepts only the LinkedIn
+metrics read's five windows (`today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`),
+defaults to `last_30_days` and answers anything else with the fixed 400
+`linkedInAudienceWindowMessage`; backend check; then the capability assertion (absent →
+`ErrKeywordInsightsUnsupported`, 400) and the shared `readScopedAudience` (empty scope → 200 empty,
+LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics flag. Errors go through
+`classifyInsightsErrorFor` with the `linkedInAdsAudienceInsights` descriptor; no new arm was needed
+(the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
+`true` on the wire. Tests: `linkedin_audience_test.go`. See
+[LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).

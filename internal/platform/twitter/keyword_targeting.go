@@ -36,9 +36,9 @@ import (
 // has keyword criteria only if an operator added them in X Ads Manager.
 //
 // ONE DELETE PER CRITERION, NOT THE BATCH ENDPOINT. X also offers
-// POST batch/accounts/:account_id/targeting_criteria, but its size limit and whether a batch is
-// applied atomically could not be established from the sources available (they disagree), and a
-// per-criterion DELETE gives each removal its own, honest outcome.
+// POST batch/accounts/:account_id/targeting_criteria, but per the reference (re-read 2026-10-13
+// for the negative-keyword add) a batch of up to 40 succeeds or fails as a group, so it cannot
+// give each removal its own, honest outcome; a per-criterion DELETE does.
 // ---------------------------------------------------------------------------
 
 // Keyword targeting types X reports on a targeting criterion.

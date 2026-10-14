@@ -63,6 +63,7 @@ type Endpoints struct {
 	GetGoogleAdsAudience        goa.Endpoint
 	GetMetaAdsAudience          goa.Endpoint
 	GetTwitterAdsAudience       goa.Endpoint
+	GetLinkedinAdsAudience      goa.Endpoint
 	GetMicrosoftAdsKeywords     goa.Endpoint
 	GetMicrosoftAdsAudience     goa.Endpoint
 	GetRedditAdsAudience        goa.Endpoint
@@ -71,6 +72,7 @@ type Endpoints struct {
 	ResolveMetaAdsCampaign      goa.Endpoint
 	ResolveRedditAdsCampaign    goa.Endpoint
 	ResolveTwitterAdsCampaign   goa.Endpoint
+	ResolveLinkedinAdsCampaign  goa.Endpoint
 	ListMetaAdsAccounts         goa.Endpoint
 	ListLinkedinAdsAccounts     goa.Endpoint
 	ListMicrosoftAdsAccounts    goa.Endpoint
@@ -141,6 +143,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetGoogleAdsAudience:        NewGetGoogleAdsAudienceEndpoint(s, a.JWTAuth),
 		GetMetaAdsAudience:          NewGetMetaAdsAudienceEndpoint(s, a.JWTAuth),
 		GetTwitterAdsAudience:       NewGetTwitterAdsAudienceEndpoint(s, a.JWTAuth),
+		GetLinkedinAdsAudience:      NewGetLinkedinAdsAudienceEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsEndpoint(s, a.JWTAuth),
 		GetMicrosoftAdsAudience:     NewGetMicrosoftAdsAudienceEndpoint(s, a.JWTAuth),
 		GetRedditAdsAudience:        NewGetRedditAdsAudienceEndpoint(s, a.JWTAuth),
@@ -149,6 +152,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ResolveMetaAdsCampaign:      NewResolveMetaAdsCampaignEndpoint(s, a.JWTAuth),
 		ResolveRedditAdsCampaign:    NewResolveRedditAdsCampaignEndpoint(s, a.JWTAuth),
 		ResolveTwitterAdsCampaign:   NewResolveTwitterAdsCampaignEndpoint(s, a.JWTAuth),
+		ResolveLinkedinAdsCampaign:  NewResolveLinkedinAdsCampaignEndpoint(s, a.JWTAuth),
 		ListMetaAdsAccounts:         NewListMetaAdsAccountsEndpoint(s, a.JWTAuth),
 		ListLinkedinAdsAccounts:     NewListLinkedinAdsAccountsEndpoint(s, a.JWTAuth),
 		ListMicrosoftAdsAccounts:    NewListMicrosoftAdsAccountsEndpoint(s, a.JWTAuth),
@@ -217,6 +221,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetGoogleAdsAudience = m(e.GetGoogleAdsAudience)
 	e.GetMetaAdsAudience = m(e.GetMetaAdsAudience)
 	e.GetTwitterAdsAudience = m(e.GetTwitterAdsAudience)
+	e.GetLinkedinAdsAudience = m(e.GetLinkedinAdsAudience)
 	e.GetMicrosoftAdsKeywords = m(e.GetMicrosoftAdsKeywords)
 	e.GetMicrosoftAdsAudience = m(e.GetMicrosoftAdsAudience)
 	e.GetRedditAdsAudience = m(e.GetRedditAdsAudience)
@@ -225,6 +230,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ResolveMetaAdsCampaign = m(e.ResolveMetaAdsCampaign)
 	e.ResolveRedditAdsCampaign = m(e.ResolveRedditAdsCampaign)
 	e.ResolveTwitterAdsCampaign = m(e.ResolveTwitterAdsCampaign)
+	e.ResolveLinkedinAdsCampaign = m(e.ResolveLinkedinAdsCampaign)
 	e.ListMetaAdsAccounts = m(e.ListMetaAdsAccounts)
 	e.ListLinkedinAdsAccounts = m(e.ListLinkedinAdsAccounts)
 	e.ListMicrosoftAdsAccounts = m(e.ListMicrosoftAdsAccounts)
@@ -1341,6 +1347,30 @@ func NewGetTwitterAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc)
 	}
 }
 
+// NewGetLinkedinAdsAudienceEndpoint returns an endpoint function that calls
+// the method "get-linkedin-ads-audience" of service
+// "lfx-v2-campaign-service-connections".
+func NewGetLinkedinAdsAudienceEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetLinkedinAdsAudiencePayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.GetLinkedinAdsAudience(ctx, p)
+	}
+}
+
 // NewGetMicrosoftAdsKeywordsEndpoint returns an endpoint function that calls
 // the method "get-microsoft-ads-keywords" of service
 // "lfx-v2-campaign-service-connections".
@@ -1530,6 +1560,30 @@ func NewResolveTwitterAdsCampaignEndpoint(s Service, authJWTFn security.AuthJWTF
 			return nil, err
 		}
 		return s.ResolveTwitterAdsCampaign(ctx, p)
+	}
+}
+
+// NewResolveLinkedinAdsCampaignEndpoint returns an endpoint function that
+// calls the method "resolve-linkedin-ads-campaign" of service
+// "lfx-v2-campaign-service-connections".
+func NewResolveLinkedinAdsCampaignEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ResolveLinkedinAdsCampaignPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ResolveLinkedinAdsCampaign(ctx, p)
 	}
 }
 

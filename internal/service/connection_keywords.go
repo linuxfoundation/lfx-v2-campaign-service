@@ -12,6 +12,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
@@ -326,6 +327,8 @@ var (
 		"the campaign id must be 1-64 letters, digits or underscores")
 	validateTwitterCampaignRefID = platformCampaignIDRule(twitter.ValidateCampaignID,
 		"the campaign id must be 1-64 letters or digits")
+	validateLinkedInCampaignRefID = platformCampaignIDRule(linkedin.ValidateCampaignID,
+		"the campaign id must be a positive integer no greater than 9223372036854775807 (a LinkedIn 64-bit id), without a leading zero")
 )
 
 // ResolveMetaAdsCampaign, ResolveRedditAdsCampaign and ResolveTwitterAdsCampaign are
@@ -340,6 +343,13 @@ func (s *ConnectionService) ResolveMetaAdsCampaign(ctx context.Context, p *conn.
 
 func (s *ConnectionService) ResolveRedditAdsCampaign(ctx context.Context, p *conn.ResolveRedditAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
 	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderRedditAds, p.PlatformCampaignID, validateRedditCampaignRefID)
+}
+
+// ResolveLinkedInAdsCampaign is the same lookup for LinkedIn (LFXV2-2665): DB-only, project-scoped,
+// every match returned (000020's unique index is Google-only, so a re-pointed connection can hold
+// two live rows for one id), the id checked by linkedin.ValidateCampaignID before any lookup.
+func (s *ConnectionService) ResolveLinkedinAdsCampaign(ctx context.Context, p *conn.ResolveLinkedinAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderLinkedInAds, p.PlatformCampaignID, validateLinkedInCampaignRefID)
 }
 
 func (s *ConnectionService) ResolveTwitterAdsCampaign(ctx context.Context, p *conn.ResolveTwitterAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {

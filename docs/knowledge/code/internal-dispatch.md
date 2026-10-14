@@ -1472,9 +1472,10 @@ wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
 ## Bid write (optional capability, LFXV2-2665)
 
 `service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising,
-Reddit, Meta and X**; Google Ads, LinkedIn and HubSpot are not `BidWriter`s (pinned by
-`TestBidWriter_OnlyMicrosoftRedditMetaAndXImplementIt`), so the orchestrator answers
-`ErrBidUnsupported` (400). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
+Reddit, Meta, X and LinkedIn**; Google Ads and HubSpot are not `BidWriter`s (pinned by
+`TestBidWriter_GoogleAndHubSpotDoNotImplementIt`), so the orchestrator answers
+`ErrBidUnsupported` (400). LinkedIn's leg is described in
+[LinkedIn settings, bid and adoption](#linkedin-settings-bid-and-adoption-lfxv2-2665). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
 (`Unconfirmed()`) and `rejectedBidAmountError` (`BidAmountReason()`), the bid lever's
 counterparts of the budget types. No env gate, matching the budget writers.
 
@@ -2129,10 +2130,18 @@ recorded one, before any request; a non-canonical stored campaign id is
 `ErrStoredPlatformIDInvalid` on both paths; then it reads the ad set
 (`GetAdSetState`), refuses another campaign's or account's ad set
 (`ErrMetaAdSetNotInCampaign`) and DELETED/ARCHIVED (`ErrMetaAdSetUnwritable`), answers
-`ALREADY_IN_STATE` with no write, and otherwise sends ONE `UpdateAdSetStatusOnce`, classified by
+`ALREADY_IN_STATE` with no write, and otherwise runs the service's `beforeWrite` hook (if any; a failure sends nothing) and sends ONE `UpdateAdSetStatusOnce`, classified by
 `meta.ClassifyAdSetWrite`: unconfirmed → `unconfirmedToggleError`; not-sent and rejected →
-ordinary errors. See [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
-Tests: `meta_ad_sets_test.go`.
+ordinary errors. `ReadMetaAdSets` marks `DeliberatelyPaused` on the recorded ad set when the
+row holds a deliberate pause of it, and `ToggleStatus` ACTIVATE on such a row calls
+`ActivateCampaignHoldingAdSet` (ads and campaign activated, the ad set left PAUSED) instead of
+the full cascade (LFXV2-2665 decision, 2026-10-13). It first READS the held ad set
+(`verifyMetaHeldAdSetPaused`) under the connection's account, or the campaign's creation account
+when the selection was cleared: only a configured PAUSED/DELETED/ARCHIVED one proceeds. ACTIVE is
+`domain.ErrMetaHeldAdSetActive` (409) and an unreadable one an ordinary error, and nothing is
+written on either. See
+[Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
+Tests: `meta_ad_sets_test.go`, `meta_ad_set_pause_test.go`.
 
 `noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
 a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
@@ -3339,6 +3348,9 @@ untouched by all of it — refusing to pause is refusing to stop spend.
 
 ### Microsoft, Meta, Reddit and X adopters (LFXV2-2665)
 
+(LinkedIn joined them later in LFXV2-2665 — see
+[LinkedIn settings, bid and adoption](#linkedin-settings-bid-and-adoption-lfxv2-2665).)
+
 `MicrosoftDispatcher`, `MetaDispatcher`, `RedditDispatcher` and `TwitterDispatcher` implement
 `LookupCampaign` (`microsoft_adopt.go`, `meta_adopt.go`, `reddit_adopt.go`, `twitter_adopt.go`),
 which is all it took to take them off the `ErrAdoptionUnsupported` path — the orchestrator gate is a
@@ -4033,8 +4045,24 @@ provenance (fail closed), account.
 **Deliberately a separate interface, not a `KeywordAction` kind.** A kind on the existing enum
 would be delivered to every `KeywordActioner`, including Google's adapter, which has never been
 taught what a live negative keyword is; a separate optional interface means only a platform that
-implements the add can be asked to perform it, and every other platform answers
-`ErrNegativeKeywordsUnsupported` → 400.
+implements the add can be asked to perform it. Three dispatchers implement it — Microsoft (here),
+`RedditDispatcher` (`reddit_negative_keywords.go`) and `TwitterDispatcher`
+(`twitter_negative_keywords.go`) — and every other platform answers
+`ErrNegativeKeywordsUnsupported` → 400 (so does Reddit while
+`REDDIT_KEYWORD_TARGETING_WRITES_ENABLED` is off). The method takes a `revision`, Reddit's
+compare-and-set token, which Microsoft and X refuse as an invalid batch.
+
+**Reddit and X negatives (LFXV2-2665).** The shared batch check is `negative_keywords.go`
+(`validateNegativeKeywordBatch`): Microsoft's text rules for every platform, the platform's own
+match types (Microsoft Exact/Phrase, X Broad/Phrase/Exact, Reddit Broad only), and duplicates
+refused under `textfold.Key` — the single simple-case-fold key (`internal/platform/textfold`)
+that the X already-present lookup and the X echo check also use, because `strings.ToLower` keeps
+σ and ς apart where `strings.EqualFold` does not. Reddit appends to the recorded ad group's
+`excluded_keywords` in one whole-targeting PATCH (revision checked, 2,000 array elements, re-read
+to confirm); X sends one paced `NE` keyword criterion POST per keyword (at most 20). Both answer
+per item whenever any item has a definite outcome — `ALREADY_PRESENT`, `APPLIED`, or `FAILED`
+with `REJECTED` / `NOT_SENT` — and error the whole call (UNCONFIRMED) only when every item is
+UNCONFIRMED. See [keyword-targeting-reddit-x](../architecture/keyword-targeting-reddit-x.md).
 
 **Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
 REMOVE the row's `keywordIds` still names the deleted keyword. On ACTIVATE `ToggleStatus` therefore
@@ -4275,3 +4303,71 @@ it through as the X/Meta reads do, and runs its upstream call through `d.audienc
 `redditReportGuard` (`reddit_report_guard.go`): single flight for identical reads (account, window,
 UTC day, sorted scope) with leader-context re-lead, and a 60 s cache of successes. Tests:
 `reddit_report_guard_test.go`, and the provenance/budget cases in `reddit_audience_test.go`.
+
+## LinkedIn settings, bid and adoption (LFXV2-2665)
+
+`linkedin_settings.go`, `linkedin_bid.go` and `linkedin_adopt.go` give `LinkedInDispatcher` the
+three capabilities every other non-Google ad platform had: `SettingsReader`, `BidWriter` and
+`CampaignAdopter` (compile-time asserted beside the siblings'; LinkedIn joins the shared adopter
+table in `adopt_test.go` and the settings wiring test). All three read the campaign through ONE
+client call, `linkedin.Client.GetCampaignSettings` — `GET adAccounts/{acct}/adCampaigns/{id}`,
+identity-checked, with a 404 proven absent only by a confirming ad-account read (see
+[internal/platform/linkedin](internal-platform-linkedin.md)).
+
+- **Settings** (`ReadSettings`): provenance fails closed first (unknown → 409, mismatch → 409, no
+  request), then one read. COMPARES `budget_amount`/`budget_type` (exactly one of `dailyBudget`/
+  `totalBudget` in USD, read as exact micro-units and rendered by `settingsMicrosToUnits`; both,
+  neither — e.g. a campaign under a group's DYNAMIC budget — non-USD or unreadable → `unknown`),
+  `campaign_name`, `start_date` (through `compareNudgedStart`, since `toMs` nudges a begun start)
+  and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
+  `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
+  whenever the currency is missing, never a bare number), `objective_type`. An `account` URN naming another account →
+  `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
+- **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
+  Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
+  checks the adoption sentinel first and answers its own 409 naming Campaign Manager), the stored
+  campaign id validated VERBATIM (never trimmed — " 777" is not campaign 777), campaign id
+  shape, amount (`linkedin.ValidateBidAmount`: whole cents, ≤ 1,000,000 → else 400), credentials +
+  account match, ONE read, then guards — the reported `account` must be present and the
+  connection's, a reported status that is not terminal (CANCELED/PENDING_DELETION/REMOVED; an unreported status is refused too), `ManualCPC()` (costType CPC with
+  optimizationTargetType NONE or ENHANCED_CONVERSION — LinkedIn's two manual modes; MAX_*,
+  TARGET_COST_PER_*, CAP_COST_AND_*, CPM/CPV and anything unreported are refused), a legible
+  `unitCost` in USD. Then one `UpdateCampaignUnitCost`, sent ONCE: unconfirmed first
+  (`unconfirmedBidWriteError`, 503 verify), then `ErrBidAmountInvalid` → `rejectedBidAmountError`
+  (400) — produced only from LinkedIn's parsed, identity-checked error envelope — then the
+  connection-defect re-tag, else a definite failure. **Create-path finding:**
+  `createSponsoredCampaign` sends costType CPC and NO optimizationTargetType or unitCost, which
+  LinkedIn's schema defaults to NONE (manual) with unitCost 0; so unlike Reddit/Meta/X a created
+  LinkedIn campaign is expected to PASS the strategy guard — unverified live, and never assumed.
+- **Adopt** (`LookupCampaign`): `linkedin.ValidateCampaignID` (a positive int64, no leading zero) →
+  `ErrInvalidPlatformCampaignID`; `resolveLinkedInCredentials` with `resolveOwnedForAdoption`
+  (never the LF system row); an unaddressable account id → `adoptionAccountIDUnusable`; one read;
+  a terminal status is absent; the SAME LinkedIn campaign adopted into a second brief (any
+  project) is refused by migration 000042's global index → `ErrPlatformCampaignAlreadyBound` (409); an unreported or foreign `account` → `ErrCampaignAccountMismatch` (409; `account` is a required field, the bid lever's rule). The Result is
+  `linkedin.AdoptedCampaignResult` — account, id, name, Campaign Manager link and **`adopted:
+  true`**. LinkedIn records no child ids for a toggle to miss (it DISCOVERS creatives), so that
+  flag (`linkedInAdopted`) is what `ToggleStatus` refuses ACTIVATE on (`ErrCampaignNotProvisioned`,
+  naming adoption, before any request) and what makes PAUSE flip the campaign ALONE
+  (`UpdateCampaignStatus`), never its creatives. Bid is refused on adopted rows; budget is allowed
+  (the campaign's own field; a shared group budget leaves the campaign with none, which
+  `WriteBudget` already refuses).
+
+
+## LinkedIn audience read (`linkedin_audience.go`, LFXV2-2665)
+
+`LinkedInDispatcher` implements `service.LinkedInAudienceReader` (`ReadLinkedInAudienceInsights`).
+Order: `linkedin.ValidateMetricsWindow` (→ `ErrMetricsWindowUnsupported`, 400) and
+`linkedInAudienceScopeIDs` (canonical ids via `linkedin.ValidateAudienceCampaignID` →
+`ErrAudienceScopeInvalid`; more than `linkedin.MaxAudienceCampaigns` distinct ids →
+`ErrAudienceScopeTooLarge`; both 409) BEFORE any credential is decrypted; then
+`resolveLinkedInCredentials(…, d.creds.resolveOwned)` — the project's OWN connection only, like the
+LinkedIn account monitor (no connection of its own → `ErrNotFound`, 404; inactive / undecodable /
+no token / no account → `ErrConnectionNotUsable`, 400); then `linkedInAudienceScopeForAccount`: ANY
+entry whose `linkedInCreationAccountID` differs from the bound account refuses the whole read
+(`ErrCampaignAccountMismatch`, 409). Only then the cached client's `GetAudienceInsights`, given the bound account so every request is
+confined to it by an `accounts` facet (one Analytics-finder request per pivot and campaign); its scope sentinels are re-tagged with the domain ones (a
+malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefect` errors go through
+`linkedinExpiry` (a 401 → `ErrCredentialsExpired`, 400), everything else is returned unclassified
+(503). Tests: `linkedin_audience_test.go` (every pivot mapped, LF fallback refused with zero upstream
+calls, foreign/legacy-URL/mixed provenance 409 with zero calls, unknown provenance proceeds, window
+and scope faults beat an inactive connection, 401 → expired, 5xx unclassified without its body).
