@@ -200,11 +200,8 @@ func TestLinkedIn_PreflightCreate_Bidding(t *testing.T) {
 	runBiddingPreflight(t, &LinkedInDispatcher{}, model.ProviderLinkedInAds, []biddingPreflightCase{
 		{name: "manual whole cents", config: `{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":2.34}}}`},
 		{name: "undecodable is left to dispatch", config: `{"linkedInConfig":{"bidding":"manual"}}`},
-		// Automatic is refused, explicitly or by omission: the Website conversions objective's only
-		// auto-bidding target, MAX_CONVERSION, cannot be activated without a conversion association.
-		{name: "no bidding is the automatic default", config: `{"linkedInConfig":{"budgetUsd":50}}`, want: "automatic bidding is not available on LinkedIn"},
-		{name: "no linkedInConfig at all", config: ``, want: "automatic bidding is not available on LinkedIn"},
-		{name: "explicit automatic", config: `{"linkedInConfig":{"bidding":{"strategy":"automatic"}}}`, want: "Website conversions objective"},
+		{name: "no bidding is the automatic default", config: `{"linkedInConfig":{"budgetUsd":50}}`},
+		{name: "explicit automatic", config: `{"linkedInConfig":{"bidding":{"strategy":"automatic"}}}`},
 		{name: "manual sub-cent", config: `{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":2.345}}}`, want: "not a whole number of cents"},
 		{name: "automatic with an amount", config: `{"linkedInConfig":{"bidding":{"strategy":"automatic","bidAmount":2}}}`, want: "only accepted with strategy"},
 	})

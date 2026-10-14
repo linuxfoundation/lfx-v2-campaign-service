@@ -229,7 +229,6 @@ func (a *imageAPI) client(opts ...Option) *Client {
 
 func imageCampaignInput(images map[string]ImageUpload, variants ...CreativeVariant) CampaignInput {
 	return CampaignInput{
-		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		RegistrationURL:  "https://events.example.org/kubecon",
 		BudgetUSD:        100,

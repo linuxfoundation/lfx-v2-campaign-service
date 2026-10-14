@@ -4296,7 +4296,9 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   `campaign_name`, `start_date` (through `compareNudgedStart`, since `toMs` nudges a begun start)
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
   `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
-  whenever the currency is missing, never a bare number), `objective_type`. An `account` URN naming another account →
+  whenever the currency is missing, never a bare number); `objective_type` is COMPARED (LFXV2-2665)
+  against `linkedinRecordedObjective` — automatic → `WEBSITE_VISIT`, manual → `WEBSITE_CONVERSION`,
+  `unknown` with no recorded strategy. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
@@ -4357,10 +4359,9 @@ most 1,000,000 and a whole number of micro-units (`exactScaled`, a round-trip te
 rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.ValidateMaxCPCBid`
 (0.01–1,000) plus the legacy `cpcBid` (alone = manual at that amount; with `bidding` it must agree,
 and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
-decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn REFUSES automatic — explicit or by
-omission — because its Website conversions objective's only automated target (MAX_CONVERSION) cannot
-activate without a conversion association, then `linkedin.ValidateBidAmount` (whole cents); X
-nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
+cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
+`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
 `<configKey>.bidding: <reason>`.
 
 The rules run twice: in each lane dispatcher's `PreflightCreate` (a `service.CreatePreflighter`, so

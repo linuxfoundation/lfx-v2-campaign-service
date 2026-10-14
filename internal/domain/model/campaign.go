@@ -64,8 +64,7 @@ type BiddingStrategy string
 // Bidding strategies. Automatic is the default when the dispatch config omits `bidding`.
 const (
 	// BiddingAutomatic lets the platform set every bid (Microsoft MaxClicks, Meta
-	// LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO). LinkedIn refuses it: its Website
-	// conversions objective's only automated target cannot activate without a conversion.
+	// LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO, LinkedIn WEBSITE_VISIT + MAX_CLICK).
 	BiddingAutomatic BiddingStrategy = "automatic"
 	// BiddingManual creates the campaign with a manual max cost-per-click bid, in the exact shape
 	// the bid lever (update-campaign-bid) accepts, so that lever can change it later.

@@ -255,3 +255,38 @@ func TestLinkedIn_ReadSettings_PaddedStoredIDFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy (LFXV2-2665): the
+// create's objective follows the bidding strategy it records — automatic → WEBSITE_VISIT, manual →
+// WEBSITE_CONVERSION — so objective_type is compared on a row that recorded one, and stays
+// `unknown` (never guessed) on a row that did not.
+func TestLinkedIn_ReadSettings_ObjectiveIsComparedAgainstTheRecordedStrategy(t *testing.T) {
+	automatic, manual := model.BiddingAutomatic, model.BiddingManual
+	cases := []struct {
+		name     string
+		strategy *model.BiddingStrategy
+		upstream string
+		want     fieldWant
+	}{
+		{"manual matches WEBSITE_CONVERSION", &manual, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_CONVERSION", "WEBSITE_CONVERSION", model.SettingsMatch}},
+		{"automatic matches WEBSITE_VISIT", &automatic, "WEBSITE_VISIT", fieldWant{"WEBSITE_VISIT", "WEBSITE_VISIT", model.SettingsMatch}},
+		{"automatic diverges from WEBSITE_CONVERSION", &automatic, "WEBSITE_CONVERSION", fieldWant{"WEBSITE_VISIT", "WEBSITE_CONVERSION", model.SettingsDiverged}},
+		{"unrecorded is unknown", nil, "WEBSITE_CONVERSION", fieldWant{"", "WEBSITE_CONVERSION", model.SettingsUnknown}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := liCampaignJSON(replace(`"objectiveType":"WEBSITE_CONVERSION"`, `"objectiveType":"`+tc.upstream+`"`))
+			d, _ := liLeverDispatcher(t, map[string]settingsRoute{liCampaignPath: {status: 200, body: body}})
+			row := liRow()
+			row.BiddingStrategy = tc.strategy
+			rb, err := d.ReadSettings(context.Background(), "proj", model.ProviderLinkedInAds, row)
+			if err != nil {
+				t.Fatalf("ReadSettings: %v", err)
+			}
+			f := settingsField(t, rb, settingsFieldObjectiveType)
+			if derefOr(f.Recorded) != tc.want.recorded || derefOr(f.Upstream) != tc.want.upstream || f.Comparison != tc.want.verdict {
+				t.Fatalf("objective_type = %q / %q / %s, want %+v", derefOr(f.Recorded), derefOr(f.Upstream), f.Comparison, tc.want)
+			}
+		})
+	}
+}

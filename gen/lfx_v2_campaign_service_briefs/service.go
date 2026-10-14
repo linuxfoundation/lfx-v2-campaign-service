@@ -281,9 +281,9 @@ type Service interface {
 	// unitCost — so it can be re-bid here. One created with AUTOMATIC bidding (the
 	// default) is refused (409) until an operator moves it to a manual per-click
 	// bid in the platform's own UI: Microsoft MaxClicks, Meta
-	// LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO (LinkedIn creates are manual
-	// only). Either way the guard decides on what the platform REPORTS, never on
-	// what was created. On every adapter but LinkedIn the amount is in the AD
+	// LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO, LinkedIn WEBSITE_VISIT +
+	// MAX_CLICK. Either way the guard decides on what the platform REPORTS, never
+	// on what was created. On every adapter but LinkedIn the amount is in the AD
 	// ACCOUNT's own currency, not USD, and this service neither knows nor converts
 	// it; the LinkedIn adapter writes USD and refuses (409) a campaign whose bid
 	// is in any other or an unreported currency. Microsoft Advertising, Reddit,
@@ -843,11 +843,12 @@ type CampaignCreateInput struct {
 	// "automatic" | "manual", "bidAmount": number}. Omitted means automatic
 	// (Microsoft MaxClicks — a Search campaign created without a bid used to get
 	// Microsoft's EnhancedCpc default; Meta LOWEST_COST_WITHOUT_CAP; Reddit
-	// BIDLESS; X AUTO). LinkedIn REFUSES automatic, explicit or by omission, with
-	// 400: its campaigns use the Website conversions objective, whose only
-	// automated target (MAX_CONVERSION) LinkedIn will not activate without a
-	// conversion association this service does not make — a LinkedIn create must
-	// send `manual`. `manual` requires `bidAmount`, the starting max
+	// BIDLESS; X AUTO). LinkedIn automatic creates an objectiveType WEBSITE_VISIT
+	// campaign bidding MAX_CLICK with costType CPM (decision 2026-10-13: automatic
+	// LinkedIn campaigns optimise for clicks because MAX_CONVERSION, the only
+	// automated target of WEBSITE_CONVERSION, needs a conversion association this
+	// service doesn't create); LinkedIn manual keeps objectiveType
+	// WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max
 	// cost-per-click bid in the ad account's own currency (LinkedIn: USD), greater
 	// than zero, at most 1,000,000 and a whole number of micro-units; it creates
 	// the campaign in the shape update-campaign-bid accepts. Per platform, a
@@ -987,11 +988,14 @@ type CampaignSettingsField struct {
 	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
 	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
-	// currency is not reported, never a bare number) and `objective_type` are
-	// upstream-only; a campaign reporting both a daily and a total budget, neither
-	// (as under a campaign group's shared budget), or a non-USD amount reads both
-	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
-	// consumer must render an unrecognised field name rather than dropping it.
+	// currency is not reported, never a bare number) are upstream-only, and
+	// `objective_type` is compared against the objective the recorded bidding
+	// strategy implies (automatic WEBSITE_VISIT, manual WEBSITE_CONVERSION;
+	// `unknown` when none is recorded); a campaign reporting both a daily and a
+	// total budget, neither (as under a campaign group's shared budget), or a
+	// non-USD amount reads both budget fields `unknown`. The vocabulary is
+	// per-platform and may grow, so a consumer must render an unrecognised field
+	// name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

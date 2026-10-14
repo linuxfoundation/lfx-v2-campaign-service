@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding that is manual only (CPC/NONE/unitCost; automatic is refused because WEBSITE_CONVERSION's only auto target, MAX_CONVERSION, cannot activate without a conversion) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding whose objective follows the strategy (automatic WEBSITE_VISIT + MAX_CLICK + CPM, manual WEBSITE_CONVERSION + CPC/NONE/unitCost) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -886,21 +886,32 @@ An image failure returns the partial result with zero creatives. See
 
 ## Create-time bidding (`CampaignInput.ManualCPCBid`, `campaignBidding`, LFXV2-2665)
 
-**Bug fixed**: the create body used to send `costType` `CPC` with NO `optimizationTargetType`,
-which LinkedIn defaults to `NONE` — manual bidding — with `unitCost` defaulting to 0, under which
-"the campaign does not deliver". `campaignBidding` now sends the bidding fields explicitly, merged
-into the campaign body by `createSponsoredCampaign`, and it is MANUAL ONLY:
+**Bug fixed**: the create body used to send `WEBSITE_CONVERSION`, `costType` `CPC` and NO
+`optimizationTargetType`, which LinkedIn defaults to `NONE` — manual bidding — with `unitCost` 0,
+under which "the campaign does not deliver". `campaignBidding` now returns a `campaignBiddingPlan`
+(body fields, `objectiveType`, name Objective segment) that `createSponsoredCampaign` merges.
 
-- MANUAL (`ManualCPCBid` > 0): `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost`
-  `{amount, currencyCode USD}` at whole cents through `ValidateBidAmount` (refused, never rounded) —
-  exactly what `CampaignSettings.ManualCPC` accepts, so the bid lever can re-bid it.
-- AUTOMATIC (`ManualCPCBid` 0) is REFUSED with `ErrAutomaticBiddingUnavailable` before any POST.
-  The create sends `objectiveType` `WEBSITE_CONVERSION`; LinkedIn's "Ad Budget Type Allowable
-  Combinations" (li-lms-2026-09), row `WEBSITE_CONVERSION`, allows `NONE`, `ENHANCED_CONVERSION`
-  (both manual) and `MAX_CONVERSION` (the only auto-bid target; `MAX_CLICK` is allowed only for
-  `CREATIVE_ENGAGEMENT`, `JOB_APPLICANT`, `TALENT_LEAD`, `WEBSITE_TRAFFIC`, `WEBSITE_VISIT`), and
-  "Create and Manage Campaigns" says a `MAX_CONVERSION` campaign "must have a conversion
-  associated with it to be activated" — which this service never does.
+**Decision (2026-10-13, Misha)**: automatic LinkedIn campaigns optimise for clicks via
+`WEBSITE_VISIT`/`MAX_CLICK`, because `MAX_CONVERSION` — the only automated target
+`WEBSITE_CONVERSION` allows — needs a conversion association this service doesn't create. So the
+OBJECTIVE follows the strategy:
 
-Every client test that reaches the API now names `testManualBid`. Neither shape is verified against
-a live account.
+- AUTOMATIC (`ManualCPCBid` 0): `objectiveType` `WEBSITE_VISIT`, `optimizationTargetType`
+  `MAX_CLICK`, `costType` `CPM`, no `unitCost`; name segment `Traffic`.
+- MANUAL: `objectiveType` `WEBSITE_CONVERSION`, `costType` `CPC`, `optimizationTargetType` `NONE`,
+  `unitCost` `{amount, USD}` at whole cents (`ValidateBidAmount`, refused never rounded) — what
+  `CampaignSettings.ManualCPC` (the bid lever) accepts; name segment `Conversions`, as before.
+
+Sources (li-lms-2026-09, consulted 2026-10-13): "Ad Budget Type Allowable Combinations",
+Objective Type Descriptions rows `WEBSITE_VISIT` (NONE, MAX_CLICK, ENHANCED_CONVERSION,
+TARGET_COST_PER_CLICK, CAP_COST_AND_MAXIMIZE_CLICKS) and `WEBSITE_CONVERSION` (NONE,
+ENHANCED_CONVERSION, MAX_CONVERSION); "Create and Manage Campaigns", Website Traffic table rows
+`STANDARD_UPDATE | AUTO | MAX_CLICK` (costType CPM, Bid Type CPC) and `STANDARD_UPDATE | CPC | NONE`
+(costType CPC), plus "Campaigns optimizing for MAX_CONVERSION must have a conversion associated with
+it to be activated". The bid lever refuses `MAX_CLICK` (not `NONE`/`ENHANCED_CONVERSION`).
+
+**Reuse by name**: `findCampaignByNameInGroup` takes the plan's objective and ABORTS on a same-name,
+same-group campaign reporting a different `objectiveType` (`responseElement.ObjectiveType`);
+an unreported objective cannot contradict, so it is reused. The two strategies' names already
+differ in the Objective segment, which also changes the automatic campaigns' `utm_term`. The bid is
+resolved before the first POST. Neither shape is verified against a live account.

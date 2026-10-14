@@ -252,9 +252,9 @@ type CampaignInput struct {
 	// runtime config's accounts list when set.
 	AdAccountID string
 	// ManualCPCBid is the manual starting bid (LFXV2-2665), in USD like BudgetUSD (every
-	// LinkedIn write here is USD). REQUIRED: zero asks for automatic bidding, which the
-	// WEBSITE_CONVERSION objective cannot have without a conversion association, so CreateCampaign
-	// refuses it (ErrAutomaticBiddingUnavailable) before any request. See campaignBidding.
+	// LinkedIn write here is USD). ZERO means AUTOMATIC bidding — objective WEBSITE_VISIT with
+	// MAX_CLICK; a positive value is a manual max CPC under WEBSITE_CONVERSION. The objective and
+	// the campaign name's Objective segment follow the choice. See campaignBidding.
 	ManualCPCBid float64
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
@@ -394,6 +394,9 @@ type responseElement struct {
 	// lookup to the resolved group, so a same-name campaign under a DIFFERENT
 	// (e.g. archived/replaced) group is not treated as a match.
 	CampaignGroup string `json:"campaignGroup"`
+	// ObjectiveType is a campaign search result's objectiveType, checked by
+	// findCampaignByNameInGroup so a same-name campaign with another objective is not reused.
+	ObjectiveType string `json:"objectiveType"`
 	// Type, Currency, Test, ServingStatuses and Reference are only populated for
 	// ad-account search results (ListAdAccounts, accounts.go). An ad account carries two
 	// independent health axes — its lifecycle `status`, decoded above, and the
@@ -1426,7 +1429,7 @@ func (c *Client) findByName(ctx context.Context, nestedPath, name string) (strin
 // findMatch exhaust the set and report absence, and the caller would POST a
 // DUPLICATE. So this case returns an error to abort, consistent with the
 // fail-closed handling for matched-but-id-less elements inside findMatch.
-func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID string) (string, error) {
+func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, name, groupID, objectiveType string) (string, error) {
 	return c.findMatch(ctx, campaignsPath, name, func(el responseElement) (bool, error) {
 		if el.Name != name {
 			return false, nil
@@ -1436,7 +1439,19 @@ func (c *Client) findCampaignByNameInGroup(ctx context.Context, campaignsPath, n
 		if el.CampaignGroup == "" || trailingID(el.CampaignGroup) == "" {
 			return false, fmt.Errorf("campaign %q has a missing or malformed campaignGroup %q — cannot confirm group scope; aborting to avoid creating a duplicate", el.Name, el.CampaignGroup)
 		}
-		return trailingID(el.CampaignGroup) == groupID, nil
+		if trailingID(el.CampaignGroup) != groupID {
+			return false, nil
+		}
+		// Same name in the same group, but a DIFFERENT objective (LFXV2-2665: the objective
+		// follows the bidding strategy). Reusing it would run the other strategy while the row
+		// records this one, and creating a second same-name campaign beside it is the duplicate
+		// this lookup exists to prevent — so abort. The name's Objective segment already differs
+		// between the two strategies, so this is reachable only through a hand-made campaign. An
+		// unreported objectiveType cannot contradict, so it does not block the reuse.
+		if objectiveType != "" && el.ObjectiveType != "" && el.ObjectiveType != objectiveType {
+			return false, fmt.Errorf("campaign %q already exists in this campaign group with objectiveType %s, not %s — it was not created for this bidding strategy; aborting rather than reuse it or create a duplicate", el.Name, el.ObjectiveType, objectiveType)
+		}
+		return true, nil
 	})
 }
 
@@ -1900,14 +1915,16 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool, bidding map[string]any) (string, error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool, bidding campaignBiddingPlan) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
 	// search is account-wide by name, so a same-name campaign under a DIFFERENT
 	// (e.g. archived/replaced) group must NOT be treated as a match — otherwise a
-	// new campaign is never created under the correct group.
-	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID)
+	// new campaign is never created under the correct group. The lookup also refuses a
+	// same-name campaign reporting a DIFFERENT objectiveType (LFXV2-2665): reusing it would
+	// silently run the other bidding strategy.
+	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType)
 	if err != nil {
 		return "", err
 	}
@@ -1955,11 +1972,11 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"name":          name,
 		"status":        "PAUSED",
 		"type":          "SPONSORED_UPDATES",
-		"objectiveType": "WEBSITE_CONVERSION",
-		// costType, optimizationTargetType and unitCost come from campaignBidding (always a
-		// manual max CPC) and are merged below. Before LFXV2-2665 this body sent costType CPC
-		// and NO optimizationTargetType, which LinkedIn defaults to NONE — manual bidding — with
-		// unitCost defaulting to 0, under which "the campaign does not deliver".
+		// objectiveType, costType, optimizationTargetType and (manual only) unitCost come from
+		// campaignBidding and are merged below: WEBSITE_VISIT + MAX_CLICK for automatic,
+		// WEBSITE_CONVERSION + NONE + unitCost for manual. Before LFXV2-2665 this body sent
+		// WEBSITE_CONVERSION, costType CPC and NO optimizationTargetType, which LinkedIn defaults
+		// to NONE — manual bidding — with unitCost 0, under which "the campaign does not deliver".
 		"locale": map[string]any{"country": "US", "language": "en"},
 		// false keeps delivery on LinkedIn itself. true opts the campaign into the
 		// LinkedIn Audience Network — placements beyond the feed, on third-party
@@ -1971,8 +1988,11 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"runSchedule":            map[string]any{"start": startMs, "end": endMs},
 	}
 	// Merge the bidding fields, then the targetingCriteria block.
-	for k, v := range bidding {
+	for k, v := range bidding.fields {
 		body[k] = v
+	}
+	if bidding.objectiveType != "" {
+		body["objectiveType"] = bidding.objectiveType
 	}
 	for k, v := range targeting {
 		body[k] = v
@@ -2492,9 +2512,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if _, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget); err != nil {
 		return nil, err
 	}
-	// The bidding fields, resolved BEFORE any POST: a missing bid (automatic, unavailable for this
-	// objective) or one that is not a whole number of cents is refused here, with nothing created,
-	// rather than after the campaign group exists.
+	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of cents
+	// is refused here, with nothing created, rather than after the campaign group exists. The plan
+	// also decides the objective and the campaign name's Objective segment.
 	bidding, err := campaignBidding(in.ManualCPCBid)
 	if err != nil {
 		return nil, err
@@ -2617,7 +2637,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
-	campaignName := fmt.Sprintf("Events | %s | LinkedIn | Conversions | Prospecting | Static | %s | MoFU", eventName, project)
+	// The Objective segment follows the bidding plan (LFXV2-2665): "Conversions" for a manual
+	// WEBSITE_CONVERSION campaign — the name every campaign had before — and "Traffic" for an
+	// automatic WEBSITE_VISIT one, so the two never share a name and a retry of one can never
+	// find and reuse the other (findCampaignByNameInGroup also refuses an objective mismatch).
+	campaignName := fmt.Sprintf("Events | %s | LinkedIn | %s | Prospecting | Static | %s | MoFU", eventName, bidding.nameObjective, project)
 	// LinkedIn limits campaign-group and campaign names to 255 characters. Validate
 	// both generated names before the first create so an over-long event name/project
 	// fails fast instead of after the group is created.

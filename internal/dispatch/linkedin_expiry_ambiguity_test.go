@@ -176,7 +176,7 @@ func TestLinkedIn_DispatchGroupPOST401RetainsClaim(t *testing.T) {
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(linkedInFutureClock()),
 	)
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",

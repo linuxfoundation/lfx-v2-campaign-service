@@ -15,10 +15,6 @@ import (
 	"testing"
 )
 
-// testManualBid is the manual bid the other LinkedIn create tests send: LinkedIn creates refuse
-// automatic bidding (LFXV2-2665), so every create that is meant to reach the API names one.
-const testManualBid = 1.0
-
 // biddingCreateServer answers a full CreateCampaign and captures the campaign POST body. posts
 // counts every mutating request, so a refusal can prove nothing was sent.
 func biddingCreateServer(t *testing.T) (*httptest.Server, func() map[string]any, func() int) {
@@ -85,8 +81,9 @@ func TestCreateCampaign_ManualBidSendsTheShapeTheBidLeverAccepts(t *testing.T) {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
 	b := body()
-	if b["costType"] != "CPC" || b["optimizationTargetType"] != "NONE" {
-		t.Fatalf("manual campaign: costType=%v optimizationTargetType=%v, want CPC/NONE", b["costType"], b["optimizationTargetType"])
+	if b["costType"] != "CPC" || b["optimizationTargetType"] != "NONE" || b["objectiveType"] != ObjectiveWebsiteConversion {
+		t.Fatalf("manual campaign: costType=%v optimizationTargetType=%v objectiveType=%v, want CPC/NONE/WEBSITE_CONVERSION",
+			b["costType"], b["optimizationTargetType"], b["objectiveType"])
 	}
 	unit, ok := b["unitCost"].(map[string]any)
 	if !ok || unit["amount"] != "4.50" || unit["currencyCode"] != "USD" {
@@ -99,26 +96,32 @@ func TestCreateCampaign_ManualBidSendsTheShapeTheBidLeverAccepts(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_AutomaticBiddingIsRefusedBeforeAnyPost: the objective this client sends,
-// WEBSITE_CONVERSION, has one auto-bidding target, MAX_CONVERSION, which LinkedIn will not activate
-// without a conversion association this service never makes. So a create with no manual bid is
-// refused with nothing created — not even the campaign group — rather than leaving a campaign that
-// cannot go live.
-func TestCreateCampaign_AutomaticBiddingIsRefusedBeforeAnyPost(t *testing.T) {
-	srv, _, posts := biddingCreateServer(t)
+// TestCreateCampaign_AutomaticBiddingIsWebsiteVisitMaxClick pins the automatic request (decision
+// 2026-10-13, Misha): objectiveType WEBSITE_VISIT, optimizationTargetType MAX_CLICK, costType CPM
+// (the "Create and Manage Campaigns" Website Traffic row STANDARD_UPDATE | AUTO | MAX_CLICK), NO
+// unitCost, and the name's Objective segment "Traffic" — and that the bid lever's own predicate
+// refuses it as not a manual max CPC.
+func TestCreateCampaign_AutomaticBiddingIsWebsiteVisitMaxClick(t *testing.T) {
+	srv, body, _ := biddingCreateServer(t)
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), biddingCreateInput(0))
-	if !errors.Is(err, ErrAutomaticBiddingUnavailable) {
-		t.Fatalf("err = %v, want ErrAutomaticBiddingUnavailable", err)
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if res != nil || posts() != 0 {
-		t.Fatalf("result=%+v posts=%d, want nil and 0", res, posts())
+	b := body()
+	if b["objectiveType"] != ObjectiveWebsiteVisit || b["optimizationTargetType"] != OptimizationTargetMaxClick || b["costType"] != "CPM" {
+		t.Fatalf("automatic campaign: objectiveType=%v optimizationTargetType=%v costType=%v, want WEBSITE_VISIT/MAX_CLICK/CPM",
+			b["objectiveType"], b["optimizationTargetType"], b["costType"])
 	}
-	// And the bid lever keeps refusing an auto-bid campaign (one an operator switched, or one
-	// from before this change): MAX_CONVERSION/CPM is not a manual max CPC.
-	cpm, maxConv := "CPM", "MAX_CONVERSION"
-	if (&CampaignSettings{CostType: &cpm, OptimizationTargetType: &maxConv}).ManualCPC() {
-		t.Fatal("an auto-bid campaign must not read as a manual max CPC")
+	if _, has := b["unitCost"]; has {
+		t.Fatalf("an automatic campaign must not send unitCost: %v", b["unitCost"])
+	}
+	if !strings.Contains(res.CampaignName, "| LinkedIn | Traffic |") {
+		t.Errorf("campaign name %q lacks the Traffic objective segment", res.CampaignName)
+	}
+	costType, target := b["costType"].(string), b["optimizationTargetType"].(string)
+	if (&CampaignSettings{CostType: &costType, OptimizationTargetType: &target}).ManualCPC() {
+		t.Fatal("an automatic MAX_CLICK campaign must not read as a manual max CPC")
 	}
 }
 
@@ -136,5 +139,40 @@ func TestCreateCampaign_SubCentManualBidIsRefusedBeforeAnyPost(t *testing.T) {
 	}
 	if n := posts(); n != 0 {
 		t.Fatalf("%d mutating requests were sent for a refused bid, want 0", n)
+	}
+}
+
+// TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch: a same-name campaign in the same group
+// is reused only when its objectiveType is the one this bidding strategy creates (or is
+// unreported); a reported mismatch aborts rather than reuse it or create a duplicate beside it.
+func TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch(t *testing.T) {
+	const name = "Events | KubeCon | LinkedIn | Traffic | Prospecting | Static | tlf | MoFU"
+	for label, tc := range map[string]struct {
+		reported string
+		wantID   string
+		wantErr  bool
+	}{
+		"same objective is reused":       {reported: `,"objectiveType":"WEBSITE_VISIT"`, wantID: "200"},
+		"unreported objective is reused": {reported: ``, wantID: "200"},
+		"different objective aborts":     {reported: `,"objectiveType":"WEBSITE_CONVERSION"`, wantErr: true},
+	} {
+		t.Run(label, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:200","campaignGroup":"urn:li:sponsoredCampaignGroup:555"`+tc.reported+`}],"metadata":{"nextPageToken":""}}`)
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+			id, err := c.findCampaignByNameInGroup(context.Background(), "adAccounts/123456789/adCampaigns", name, "555", ObjectiveWebsiteVisit)
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "objectiveType WEBSITE_CONVERSION, not WEBSITE_VISIT") {
+					t.Fatalf("id=%q err=%v, want an objective-mismatch abort", id, err)
+				}
+				return
+			}
+			if err != nil || id != tc.wantID {
+				t.Fatalf("id=%q err=%v, want %q", id, err, tc.wantID)
+			}
+		})
 	}
 }

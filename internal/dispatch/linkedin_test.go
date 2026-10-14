@@ -285,7 +285,7 @@ func TestLinkedIn_BadConfigIsPreCreate(t *testing.T) {
 func TestLinkedIn_EmptyVariantsIsPreCreate(t *testing.T) {
 	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{})
 	// A well-formed config with NO variants.
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01","variants":[]}}`)
+	cfg := json.RawMessage(`{"linkedInConfig":{"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01","variants":[]}}`)
 	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
 	var nuc interface{ NoUpstreamCreate() bool }
 	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
@@ -357,7 +357,7 @@ func TestLinkedIn_DispatchSuccessMapsResult(t *testing.T) {
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
 	)
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",
@@ -400,7 +400,7 @@ func TestLinkedIn_ForeignAccountIDRejected(t *testing.T) {
 	// A variant IS supplied so the flow gets PAST the empty-variants pre-create check
 	// and actually reaches the cross-account guard — otherwise this test would pass on
 	// the wrong error and a broken account guard would go unnoticed.
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},"adAccountId":"999999999","targetingProfile":"x","targetingProfiles":[{"id":"x","label":"X"}],"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]}}`)
+	cfg := json.RawMessage(`{"linkedInConfig":{"adAccountId":"999999999","targetingProfile":"x","targetingProfiles":[{"id":"x","label":"X"}],"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]}}`)
 	_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
 	var nuc interface{ NoUpstreamCreate() bool }
 	if err == nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
@@ -444,7 +444,7 @@ func TestLinkedIn_PaddedMatchingAccountIDAccepted(t *testing.T) {
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
 	)
 	// The connection's account is "123456789"; supply it whitespace-padded.
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"adAccountId":"  123456789  ",
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
@@ -478,7 +478,7 @@ func TestLinkedIn_AmbiguousCreateRetainsClaim(t *testing.T) {
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
 	)
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",
@@ -542,7 +542,7 @@ func TestLinkedIn_ConfigHSTokenTakesPrecedence(t *testing.T) {
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
 	)
 	// hsToken is a TOP-LEVEL envelope field (sibling to linkedInConfig, per api-catalog).
-	cfg := json.RawMessage(`{"hsToken":"HS-FROM-CONFIG","linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"hsToken":"HS-FROM-CONFIG","linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",
@@ -582,7 +582,7 @@ func TestLinkedIn_GroupCreatedButCampaignFails_RecordsGroupOrphan(t *testing.T) 
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
 	)
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",
@@ -1101,7 +1101,7 @@ func TestLinkedIn_DispatchAdoptsTheTrimmedAccessToken(t *testing.T) {
 		identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(clock),
 	)
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",
@@ -1415,7 +1415,7 @@ func TestLinkedIn_DispatchStampsCreatingAccount(t *testing.T) {
 		fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
 		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
-	cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
+	cfg := json.RawMessage(`{"linkedInConfig":{
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",

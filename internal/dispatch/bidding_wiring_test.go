@@ -6,7 +6,6 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -217,7 +216,7 @@ func TestLinkedIn_DispatchManualBiddingReachesTheCampaign(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	body := log.get("adCampaigns")
-	for _, want := range []string{`"costType":"CPC"`, `"optimizationTargetType":"NONE"`, `"unitCost":{"amount":"4.50","currencyCode":"USD"}`} {
+	for _, want := range []string{`"objectiveType":"WEBSITE_CONVERSION"`, `"costType":"CPC"`, `"optimizationTargetType":"NONE"`, `"unitCost":{"amount":"4.50","currencyCode":"USD"}`, `| LinkedIn | Conversions |`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("campaign body %s lacks %s", body, want)
 		}
@@ -225,38 +224,60 @@ func TestLinkedIn_DispatchManualBiddingReachesTheCampaign(t *testing.T) {
 	assertManualRow(t, camp, 4.5)
 }
 
-// TestLinkedIn_DispatchWithoutManualBiddingCreatesNothing: a LinkedIn dispatch that omits
-// `bidding` (the automatic default) or asks for automatic is refused before any LinkedIn request,
-// with the claim released — the Website conversions objective's only automated bidding cannot be
-// activated without a conversion this service does not associate.
-func TestLinkedIn_DispatchWithoutManualBiddingCreatesNothing(t *testing.T) {
-	for name, cfg := range map[string]string{
-		"omitted":   `{"linkedInConfig":{"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01","variants":[{"introText":"Join us","headline":"KubeCon"}]}}`,
-		"automatic": `{"linkedInConfig":{"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01","variants":[{"introText":"Join us","headline":"KubeCon"}],"bidding":{"strategy":"automatic"}}}`,
-	} {
+// TestLinkedIn_DispatchAutomaticBiddingIsWebsiteVisitMaxClick: a LinkedIn dispatch that omits
+// `bidding` (the automatic default) or asks for automatic creates a WEBSITE_VISIT campaign bidding
+// MAX_CLICK with no unitCost and a "Traffic" name segment, and records automatic with no bid.
+func TestLinkedIn_DispatchAutomaticBiddingIsWebsiteVisitMaxClick(t *testing.T) {
+	for name, bidding := range map[string]string{"omitted": ``, "automatic": `,"bidding":{"strategy":"automatic"}`} {
 		t.Run(name, func(t *testing.T) {
-			var mu sync.Mutex
-			requests := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				mu.Lock()
-				requests++
-				mu.Unlock()
-				w.WriteHeader(http.StatusInternalServerError)
+			log := &bodyLog{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+					return
+				}
+				b, _ := io.ReadAll(r.Body)
+				switch {
+				case strings.Contains(r.URL.Path, "adCampaignGroups"):
+					_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+				case strings.Contains(r.URL.Path, "adCampaigns"):
+					log.put("adCampaigns", string(b))
+					w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+					_, _ = io.WriteString(w, `{}`)
+				case strings.Contains(r.URL.Path, "posts"):
+					_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+				case strings.Contains(r.URL.Path, "creatives"):
+					_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+				default:
+					http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+				}
 			}))
 			defer srv.Close()
-			d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
-			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, json.RawMessage(cfg))
-			var nuc interface{ NoUpstreamCreate() bool }
-			if err == nil || camp != nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
-				t.Fatalf("Dispatch = %+v, %v; want a NoUpstreamCreate refusal", camp, err)
+			d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+				linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }))
+			cfg := json.RawMessage(`{"linkedInConfig":{
+				"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+				"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+				"targetingProfile":"cloud-native",
+				"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+				"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]` + bidding + `
+			}}`)
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
 			}
-			if !strings.Contains(err.Error(), "automatic bidding is not available on LinkedIn") {
-				t.Errorf("err = %v, want the automatic-bidding refusal", err)
+			body := log.get("adCampaigns")
+			for _, want := range []string{`"objectiveType":"WEBSITE_VISIT"`, `"optimizationTargetType":"MAX_CLICK"`, `"costType":"CPM"`, `| LinkedIn | Traffic |`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("campaign body %s lacks %s", body, want)
+				}
 			}
-			mu.Lock()
-			defer mu.Unlock()
-			if requests != 0 {
-				t.Fatalf("%d LinkedIn requests for a refused config, want 0", requests)
+			if strings.Contains(body, "unitCost") {
+				t.Errorf("an automatic campaign must not send unitCost: %s", body)
+			}
+			if camp.BiddingStrategy == nil || *camp.BiddingStrategy != model.BiddingAutomatic || camp.MaxCPCBid != nil {
+				t.Fatalf("row = %v / %v, want automatic / nil", camp.BiddingStrategy, camp.MaxCPCBid)
 			}
 		})
 	}
