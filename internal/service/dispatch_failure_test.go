@@ -297,13 +297,21 @@ func TestCallerValue(t *testing.T) {
 		{"ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123", "(value withheld)"},     // prefixed token
 		{"0123456789abcdef0123456789abcdef01234567", "(value withheld)"},        // 40-char hex
 		{"x" + "SECRET2080000000000000000000000000000/+_-", "(value withheld)"}, // base64 alphabet
+		{"//events.example/reset/SECRET-208", "(value withheld)"},               // protocol-relative URL
+		{"events.example/reset", "(value withheld)"},                            // host + path, no scheme
+		{"/events.example", "(value withheld)"},
+		{"reset/SECRET/208", "(value withheld)"}, // a path
+		{"SECRET%2F208", "(value withheld)"},     // percent-encoded payload
+		{"SECRET\\208", "(value withheld)"},      // escaped payload
 		// Legitimate shapes the refusals quote must survive.
+		{"image/png", `"image/png"`}, // a MIME type the image refusals quote
+		{"2099-01-04", `"2099-01-04"`},
 		{"3fa85f64-5717-4562-b3fc-2c963f66afa6", `"3fa85f64-5717-4562-b3fc-2c963f66afa6"`}, // asset/project UUID
 		{"act_193556282970417", `"act_193556282970417"`},
 		{"urn:li:image:D4E10AQGd7Hmvf3D4NAxyz", `"urn:li:image:D4E10AQGd7Hmvf3D4NAxyz"`},
 		{"1234567890123456789", `"1234567890123456789"`},
 		{"cloud-native-computing-foundation-events", `"cloud-native-computing-foundation-events"`}, // digit-free slug
-		{long, `"` + strings.Repeat("a", 64) + `…"`},
+		{long, `"` + strings.Repeat("a", 64) + `…" (truncated)`},
 		{"bell\x07", "\"bell\uFFFD\""},
 		{"", `""`},
 	} {

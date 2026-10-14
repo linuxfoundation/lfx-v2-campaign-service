@@ -54,3 +54,18 @@ PR #335 bot review follow-ups, folded into the same change:
   image choice, and LinkedIn's stored-image validation. Reddit's composed-name checks stay
   unmarked because they run after the account-verify GET.
 
+Second PR #335 bot round:
+
+- `CallerValue` also withholds:
+  - a protocol-relative `//…` value;
+  - any value with two or more `/`, or a `/` together with a `.` (a host and path);
+  - any value with `\` or `%`.
+
+  MIME types such as `image/png`, dates, URNs and ids still show. A cut value now ends with
+  "(truncated)". It replaces the dispatchers' `safeAssetIDForError`.
+- Each dispatcher's pre-create stored-asset resolution is marked. That covers
+  `resolveLinkedInImages`, whose `ValidateImage` ran before the client's and so surfaced an
+  invalid image as the generic string, and the Meta, Microsoft, X and Reddit equivalents. Tests
+  pin that an invalid LinkedIn or Microsoft stored image reaches the job result with nothing
+  sent.
+

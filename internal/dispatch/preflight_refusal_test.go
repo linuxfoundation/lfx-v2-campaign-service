@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -303,6 +304,10 @@ func TestDispatch_RefusalsNeverEchoHostileCallerInput(t *testing.T) {
 		{"x tweet id spans lines", model.ProviderTwitterAds, x, xCfg("123\nSECRET-208"), "invalid tweet id: (value withheld)"},
 		{"x tweet id is a bare query", model.ProviderTwitterAds, x, xCfg("access_token=SECRET-208&scope=ads"), "invalid tweet id: (value withheld)"},
 		{"x tweet id is a long opaque token", model.ProviderTwitterAds, x, xCfg("ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123"), "invalid tweet id: (value withheld)"},
+		{"x tweet id is a protocol-relative URL", model.ProviderTwitterAds, x, xCfg("//events.example/reset/SECRET-208"), "invalid tweet id: (value withheld)"},
+		{"x tweet id is a percent-encoded payload", model.ProviderTwitterAds, x, xCfg("SECRET%2F208"), "invalid tweet id: (value withheld)"},
+		{"linkedin image urn is a protocol-relative URL", model.ProviderLinkedInAds, li, liCfg("//events.example/reset/SECRET-208"), "variant-1 image URN (value withheld) is malformed"},
+		{"linkedin image urn carries a host and path", model.ProviderLinkedInAds, li, liCfg("urn:li:image:events.example/SECRET-208"), "variant-1 image URN (value withheld) is malformed"},
 		{"linkedin image urn is a bare query", model.ProviderLinkedInAds, li, liCfg("urn:li:image:1?access_token=SECRET-208&scope=ads"), "variant-1 image URN (value withheld) is malformed"},
 		{"linkedin image urn carries a long opaque token", model.ProviderLinkedInAds, li, liCfg("urn:li:digitalmediaAsset:SECRET208abcdefghijklmnopqrstuvwxyz0123"), "variant-1 image URN (value withheld) is malformed"},
 		{"linkedin image urn is a secret-bearing URL", model.ProviderLinkedInAds, li, liCfg(hostileURL), "variant-1 image URN (value withheld) is malformed"},
@@ -355,5 +360,55 @@ func TestDispatch_XComposedNameOverflowIsARefusal(t *testing.T) {
 	}
 	if n := tr.sent.Load(); n != 0 {
 		t.Errorf("%d request(s) sent before the composed-name refusal", n)
+	}
+}
+
+// TestDispatch_LinkedInInvalidStoredImageReachesTheJobResult: Dispatch validates a stored image
+// in resolveLinkedInImages, BEFORE the client's own CreateCampaign check runs, so that earlier
+// refusal must be marked too, or an invalid image reads as the generic string. The reason is
+// size/shape/format only and nothing is sent to LinkedIn.
+func TestDispatch_LinkedInInvalidStoredImageReachesTheJobResult(t *testing.T) {
+	api := newLIImageAPI(t)
+	d := newLIImageDispatcher(api, liPNGAsset(t, 300, 200), NewAssetReserver(10<<20, time.Millisecond))
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, liImageConfig(liVariant(`"imageAssetId":"`+msAssetID+`"`)))
+	if camp != nil || !isNoUpstreamCreate(err) {
+		t.Fatalf("want a pre-create refusal, got camp=%v err=%v", camp, err)
+	}
+	msg, ok := domain.AsPreflightRefusal(err)
+	if !ok {
+		t.Fatalf("the stored-image refusal is not marked, so the job would read the generic string: %v", err)
+	}
+	got := service.DispatchFailureMessage(model.ProviderLinkedInAds, err, true)
+	if got != msg {
+		t.Errorf("job result error = %q, want the refusal verbatim %q", got, msg)
+	}
+	if !strings.Contains(got, msAssetID) || !strings.Contains(got, "300x200") {
+		t.Errorf("job result error %q should name the asset and its size", got)
+	}
+	if n := api.count(""); n != 0 {
+		t.Errorf("%d request(s) reached LinkedIn before the image refusal", n)
+	}
+}
+
+// TestDispatch_MicrosoftInvalidStoredImageReachesTheJobResult: the same gap on Microsoft's
+// pre-create asset resolution (resolveMicrosoftImage runs ValidateImage before the client).
+func TestDispatch_MicrosoftInvalidStoredImageReachesTheJobResult(t *testing.T) {
+	api := &msImageAPI{}
+	d := newMSImageDispatcher(t, api, liPNGAsset(t, 30, 10))
+	d.SetAssetReserver(NewAssetReserver(MaxConcurrentVariantAssetBytes, 0))
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds,
+		msImageConfig(`,"imageAssetId":"`+msAssetID+`","imageAltText":"KubeCon NA"`))
+	if camp != nil || !isNoUpstreamCreate(err) {
+		t.Fatalf("want a pre-create refusal, got camp=%v err=%v", camp, err)
+	}
+	msg, ok := domain.AsPreflightRefusal(err)
+	if !ok {
+		t.Fatalf("the stored-image refusal is not marked: %v", err)
+	}
+	if got := service.DispatchFailureMessage(model.ProviderMicrosoftAds, err, true); got != msg || !strings.Contains(got, "30x10") {
+		t.Errorf("job result error = %q, want the refusal %q naming the image size", got, msg)
+	}
+	if n := api.total(); n != 0 {
+		t.Errorf("%d request(s) reached Microsoft before the image refusal", n)
 	}
 }

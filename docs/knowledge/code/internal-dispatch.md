@@ -4421,7 +4421,12 @@ calendar validity (`validateDate`), date order and lead time, tweet id, composed
 image placement and `validateImageInput`, account/funding instrument, and the composed
 campaign and line-item name lengths), and Microsoft up to geo resolution (account/customer ids, project, event, budget,
 name length, composed URL length, ad copy, keywords, bid, geo codes). LinkedIn's stored-image
-checks (`ValidateImage`) are marked too. Reddit's composed campaign / ad-group name length
+checks (`ValidateImage`) are marked too, both in the client and in `resolveLinkedInImages`,
+which runs them first. Each dispatcher's pre-create stored-asset resolution is marked the same
+way: `resolveLinkedInImages`, Meta `resolveVariantAssets`, Microsoft `resolveMicrosoftImage`
+(including its `ValidateImage`), X `resolveTwitterImage` and Reddit `checkRedditAsset`. That
+covers malformed ids, a missing or foreign asset, size and byte limits, a full reservation, and
+empty bytes. Repository-error wraps stay unmarked. Reddit's composed campaign / ad-group name length
 checks are NOT: they run after the account-verify GET, so a request was already sent. Dispatcher-authored ones
 are marked too: Reddit's stored-asset choice, LinkedIn's inactive / incomplete / missing-org /
 no-variant / foreign-account refusals, X's missing funding instrument, and HubSpot's missing
@@ -4429,9 +4434,11 @@ no-variant / foreign-account refusals, X's missing funding instrument, and HubSp
 refusal names — dates, ids, URNs, objectives, keywords, CTA, video goal, list ids, targeting
 profile and facet names — is rendered through `domain.CallerValue`. That function quotes the
 value, cuts it to 64 runes, replaces non-graphic runes, and withholds it entirely
-("(value withheld)") when it contains `://`, `?`, `#`, `@`, `=`, `&` or whitespace, or an
-opaque token (a run of 32+ characters from `[A-Za-z0-9+/_-]` that includes a digit and is
-not a canonical UUID). So a pasted secret-bearing URL, a bare query, or a token in an id
+("(value withheld)") when it contains `://`, `?`, `#`, `@`, `=`, `&`, `\`, `%` or whitespace;
+starts with `//`; contains two or more `/`, or a `/` together with a `.`; or contains an opaque
+token (a run of 32+ characters from `[A-Za-z0-9+/_-]` that includes a digit and is not a
+canonical UUID). A value it cuts carries "… (truncated)". It replaced the dispatchers'
+`safeAssetIDForError`. So a pasted secret-bearing URL, a bare query, or a token in an id
 field never reaches the job result. The shared helpers whose text
 reaches a marked refusal (LinkedIn `toMs`/`validateSchedule`/`resolveAccountID`/`resolveOrgID`/
 targeting profile and facet checks, Meta `buildPromotedObject`, Microsoft keyword/geo/ad-copy

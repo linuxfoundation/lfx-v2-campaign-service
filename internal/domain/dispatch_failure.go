@@ -107,30 +107,39 @@ const callerValueWithheld = "(value withheld)"
 // may reach the job result verbatim (PreflightRefusal). Caller input is not upstream text, but
 // it is not ours either: an "id" field can hold a pasted URL whose query carries a token, and a
 // value can be arbitrarily long or carry control characters. So, modelled on the dispatchers'
-// safeAssetIDForError:
+// former safeAssetIDForError:
 //
 //   - a value is not shown at all when it is shaped like something that carries a secret:
-//     it contains "://", "?", "#", "@", "=", "&" or any whitespace (a URL, a query — including
-//     a bare one such as "access_token=…&scope=ads" — a userinfo credential, or a multi-line
-//     paste), or it contains an opaque token: a run of 32 or more characters from
+//     it contains "://", "?", "#", "@", "=", "&", "\\", "%" or any whitespace (a URL, a
+//     query — including a bare one such as "access_token=…&scope=ads" — a userinfo
+//     credential, an escaped or percent-encoded payload, or a multi-line paste); it starts
+//     with "//" (a protocol-relative URL) or contains two or more "/" (a path); it contains
+//     a "/" together with a "." (a host and path, "events.example/reset/…" or
+//     "/events.example"); or it contains an opaque token: a run of 32 or more characters from
 //     [A-Za-z0-9+/_-] that includes a digit and is not a canonical UUID (base64, base64url
-//     and hex tokens). No value these refusals quote legitimately has either shape: dates,
-//     numeric and short alphanumeric account/tweet/pixel/list ids, "urn:li:…" URNs (the
-//     colons break the run), objectives and CTAs are all far shorter, and the UUIDs used as
-//     asset and project ids are exempted by shape. A digit-free run (a long slug) is kept;
-//   - otherwise it is cut to maxCallerValueRunes (marked with "…"), every non-graphic rune is
-//     replaced with U+FFFD, and the result is quoted.
+//     and hex tokens). No value these refusals quote legitimately has any of these shapes:
+//     dates (no slash), numeric and short alphanumeric account/tweet/pixel/list ids,
+//     "urn:li:…" URNs (colons, no slash; the colons also break a token run), objectives and
+//     CTAs, and MIME types such as "image/png" (one slash, no dot). The UUIDs used as asset
+//     and project ids are exempted from the token rule by shape, and a digit-free run (a
+//     long slug) is kept;
+//   - otherwise it is cut to maxCallerValueRunes (marked with "…" and a trailing
+//     " (truncated)", so a cut value cannot be mistaken for a whole one), every non-graphic
+//     rune is replaced with U+FFFD, and the result is quoted.
 //
 // Every caller-supplied value formatted into a PreflightRefusal must go through this.
 func CallerValue(s string) string {
-	if strings.Contains(s, "://") || strings.ContainsAny(s, "?#@=&") || strings.IndexFunc(s, unicode.IsSpace) >= 0 || hasOpaqueToken(s) {
+	if strings.Contains(s, "://") || strings.ContainsAny(s, "?#@=&\\%") || strings.IndexFunc(s, unicode.IsSpace) >= 0 ||
+		looksLikePath(s) || hasOpaqueToken(s) {
 		return callerValueWithheld
 	}
 	var b strings.Builder
 	n := 0
+	truncated := false
 	for _, r := range s {
 		if n == maxCallerValueRunes {
 			b.WriteString("…")
+			truncated = true
 			break
 		}
 		if !unicode.IsGraphic(r) {
@@ -139,6 +148,9 @@ func CallerValue(s string) string {
 		b.WriteRune(r)
 		n++
 	}
+	if truncated {
+		return strconv.Quote(b.String()) + " (truncated)"
+	}
 	return strconv.Quote(b.String())
 }
 
@@ -146,6 +158,16 @@ var (
 	opaqueTokenRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{32,}`)
 	canonicalUUID  = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
 )
+
+// looksLikePath reports whether s is shaped like a URL without a scheme or a path: it starts
+// with "//", it has two or more "/", or it has a "/" and a "." (a host beside a path). A single
+// slash with no dot — a MIME type such as "image/png", which the image refusals quote — passes.
+func looksLikePath(s string) bool {
+	if strings.HasPrefix(s, "//") || strings.Count(s, "/") >= 2 {
+		return true
+	}
+	return strings.Contains(s, "/") && strings.Contains(s, ".")
+}
 
 // hasOpaqueToken reports whether s contains a run shaped like a credential token (see
 // CallerValue).
