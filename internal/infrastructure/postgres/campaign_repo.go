@@ -524,15 +524,17 @@ func (r *CampaignRepo) ListRecentProjectPlatformCampaigns(ctx context.Context, p
 // the mutation routes are brief- and campaign-scoped, while the keyword rows a caller acts on
 // carry only the platform's numeric id.
 //
-// FOR GOOGLE ADS, AT MOST ONE ROW CAN MATCH, enforced by the schema rather than by this query:
-// migration 000020 creates uq_campaigns_platform_campaign_live, a UNIQUE index on
-// (platform, platform_campaign_id) WHERE platform = 'google-ads'. The index is GLOBAL — it has
-// no project_id column — so adding project_id can only narrow one row to zero or one.
+// FOR GOOGLE ADS, LINKEDIN AND META, AT MOST ONE ROW CAN MATCH, enforced by the schema rather
+// than by this query: migrations 000020, 000042 and 000043 create UNIQUE indexes on
+// (platform, platform_campaign_id) scoped to each of those platforms. They are GLOBAL — no
+// project_id column — so adding project_id can only narrow one row to zero or one.
 //
-// FOR MICROSOFT ADVERTISING MORE THAN ONE LIVE ROW CAN MATCH: that index does not cover it, and
-// Microsoft campaign ids are minted per ad account, so a project whose connection was re-pointed
-// to another account can hold two live rows with the same id. The return-every-row shape is
-// therefore LOAD-BEARING there, not merely defensive: no LIMIT and no DISTINCT, so the caller
+// FOR MICROSOFT ADVERTISING, REDDIT AND X MORE THAN ONE LIVE ROW CAN MATCH: their binding indexes
+// (000044-000046) are keyed on the AD ACCOUNT too (Microsoft mints ids per account; Reddit and X
+// do not document theirs as global), so a project whose connection was re-pointed to another
+// account can hold one live row per account for the same id — and a legacy row that records no
+// account is not constrained at all. The return-every-row shape is therefore LOAD-BEARING there,
+// not merely defensive: no LIMIT and no DISTINCT, so the caller
 // sees every match and refuses rather than acting on whichever row sorted first. Ordered by id so
 // a repeated call answers identically.
 const resolvePlatformCampaignQuery = `SELECT id, brief_id FROM campaigns

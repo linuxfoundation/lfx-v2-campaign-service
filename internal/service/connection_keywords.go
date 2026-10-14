@@ -287,9 +287,9 @@ func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *con
 // Everything above ResolveGoogleAdsCampaign holds here unchanged — a read of this service's own
 // tables, project-scoped in SQL, 200 with no matches for an unowned id, 500 for a storage fault,
 // 503 while the backend is not wired — with ONE difference a caller must handle: more than one
-// match is REACHABLE. Migration 000020's unique index covers Google Ads only, because Microsoft
-// mints campaign ids per ad account, so a project whose connection was re-pointed between accounts
-// can hold two live rows for the same id. Every match is returned and the caller refuses; this
+// match is REACHABLE. Microsoft mints campaign ids per ad account, so its binding index (000044)
+// allows one live row per (id, account), and a project whose connection was re-pointed between
+// accounts can hold one row per account for the same id — plus legacy rows recording no account. Every match is returned and the caller refuses; this
 // layer never picks one.
 //
 // Not gated on MICROSOFT_METRICS_ENABLED: that flag governs reads that contact Microsoft, and this
@@ -326,8 +326,10 @@ var (
 // ResolveMicrosoftAdsCampaign for Meta, Reddit and X (LFXV2-2665): the same DB-only,
 // project-scoped lookup through resolvePlatformCampaignRef, differing only in the platform the
 // route fixes and the id rule — each platform package's ValidateCampaignID, applied before any
-// lookup. As for Microsoft, more than one match is reachable (000020's unique index covers
-// Google Ads only) and every match is returned for the caller to refuse.
+// lookup. Every match is returned for the caller to refuse; whether more than one is REACHABLE
+// depends on the platform's binding index: on Meta (000043, global) a valid database holds at
+// most one, while on Reddit and X (000045/000046, per ad account) a project can hold one row per
+// account for the same id, plus legacy rows that record no account.
 func (s *ConnectionService) ResolveMetaAdsCampaign(ctx context.Context, p *conn.ResolveMetaAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
 	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderMetaAds, p.PlatformCampaignID, validateMetaCampaignRefID)
 }
@@ -337,8 +339,8 @@ func (s *ConnectionService) ResolveRedditAdsCampaign(ctx context.Context, p *con
 }
 
 // ResolveLinkedInAdsCampaign is the same lookup for LinkedIn (LFXV2-2665): DB-only, project-scoped,
-// every match returned (000020's unique index is Google-only, so a re-pointed connection can hold
-// two live rows for one id), the id checked by linkedin.ValidateCampaignID before any lookup.
+// every match returned — though 000042's global index (LinkedIn ids are globally unique) keeps a
+// valid database to at most one — the id checked by linkedin.ValidateCampaignID before any lookup.
 func (s *ConnectionService) ResolveLinkedinAdsCampaign(ctx context.Context, p *conn.ResolveLinkedinAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
 	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderLinkedInAds, p.PlatformCampaignID, validateLinkedInCampaignRefID)
 }

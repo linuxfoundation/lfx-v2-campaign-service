@@ -32,3 +32,19 @@ deploying, check with e.g. `SELECT platform, platform_campaign_id, count(*) FROM
 status <> 'deleted' AND platform_campaign_id IS NOT NULL AND platform IN ('meta-ads',
 'microsoft-ads','reddit-ads','twitter-ads') GROUP BY 1,2 HAVING count(*) > 1` (refine by account
 for the account-keyed three); soft-delete one row of each duplicate, drop any INVALID index, re-run.
+
+Follow-up (thread on #318): the campaign-ref methods' published `matches` cardinality is now per
+provider — `localCampaignRefMethod` takes the sentence per call. Meta and LinkedIn say at most
+one in a valid database (global indexes 000043/000042); Microsoft, Reddit and X say more than one
+is reachable (one live row per (id, ad account) under 000044-000046, plus account-less legacy
+rows). The same claim was corrected in the service comments, the comment above
+`resolvePlatformCampaignQuery`, the api-catalog Microsoft and twin rows, and the service KB.
+
+#328 review: the required-index boot check compared expression keys as exact strings against a
+PG16 deparse, so a PostgreSQL upgrade re-rendering them could fail boot. Production's Postgres is
+external and not pinned here (only CI is, `postgres:16-alpine`), so the check now compares the
+RUNNING server's deparse of both sides: `serverDeparsedRequiredIndexes` builds each expected
+definition on an empty TEMP copy of its table inside a rolled-back transaction and reads that
+probe's deparse. A live test proves a differently-spelled identical definition passes and a
+different one fails. `identifierRe` moved above the `requiredIndex` doc comment so godoc attaches
+correctly.

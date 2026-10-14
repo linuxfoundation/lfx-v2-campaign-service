@@ -409,7 +409,9 @@ var requiredIndexes = []requiredIndex{{
 	// One live row per Microsoft campaign PER AD ACCOUNT (000044): Microsoft ids are
 	// account-scoped, so the third key is the account extracted exactly as
 	// microsoftCreationAccountID reads it (accountId, else the aid= of microsoftAdsUrl).
-	// Deparsed against PostgreSQL 16 — note the quoted "substring".
+	// Captured from PostgreSQL 16's deparse (note the quoted "substring"); the boot check does
+	// NOT depend on that spelling — it compares the server's own deparse of this definition
+	// against the live index (serverDeparsedRequiredIndexes), so an upgrade cannot fail boot.
 	name:   "uq_campaigns_microsoft_campaign_live",
 	table:  "campaigns",
 	unique: true,
@@ -577,12 +579,12 @@ func describeMissing(names []string) string {
 	return strings.Join(out, "\n")
 }
 
-// requiredIndex is an index whose absence — or silent replacement by something of the
-// same name — leaves an invariant unenforced with no other symptom.
 // identifierRe matches a plain column name — what pg_get_indexdef renders for a column key, as
 // opposed to an expression key.
 var identifierRe = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
+// requiredIndex is an index whose absence — or silent replacement by something of the
+// same name — leaves an invariant unenforced with no other symptom.
 type requiredIndex struct {
 	name   string
 	table  string
@@ -781,6 +783,10 @@ const requiredIndexQuery = `SELECT
 // INVALID counts as absent: it enforces nothing, which is the same fact to a caller
 // deciding whether the invariant holds, and its recovery is the drop-then-create above.
 func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong []string, err error) {
+	expected, err := serverDeparsedRequiredIndexes(ctx, conn)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, want := range requiredIndexes {
 		var unique, live, rightTable bool
 		var predicate string
@@ -800,11 +806,14 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong
 		if !rightTable {
 			defects = append(defects, "on a different table than "+want.table)
 		}
-		if !slices.Equal(keys, want.keys) {
-			defects = append(defects, fmt.Sprintf("keys %v, want %v", keys, want.keys))
+		// Compared against THIS server's deparse of the expected definition, not against the
+		// stored text: see serverDeparsedRequiredIndexes.
+		exp := expected[want.name]
+		if !slices.Equal(keys, exp.keys) {
+			defects = append(defects, fmt.Sprintf("keys %v, want %v", keys, exp.keys))
 		}
-		if predicate != want.predicate {
-			defects = append(defects, fmt.Sprintf("predicate %q, want %q", predicate, want.predicate))
+		if predicate != exp.predicate {
+			defects = append(defects, fmt.Sprintf("predicate %q, want %q", predicate, exp.predicate))
 		}
 		if len(defects) > 0 {
 			// The remedy travels with the defects rather than in the message's closing
@@ -886,3 +895,76 @@ func pgxURL(dsn string) (string, error) {
 
 // ensure the pgx5 migrate driver is linked.
 var _ = pgx.Postgres{}
+
+// deparsedIndex is one index definition as a particular PostgreSQL server deparses it.
+type deparsedIndex struct {
+	keys      []string
+	predicate string
+}
+
+// probeIndexQuery reads a probe index's deparsed keys and predicate by oid — the same renderings
+// requiredIndexQuery reads for the real index (pg_get_indexdef per key, pg_get_expr for the
+// predicate).
+const probeIndexQuery = `SELECT
+		COALESCE(pg_get_expr(i.indpred, i.indrelid), ''),
+		COALESCE((
+			SELECT array_agg(pg_get_indexdef(i.indexrelid, k.ord, true) ORDER BY k.ord)
+			FROM generate_series(1, i.indnkeyatts::int) AS k(ord)
+		), '{}')
+	FROM pg_index i WHERE i.indexrelid = $1::regclass`
+
+// serverDeparsedRequiredIndexes asks the RUNNING server how it deparses each required index's
+// expected definition, so the boot check compares the server's rendering of BOTH sides rather
+// than a live deparse against text captured on one PostgreSQL version. A major upgrade that
+// changes how an expression key (000044-000046) or a predicate is rendered then changes both
+// sides alike and cannot fail boot; a genuinely different definition still differs.
+//
+// How: inside ONE transaction that is always rolled back, it creates an empty TEMP copy of each
+// table (`LIKE`, columns only — no data, no lock beyond a brief share on the source) and builds
+// each expected index on it from createSQL's own key list and predicate, then reads that probe's
+// deparse. The stored strings stay valid SQL on any version that can parse them, which is all the
+// probe needs. If the server cannot build a probe (a stored string this version no longer
+// parses), that entry falls back to the stored text, so the check is never weaker than before.
+func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (map[string]deparsedIndex, error) {
+	out := make(map[string]deparsedIndex, len(requiredIndexes))
+	for _, r := range requiredIndexes {
+		out[r.name] = deparsedIndex{keys: r.keys, predicate: r.predicate}
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check for required indexes: begin probe: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	probed := map[string]string{}
+	for n, r := range requiredIndexes {
+		tmp, ok := probed[r.table]
+		if !ok {
+			tmp = "required_index_probe_" + r.table
+			if _, err := tx.Exec(ctx, fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s)", tmp, r.table)); err != nil {
+				return nil, fmt.Errorf("check for required indexes: create probe table for %s: %w", r.table, err)
+			}
+			probed[r.table] = tmp
+		}
+		probe := fmt.Sprintf("required_index_probe_%d", n)
+		ddl := strings.Replace(r.createSQL(), "INDEX "+r.name+" ON "+r.table+" ", "INDEX "+probe+" ON "+tmp+" ", 1)
+		ddl = strings.Replace(ddl, "CREATE UNIQUE INDEX", "CREATE INDEX", 1)
+		// A savepoint per probe, so a definition this server cannot parse falls back to the
+		// stored text for that entry alone instead of aborting the whole transaction.
+		if _, err := tx.Exec(ctx, "SAVEPOINT required_index_probe"); err != nil {
+			return nil, fmt.Errorf("check for required indexes: savepoint: %w", err)
+		}
+		if _, err := tx.Exec(ctx, ddl); err != nil {
+			if _, rerr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT required_index_probe"); rerr != nil {
+				return nil, fmt.Errorf("check for required indexes: rollback probe: %w", rerr)
+			}
+			continue
+		}
+		var d deparsedIndex
+		if err := tx.QueryRow(ctx, probeIndexQuery, "pg_temp."+probe).Scan(&d.predicate, &d.keys); err != nil {
+			return nil, fmt.Errorf("check for required indexes: read probe for %s: %w", r.name, err)
+		}
+		out[r.name] = d
+	}
+	return out, nil
+}

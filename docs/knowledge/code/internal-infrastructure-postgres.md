@@ -1770,7 +1770,16 @@ Two guards live in the same transaction as the insert, and neither can be enforc
     result struct is marshalled untagged).
   The expression keys made `requiredIndexes` compare keys via `pg_get_indexdef(index, n, true)`
   (a bare column name, or an expression key's deparsed text) instead of `pg_attribute`, which
-  silently dropped expression keys; `createSQL` parenthesises an expression key.
+  silently dropped expression keys; `createSQL` parenthesises an expression key. The check
+  no longer compares the live deparse against TEXT captured on one PostgreSQL version:
+  `serverDeparsedRequiredIndexes` builds each expected definition on an empty TEMP copy of its
+  table (`LIKE`, in one always-rolled-back transaction, a savepoint per probe) and compares the
+  server's deparse of BOTH sides, so a major upgrade that re-renders an expression or predicate
+  cannot fail boot while a genuinely different definition still does
+  (`TestLiveRequiredIndexCheckComparesTheServersOwnDeparse`). A stored definition the server can
+  no longer parse falls back to the old text comparison. CI pins `postgres:16-alpine`
+  (`.github/workflows/lfx-v2-campaign-service-build.yaml`); the deployed database is external
+  (the chart only receives its connection settings), so its version is not pinned by this repo.
   **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so they
   never block a legitimate binding; `AdoptCampaign` closes the other side with
   `adoptBindingLegacyQuery` — it refuses (AlreadyBound) to adopt an id a live account-less row of
