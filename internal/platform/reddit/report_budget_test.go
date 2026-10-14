@@ -331,3 +331,32 @@ func TestReportBudgets_ReleaseIsExactAndIdempotent(t *testing.T) {
 		t.Errorf("used = %d/%d, want 1/1 — only the released slot is returned, and only once", all, ins)
 	}
 }
+
+// Inactive accounts' ledgers do not accumulate: once the window has passed, the next acquire's
+// sweep drops every expired ledger, and releasing an account's only slot drops its ledger too, so
+// the map returns to empty instead of growing with every ad account ever seen.
+func TestReportBudgets_InactiveLedgersAreDropped(t *testing.T) {
+	b, clk := fakeLedger(5, 5)
+	for _, id := range []string{"t2_a", "t2_b", "t2_c"} {
+		if err := b.acquire(context.Background(), id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := b.accounts(); n != 3 {
+		t.Fatalf("accounts = %d, want 3", n)
+	}
+	clk.mu.Lock()
+	clk.t = clk.t.Add(time.Minute + time.Second) // past the window: every slot has expired
+	clk.mu.Unlock()
+	release, err := b.reserve(context.Background(), "t2_new", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := b.accounts(); n != 1 {
+		t.Errorf("accounts after the window = %d, want 1 (only t2_new): inactive ledgers must be dropped", n)
+	}
+	release()
+	if n := b.accounts(); n != 0 {
+		t.Errorf("accounts after releasing the only slot = %d, want 0", n)
+	}
+}

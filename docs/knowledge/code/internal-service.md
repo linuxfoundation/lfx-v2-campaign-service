@@ -2090,7 +2090,12 @@ All six are one helper,
 `connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any
 lookup), then the backend check (503 when not wired), then the project-scoped DB read (500 on a
 storage fault; 200 with an empty `matches` for an unowned id; every live match returned, never
-one picked). The platform and the id rule are fixed by the method, never by the request. Google
+one picked). How many can match is the platform's binding index, and each method's published
+description says so separately (`localCampaignRefMethod` takes the sentence per call): at most
+one in a valid database on Google Ads, LinkedIn and Meta (global indexes 000020/000042/000043);
+more than one on Microsoft, Reddit and X, whose indexes (000044-000046) allow one live row per
+(id, ad account), so a re-pointed connection leaves one row per account for the same id, plus
+legacy rows that record no account. The platform and the id rule are fixed by the method, never by the request. Google
 and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta, Reddit and X
 (LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
 `platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
