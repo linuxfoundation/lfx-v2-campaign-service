@@ -83,7 +83,8 @@ named by strategy (`| AUTO` / `| MAX`), so a retry never crosses strategies.
 **Precision and minimums**:
 - Microsoft manual bids are limited to two decimals (`1.005` is refused). The account currency is
   not known before dispatch, so a zero-decimal account is Microsoft's to judge.
-- Meta refuses a manual bid whose daily budget is under 5 × the bid. Source: the Ad Set reference,
+- Meta refuses a manual bid whose daily budget is under 5 × the bid (at dispatch, in encoded minor
+  units; see below). Source: the Ad Set reference,
   `LOWEST_COST_WITH_BID_CAP`: "Clicks/Actions: 5x the bid_amount for a Click or Action". A lifetime
   budget is not checked, because the rule names the daily budget.
 
@@ -94,4 +95,19 @@ now decodes only `<configKey>.bidding` from the raw envelope, before the full de
 lane platforms. It answers `400 invalid campaign config: <configKey>.bidding: bidAmount must be a
 number` (or `strategy must be a string`, or `bidding must be an object`). A type error in any other
 config field keeps its old answer for compatibility (not applicable, then a failed job), because
-only `bidding` was promised as a 400. JSON `null` still means absent.
+only `bidding` was promised as a 400.
+
+**Field presence is preserved (PR #332 review).** Plain decoding read an omitted strategy, `""`
+and `null` the same way, and an omitted `bidAmount` and `null` the same way. All of them became
+automatic, so a typo could launch a paid campaign on automatic bidding. `biddingConfig.UnmarshalJSON`
+now records which keys appeared, and only a genuinely absent field takes the default. An explicit
+`"strategy": null` or `""`, `"bidAmount": null`, or `"bidding": null` is a 400. `checkBiddingShape`
+enforces this in every lane `PreflightCreate`, and now in `Dispatch` too before any upstream call.
+`resolveBidding` enforces it again on the decoded config. `{}` and an omitted `bidding` are still
+automatic.
+
+**Meta's 5× budget minimum moved to the client only (PR #332 review).** The pre-check compared the
+budget and bid in hundredths before the account currency was known. That refused valid JPY cases:
+bid 1 with budget 4.6 encodes to 5 minor units, which meets 5 × 1. The client already compares in
+the encoded minor units at the account currency's offset, before its first mutating call, so the
+pre-check no longer attempts it.

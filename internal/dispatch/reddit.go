@@ -180,6 +180,9 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	}
 	// The bidding choice, validated before any upstream call (PreflightCreate normally refused a
 	// bad one already, as a 400). Recorded on every row this dispatch returns.
+	if err := checkBiddingShape(config, "redditConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	plan, err := redditBidPlan(cfg)
 	if err != nil {
 		return nil, notCreated(err)

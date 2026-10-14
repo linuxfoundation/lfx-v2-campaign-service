@@ -464,7 +464,9 @@ Field names are camelCase like the rest of the config envelope.
 bidding?: {
   strategy?: "automatic" | "manual"   — OMITTED (or the whole object omitted) = automatic: the
                                         platform sets every bid. Exact lowercase; anything else
-                                        is refused.
+                                        is refused. Only an ABSENT field defaults: an explicit
+                                        `"strategy": null` or `""`, `"bidAmount": null`, or
+                                        `"bidding": null` is a 400, as is a wrong JSON type.
   bidAmount?: number                  — REQUIRED with "manual", REFUSED with "automatic" (even 0).
                                         The starting max cost-per-click bid in the AD ACCOUNT's
                                         own currency, major units, no FX (LinkedIn: USD, like its
@@ -480,7 +482,7 @@ be changed later; `automatic` is refused there (409) until an operator switches 
 | Platform | automatic (default) | manual | extra manual rules |
 | --- | --- | --- | --- |
 | Microsoft | campaign `BiddingScheme` `MaxClicks`, ad group without `CpcBid` | campaign `BiddingScheme` `EnhancedCpc`, ad group `CpcBid` = bid (Microsoft silently converts `ManualCpc` to `EnhancedCpc` on Search campaigns) | 0.01–1,000 (the bid lever's bounds); at most two decimals (a zero-decimal account currency is Microsoft's to judge — the currency is not known before dispatch) |
-| Meta | ad set `LOWEST_COST_WITHOUT_CAP`, `billing_event` `IMPRESSIONS` (unchanged) | ad set `LOWEST_COST_WITH_BID_CAP`, `billing_event` `LINK_CLICKS`, `bid_amount` in minor units | objective `traffic` or `leads` only; at most two decimals; a whole minor unit of the account currency (checked against the currency Meta reports, at dispatch, before anything is created); a DAILY budget of at least 5 × the bid (Meta's Ad Set reference: "Clicks/Actions: 5x the bid_amount") |
+| Meta | ad set `LOWEST_COST_WITHOUT_CAP`, `billing_event` `IMPRESSIONS` (unchanged) | ad set `LOWEST_COST_WITH_BID_CAP`, `billing_event` `LINK_CLICKS`, `bid_amount` in minor units | objective `traffic` or `leads` only; at most two decimals; a whole minor unit of the account currency (checked against the currency Meta reports, at dispatch, before anything is created); a DAILY budget of at least 5 × the bid (Meta's Ad Set reference: "Clicks/Actions: 5x the bid_amount"), compared in the account currency's ENCODED minor units at dispatch, before anything is created (in JPY a 4.6 budget encodes to 5 and satisfies 5 × 1) |
 | Reddit | campaign and ad group `BIDLESS` (unchanged) | campaign and ad group `MANUAL_BIDDING`, `bid_type` `CPC`, ad group `bid_value` in micro-units | objective `traffic` only (the default, `conversions`, bids CPM) |
 | X | line item `bid_strategy` `AUTO` (unchanged), named `… \| AUTO` | line item `bid_strategy` `MAX`, `pay_by` `LINK_CLICK`, `bid_amount_local_micro`, named `… \| MAX` | — |
 | LinkedIn | `objectiveType` `WEBSITE_VISIT`, `optimizationTargetType` `MAX_CLICK`, `costType` `CPM`, no `unitCost`; name segment `Traffic` | `objectiveType` `WEBSITE_CONVERSION`, `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost` = bid (USD); name segment `Conversions` | whole cents; the OBJECTIVE follows the strategy (see below) |
@@ -488,9 +490,10 @@ be changed later; `automatic` is refused there (409) until an operator switches 
 **Refusals are synchronous**: a bad `bidding` is a **`400`** from `POST .../campaigns` before any
 job exists, with the message `invalid campaign config: <configKey>.bidding: <reason>` (for
 example `invalid campaign config: metaConfig.bidding: manual bidding is a cost-per-link-click bid
-cap, which needs the traffic or leads objective; ...`). The one rule that needs the platform —
-Meta's whole minor unit in a zero-decimal currency — fails the platform job at dispatch instead,
-still before anything is created. `googleAdsConfig.bidding` is refused with `400` (Google Ads sets
+cap, which needs the traffic or leads objective; ...`). The two rules that need the account
+currency — Meta's whole minor unit in a zero-decimal currency and Meta's 5 × bid daily-budget
+minimum in encoded minor units — fail the platform job at dispatch instead, still before anything
+is created. `googleAdsConfig.bidding` is refused with `400` (Google Ads sets
 its strategy with `googleAdsConfig.biddingStrategy`).
 
 **LinkedIn's objective follows the strategy** (decision 2026-10-13, Misha: automatic LinkedIn

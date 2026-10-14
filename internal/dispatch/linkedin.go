@@ -340,6 +340,9 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		return nil, notCreated(err)
 	}
 	// The bidding choice, validated before any upstream call; recorded on every returned row.
+	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	plan, err := linkedinBidPlan(cfg)
 	if err != nil {
 		return nil, notCreated(err)

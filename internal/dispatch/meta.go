@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -703,6 +702,9 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// The bidding choice, validated before any upstream call; the one currency-dependent rule (a
 	// whole number of minor units) is the client's, after its account preflight read and still
 	// before anything is created.
+	if err := checkBiddingShape(config, "metaConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	plan, err := metaBidPlan(cfg)
 	if err != nil {
 		return nil, notCreated(err)
@@ -1525,21 +1527,13 @@ func metaBidPlan(cfg metaConfig) (bidPlan, error) {
 	if !meta.ManualBidSupported(cfg.Objective) {
 		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the traffic or leads objective; use automatic bidding for this objective")
 	}
-	bidCents, ok := exactScaled(plan.amount, 100)
-	if !ok {
+	if _, ok := exactScaled(plan.amount, 100); !ok {
 		return bidPlan{}, biddingInvalid(key, "bidAmount %s has more than two decimal places, which is not a whole minor unit of any ad account currency; it is refused rather than rounded", formatBid(plan.amount))
 	}
-	// Meta's Ad Set reference, daily_budget minimums under LOWEST_COST_WITH_BID_CAP: "Clicks/Actions:
-	// 5x the bid_amount for a Click or Action" — a LINK_CLICKS bid cap needs a DAILY budget of at
-	// least five times the bid, and the ad-set POST that would be refused comes after the campaign
-	// exists. Compared in hundredths, so 5 x 1.25 is exactly 6.25. The documented rule names the
-	// daily budget only, so a lifetime budget is not checked here (Meta decides).
-	if !cfg.LifetimeBudget && cfg.Budget > 0 && math.Round(cfg.Budget*100) < float64(metaBidCapBudgetMultiple*bidCents) {
-		return bidPlan{}, biddingInvalid(key, "a link-click bid cap needs a daily budget of at least %d times the bid (Meta's minimum); budget %s is below %d x %s", metaBidCapBudgetMultiple, formatBid(cfg.Budget), metaBidCapBudgetMultiple, formatBid(plan.amount))
-	}
+	// Meta's daily-budget minimum for a click-billed bid cap (5 x bid_amount) is NOT checked here:
+	// it is a comparison of ENCODED minor units, and the minor-unit scale depends on the account
+	// currency, which only the client's account preflight knows (in JPY a 4.6 budget encodes to 5
+	// and satisfies 5 x 1, while a hundredths comparison here would refuse it — PR #332 review).
+	// The client refuses it before its first mutating call (meta.BidCapDailyBudgetMultiple).
 	return plan, nil
 }
-
-// metaBidCapBudgetMultiple is Meta's documented minimum daily budget for a click-billed bid cap,
-// as a multiple of bid_amount (meta.BidCapDailyBudgetMultiple, restated for the preflight).
-const metaBidCapBudgetMultiple = meta.BidCapDailyBudgetMultiple

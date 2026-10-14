@@ -178,10 +178,11 @@ func TestMeta_PreflightCreate_Bidding(t *testing.T) {
 		{name: "manual on conversions", config: `{"metaConfig":{"objective":"conversions","bidding":{"strategy":"manual","bidAmount":1}}}`, want: "traffic or leads objective"},
 		{name: "manual with three decimals", config: `{"metaConfig":{"bidding":{"strategy":"manual","bidAmount":1.255}}}`, want: "more than two decimal places"},
 		{name: "automatic with an amount", config: `{"metaConfig":{"bidding":{"bidAmount":1}}}`, want: "only accepted with strategy"},
-		// Meta's documented minimum: a click-billed bid cap needs a DAILY budget >= 5 x bid.
-		{name: "daily budget exactly five times the bid", config: `{"metaConfig":{"budget":6.25,"bidding":{"strategy":"manual","bidAmount":1.25}}}`},
-		{name: "daily budget under five times the bid", config: `{"metaConfig":{"budget":6.24,"bidding":{"strategy":"manual","bidAmount":1.25}}}`, want: "daily budget of at least 5 times the bid"},
-		{name: "lifetime budget is Meta's to judge", config: `{"metaConfig":{"budget":5,"lifetimeBudget":true,"bidding":{"strategy":"manual","bidAmount":1.25}}}`},
+		// Meta's 5 x bid daily-budget minimum is the CLIENT's, in encoded minor units once the
+		// account currency is known (PR #332 review): a JPY bid of 1 with budget 4.6 encodes to
+		// 5 >= 5 x 1 and is valid, so the pre-check refuses neither of these.
+		{name: "budget under 5x in hundredths is left to the client", config: `{"metaConfig":{"budget":4.6,"bidding":{"strategy":"manual","bidAmount":1}}}`},
+		{name: "a USD budget under 5x is also the client's", config: `{"metaConfig":{"budget":6.24,"bidding":{"strategy":"manual","bidAmount":1.25}}}`},
 	})
 }
 
@@ -382,11 +383,91 @@ func TestPreflightCreate_WrongTypedBiddingIsA400OnEveryLanePlatform(t *testing.T
 					want: lane.key + ".bidding: strategy must be a string"},
 				{name: "array bidding", config: `{"` + lane.key + `":{"bidding":[]}}`,
 					want: lane.key + ".bidding: bidding must be an object"},
-				{name: "null bidding is absent", config: `{"` + lane.key + `":{"bidding":null}}`},
+				// PRESENCE (PR #332 review): only a genuinely absent field takes a default.
+				{name: "explicit null bidding", config: `{"` + lane.key + `":{"bidding":null}}`,
+					want: lane.key + ".bidding: bidding is null"},
+				{name: "explicit null strategy", config: `{"` + lane.key + `":{"bidding":{"strategy":null}}}`,
+					want: lane.key + ".bidding: strategy must be a string"},
+				{name: "explicit empty strategy", config: `{"` + lane.key + `":{"bidding":{"strategy":""}}}`,
+					want: lane.key + ".bidding: strategy must be a string"},
+				{name: "explicit null bidAmount with manual", config: `{"` + lane.key + `":{"bidding":{"strategy":"manual","bidAmount":null}}}`,
+					want: lane.key + ".bidding: bidAmount must be a number"},
+				{name: "explicit null bidAmount with automatic", config: `{"` + lane.key + `":{"bidding":{"strategy":"automatic","bidAmount":null}}}`,
+					want: lane.key + ".bidding: bidAmount must be a number"},
+				{name: "an empty bidding object is the automatic default", config: `{"` + lane.key + `":{"bidding":{}}}`},
+				{name: "omitted bidding is the automatic default", config: `{"` + lane.key + `":{}}`},
 				// The budget is a real float64 field of each config, so a string there makes the whole
 				// decode fail — and that, unlike bidding, keeps its pre-#332 answer.
 				{name: "a non-bidding type error is left to dispatch", config: `{"` + lane.key + `":{"` + lane.budgetField + `":"50","bidding":{"strategy":"manual","bidAmount":1}}}`},
 			})
+		})
+	}
+}
+
+// TestResolveBidding_DefaultsOnlyAbsentFields decodes real JSON through biddingConfig.UnmarshalJSON
+// and resolveBidding — the path Dispatch takes — so presence is checked where it is lost: an
+// explicit null or empty strategy, or an explicit null bidAmount, is refused, never read as the
+// automatic default; only genuinely absent fields default.
+func TestResolveBidding_DefaultsOnlyAbsentFields(t *testing.T) {
+	cases := []struct {
+		name, json string
+		want       model.BiddingStrategy
+		wantErr    string
+	}{
+		{name: "empty object", json: `{}`, want: model.BiddingAutomatic},
+		{name: "explicit automatic", json: `{"strategy":"automatic"}`, want: model.BiddingAutomatic},
+		{name: "manual", json: `{"strategy":"manual","bidAmount":1.5}`, want: model.BiddingManual},
+		{name: "null strategy", json: `{"strategy":null}`, wantErr: "an empty or null strategy is refused"},
+		{name: "empty strategy", json: `{"strategy":""}`, wantErr: "an empty or null strategy is refused"},
+		{name: "null strategy with an amount", json: `{"strategy":null,"bidAmount":1}`, wantErr: "an empty or null strategy is refused"},
+		{name: "null bidAmount, no strategy", json: `{"bidAmount":null}`, wantErr: "null is refused"},
+		{name: "null bidAmount with manual", json: `{"strategy":"manual","bidAmount":null}`, wantErr: "null is refused"},
+		{name: "string bidAmount", json: `{"strategy":"manual","bidAmount":"1"}`, wantErr: "decode"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg metaConfig
+			derr := json.Unmarshal([]byte(`{"bidding":`+tc.json+`}`), &cfg)
+			if tc.wantErr == "decode" {
+				if derr == nil {
+					t.Fatal("a wrong-typed bidAmount must fail the decode")
+				}
+				return
+			}
+			if derr != nil {
+				t.Fatalf("decode: %v", derr)
+			}
+			plan, err := resolveBidding("metaConfig", cfg.Bidding)
+			if tc.wantErr != "" {
+				if !errors.Is(err, domain.ErrCreateConfigInvalid) || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveBidding = %+v, %v; want ErrCreateConfigInvalid containing %q", plan, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || plan.strategy != tc.want {
+				t.Fatalf("resolveBidding = %+v, %v; want %s", plan, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestDispatch_ExplicitNullStrategyFailsBeforeAnyUpstreamCall: Dispatch applies the same presence
+// rule for any path that skipped the pre-check — refused pre-create, claim released, nothing sent.
+func TestDispatch_ExplicitNullStrategyFailsBeforeAnyUpstreamCall(t *testing.T) {
+	for name, cfg := range map[string]string{
+		"null strategy":  `{"microsoftConfig":{"budget":50,"bidding":{"strategy":null,"bidAmount":1.5}}}`,
+		"empty strategy": `{"microsoftConfig":{"budget":50,"bidding":{"strategy":""}}}`,
+		"null bidding":   `{"microsoftConfig":{"budget":50,"bidding":null}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := msBiddingCreate(t, cfg)
+			var nuc interface{ NoUpstreamCreate() bool }
+			if r.err == nil || r.camp != nil || !errors.As(r.err, &nuc) || !nuc.NoUpstreamCreate() {
+				t.Fatalf("Dispatch = %+v, %v; want a NoUpstreamCreate refusal", r.camp, r.err)
+			}
+			if !errors.Is(r.err, domain.ErrCreateConfigInvalid) || r.requests != 0 {
+				t.Fatalf("err=%v requests=%d, want ErrCreateConfigInvalid and 0", r.err, r.requests)
+			}
 		})
 	}
 }

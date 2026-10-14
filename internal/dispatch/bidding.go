@@ -43,11 +43,52 @@ import (
 // ---------------------------------------------------------------------------
 
 // biddingConfig is the wire shape of the optional `bidding` object.
+//
+// PRESENCE IS PRESERVED (PR #332 review). encoding/json alone decodes an omitted strategy, an
+// explicit `"strategy": ""` and `"strategy": null` to the same "", and an omitted bidAmount and
+// `"bidAmount": null` to the same nil — so a typo would launch a paid campaign on automatic bidding
+// instead of getting the promised 400. UnmarshalJSON records which fields were PRESENT, and
+// resolveBidding defaults only fields that are genuinely absent.
 type biddingConfig struct {
 	Strategy string `json:"strategy"`
 	// BidAmount is a pointer so "absent" and "0" are different facts: an automatic request that
 	// names any amount, zero included, is refused rather than silently dropped.
 	BidAmount *float64 `json:"bidAmount"`
+
+	// strategyPresent / bidAmountPresent: the key appeared in the JSON (with any value, null
+	// included). Set by UnmarshalJSON only.
+	strategyPresent, bidAmountPresent bool
+}
+
+// UnmarshalJSON decodes the bidding object keeping field presence and JSON type: a present
+// strategy must be a string and a present bidAmount a number (null is recorded as present-but-null
+// and refused by resolveBidding). A wrong JSON type is an error here — the synchronous pre-check
+// (checkBiddingShape) reports it as a 400 before this decode ever runs on the create path.
+func (b *biddingConfig) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("bidding must be an object")
+	}
+	*b = biddingConfig{}
+	if v, ok := fields["strategy"]; ok {
+		b.strategyPresent = true
+		if !isJSONNull(v) {
+			if err := json.Unmarshal(v, &b.Strategy); err != nil {
+				return fmt.Errorf("bidding.strategy must be a string")
+			}
+		}
+	}
+	if v, ok := fields["bidAmount"]; ok {
+		b.bidAmountPresent = true
+		if !isJSONNull(v) {
+			var n float64
+			if err := json.Unmarshal(v, &n); err != nil {
+				return fmt.Errorf("bidding.bidAmount must be a number")
+			}
+			b.BidAmount = &n
+		}
+	}
+	return nil
 }
 
 // The strategy spellings the config accepts, exactly — no case folding, so the value persisted is
@@ -112,6 +153,14 @@ func resolveBidding(key string, cfg *biddingConfig) (bidPlan, error) {
 	if cfg == nil {
 		return bidPlan{strategy: model.BiddingAutomatic}, nil
 	}
+	// Only a genuinely ABSENT field takes a default. An explicit null or empty strategy, or an
+	// explicit null bidAmount, is a mistake the caller must fix — never read as "automatic".
+	if cfg.strategyPresent && cfg.Strategy == "" {
+		return bidPlan{}, biddingInvalid(key, "strategy must be \"automatic\" or \"manual\"; an empty or null strategy is refused — omit the field for the automatic default")
+	}
+	if cfg.bidAmountPresent && cfg.BidAmount == nil {
+		return bidPlan{}, biddingInvalid(key, "bidAmount must be a number; null is refused — omit bidAmount for automatic bidding, or send the bid for manual")
+	}
 	switch cfg.Strategy {
 	case "", biddingStrategyAutomatic:
 		if cfg.BidAmount != nil {
@@ -164,7 +213,9 @@ func exactScaled(amount float64, scale int64) (int64, bool) {
 // envelope to raw JSON, finds key.bidding, and refuses a wrong JSON type with an actionable
 // ErrCreateConfigInvalid naming the field. Anything it cannot attribute to `bidding` — a malformed
 // envelope, a config that is not an object, no `bidding` at all — returns nil and is left to the
-// ordinary decode. JSON null is accepted wherever the field is optional, as encoding/json does.
+// ordinary decode. An explicit null — of `bidding`, `strategy` or `bidAmount` — or an empty
+// strategy is refused too: only a genuinely ABSENT field takes a default (PR #332 review). Dispatch
+// runs this same check before any upstream call, for any path that skipped the pre-check.
 func checkBiddingShape(config json.RawMessage, key string) error {
 	if len(config) == 0 {
 		return nil
@@ -178,23 +229,27 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 		return nil
 	}
 	raw, ok := platformCfg["bidding"]
-	if !ok || isJSONNull(raw) {
+	if !ok {
 		return nil
+	}
+	if isJSONNull(raw) {
+		// Explicit null is not "omitted": only a genuinely absent bidding defaults to automatic.
+		return biddingInvalid(key, "bidding is null; omit it for the automatic default, or send {\"strategy\": \"automatic\" | \"manual\"}")
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
 		return biddingInvalid(key, "bidding must be an object, {\"strategy\": \"automatic\" | \"manual\", \"bidAmount\": number}")
 	}
-	if v, ok := fields["strategy"]; ok && !isJSONNull(v) {
+	if v, ok := fields["strategy"]; ok {
 		var str string
-		if json.Unmarshal(v, &str) != nil {
-			return biddingInvalid(key, "strategy must be a string, \"automatic\" or \"manual\"")
+		if isJSONNull(v) || json.Unmarshal(v, &str) != nil || str == "" {
+			return biddingInvalid(key, "strategy must be a string, \"automatic\" or \"manual\"; null and \"\" are refused — omit the field for the automatic default")
 		}
 	}
-	if v, ok := fields["bidAmount"]; ok && !isJSONNull(v) {
+	if v, ok := fields["bidAmount"]; ok {
 		var n float64
-		if json.Unmarshal(v, &n) != nil {
-			return biddingInvalid(key, "bidAmount must be a number (for example 1.25), not a string or other JSON type")
+		if isJSONNull(v) || json.Unmarshal(v, &n) != nil {
+			return biddingInvalid(key, "bidAmount must be a number (for example 1.25), not null, a string or other JSON type")
 		}
 	}
 	return nil

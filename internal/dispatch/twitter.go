@@ -234,6 +234,9 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		return nil, notCreated(err)
 	}
 	// The bidding choice, validated before any upstream call; recorded on every returned row.
+	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	plan, err := twitterBidPlan(cfg)
 	if err != nil {
 		return nil, notCreated(err)

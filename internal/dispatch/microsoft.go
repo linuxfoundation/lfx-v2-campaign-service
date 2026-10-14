@@ -182,6 +182,9 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	}
 	// The bidding choice, validated BEFORE any upstream call (PreflightCreate has normally
 	// refused a bad one already, as a 400). Recorded on every row this dispatch returns.
+	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
+		return nil, notCreated(err)
+	}
 	plan, err := microsoftBidPlan(cfg)
 	if err != nil {
 		return nil, notCreated(err)

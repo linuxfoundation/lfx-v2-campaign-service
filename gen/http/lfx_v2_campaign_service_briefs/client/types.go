@@ -4300,10 +4300,12 @@ type CampaignCreateInputRequestBody struct {
 	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
 	// of the account currency (checked against the currency at dispatch), and only
 	// for the traffic or leads objective; Reddit only for the traffic objective;
-	// LinkedIn whole cents. `automatic` with a `bidAmount`, an unknown strategy,
-	// or a bid breaking these rules is refused synchronously with 400 "invalid
-	// campaign config: <configKey>.bidding: ..." before any job exists.
-	// googleAdsConfig.bidding is refused with 400 (use
+	// LinkedIn whole cents. `automatic` with a `bidAmount`, an unknown strategy, a
+	// wrong JSON type, an explicit null or empty value (only an ABSENT field
+	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
+	// null` are refused), or a bid breaking these rules is refused synchronously
+	// with 400 "invalid campaign config: <configKey>.bidding: ..." before any job
+	// exists. googleAdsConfig.bidding is refused with 400 (use
 	// googleAdsConfig.biddingStrategy).
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.

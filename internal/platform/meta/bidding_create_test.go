@@ -118,3 +118,40 @@ func TestManualBidSupported(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateCampaign_BidCapBudgetMinimumIsComparedInEncodedMinorUnits (PR #332 review): Meta's
+// daily-budget minimum for a click-billed bid cap (5 x bid_amount) is compared in the ENCODED minor
+// units of the account currency, so a JPY account (offset 1) with bid 1 and budget 4.6 — encoded
+// to 5 — passes, while 4.4 (encoded 4) is refused; USD (offset 100) compares in cents.
+func TestCreateCampaign_BidCapBudgetMinimumIsComparedInEncodedMinorUnits(t *testing.T) {
+	cases := []struct {
+		name        string
+		offset      int64
+		budget, bid float64
+		refused     bool
+	}{
+		{"JPY 4.6 encodes to 5 = 5 x 1", 1, 4.6, 1, false},
+		{"JPY 4.4 encodes to 4 < 5 x 1", 1, 4.4, 1, true},
+		{"USD 6.25 = 5 x 1.25", 100, 6.25, 1.25, false},
+		{"USD 6.24 < 5 x 1.25", 100, 6.24, 1.25, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			adsetCap := newBodyCapture()
+			srv := metaFieldServer(t, adsetCap, newBodyCapture())
+			defer srv.Close()
+			in := metaFieldInput()
+			in.Budget, in.BidCap = tc.budget, tc.bid
+			_, err := biddingClient(srv.URL, tc.offset).CreateCampaign(context.Background(), in)
+			if tc.refused {
+				if !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "at least 5 times the bid") || adsetCap.get() != nil {
+					t.Fatalf("err = %v (ad set sent: %v), want the 5x refusal before the ad set", err, adsetCap.get() != nil)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateCampaign: %v", err)
+			}
+		})
+	}
+}

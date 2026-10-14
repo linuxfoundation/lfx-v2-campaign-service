@@ -4419,8 +4419,9 @@ otherwise and never calls a platform), and again in `Dispatch` before any upstre
 starting bid in `MaxCPCBid` ONLY when the dispatch succeeded (`err == nil`) AND the client's result
 reports `BidApplied` — the run created the entity carrying the bid. A reused entity (the client adds
 a "bid NOT applied to reused …" step) or a partial leaves both NULL, so the row never claims a bid
-the platform was not given. Microsoft also requires at most two decimals; Meta a daily budget of at
-least 5 × the bid (`meta.BidCapDailyBudgetMultiple`, from the Ad Set reference). `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
+the platform was not given. Microsoft also requires at most two decimals. Meta's 5 × bid daily-budget
+minimum (`meta.BidCapDailyBudgetMultiple`, from the Ad Set reference) is the CLIENT's, compared in
+encoded minor units once the account currency is known — the pre-check does not attempt it. `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
 drives a manual create and then `WriteBid` on the returned row.
 
 `TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400` (`bidding_create_e2e_test.go`)
@@ -4429,3 +4430,6 @@ drives the real Meta and Microsoft dispatchers through `service.BriefService.Cre
 `checkBiddingShape` runs first in every lane `PreflightCreate`. It type-checks `<configKey>.bidding`
 alone from the raw envelope, so a wrong-typed `bidAmount` or `strategy` is that 400 rather than a
 decode failure left to Dispatch. Other fields' type errors are still left to Dispatch, as before.
+PRESENCE is preserved: `biddingConfig.UnmarshalJSON` records which keys appeared, and only a
+genuinely absent field defaults — an explicit `null`/`""` strategy, a `null` bidAmount or a `null`
+bidding is a 400 (`checkBiddingShape`, which Dispatch also runs, and `resolveBidding`).

@@ -100,35 +100,47 @@ func TestCreateCampaigns_WrongTypedBiddingIsSynchronous400OnEveryLanePlatform(t 
 		{"microsoft-ads", "microsoftConfig"}, {"meta-ads", "metaConfig"}, {"reddit-ads", "redditConfig"},
 		{"twitter-ads", "twitterConfig"}, {"linkedin-ads", "linkedInConfig"},
 	}
+	bodies := []struct {
+		name    string
+		bidding map[string]any
+		want    string
+	}{
+		{"string bidAmount", map[string]any{"strategy": "manual", "bidAmount": "1.25"}, "bidAmount must be a number"},
+		// PRESENCE (PR #332 review): an explicit empty strategy is not the automatic default.
+		{"empty strategy", map[string]any{"strategy": ""}, "strategy must be a string"},
+		{"null bidAmount", map[string]any{"strategy": "manual", "bidAmount": nil}, "bidAmount must be a number"},
+	}
 	for _, lane := range lanes {
-		t.Run(lane.platform, func(t *testing.T) {
-			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf", EventSlug: "kubecon", Status: model.BriefApproved,
-				DeliveryType: model.DeliveryPaidMarketing, Version: 1}
-			jobs := &e2eJobRepo{}
-			orch := service.NewOrchestrator(nil, jobs, map[model.Provider]service.PlatformDispatcher{
-				model.ProviderMicrosoftAds: &MicrosoftDispatcher{},
-				model.ProviderMetaAds:      &MetaDispatcher{},
-				model.ProviderRedditAds:    &RedditDispatcher{},
-				model.ProviderTwitterAds:   &TwitterDispatcher{},
-				model.ProviderLinkedInAds:  &LinkedInDispatcher{},
+		for _, body := range bodies {
+			t.Run(lane.platform+"/"+body.name, func(t *testing.T) {
+				brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf", EventSlug: "kubecon", Status: model.BriefApproved,
+					DeliveryType: model.DeliveryPaidMarketing, Version: 1}
+				jobs := &e2eJobRepo{}
+				orch := service.NewOrchestrator(nil, jobs, map[model.Provider]service.PlatformDispatcher{
+					model.ProviderMicrosoftAds: &MicrosoftDispatcher{},
+					model.ProviderMetaAds:      &MetaDispatcher{},
+					model.ProviderRedditAds:    &RedditDispatcher{},
+					model.ProviderTwitterAds:   &TwitterDispatcher{},
+					model.ProviderLinkedInAds:  &LinkedInDispatcher{},
+				})
+				var campaigns struct{ domain.CampaignRepository }
+				s := service.NewBriefService(e2eBriefRepo{brief: brief}, campaigns, jobs, orch)
+				_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+					ProjectID: "cncf", BriefID: "b1",
+					Input: &briefs.CampaignCreateInput{
+						Platforms: []string{lane.platform},
+						Config:    map[string]any{lane.key: map[string]any{"bidding": body.bidding}},
+					},
+				})
+				want := "invalid campaign config: " + lane.key + ".bidding: " + body.want
+				var bad *briefs.BadRequestError
+				if !errors.As(err, &bad) || bad.Code != "400" || !strings.HasPrefix(bad.Message, want) {
+					t.Fatalf("CreateCampaigns = %v, want a 400 starting %q", err, want)
+				}
+				if n := jobs.count(); n != 0 {
+					t.Fatalf("%d job creation attempts for a refused create, want 0", n)
+				}
 			})
-			var campaigns struct{ domain.CampaignRepository }
-			s := service.NewBriefService(e2eBriefRepo{brief: brief}, campaigns, jobs, orch)
-			_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
-				ProjectID: "cncf", BriefID: "b1",
-				Input: &briefs.CampaignCreateInput{
-					Platforms: []string{lane.platform},
-					Config:    map[string]any{lane.key: map[string]any{"bidding": map[string]any{"strategy": "manual", "bidAmount": "1.25"}}},
-				},
-			})
-			want := "invalid campaign config: " + lane.key + ".bidding: bidAmount must be a number"
-			var bad *briefs.BadRequestError
-			if !errors.As(err, &bad) || bad.Code != "400" || !strings.HasPrefix(bad.Message, want) {
-				t.Fatalf("CreateCampaigns = %v, want a 400 starting %q", err, want)
-			}
-			if n := jobs.count(); n != 0 {
-				t.Fatalf("%d job creation attempts for a refused create, want 0", n)
-			}
-		})
+		}
 	}
 }
