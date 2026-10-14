@@ -963,10 +963,10 @@ That failure mode is specific to an AUTHORIZATION field and worth naming as such
 routing value fails loudly on first use, because something downstream needs it; a dropped
 authorization value fails silently and OPEN, because the code that reads it is written to treat
 absence as "no restriction configured". The same shape applies to the update direction: PUT is a
-full replace on these endpoints, so an omitted `as_user_id` CLEARS the declared identity and
-widens what dispatch will accept. That matches `account_id` and Meta's `app_id` rather than
-inventing a third convention, and `TestUpdateTwitterAds_OmittedAsUserIDClearsIt` states it out
-loud for exactly that reason. The round-trip test asserts the STORED row, not the returned
+full replace on these endpoints, and an omitted `as_user_id` used to CLEAR the declared identity
+and widen what dispatch would accept. Since issue #300 that omission is refused with 400 while an
+identity is stored (see "Omitting a stored config field is refused" below), and clearing takes an
+explicit `""`; `TestUpdateTwitterAds_OmittedAsUserIDIsRefused` pins it. The round-trip test asserts the STORED row, not the returned
 result: a handler that echoed the payload back without persisting it passes any result-only
 assertion, and the stored row is what dispatch resolves.
 
@@ -2185,3 +2185,47 @@ LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics f
 (the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
 `true` on the wire. Tests: `linkedin_audience_test.go`. See
 [LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).
+
+## Omitting a stored config field is refused (issue #300)
+
+PUT on a connection is a full replace, and each `Update<Provider>` adapter rebuilds
+`ProviderConfig` from the payload alone, so an OPTIONAL key the caller left out used to be written
+as `""` over whatever was stored. For Reddit that cleared `conversion_pixel_id`, which Reddit
+requires on every campaign create, so a label-only edit disabled campaign creation for the project
+while answering 200.
+
+`updateConnGuarded` (`connection_handler.go`) keeps the full replace for every field a caller
+SENDS and refuses only clearing by omission. Each adapter passes its optional keys as an
+`optionalConfig` (`map[string]*string`, the payload pointers as decoded: nil means omitted or JSON
+null). When any is nil, the handler reads the current row and:
+
+- answers **412** if the row is not at the `If-Match` version, so the guard never judges a row the
+  caller did not see. `repo.Update` is itself conditioned on that version, so a writer that moves
+  the row after the read makes the write fail with 412: the guard adds no race window and needs no
+  extra lock;
+- answers **400** naming every omitted key that has a non-empty stored value (`config.<key>`,
+  sorted), telling the caller to resend the value or send `""` to clear it. Nothing is written.
+
+An omitted key with nothing stored passes, since `""` over `""` changes nothing. A body that sends
+every optional key performs no read, so a full body keeps the single-statement path. The read is
+shared with the force-system guard when that applies.
+
+Guarded keys, verified against the Required lists in `design/connection.go`:
+
+| Provider | Optional keys guarded | Not guarded (Required) |
+| --- | --- | --- |
+| Meta Ads | `app_id` | `page_id` |
+| Reddit Ads | `conversion_pixel_id` | |
+| X / Twitter Ads | `as_user_id` | `funding_instrument_id` |
+| Microsoft Ads | `customer_id` | |
+| HubSpot | `portal_id`, `sender_email`, `sender_name`, `brand_kit` | |
+| LinkedIn Ads | none | `org_id` |
+| Google Ads | none yet | |
+
+Google Ads is not opted in (`login_customer_id` still clears on omission). Opting it in is one
+line: call `updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{"login_customer_id":
+cfg.LoginCustomerID})` instead of `updateConn`. X's `as_user_id` Pattern became `^([0-9]+)?$` so an
+explicit `""` can clear it; with the old `^[0-9]+$` a declared identity could not be cleared at all
+once omission was refused. The rule is in each guarded attribute's description (`keepOnUpdate` in
+the design), so it reaches the generated OpenAPI. `account_id` and `label` are not
+provider-config keys and keep the plain full-replace behaviour.

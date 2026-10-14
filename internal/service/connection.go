@@ -1081,6 +1081,8 @@ func (s *ConnectionService) UpdateLinkedinAds(ctx context.Context, p *conn.Updat
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}
+	// No omission guard: org_id, LinkedIn's only config key, is Required by the design, so the
+	// decoder refuses a body without it and there is no optional key to omit (issue #300).
 	updated, err := s.updateConn(ctx, m, p.IfMatch)
 	if err != nil {
 		return nil, err
@@ -1377,7 +1379,8 @@ func (s *ConnectionService) UpdateMetaAds(ctx context.Context, p *conn.UpdateMet
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}
-	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	// page_id is Required by the design, so only app_id can be omitted (issue #300).
+	updated, err := s.updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{"app_id": cfg.AppID})
 	if err != nil {
 		return nil, err
 	}
@@ -1468,7 +1471,9 @@ func (s *ConnectionService) UpdateRedditAds(ctx context.Context, p *conn.UpdateR
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}
-	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	// Omitting a stored pixel is refused rather than clearing it: Reddit needs the pixel on
+	// every campaign create, so a silent clear disabled the provider for the project (#300).
+	updated, err := s.updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{"conversion_pixel_id": cfg.ConversionPixelID})
 	if err != nil {
 		return nil, err
 	}
@@ -1560,16 +1565,16 @@ func (s *ConnectionService) UpdateTwitterAds(ctx context.Context, p *conn.Update
 		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"funding_instrument_id": cfg.FundingInstrumentID,
-			// PUT is a full replace here, so an omitted as_user_id CLEARS a previously declared
-			// identity — the same semantics account_id and Meta's app_id already carry on these
-			// endpoints, and the design type says so explicitly rather than leaving it implied.
-			// Clearing an authorization control by omission is worth naming: it widens what
-			// dispatch accepts, so a caller restating the row must restate this key too.
+			// PUT is a full replace here, but an OMITTED as_user_id no longer clears a declared
+			// identity: updateConnGuarded refuses that with 400 (issue #300). Clearing an
+			// authorization control widens what dispatch accepts, so it has to be asked for with
+			// an explicit "", which the design's Pattern admits for exactly this reason.
 			"as_user_id": strVal(cfg.AsUserID),
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}
-	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	// funding_instrument_id is Required by the design, so only as_user_id can be omitted.
+	updated, err := s.updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{"as_user_id": cfg.AsUserID})
 	if err != nil {
 		return nil, err
 	}
@@ -1650,7 +1655,7 @@ func (s *ConnectionService) UpdateMicrosoftAds(ctx context.Context, p *conn.Upda
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}
-	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	updated, err := s.updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{"customer_id": cfg.CustomerID})
 	if err != nil {
 		return nil, err
 	}
@@ -1742,7 +1747,12 @@ func (s *ConnectionService) UpdateHubspot(ctx context.Context, p *conn.UpdateHub
 		},
 		UpdatedBy: actorFromCtx(ctx),
 	}
-	updated, err := s.updateConn(ctx, m, p.IfMatch)
+	updated, err := s.updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{
+		"portal_id":    cfg.PortalID,
+		"sender_email": cfg.SenderEmail,
+		"sender_name":  cfg.SenderName,
+		"brand_kit":    cfg.BrandKit,
+	})
 	if err != nil {
 		return nil, err
 	}

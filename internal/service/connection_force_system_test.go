@@ -662,10 +662,16 @@ func TestForceSystem_CurrentRowReadIsConditional(t *testing.T) {
 		ifMatch := "1"
 		repo.gets = 0
 
+		// Every optional HubSpot config key is SENT (as ""), so the omission guard of issue #300
+		// has nothing to check and needs no read. Omitting them would make that guard read the
+		// row, and this case is about the force-system guard's scope alone.
+		empty := strPtr("")
 		if _, err := s.UpdateHubspot(context.Background(), &conn.UpdateHubspotPayload{
 			ProjectID: "cncf",
-			Config:    &conn.HubspotConnectionConfig{AccountID: "87654321"},
-			IfMatch:   &ifMatch,
+			Config: &conn.HubspotConnectionConfig{
+				AccountID: "87654321", PortalID: empty, SenderEmail: empty, SenderName: empty, BrandKit: empty,
+			},
+			IfMatch: &ifMatch,
 		}); err != nil {
 			t.Fatalf("HubSpot update must stay allowed while force-system mode is on: %v", err)
 		}

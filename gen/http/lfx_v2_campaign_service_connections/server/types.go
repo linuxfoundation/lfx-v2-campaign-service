@@ -6774,7 +6774,10 @@ type MetaAdsConnectionConfigRequestBody struct {
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Facebook page ID
 	PageID *string `form:"page_id,omitempty" json:"page_id,omitempty" xml:"page_id,omitempty"`
-	// Meta app ID
+	// Meta app ID. On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	AppID *string `form:"app_id,omitempty" json:"app_id,omitempty" xml:"app_id,omitempty"`
 }
 
@@ -6793,7 +6796,11 @@ type RedditAdsConnectionConfigRequestBody struct {
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// Reddit advertiser ID
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// Reddit conversion pixel ID (Reddit Ads → Events Manager)
+	// Reddit conversion pixel ID (Reddit Ads → Events Manager). On update (PUT
+	// replaces the whole config): omitting this field while the connection has a
+	// stored value for it is refused with 400 naming the field. Send the current
+	// value to keep it, or send "" to clear it deliberately. JSON null counts as
+	// omitted.
 	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
@@ -6817,7 +6824,11 @@ type TwitterAdsConnectionConfigRequestBody struct {
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID *string `form:"funding_instrument_id,omitempty" json:"funding_instrument_id,omitempty" xml:"funding_instrument_id,omitempty"`
-	// X/Twitter user id authorized to author this connection's tweets (numeric)
+	// X/Twitter user id authorized to author this connection's tweets (numeric, or
+	// "" for none). On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	AsUserID *string `form:"as_user_id,omitempty" json:"as_user_id,omitempty" xml:"as_user_id,omitempty"`
 }
 
@@ -6842,7 +6853,11 @@ type MicrosoftAdsConnectionConfigRequestBody struct {
 	// Microsoft Advertising account ID (positive integer)
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Microsoft Advertising customer ID (a positive integer, digits only).
-	// Optional: omit it to let the credential's own customers be discovered.
+	// Optional: leave it empty to let the credential's own customers be
+	// discovered. On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
 }
 
@@ -6866,13 +6881,25 @@ type HubspotConnectionConfigRequestBody struct {
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// HubSpot list/audience ID
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// HubSpot portal/account ID
+	// HubSpot portal/account ID. On update (PUT replaces the whole config):
+	// omitting this field while the connection has a stored value for it is
+	// refused with 400 naming the field. Send the current value to keep it, or
+	// send "" to clear it deliberately. JSON null counts as omitted.
 	PortalID *string `form:"portal_id,omitempty" json:"portal_id,omitempty" xml:"portal_id,omitempty"`
-	// Default sender address
+	// Default sender address. On update (PUT replaces the whole config): omitting
+	// this field while the connection has a stored value for it is refused with
+	// 400 naming the field. Send the current value to keep it, or send "" to clear
+	// it deliberately. JSON null counts as omitted.
 	SenderEmail *string `form:"sender_email,omitempty" json:"sender_email,omitempty" xml:"sender_email,omitempty"`
-	// Default sender name
+	// Default sender name. On update (PUT replaces the whole config): omitting
+	// this field while the connection has a stored value for it is refused with
+	// 400 naming the field. Send the current value to keep it, or send "" to clear
+	// it deliberately. JSON null counts as omitted.
 	SenderName *string `form:"sender_name,omitempty" json:"sender_name,omitempty" xml:"sender_name,omitempty"`
-	// Per-project brand kit selector
+	// Per-project brand kit selector. On update (PUT replaces the whole config):
+	// omitting this field while the connection has a stored value for it is
+	// refused with 400 naming the field. Send the current value to keep it, or
+	// send "" to clear it deliberately. JSON null counts as omitted.
 	BrandKit *string `form:"brand_kit,omitempty" json:"brand_kit,omitempty" xml:"brand_kit,omitempty"`
 }
 
@@ -14734,7 +14761,7 @@ func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 		}
 	}
 	if body.AsUserID != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.as_user_id", *body.AsUserID, "^[0-9]+$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.as_user_id", *body.AsUserID, "^([0-9]+)?$"))
 		if utf8.RuneCountInString(*body.AsUserID) > 32 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.as_user_id", *body.AsUserID, utf8.RuneCountInString(*body.AsUserID), 32, false))
 		}
@@ -14762,7 +14789,7 @@ func validateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 		}
 	}
 	if body.AsUserID != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern(path+".as_user_id", *body.AsUserID, "^[0-9]+$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".as_user_id", *body.AsUserID, "^([0-9]+)?$"))
 		if utf8.RuneCountInString(*body.AsUserID) > 32 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".as_user_id", *body.AsUserID, utf8.RuneCountInString(*body.AsUserID), 32, false))
 		}

@@ -32,6 +32,9 @@ type fakeRepo struct {
 	// (as the real repository's RETURNING does), so a retained pointer would report the
 	// post-call state and the assertion would be about the fake, not the handler.
 	gotUpdateCreds []byte
+	// updateCalls counts Update calls that reached the repository, so a test can show a
+	// refused update never attempted the write.
+	updateCalls int
 	// createCalls and setCredentialCalls count writes that REACHED the repository.
 	//
 	// A rejected payload must not persist, and the error alone cannot show that: every
@@ -90,6 +93,7 @@ func (r *fakeRepo) Create(_ context.Context, c *model.Connection) (*model.Connec
 }
 
 func (r *fakeRepo) Update(_ context.Context, c *model.Connection, expectedVersion int64) (*model.Connection, error) {
+	r.updateCalls++
 	r.gotUpdateVersion = expectedVersion
 	r.gotUpdateCreds = c.EncryptedCredentials
 	if r.updateErr != nil {
@@ -1062,14 +1066,12 @@ func TestUpdateMetaAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
 	}
 }
 
-// The conversion pixel must survive create → read-back, and a PUT that omits it must CLEAR
-// it. Both halves matter and neither was pinned.
+// The conversion pixel must survive create → read-back, a PUT that omits it must be REFUSED
+// while one is stored (issue #300), and a PUT that sends "" must clear it.
 //
-// Reddit requires the pixel on every campaign create, so an update that silently drops it
-// turns the next dispatch into a refusal — an operator editing only the label would break
-// campaign creation without touching anything that looks related. That is the documented
-// full-replace semantic of PUT (see the Update handlers), not a bug, but it is exactly the
-// kind of behaviour that needs a test recording it where someone will find it.
+// Reddit requires the pixel on every campaign create, so an update that silently dropped it
+// turned the next dispatch into a refusal — an operator editing only the label broke campaign
+// creation without touching anything that looked related. Clearing now takes an explicit "".
 func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
 	repo := newFakeRepo()
 	s := newTestService(t, repo)
@@ -1100,18 +1102,31 @@ func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
 		t.Errorf("read-back pixel = %v, want a2_pixel_round_trip — a value that does not survive the round trip is unusable at dispatch", got.ConversionPixelID)
 	}
 
-	// PUT is a full replace: omitting the pixel clears it. Recorded rather than asserted as
-	// desirable — the next dispatch refuses, which is the safe outcome but a surprising one.
-	updated, err := s.UpdateRedditAds(ctx, &conn.UpdateRedditAdsPayload{
+	// Omitting the stored pixel is refused, and the pixel survives.
+	_, err = s.UpdateRedditAds(ctx, &conn.UpdateRedditAdsPayload{
 		ProjectID: "cncf",
 		IfMatch:   strPtr(etag(got.Version)),
 		Config:    &conn.RedditAdsConnectionConfig{AccountID: "t2_gv9wtbfa"},
 	})
+	if bad, ok := err.(*conn.BadRequestError); !ok || !strings.Contains(bad.Message, "config.conversion_pixel_id") {
+		t.Fatalf("an update omitting a stored conversion_pixel_id must be a 400 naming it, got %T (%v)", err, err)
+	}
+	if px := repo.store[repoKey("cncf", model.ProviderRedditAds)].ProviderConfig["conversion_pixel_id"]; px != "a2_pixel_round_trip" {
+		t.Errorf("stored pixel = %q after a refused update, want it kept", px)
+	}
+
+	// An explicit "" is a deliberate clear and is honoured: PUT stays a full replace for
+	// every field the caller sends.
+	updated, err := s.UpdateRedditAds(ctx, &conn.UpdateRedditAdsPayload{
+		ProjectID: "cncf",
+		IfMatch:   strPtr(etag(got.Version)),
+		Config:    &conn.RedditAdsConnectionConfig{AccountID: "t2_gv9wtbfa", ConversionPixelID: strPtr("")},
+	})
 	if err != nil {
 		t.Fatalf("UpdateRedditAds: %v", err)
 	}
-	if updated.ConversionPixelID != nil && *updated.ConversionPixelID != "" {
-		t.Errorf("an update omitting conversion_pixel_id must CLEAR it (PUT is a full replace), got %v", *updated.ConversionPixelID)
+	if updated.ConversionPixelID != nil {
+		t.Errorf(`an update sending conversion_pixel_id "" must clear it, got %v`, *updated.ConversionPixelID)
 	}
 }
 
@@ -1549,14 +1564,12 @@ func TestTwitterAds_AsUserIDRoundTripsThroughTheService(t *testing.T) {
 	}
 }
 
-// TestUpdateTwitterAds_OmittedAsUserIDClearsIt states the full-replace semantics out loud,
-// because this is the direction that WIDENS what dispatch accepts: a PUT that restates the row
-// without as_user_id returns the connection to "declares no identity", after which a campaign
-// config may name any promotable handle again. That is the same rule account_id and Meta's
-// app_id already carry on these endpoints — X is not inventing a third convention — but an
-// authorization control silently relaxing on an omitted key is worth a test that says so, so a
-// later "preserve when omitted" tweak has to argue with this comment rather than slip past.
-func TestUpdateTwitterAds_OmittedAsUserIDClearsIt(t *testing.T) {
+// TestUpdateTwitterAds_OmittedAsUserIDIsRefused: an omitted as_user_id no longer clears a
+// declared identity (issue #300). Clearing it widens what dispatch accepts — a campaign config
+// may then name any promotable handle — so it must be asked for with an explicit "", and a PUT
+// that merely restates the row without the key is refused with 400 before any write. The
+// explicit-clear half is TestUpdateConnection_OmittedConfigKeyGuard's.
+func TestUpdateTwitterAds_OmittedAsUserIDIsRefused(t *testing.T) {
 	repo := newFakeRepo()
 	repo.store[repoKey("cncf", model.ProviderTwitterAds)] = &model.Connection{
 		ProjectID: "cncf", Provider: model.ProviderTwitterAds, Status: model.StatusActive,
@@ -1577,18 +1590,17 @@ func TestUpdateTwitterAds_OmittedAsUserIDClearsIt(t *testing.T) {
 		},
 		IfMatch: &ifMatch,
 	})
-	if err != nil {
-		t.Fatalf("UpdateTwitterAds: %v", err)
+	if bad, ok := err.(*conn.BadRequestError); !ok || !strings.Contains(bad.Message, "config.as_user_id") {
+		t.Fatalf("expected a 400 naming config.as_user_id, got %T (%v)", err, err)
+	}
+	if res != nil {
+		t.Errorf("result = %+v, want none for a refused update", res)
+	}
+	if repo.updateCalls != 0 {
+		t.Errorf("repo.Update called %d time(s); the refusal must come before any write", repo.updateCalls)
 	}
 	stored := repo.store[repoKey("cncf", model.ProviderTwitterAds)]
-	if got := stored.ProviderConfig["as_user_id"]; got != "" {
-		t.Errorf("stored as_user_id = %q, want it cleared: PUT is a full replace here", got)
-	}
-	if res.AsUserID != nil {
-		t.Errorf("result as_user_id = %v, want it absent once cleared", *res.AsUserID)
-	}
-	if got := stored.ProviderConfig["funding_instrument_id"]; got != "lygyi" {
-		t.Errorf("funding_instrument_id = %q, want it preserved — the restated key must "+
-			"survive a PUT that clears its neighbour", got)
+	if got := stored.ProviderConfig["as_user_id"]; got != "1234567890123456789" {
+		t.Errorf("stored as_user_id = %q, want the declared identity kept", got)
 	}
 }
