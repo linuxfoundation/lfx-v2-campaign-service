@@ -12,9 +12,9 @@ import (
 	"io"
 )
 
-// Serves one stored creative asset at a short-lived HMAC-signed URL minted by
-// the Reddit dispatch. Unauthenticated by design: the signature is the
-// authorization.
+// Serves one stored creative asset at a short-lived HMAC-signed URL that the
+// Reddit client mints immediately before post creation. Unauthenticated by
+// design: the signature is the authorization.
 type Service interface {
 	// Serve the bytes of one stored creative asset named by a valid, unexpired
 	// signature over (project, brief, asset, expiry). Every rejection is the same

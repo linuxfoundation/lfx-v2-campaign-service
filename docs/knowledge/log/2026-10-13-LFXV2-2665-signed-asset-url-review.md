@@ -23,3 +23,9 @@ verifier's clock, so a 60-minute URL minted by a pod one second ahead of the ser
 refused. It now allows `MaxTTL + MaxClockSkew` (1 minute, a documented constant); an expiry
 already past on the verifier is still refused. `TestVerifyToleratesClockSkewBetweenPods` mints
 on clocks skewed in both directions and checks that skew beyond the allowance is refused.
+
+Follow-up (#317 review, minting wording): the signed-asset Goa design (its package comment and
+the service description, regenerated into `gen/`) still said the Reddit dispatch minted the URL,
+and the api-catalog row said it was minted "only inside the Reddit dispatch". Both now say the
+Reddit client mints it immediately before the promoted-post request, matching the concept and
+`reddit.CampaignInput.ImageURLSource`.

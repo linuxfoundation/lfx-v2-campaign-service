@@ -5117,7 +5117,7 @@ func lfxV2CampaignServiceConnectionsMonitorHubspotAccountUsage() {
 // lfxV2CampaignServiceSignedAssetsUsage displays the usage of the
 // lfx-v2-campaign-service-signed-assets command and its subcommands.
 func lfxV2CampaignServiceSignedAssetsUsage() {
-	fmt.Fprintln(os.Stderr, `Serves one stored creative asset at a short-lived HMAC-signed URL minted by the Reddit dispatch. Unauthenticated by design: the signature is the authorization.`)
+	fmt.Fprintln(os.Stderr, `Serves one stored creative asset at a short-lived HMAC-signed URL that the Reddit client mints immediately before post creation. Unauthenticated by design: the signature is the authorization.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] lfx-v2-campaign-service-signed-assets COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
 	fmt.Fprintln(os.Stderr, `    get-signed-creative-asset: Serve the bytes of one stored creative asset named by a valid, unexpired signature over (project, brief, asset, expiry). Every rejection is the same 404.`)
