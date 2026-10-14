@@ -84,6 +84,8 @@ type ReportBudgets struct {
 
 	mu        sync.Mutex
 	byAccount map[string]*accountReportLedger
+	// lastSweep is when sweepLocked last pruned EVERY account and dropped the empty ledgers.
+	lastSweep time.Time
 }
 
 // accountReportLedger holds the send times of an account's attempts inside the window: every
@@ -162,6 +164,33 @@ func (b *ReportBudgets) release(accountID string, insights bool, at time.Time) {
 	if insights {
 		l.insights = removeOne(l.insights, at)
 	}
+	if len(l.all) == 0 && len(l.insights) == 0 {
+		delete(b.byAccount, accountID)
+	}
+}
+
+// sweepLocked bounds the map: an account's ledger is otherwise pruned only when that account
+// takes a slot again, so an ad account that stops reading would keep its (expired) entry forever
+// and account churn would grow the map without bound. At most once per window it prunes EVERY
+// account and deletes the ledgers left empty. Cleanup is demand-driven, not timed: it runs on
+// the next eligible `tryTake`, so while reporting traffic continues the map holds no account
+// idle for more than two windows, and its size is bounded by the accounts read in that span,
+// not by every account ever seen. If report requests stop altogether, expired ledgers stay until
+// the next request triggers a sweep. O(accounts) per sweep, at most one sweep per window. b.mu
+// must be held.
+func (b *ReportBudgets) sweepLocked(now time.Time) {
+	if now.Sub(b.lastSweep) < b.window {
+		return
+	}
+	b.lastSweep = now
+	cutoff := now.Add(-b.window)
+	for id, l := range b.byAccount {
+		l.all = pruneBefore(l.all, cutoff)
+		l.insights = pruneBefore(l.insights, cutoff)
+		if len(l.all) == 0 && len(l.insights) == 0 {
+			delete(b.byAccount, id)
+		}
+	}
 }
 
 func removeOne(ts []time.Time, at time.Time) []time.Time {
@@ -179,6 +208,7 @@ func (b *ReportBudgets) tryTake(accountID string, insights bool) (time.Time, tim
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
+	b.sweepLocked(now)
 	l := b.byAccount[accountID]
 	if l == nil {
 		l = &accountReportLedger{}
@@ -219,6 +249,13 @@ func (b *ReportBudgets) used(accountID string) (all, insights int) {
 	}
 	cutoff := b.now().Add(-b.window)
 	return len(pruneBefore(l.all, cutoff)), len(pruneBefore(l.insights, cutoff))
+}
+
+// accounts reports how many account ledgers the map holds. Tests only.
+func (b *ReportBudgets) accounts() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.byAccount)
 }
 
 func pruneBefore(ts []time.Time, cutoff time.Time) []time.Time {

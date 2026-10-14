@@ -777,3 +777,12 @@ without it). The request loop calls it on exactly one branch: a `Do` error that
 Every other `Do` error may have been sent and keeps its slot. Release removes exactly the
 recorded slot, once (`TestReportBudgets_PreSendDialFailureReleasesTheSlot`,
 `TestReportBudgets_ReleaseIsExactAndIdempotent`).
+
+The ledger map (`byAccount`) is bounded: a ledger left empty by a release is deleted, and at most
+once per window `tryTake` runs `sweepLocked`, which prunes EVERY account and deletes the empty
+ledgers. Without it only the account taking a slot was pruned, so every ad account ever seen kept
+an entry and account churn grew the map without bound. Cleanup is demand-driven: it runs on the
+next eligible `tryTake`, so while reporting traffic continues the map holds only accounts read in
+the last two windows; if report requests stop, expired ledgers stay until the next request sweeps
+them (`TestReportBudgets_InactiveLedgersAreDropped`: after the window an inactive account's
+ledger is gone, and releasing the last slot returns the map to 0).
