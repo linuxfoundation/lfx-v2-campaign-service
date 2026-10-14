@@ -397,11 +397,16 @@ minor unit (`1.4` on a JPY account, `25.505` on a USD one) instead of rounding i
 written as ¥1 / $25.51 and answered 200 (#235). The whole conversion is EXACT
 (`minorUnitsExact`, PR #316 review): amount×offset is computed with `math/big.Rat` from the
 amount's shortest round-tripping decimal form (the digits the caller sent), and that exact product
-decides every refusal — above `math.MaxInt64` too large (MaxInt64 itself fits), below 1 too small,
-a non-integer fractional — and is the integer encoded. So `19.99` is 1999 although `19.99*100` is
-`1998.9999999999998` as a float, and `90071992547253.9` is 9007199254725390 where the old float
-product wrote 9007199254725391 after the fraction check had passed it. No float tolerance is
-chosen, for any offset. `MinorUnitsExact` exports it for the settings readback
+decides every refusal — above `MaxExactMinorUnits` (999,999,999,999,999 minor units) "too large to
+represent exactly", below 1 too small, a non-integer fractional — and is the integer encoded. So
+`19.99` is 1999 although `19.99*100` is `1998.9999999999998` as a float. The ceiling exists
+because the amount arrives already decoded into a float64, which keeps a decimal exactly only to
+15 significant digits: past it the caller's digits may be gone before any check runs (JSON
+`9007199254740992.4` decodes to `9007199254740992`; `90071992547253.9` USD was written as
+9007199254725391). 2^53 is not enough once the offset is above 1 — `90071992547409.91` USD is
+below 2^53 cents yet decodes to `…409.9`. More than 15 significant digits in a request cannot be
+made exact by any bound; that precision is lost in JSON decoding. No float tolerance is chosen,
+for any offset. `MinorUnitsExact` exports it for the settings readback
 (`dispatch.metaRecordedMinor`), which encodes the recorded amount the same way, falling back to
 `round(amount × offset)` only for a pre-#235 row the encoder would now refuse. The sentence ends "enter whole amounts for this currency" (offset 1) or
 "enter at most 2 decimal places for this currency" (offset 100). Because the encoder is shared,
@@ -472,8 +477,8 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
   create/budget scale), then `bidToMinorUnits`: finite, positive, at most 1,000,000, at least one
   minor unit, and no finer than one — the same exact `minorUnitsExact` conversion as
   `budgetToMinorUnits` (a ¥1.4 bid is refused, never written as ¥1, #235; a product past
-  `math.MaxInt64` is refused, never converted to an implementation-defined, possibly negative,
-  minor-unit bid; the bid encoded is the exact product, not a rounded float); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
+  `MaxExactMinorUnits` is refused "too large to represent exactly", so nothing near the int64
+  range is ever converted; the bid encoded is the exact product, not a rounded float); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
   currency wraps `ErrAccountCurrencyUnresolvable`.
 - `GetAdSetBid(ctx, adSetID)` — `GET /{id}?fields=id,campaign_id,bid_strategy,billing_event,optimization_goal,bid_amount`;
   a pure read; an answer for another ad set is an error; a non-numeric id is `ErrInvalidAdSetID`
@@ -789,9 +794,14 @@ The window is the read's own: `fetchAccountCampaignInsights` returns the `since`
 `ListAccountCampaigns` stamps them on every row (`MetricsSince`/`MetricsUntil`, carried to
 `model.AccountCampaignMetrics.MetricsWindowStart`/`End`), and `EvaluateMetaMonitor(rows)` takes no
 clock — so a request crossing UTC midnight cannot pace against different days than its spend.
-The monitor's Insights `spend` goes through `parseMonitorSpend`, which accepts only a finite,
-non-negative amount (`strconv.ParseFloat` alone admits `NaN`, `Inf` and negatives); anything else
-is a per-row parse failure and the row is `FetchFailed`, never paced. The counters already refuse
+The monitor's Insights `spend` goes through `parseMonitorSpend`, which accepts only a plain
+decimal string (`^[0-9]+(\.[0-9]+)?$` — what Meta sends) that parses to a finite value;
+`strconv.ParseFloat` alone admits `NaN`, `Inf`, negatives, exponents (`1e2`), hex floats
+(`0x1p+2`) and underscores. Anything else is a per-row parse failure and the row is `FetchFailed`,
+never paced. A campaign-list row reporting BOTH a positive `daily_budget` and `lifetime_budget`
+(Meta documents them as mutually exclusive) keeps neither — 0/0, pacing unknown, delivery intact,
+the same verdict as the mix on ad sets — and is not sent to the ad-set fallback;
+`metaExpectedSpend` refuses a row with both budgets too. The counters already refuse
 negatives through `parseMetricInt`.
 
 See [internal/platform/meta](../../../internal/platform/meta).

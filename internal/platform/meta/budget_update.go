@@ -164,9 +164,13 @@ func (c *Client) resolveCurrencyOffset(acctCurrency string, preflightErr error) 
 // 90071992547253.9 × 100 passed it and was then written as 9007199254725391 rather than
 // 9007199254725390. The exact product is the authority for every refusal:
 //
-//   - too large: it exceeds math.MaxInt64 (an amount that fits exactly — MaxInt64 itself — is
-//     accepted; the old float comparison against float64(MaxInt64), which rounds up to 2^63,
-//     could not tell the two apart). This is the only budget-magnitude ceiling; +Inf is too large;
+//   - too large: above MaxExactMinorUnits (999,999,999,999,999 minor units — 15 digits; +Inf
+//     too). The amount arrives as an already-decoded float64, which reproduces a decimal exactly
+//     only up to 15 significant digits; past that the caller's digits may be gone before any
+//     check runs — JSON 9007199254740992.4 decodes to 9007199254740992 and would pass as a whole
+//     JPY amount (PR #316 review). See MaxExactMinorUnits for why the bound is 15 digits and not
+//     2^53. This is the only budget-magnitude ceiling, and it sits well inside
+//     int64, so the conversion can never overflow;
 //   - too small: below one minor unit (zero and negatives included);
 //   - finer than one minor unit (1.4 on a JPY account, 25.505 on a USD one): REFUSED before
 //     anything is written, not rounded (#235).
@@ -180,7 +184,7 @@ func budgetToMinorUnits(budget float64, offset int64) (int64, error) {
 	}
 	switch minor, verdict := minorUnitsExact(budget, offset); verdict {
 	case minorTooLarge:
-		return 0, invalidBudgetAmount("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
+		return 0, invalidBudgetAmount("budget too large to represent exactly: at most %d minor units of the ad account's currency (offset %d)", MaxExactMinorUnits, offset)
 	case minorTooSmall:
 		return 0, invalidBudgetAmount("budget too small: must be at least one minor currency unit (offset %d)", offset)
 	case minorFractional:
@@ -203,10 +207,22 @@ const (
 	minorFractional
 )
 
-var maxInt64Rat = new(big.Rat).SetInt64(math.MaxInt64)
+// MaxExactMinorUnits is the largest minor-unit amount the Meta encoders accept:
+// 999,999,999,999,999 (15 digits). The amount reaches this package already decoded into a
+// float64, and a float64 round-trips every decimal of at most 15 significant digits exactly
+// (DBL_DIG), so a valid amount — at most this many minor units, no finer than one — is the
+// caller's own digits. 2^53 is NOT a sufficient bound once the offset is above 1: at USD scale
+// 90071992547409.91 (9007199254740991 cents, below 2^53) decodes to 90071992547409.9 and would
+// be written one cent short. The bound cannot make a request carrying more than 15 significant
+// digits exact (1.0000000000000001 decodes to 1); that precision is lost in JSON decoding,
+// before this service sees the amount.
+const MaxExactMinorUnits = 999_999_999_999_999
+
+var maxExactMinorRat = new(big.Rat).SetInt64(MaxExactMinorUnits)
 
 // minorUnitsExact computes amount×offset EXACTLY and classifies it, in this order: above
-// math.MaxInt64 (or +Inf) is minorTooLarge, below 1 (or -Inf, zero, negative) is minorTooSmall,
+// MaxExactMinorUnits (or +Inf) is minorTooLarge — checked first, because past it the fraction
+// check below cannot be trusted — below 1 (or -Inf, zero, negative) is minorTooSmall,
 // a non-integer is minorFractional; otherwise minorOK with the product. The amount is taken as
 // its shortest round-tripping decimal form — the digits the caller sent, since a JSON number is
 // parsed from exactly that text — so 19.99 is 1999 minor units although 19.99*100 is
@@ -225,7 +241,7 @@ func minorUnitsExact(amount float64, offset int64) (int64, minorVerdict) {
 	}
 	r.Mul(r, new(big.Rat).SetInt64(offset))
 	switch {
-	case r.Cmp(maxInt64Rat) > 0:
+	case r.Cmp(maxExactMinorRat) > 0:
 		return 0, minorTooLarge
 	case r.Cmp(big.NewRat(1, 1)) < 0:
 		return 0, minorTooSmall

@@ -106,12 +106,13 @@ func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 	}
 	// Exact, like budgetToMinorUnits (PR #316 review): the product is computed in rational
 	// arithmetic, never as a binary float product, and is the authority for every refusal below.
-	// Its upper bound is int64 itself: metaMaxBid caps the AMOUNT, not the product, and a large
-	// currency offset can still push amount*offset past int64.
+	// Its upper bound is MaxExactMinorUnits (2^53): metaMaxBid caps the AMOUNT, not the product,
+	// and a large currency offset can still push amount*offset past what a decoded float64 can
+	// carry exactly.
 	switch minor, verdict := minorUnitsExact(amount, offset); verdict {
 	case minorTooLarge:
-		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s exceeds the representable minor-unit range of the ad account's currency",
-			strconv.FormatFloat(amount, 'f', -1, 64))}
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is too large to represent exactly: at most %d minor units of the ad account's currency",
+			strconv.FormatFloat(amount, 'f', -1, 64), MaxExactMinorUnits)}
 	case minorTooSmall:
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is smaller than one minor unit of the ad account's currency, the smallest bid Meta accepts",
 			strconv.FormatFloat(amount, 'f', -1, 64))}

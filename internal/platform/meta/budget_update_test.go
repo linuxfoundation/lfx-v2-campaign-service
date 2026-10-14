@@ -52,13 +52,20 @@ func TestBudgetToMinorUnits(t *testing.T) {
 		{name: "overflows int64 after scaling", budget: math.MaxFloat64, offset: 100, wantErr: "budget too large"},
 		// The ENCODING is exact, not only the fraction check (PR #316 review): the float product
 		// 90071992547253.9*100 is 9007199254725391, one minor unit too many.
-		{name: "large amount encodes exactly", budget: 90071992547253.9, offset: 100, want: 9007199254725390},
-		{name: "large amount with cents encodes exactly", budget: 90071992547253.97, offset: 100, want: 9007199254725397},
-		// The int64 boundary is the EXACT product's: MaxInt64 minor units fits, which the old float
-		// comparison against float64(MaxInt64) (= 2^63) could not tell from one past it.
-		{name: "exactly MaxInt64 minor units fits", budget: 1, offset: math.MaxInt64, want: math.MaxInt64},
-		{name: "past MaxInt64 minor units is too large", budget: 2, offset: math.MaxInt64, wantErr: "budget too large"},
-		{name: "a float at 2^63 is too large", budget: 9223372036854775808, offset: 1, wantErr: "budget too large"},
+		{name: "the reviewer's 90071992547253.9 is refused, not written as ...391", budget: 90071992547253.9, offset: 100, wantErr: "too large to represent exactly"},
+		{name: "large amount with cents encodes exactly", budget: 9007199254725.39, offset: 100, want: 900719925472539},
+		{name: "large amount with cents at the ceiling encodes exactly", budget: 9999999999999.97, offset: 100, want: 999999999999997},
+		// The ceiling is what a DECODED float64 carries exactly — 15 digits of minor units (PR
+		// #316 review). JSON 9007199254740992.4 decodes to 9007199254740992, its fraction already
+		// gone; and below 2^53 at USD scale, 90071992547409.91 decodes to 90071992547409.9 — one
+		// cent short — which is why the bound is 15 digits, not 2^53.
+		{name: "15 digits of minor units is the largest accepted (JPY)", budget: 999999999999999, offset: 1, want: 999999999999999},
+		{name: "16 digits of minor units is too large to represent exactly (JPY)", budget: 1000000000000000, offset: 1, wantErr: "too large to represent exactly"},
+		{name: "15 digits of minor units is the largest accepted (USD)", budget: decodeJSONNumber(t, "9999999999999.99"), offset: 100, want: 999999999999999},
+		{name: "16 digits of minor units is too large (USD)", budget: decodeJSONNumber(t, "10000000000000.00"), offset: 100, wantErr: "too large to represent exactly"},
+		{name: "a decoded 9007199254740992.4 is refused", budget: decodeJSONNumber(t, "9007199254740992.4"), offset: 1, wantErr: "too large to represent exactly"},
+		{name: "a decoded 90071992547409.91 is refused, not written a cent short", budget: decodeJSONNumber(t, "90071992547409.91"), offset: 100, wantErr: "too large to represent exactly"},
+		{name: "MaxInt64 minor units is far past the ceiling", budget: 1, offset: math.MaxInt64, wantErr: "too large to represent exactly"},
 		{name: "positive infinity", budget: math.Inf(1), offset: 100, wantErr: "budget too large"},
 		// NaN fails every ordered comparison, so it would slip past the range check
 		// and convert to an implementation-defined int64 unless named explicitly.
@@ -390,4 +397,15 @@ func TestUpdateAdSetBudget_A5xxIsUnconfirmedA4xxIsDefinite(t *testing.T) {
 			}
 		})
 	}
+}
+
+// decodeJSONNumber decodes a JSON number literal the way the request body is decoded, so a test
+// sees the float64 the encoder actually receives.
+func decodeJSONNumber(t *testing.T, lit string) float64 {
+	t.Helper()
+	var v float64
+	if err := json.Unmarshal([]byte(lit), &v); err != nil {
+		t.Fatalf("decode %s: %v", lit, err)
+	}
+	return v
 }

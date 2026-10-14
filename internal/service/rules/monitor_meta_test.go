@@ -393,3 +393,24 @@ func TestEvaluateMetaMonitor_SkipsFetchFailedRows(t *testing.T) {
 		t.Errorf("FetchFailed row produced action items, want none: %+v", items)
 	}
 }
+
+// TestMetaPacingPct_BothBudgetsIsUnknown: a row with a daily AND a lifetime budget has no single
+// plan (Meta documents them as mutually exclusive). It used to be paced on the lifetime figure
+// alone, or dropped to unknown only when that flight was unpaceable; it is now unknown either way,
+// matching the ad-set path (PR #316 review).
+func TestMetaPacingPct_BothBudgetsIsUnknown(t *testing.T) {
+	now := time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
+	paceable := model.AccountCampaignMetrics{BudgetDay: 100, TotalBudget: 1000, StartDate: "2026-07-21", EndDate: "2026-07-30", Spend: 700}
+	if pct, ok := metaPct(paceable, 7, now); ok {
+		t.Errorf("both budgets with a paceable flight paced at %v%%, want unknown", pct)
+	}
+	openEnded := model.AccountCampaignMetrics{BudgetDay: 100, TotalBudget: 1000, StartDate: "2026-07-21", Spend: 700}
+	if pct, ok := metaPct(openEnded, 7, now); ok {
+		t.Errorf("both budgets on an open-ended flight paced at %v%%, want unknown", pct)
+	}
+	rows, _ := evalMeta([]model.AccountCampaignMetrics{{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+		Impressions: 1000, Clicks: 10, BudgetDay: 100, TotalBudget: 1000, StartDate: "2026-07-21", EndDate: "2026-07-30", Spend: 700}}, 7, now)
+	if !rows[0].Metrics.PacingUnknown {
+		t.Errorf("row = %+v, want PacingUnknown for a row with both budgets", rows[0])
+	}
+}

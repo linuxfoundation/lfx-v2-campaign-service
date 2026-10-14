@@ -470,6 +470,15 @@ func TestListAccountCampaigns_InsightsSpendMustBeFiniteNonNegative(t *testing.T)
 		{"-Inf spend", "spend", "-Inf"},
 		{"infinity spelled out", "spend", "+Infinity"},
 		{"overflowing spend", "spend", "1e400"},
+		// Only a plain decimal is a spend (PR #316 review): Meta sends "12.34", never these, and
+		// ParseFloat would accept every one of them.
+		{"hex float spend", "spend", "0x1p+2"},
+		{"exponent spend", "spend", "1e2"},
+		{"underscore spend", "spend", "1_000"},
+		{"signed spend", "spend", "+5"},
+		{"trailing dot spend", "spend", "5."},
+		{"leading dot spend", "spend", ".5"},
+		{"whitespace spend", "spend", " 5"},
 		{"negative impressions", "impressions", "-1"},
 		{"negative clicks", "clicks", "-1"},
 	} {
@@ -500,5 +509,28 @@ func TestListAccountCampaigns_InsightsSpendMustBeFiniteNonNegative(t *testing.T)
 	}
 	if v, err := parseMonitorSpend("12.34"); err != nil || v != 12.34 {
 		t.Errorf("parseMonitorSpend(\"12.34\") = %v, %v; want 12.34", v, err)
+	}
+}
+
+// Meta documents daily_budget and lifetime_budget as mutually exclusive. A campaign reporting
+// BOTH used to be paced on the lifetime figure alone; it is now unreadable as a budget — 0/0,
+// pacing unknown — exactly as the same mix on ad sets is, its delivery intact, and it is not sent
+// to the ad-set fallback (PR #316 review).
+func TestListAccountCampaigns_CampaignWithBothBudgetsIsUnknown(t *testing.T) {
+	rows, rec := listMonitorRows(t, monitorFixture{
+		campaigns: []string{monitorList(
+			monitorCampaign("111", StatusActive, `"daily_budget":"5000","lifetime_budget":"900000"`),
+			monitorCampaign("333", StatusActive, `"lifetime_budget":"900000"`),
+		)},
+		insights: []string{insightsFor("111", "333")},
+		currency: usdAccount,
+	})
+	assertBudgets(t, rows["111"], 0, 0)
+	if r := rows["111"]; r.FetchFailed || r.Impressions != 1000 {
+		t.Errorf("row 111 = %+v, want delivery kept and not FetchFailed", r)
+	}
+	assertBudgets(t, rows["333"], 0, 9000)
+	if got := adSetRequests(rec); len(got) != 0 {
+		t.Errorf("a campaign with both budgets was sent to the ad-set fallback: %v", got)
 	}
 }

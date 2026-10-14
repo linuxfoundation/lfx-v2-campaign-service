@@ -41,7 +41,7 @@ the row is `pacing_unknown`, never a false alert.
 - **Minor units are converted exactly.** The fractional-unit check was decimal, but the encoding
   still multiplied in binary float, so `90071992547253.9` × 100 was written as 9007199254725391.
   `minorUnitsExact` now computes amount×offset with `big.Rat` from the amount's shortest decimal
-  form; the exact product decides too large (past `math.MaxInt64` — MaxInt64 itself now fits),
+  form; the exact product decides too large (since the exactness-ceiling bullet below, past 15 digits of minor units),
   too small and fractional, and is what is encoded, for budgets and bids alike. The settings
   readback encodes the recorded amount the same way. The `MetaConfig` create contract in
   `docs/api-catalog.md` now says a fraction of a minor unit is refused at create too, not rounded.
@@ -52,10 +52,24 @@ the row is `pacing_unknown`, never a false alert.
   `parseMetricInt`. The `docs/api-catalog.md` settings-readback entry and
   `code/internal-dispatch.md` now say the recorded budget is encoded exactly, with the legacy
   `round(amount × offset)` fallback only for a fractional row from before #235.
+- **A campaign with both budgets is `pacing_unknown`.** `metaExpectedSpend` paced a row with a
+  daily AND a lifetime budget on the lifetime figure alone (or dropped it only when that flight
+  was unpaceable), while the same mix on ad sets was unknown. Meta documents the two as mutually
+  exclusive, so the campaign-list read now keeps neither (0/0, delivery intact, no ad-set
+  fallback) and the rules refuse a row with both.
+- **Exactness ceiling for minor units.** Amounts reach the encoder already decoded into a
+  float64, so digits can be lost before any check (JSON `9007199254740992.4` → `…992`, accepted
+  as a whole JPY amount). Budgets and bids — create and update alike — above 999,999,999,999,999
+  minor units (15 digits, what a float64 keeps exactly) are refused "too large to represent
+  exactly"; this replaces the int64 ceiling. 2^53 was not enough: `90071992547409.91` USD is below
+  2^53 cents but decodes to `…409.9`. Documented in `docs/api-catalog.md`.
+- **Spend must be a plain decimal.** `parseMonitorSpend` first requires `^[0-9]+(\.[0-9]+)?$`, so
+  hex floats, exponents (`1e2` — Meta sends plain decimals), underscores, signs and bare dots make
+  the row `FetchFailed`.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against
-  `float64(math.MaxInt64)`; since the exact-conversion fix above, the exact product's range.)
+  `float64(math.MaxInt64)`; now the 15-digit exactness ceiling above, well inside int64.)
 
 No API, design, gen or migration change. See `architecture/account-monitor-endpoints.md` and
 `code/internal-platform-meta.md`.

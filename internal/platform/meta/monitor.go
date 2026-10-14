@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -142,7 +143,13 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			MetricsSince: window.since,
 			MetricsUntil: window.until,
 		}
-		if currencyKnown {
+		// Meta documents daily_budget and lifetime_budget as mutually exclusive, so a campaign
+		// reporting BOTH is not a readable budget: neither is the plan, and pacing on either
+		// alone would be a guess (PR #316 review). Both stay 0 — pacing unknown — exactly as the
+		// same mix on ad sets is, and the campaign is not sent to the ad-set fallback either,
+		// since it does report a campaign-level budget.
+		bothBudgets := positiveMinor(cm.DailyMinor) && positiveMinor(cm.LifetimeMinor)
+		if currencyKnown && !bothBudgets {
 			row.DailyBudget = minorToWhole(cm.DailyMinor, offset)
 			row.LifetimeBudget = minorToWhole(cm.LifetimeMinor, offset)
 		}
@@ -340,13 +347,22 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 	return nil, fmt.Errorf("list account campaigns exceeded %d pages; too many campaigns to enumerate", monitorMaxPages)
 }
 
-// parseMonitorSpend parses an Insights `spend` string. strconv.ParseFloat accepts "NaN", "Inf",
-// "-1.5" and hex floats, none of which is a spend: a negative, NaN or infinite value reaching the
-// rules layer would be paced as a real reading — NaN even lands in a band (PR #316 review). So
-// only a finite, non-negative value is accepted; anything else is an error, which the caller
-// records as a per-row parse failure (the row is FetchFailed). The error carries the length,
-// never the upstream bytes, like parseMetricInt.
+// monitorSpendRE is the only shape an Insights `spend` takes: a plain decimal string ("12.34",
+// "0"). Meta sends no sign, exponent, hex or digit separators, so none is accepted.
+var monitorSpendRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+// parseMonitorSpend parses an Insights `spend` string. strconv.ParseFloat alone accepts "NaN",
+// "Inf", "-1.5", exponents ("1e2"), hex floats ("0x1p+2") and, with a base prefix, underscores —
+// none of which is a spend Meta sends, and a negative, NaN or infinite value reaching the rules
+// layer would be paced as a real reading (PR #316 review). So the string must first match
+// monitorSpendRE (plain decimal), and the parsed value must be finite (a decimal too long for
+// float64 parses to ±Inf with ErrRange). Anything else is an error, which the caller records as a
+// per-row parse failure (the row is FetchFailed). The error carries the length, never the
+// upstream bytes, like parseMetricInt.
 func parseMonitorSpend(s string) (float64, error) {
+	if !monitorSpendRE.MatchString(s) {
+		return 0, fmt.Errorf("spend is not a plain decimal amount (%d bytes)", len(s))
+	}
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return 0, fmt.Errorf("spend is not a number (%d bytes)", len(s))

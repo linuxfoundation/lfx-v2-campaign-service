@@ -120,6 +120,14 @@ func metaExpectedSpend(m model.AccountCampaignMetrics) (float64, bool) {
 		flightEnd = end.AddDate(0, 0, 1)
 	}
 
+	// A row reporting both budgets has no single plan: Meta documents daily and lifetime budgets
+	// as mutually exclusive, the platform read already zeroes such a campaign's pair and refuses
+	// the mix on ad sets, and this guard keeps the rules from pacing on the lifetime figure alone
+	// (or dropping to unknown only when that flight is unpaceable) if one ever arrives (PR #316
+	// review).
+	if m.TotalBudget > 0 && m.BudgetDay > 0 {
+		return 0, false
+	}
 	if m.TotalBudget > 0 {
 		if start.IsZero() || flightEnd.IsZero() || !flightEnd.After(start) {
 			return 0, false
