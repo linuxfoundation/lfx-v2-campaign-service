@@ -31,7 +31,7 @@ func TestProbeWarningsWithholdDSNIdentifiersAndCredentials(t *testing.T) {
 
 	t.Run("connect failure", func(t *testing.T) {
 		buf := captureSlog(t)
-		dsn := "postgres://probeSecretUser:s3cretPassw0rd@secret-db-host.invalid:5432/probeSecretDB?connect_timeout=1"
+		dsn := "postgres://probeSecretUser:s3cretPassw0rd@secret-db-host.invalid:5432/probeSecretDB?connect_timeout=1" // secretlint-disable-line -- intentional fake DSN
 		if got := probeRequiredIndexDeparse(dsn); got != nil {
 			t.Fatalf("a probe that cannot connect returned %v, want the nil (text-comparison) fallback", got)
 		}
