@@ -324,6 +324,10 @@ type Client struct {
 	// makes the single-flight above safe for a client many callers share. See
 	// WithCallerScopedTokenRefresh.
 	callerScopedRefresh bool
+
+	// reportBudgets is the reporting-attempt ledger this client spends from; nil means the
+	// process-wide defaultReportBudgets (report_budget.go). Set only by tests.
+	reportBudgets *ReportBudgets
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
@@ -1249,6 +1253,24 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 			reqBody = bytes.NewReader(encoded)
 		}
 
+		req, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("reddit API %s %s: build request: %w", method, path, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", redditUserAgent)
+
+		// A reporting-operation attempt — every page, every 429 retry — takes a slot in the ad
+		// account's process-wide reporting budget (report_budget.go) and is not sent without one.
+		// It is taken HERE, after the token refresh and the request build and immediately before
+		// the send, so an attempt that fails before it could be sent spends no slot. Nothing has
+		// been sent when this fails. Taken before the per-attempt deadline starts, so a wait for
+		// a slot does not eat into the attempt's own timeout.
+		releaseSlot, err := c.acquireReportSlot(ctx, rawPath)
+		if err != nil {
+			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
+		}
 		// Bound EACH attempt with a per-attempt context deadline, not just the
 		// http.Client.Timeout: a WithHTTPClient override could supply a client with
 		// no Timeout, and request() takes the caller ctx directly (which may be
@@ -1256,14 +1278,7 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 		// and redditWorstCaseCreateWait (which sizes the past-start buffer) assumes
 		// every attempt is capped by redditRequestTimeout.
 		attemptCtx, cancel := context.WithTimeout(ctx, redditRequestTimeout)
-		req, err := http.NewRequestWithContext(attemptCtx, method, fullURL, reqBody)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("reddit API %s %s: build request: %w", method, path, err)
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", redditUserAgent)
+		req = req.WithContext(attemptCtx)
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -1275,6 +1290,10 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 			// / may have been sent: wrap it as transportError so callers treat the
 			// create as "may exist".
 			if isPreSendDialError(err) {
+				// Proven NOT sent, so Reddit counted nothing: hand the reporting slot back, or
+				// a DNS/connect outage would burn the account's budget on requests that never
+				// left. Every other Do error may have been sent and keeps its slot.
+				releaseSlot()
 				return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 			}
 			return nil, &transportError{Method: method, Path: path, Err: err}

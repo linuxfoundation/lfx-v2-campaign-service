@@ -10,7 +10,12 @@ image:
   # pullPolicy is the image pull policy
   pullPolicy: IfNotPresent
 
-# replicaCount is the number of replicas for the deployment
+# replicaCount is the number of replicas for the deployment. It must stay 1:
+# templates/deployment.yaml refuses to render more (or autoscaling past one),
+# because the Reddit reporting budget is a per-process ledger that the
+# always-on Reddit account monitor spends from, so every replica would
+# multiply it against the ad account's 60-requests-a-minute quota. The
+# Recreate rollout's migration ordering also rests on one replica.
 replicaCount: 1
 
 # podAnnotations are additional annotations applied to the pod template.
@@ -254,6 +259,12 @@ app:
     # than "true" is treated as off, so a typo fails closed.
     # Flip to "true" only after the shape is verified against a live Reddit ad
     # account; at that point the gate is removed and this key goes away.
+    # The same flag gates the Reddit audience read (reddit-ads/audience,
+    # LFXV2-2665), which runs on the same reporting operation with breakdowns.
+    # Their reporting budget (Reddit's 60 report requests a minute per ad
+    # account) is kept per process and is ALSO spent by the ungated Reddit
+    # account monitor, so templates/deployment.yaml refuses replicaCount > 1
+    # (or autoscaling past one) whatever this flag says — see replicaCount.
     REDDIT_METRICS_ENABLED:
       value: "false"
 
