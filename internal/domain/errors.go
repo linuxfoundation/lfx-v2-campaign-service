@@ -311,6 +311,15 @@ var (
 	// tracking existed, or under a connection with no tenant id at all, needs.
 	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
 
+	// ErrCampaignProvenanceMixed indicates a SET of campaigns fails provenance both ways at
+	// once: some record a different creating tenant (ErrCampaignAccountMismatch) and others
+	// record none (ErrCampaignProvenanceUnknown). It is joined with BOTH of those (never
+	// returned alone), so every existing errors.Is check keeps matching, while a handler can
+	// check it first and name both remedies — re-dispatching the unrecorded rows AND
+	// reconciling the foreign ones. Naming only one would send the operator to fix half the
+	// problem and hit the other half on the next read.
+	ErrCampaignProvenanceMixed = errors.New("some campaigns record a different platform tenant and others record none")
+
 	// ErrCampaignUpstreamIdentityMismatch indicates the PLATFORM's own answer contradicts the
 	// identity this service recorded for a campaign, even though the recorded account and the
 	// connection agree: the platform reports the campaign under a different ad account, or a
@@ -489,12 +498,14 @@ var (
 	// bound on the stats jobs one request creates and awaits); Microsoft's is
 	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
 	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
-	// counted over DISTINCT campaign ids. Refused before any upstream call and PERMANENT while the
+	// counted over DISTINCT campaign ids; Reddit's is reddit.MaxAudienceCampaigns (a local bound
+	// on the per-campaign reports one read issues; the requests themselves are bounded by the ad account's
+	// reporting budget, reddit/report_budget.go). Refused before any upstream call and PERMANENT while the
 	// project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message is fixed,
 	// client-safe text: it reaches the HTTP body.
 	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
 
-	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft or X)
+	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft, Reddit or X)
 	// refused because a campaign in the project's scope has a stored platform id that is not a
 	// valid campaign id for that platform. Refused before any upstream call, PERMANENT until the
 	// row is corrected, for ErrKeywordReportScopeInvalid's reasons. The message is fixed,

@@ -67,6 +67,10 @@ type redditAssetHarness struct {
 	// postsFail makes the post create answer 400 with a body echoing media_url, the shape that
 	// would carry a signature into persisted steps.
 	postsFail bool
+	// onVerify runs inside the account-verification GET, the step before post authoring.
+	onVerify func()
+	// verified reports whether that GET has completed.
+	verified atomic.Bool
 }
 
 func (h *redditAssetHarness) dispatcher(t *testing.T) *RedditDispatcher {
@@ -74,7 +78,16 @@ func (h *redditAssetHarness) dispatcher(t *testing.T) *RedditDispatcher {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.calls.Add(1)
 		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_acct"):
+			if h.onVerify != nil {
+				h.onVerify()
+			}
+			h.verified.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_acct", "name": "acct"}})
 		case strings.HasSuffix(r.URL.Path, "/posts"):
+			if !h.verified.Load() {
+				t.Error("the post was authored before the account was verified")
+			}
 			body, _ := io.ReadAll(r.Body)
 			var req struct {
 				Data struct {
@@ -305,5 +318,60 @@ func TestScrubSignedURLRedactsTheQuery(t *testing.T) {
 	}
 	if scrubSignedURL("unrelated", signed) != "unrelated" {
 		t.Fatal("text without the URL must be unchanged")
+	}
+}
+
+// TestRedditAsset_MintedAfterAccountCheckSurvivesASlowPrePostStep is the #310 review fix: the
+// URL used to be minted in Dispatch, before CreateCampaign's account verification, which can
+// sit out a Retry-After wait. With a short TTL the URL then expired before Reddit fetched it.
+// Here the verification step advances the clock by an HOUR — far past any TTL — and the URL
+// Reddit receives must still verify at the time of the post, with an expiry measured from
+// AFTER the account check.
+func TestRedditAsset_MintedAfterAccountCheckSurvivesASlowPrePostStep(t *testing.T) {
+	var mu sync.Mutex
+	clock := time.Unix(1_800_000_000, 0)
+	now := func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	base := testAssetSigner(t)
+	signer := base.WithClock(now)
+
+	var verifiedAt time.Time
+	h := &redditAssetHarness{onVerify: func() {
+		mu.Lock()
+		clock = clock.Add(time.Hour) // a slow pre-post step: throttling, token refresh, ...
+		verifiedAt = clock
+		mu.Unlock()
+	}}
+	d := h.dispatcher(t)
+	d.SetCreativeAssetURLs(ownedSizer(), signer)
+
+	if _, err := d.Dispatch(context.Background(), assetBrief(), model.ProviderRedditAds, redditAssetCfg(`,"imageAssetId":"`+raAsset+`"`)); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	u, err := url.Parse(h.mediaURL)
+	if err != nil || h.mediaURL == "" {
+		t.Fatalf("no signed media_url reached Reddit: %q", h.mediaURL)
+	}
+	exp, _ := strconv.ParseInt(u.Query().Get("exp"), 10, 64)
+	if want := verifiedAt.Add(signer.TTL()).Unix(); exp != want {
+		t.Fatalf("exp = %d, want %d: the URL must be minted after the account check, not before it", exp, want)
+	}
+	segs := strings.Split(strings.TrimPrefix(u.Path, assetsign.RoutePrefix), "/")
+	if !signer.Verify(segs[0], segs[1], segs[2], exp, u.Query().Get("sig")) {
+		t.Fatal("the URL Reddit received had already expired when the post was authored")
+	}
+}
+
+// The URL is minted late, inside CreateCampaign, so anything that would make minting fail must
+// be caught BEFORE any Reddit call: a project id a signed URL cannot carry is refused pre-create.
+func TestRedditAsset_UncarriableProjectRefusedBeforeAnyUpstreamCall(t *testing.T) {
+	h := &redditAssetHarness{}
+	d := h.dispatcher(t)
+	brief := assetBrief()
+	brief.ProjectID = "cncf_legacy" // '_' is outside the signed route's project pattern
+	d.SetCreativeAssetURLs(&fakeAssetSizer{sizes: map[[3]string]int64{{brief.ProjectID, raBrief, raAsset}: 1024}}, testAssetSigner(t))
+	_, err := d.Dispatch(context.Background(), brief, model.ProviderRedditAds, redditAssetCfg(`,"imageAssetId":"`+raAsset+`"`))
+	requirePreCreate(t, err)
+	if n := h.calls.Load(); n != 0 {
+		t.Fatalf("%d Reddit calls were made before the refusal", n)
 	}
 }

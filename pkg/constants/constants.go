@@ -78,6 +78,10 @@ const (
 	// Default-off keeps that from reaching anyone until one live read confirms the shape, at
 	// which point the default flips and this constant goes away. RedditDispatcher.ReadMetrics
 	// carries the same statement at the gate itself; keep the two in step.
+	//
+	// It also gates the Reddit audience read (get-reddit-ads-audience, LFXV2-2665,
+	// RedditDispatcher.AudienceEnabled), which runs on the same reporting operation with
+	// GENDER/COUNTRY/COMMUNITY breakdowns added — more of the same unexercised contract.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
 
 	// EnvMicrosoftMetricsEnabled opts a deployment IN to Microsoft Advertising metrics
@@ -147,8 +151,9 @@ const (
 	// creative asset, which Reddit only accepts as a public URL it fetches. Optional as a
 	// PAIR: with the key or the base URL unset the feature is OFF — the serving route answers
 	// 404 and a Reddit dispatch that references a stored asset is refused before any upstream
-	// call. A value that is SET but unusable (key under 32 bytes or not base64, base URL not
-	// https or not a bare origin, TTL outside 1m..60m) fails startup. See
+	// call. EVERY value that is SET is validated, even while the feature is off for want of its
+	// other half, and an unusable one (key under 32 bytes or not base64, base URL not https or
+	// not a bare origin, TTL outside 5m..60m) fails startup. See
 	// docs/knowledge/architecture/signed-creative-asset-urls.md.
 	// The key is a SECRET (standard base64, >= 32 bytes) sourced from the chart's Secret.
 	EnvCreativeAssetURLSigningKey = "CREATIVE_ASSET_URL_SIGNING_KEY"

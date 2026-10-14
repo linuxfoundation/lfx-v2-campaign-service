@@ -108,6 +108,10 @@ type RedditDispatcher struct {
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// audience de-duplicates identical concurrent audience reads and briefly reuses a successful
+	// one (reddit_report_guard.go), so refreshes do not each spend the ad account's reporting
+	// budget.
+	audience *redditReportGuard[reddit.AudienceInsights]
 	// assets and assetURLs back redditConfig.imageAssetId (reddit_asset.go): the store that
 	// proves the asset belongs to the brief, and the signer that mints the URL Reddit fetches.
 	// A nil assetURLs is the feature OFF.
@@ -117,7 +121,7 @@ type RedditDispatcher struct {
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
-	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts}
+	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newRedditReportGuard[reddit.AudienceInsights]()}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
@@ -168,22 +172,23 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		hsToken = bf.HSToken
 	}
 
-	// A stored creative asset becomes the signed URL Reddit fetches, resolved here — after
-	// the config is parsed and BEFORE any Reddit call — so a refused or foreign asset fails
-	// the platform pre-create and releases the claim. cfg itself is left untouched, so the
-	// persisted config snapshot records imageAssetId and never the minted URL.
-	imageURL := cfg.ImageURL
+	// A stored creative asset is CHECKED here — after the config is parsed and BEFORE any
+	// Reddit call — so a refused or foreign asset fails the platform pre-create and releases
+	// the claim. Its signed URL is NOT minted here: the client mints it through
+	// ImageURLSource immediately before the post request that hands it to Reddit, so the
+	// account verification and any throttle wait in between cannot expire it. cfg itself is
+	// left untouched, so the persisted config snapshot records imageAssetId and never a URL.
 	var signedURL string
+	var imageURLSource func(context.Context) (string, error)
 	assetID, err := d.checkRedditAssetChoice(cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
 	if assetID != "" {
-		signedURL, err = d.resolveRedditAssetURL(ctx, brief, assetID)
-		if err != nil {
+		if err := d.checkRedditAsset(ctx, brief, assetID); err != nil {
 			return nil, notCreated(err)
 		}
-		imageURL = signedURL
+		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
 	}
 
 	in := reddit.CampaignInput{
@@ -206,7 +211,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		Keywords:          cfg.Keywords,
 		Variants:          cfg.Variants,
 		PostURL:           cfg.PostURL,
-		ImageURL:          imageURL,
+		ImageURL:          cfg.ImageURL,
+		ImageURLSource:    imageURLSource,
 		CallToAction:      cfg.CallToAction,
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,

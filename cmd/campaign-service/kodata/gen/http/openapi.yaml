@@ -1988,7 +1988,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: create-campaigns lfx-v2-campaign-service-briefs
-            description: 'Create campaigns across the selected platforms (async -> job). One request shape is refused synchronously, before any job exists: an email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together. It returns 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. Every other dispatch failure still arrives later, as the job''s own result.'
+            description: 'Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients'' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured (''stored creative assets are not enabled for Reddit; supply imageUrl''): 400 with that message. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job''s own result.'
             operationId: lfx-v2-campaign-service-briefs#create-campaigns
             parameters:
                 - name: project_id
@@ -3059,7 +3059,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-meta-ad-set-status lfx-v2-campaign-service-briefs
-            description: 'Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. `ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set''s targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign''s ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign''s write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set''s status WAS changed on Meta. A DELIBERATE PAUSE OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: pausing the ad set this service created records the pause on the campaign row, and toggle-campaign-status ACTIVE then activates the campaign and its ads but leaves that ad set PAUSED; only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The record is written BEFORE the pause is sent, so a pause whose outcome is UNCONFIRMED normally stays on record (unknown is treated as paused), and it is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume does not clear it. The record is NOT guaranteed after every 503: when the 503 says the record could not be confirmed, or that the write lock was lost, re-read list-meta-ad-sets and do not assume `deliberately_paused` — pause the ad set again if it is not shown. list-meta-ad-sets reports it as `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED campaign, which records no ad set — records nothing, since the campaign cascade never re-activates it. When the record is written the campaign row''s version is bumped and the returned ETag (200 only) is the new one. An ERROR response carries no ETag, yet some 503 paths can still have bumped the version (a record written before an UNCONFIRMED write, or one withdrawn after a definite refusal), so after any error re-read the campaign for its current ETag before retrying; otherwise the ETag is the row''s UNCHANGED version (as when a created_degraded campaign is paused). If recording fails before the write, nothing is sent (503, or 409 if the row changed); if it fails after Meta''s definite answer, the 503/409 says what Meta now holds and that the record was not updated. Any platform but Meta is 400.'
+            description: 'Pause or resume ONE ad set of a Meta campaign (LFXV2-2665). A MUTATION on a live paid campaign, guarded like toggle-campaign-status: If-Match carries the campaign row''s ETag (428 when missing, 412 when stale) and the campaign''s write lock is held for the call. `ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection''s (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set''s targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign''s ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign''s write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set''s status WAS changed on Meta. A DELIBERATE PAUSE OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: pausing the ad set this service created records the pause on the campaign row, and toggle-campaign-status ACTIVE then activates the campaign and its ads but leaves that ad set PAUSED; only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The record is written BEFORE the pause is sent, so a pause whose outcome is UNCONFIRMED normally stays on record (unknown is treated as paused), and it is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume does not clear it. The record is NOT guaranteed after every 503: when the 503 says the record could not be confirmed, or that the write lock was lost, re-read list-meta-ad-sets and do not assume `deliberately_paused` — after a pause, pause the ad set again if it is false; after a resume, resume it again if it is still true — and re-read the campaign for a fresh ETag before retrying (the ad-set read returns none). list-meta-ad-sets reports it as `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED campaign, which records no ad set — records nothing, since the campaign cascade never re-activates it. When the record is written the campaign row''s version is bumped and the returned ETag (200 only) is the new one. An ERROR response carries no ETag, yet some 503 paths can still have bumped the version (a record written before an UNCONFIRMED write, or one withdrawn after a definite refusal), so after any error re-read the campaign for its current ETag before retrying; otherwise the ETag is the row''s UNCHANGED version (as when a created_degraded campaign is paused). If recording fails before the write, nothing is sent (503, or 409 if the row changed); if it fails after Meta''s definite answer, the 503/409 says what Meta now holds and that the record was not updated. Any platform but Meta is 400.'
             operationId: lfx-v2-campaign-service-briefs#toggle-meta-ad-set-status
             parameters:
                 - name: project_id
@@ -10372,6 +10372,96 @@ paths:
                             - metrics_pending
                             - conversions_complete
                             - data_incomplete
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: 'Conflict: Conflict'
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/audience:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-reddit-ads-audience lfx-v2-campaign-service-connections
+            description: 'Read Reddit Ads audience insights — gender, country and community (subreddit), the Reddit Ads API v3 report breakdowns GENDER, COUNTRY and COMMUNITY — for this project''s own campaigns, live from POST /ad_accounts/{id}/reports on the connected ad account. Reddit offers no AGE breakdown, so there is no age dimension. Read from the project''s OWN connection only (never the LF system account) and its bound ad account only, and scoped to the campaigns this service holds for the project: one report per campaign per breakdown, each filtered to that campaign (campaign:id==<id>) with every returned row checked against it. A campaign that does not record which ad account it was created under is 409 (re-dispatch it). At most 8 campaigns (more is 409). Every report request — each page and each 429 retry — first takes a slot in the ad account''s per-process reporting budget (45 per 60 seconds of Reddit''s documented 60, at most 24 of them for this read, shared with the Reddit metrics read and account monitor); a read that cannot get its slots before its deadline is 503 with nothing partial. Identical concurrent reads share one upstream read, and a successful read is reused for 60 seconds within the same UTC day. A pure read-through; nothing is persisted. A project with no Reddit campaigns of its own receives an empty `buckets` array and Reddit is not contacted. All three breakdowns must load or the request fails (503): each covers the same traffic independently, and one presented without the others is a partial picture. Spend is in the account''s own currency; no FX conversion is performed. There is no conversions counter. Disabled (400 not supported) unless REDDIT_METRICS_ENABLED is "true", like the Reddit metrics reads that share the reporting contract.'
+            operationId: lfx-v2-campaign-service-connections#get-reddit-ads-audience
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.
+                  required: false
+                  type: string
+                  enum:
+                    - today
+                    - last_7_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  type: string
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/RedditAdsAudience'
+                        required:
+                            - window
+                            - buckets
+                            - bucket_count
                 "400":
                     description: 'BadRequest: Bad request'
                     schema:
@@ -18100,6 +18190,125 @@ definitions:
         required:
             - code
             - message
+    RedditAdsAudience:
+        title: RedditAdsAudience
+        type: object
+        properties:
+            bucket_count:
+                type: integer
+                description: How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.
+                example: 3
+                format: int64
+            buckets:
+                type: array
+                items:
+                    $ref: '#/definitions/RedditAdsAudienceBucket'
+                description: Every bucket across the three breakdowns, discriminated by `dimension`. Ordered by dimension (gender, country, community), then impressions descending, then value (a value-less bucket last among equals).
+                example:
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: gender
+                      impressions: 9000
+                      value: female
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: country
+                      impressions: 9000
+                      value: US
+                    - clicks: 270
+                      cost_micros: 2700000
+                      ctr: 0.03
+                      dimension: community
+                      impressions: 9000
+                      value: kubernetes
+            window:
+                type: string
+                description: The reporting window these counters cover, as UTC days (the Reddit campaign metrics read's range for the same window)
+                example: this_month
+                enum:
+                    - today
+                    - last_7_days
+                    - last_30_days
+                    - this_month
+                    - last_month
+        example:
+            bucket_count: 3
+            buckets:
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: gender
+                  impressions: 9000
+                  value: female
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: country
+                  impressions: 9000
+                  value: US
+                - clicks: 270
+                  cost_micros: 2700000
+                  ctr: 0.03
+                  dimension: community
+                  impressions: 9000
+                  value: kubernetes
+            window: last_30_days
+        required:
+            - window
+            - buckets
+            - bucket_count
+    RedditAdsAudienceBucket:
+        title: RedditAdsAudienceBucket
+        type: object
+        properties:
+            clicks:
+                type: integer
+                description: Clicks over the window
+                example: 742
+                format: int64
+            cost_micros:
+                type: integer
+                description: Spend over the window (Reddit's SPEND) in micro-units of the ad account's own currency. This service performs no FX conversion and does not read the currency.
+                example: 3120000
+                format: int64
+            ctr:
+                type: number
+                description: Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+                example: 0.0578
+                format: double
+            dimension:
+                type: string
+                description: 'Which Reddit report breakdown this bucket belongs to: gender (GENDER), country (COUNTRY) or community (COMMUNITY, the subreddit)'
+                example: gender
+                enum:
+                    - gender
+                    - country
+                    - community
+            impressions:
+                type: integer
+                description: Impressions over the window
+                example: 12840
+                format: int64
+            value:
+                type: string
+                description: 'Reddit''s breakdown value, verbatim (a gender, a country code or a subreddit name). ABSENT when Reddit reported an explicit null for this dimension: traffic Reddit did not attribute to any value, kept so the dimension''s buckets still total its traffic. A value outside a conservative charset fails the read rather than being returned.'
+                example: US
+                pattern: ^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$
+        example:
+            clicks: 270
+            cost_micros: 2700000
+            ctr: 0.03
+            dimension: community
+            impressions: 9000
+            value: kubernetes
+        required:
+            - dimension
+            - impressions
+            - clicks
+            - cost_micros
+            - ctr
     RedditAdsConnection:
         title: RedditAdsConnection
         type: object

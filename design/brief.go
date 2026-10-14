@@ -790,6 +790,74 @@ var TwitterAdsAudience = Type("twitter-ads-audience", func() {
 	})
 })
 
+// redditAudienceWindowEnum is the subset of metricsWindowEnum the Reddit audience read serves: the
+// windows the Reddit report client maps to a starts_at/ends_at range (reddit.ValidateMetricsWindow
+// — the campaign metrics read's set). `yesterday` and `last_14_days` have no mapping there, so the
+// decoder refuses them here rather than reaching a runtime 400 the design did not declare.
+func redditAudienceWindowEnum() {
+	Enum("today", "last_7_days", "last_30_days", "this_month", "last_month")
+}
+
+// RedditAdsAudienceBucket is one Reddit report breakdown value's counters, summed across the
+// project's own campaigns.
+//
+// A Reddit-named type: its dimensions are the Reddit Ads API v3 report `breakdowns` GENDER,
+// COUNTRY and COMMUNITY (Reddit offers no AGE breakdown, so there is no age dimension), and a
+// breakdown value may be an explicit null on Reddit's side — returned here as a bucket with no
+// `value` rather than dropped, so a dimension's buckets still total its traffic. One value per
+// dimension, so a single `value` fits, as on X.
+var RedditAdsAudienceBucket = Type("reddit-ads-audience-bucket", func() {
+	Attribute("dimension", String, "Which Reddit report breakdown this bucket belongs to: gender (GENDER), country (COUNTRY) or community (COMMUNITY, the subreddit)", func() { Enum("gender", "country", "community") })
+	Attribute("value", String, "Reddit's breakdown value, verbatim (a gender, a country code or a subreddit name). ABSENT when Reddit reported an explicit null for this dimension: traffic Reddit did not attribute to any value, kept so the dimension's buckets still total its traffic. A value outside a conservative charset fails the read rather than being returned.", func() {
+		Pattern(`^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$`)
+		Example("US")
+	})
+	Attribute("impressions", Int64, "Impressions over the window", func() { Example(12840) })
+	Attribute("clicks", Int64, "Clicks over the window", func() { Example(742) })
+	Attribute("cost_micros", Int64, "Spend over the window (Reddit's SPEND) in micro-units of the ad account's own currency. This service performs no FX conversion and does not read the currency.", func() { Example(3120000) })
+	Attribute("ctr", Float64, "Clicks/Impressions after summing across campaigns, 0 when Impressions is 0", func() { Example(0.0578) })
+	Required("dimension", "impressions", "clicks", "cost_micros", "ctr")
+	// TYPE-LEVEL examples so the published bucket is one a response can contain.
+	Example("country bucket", redditAudienceCountryExample)
+	Example("community bucket", redditAudienceCommunityExample)
+})
+
+// redditAudienceGenderExample / redditAudienceCountryExample / redditAudienceCommunityExample are
+// possible bucket shapes (ctr = clicks/impressions), shared by the bucket type's examples and the
+// envelope's so the two cannot disagree. Each dimension totals the same traffic.
+var (
+	redditAudienceGenderExample = map[string]any{
+		"dimension": "gender", "value": "female",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	redditAudienceCountryExample = map[string]any{
+		"dimension": "country", "value": "US",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+	redditAudienceCommunityExample = map[string]any{
+		"dimension": "community", "value": "kubernetes",
+		"impressions": 9000, "clicks": 270, "cost_micros": 2700000, "ctr": 0.03,
+	}
+)
+
+// RedditAdsAudience is the project-scoped Reddit audience read: the Google audience read's
+// envelope (window, buckets, bucket_count). No account_currency (the read does not request
+// Reddit's CURRENCY field) and no conversions (the Reddit metrics reads request none).
+var RedditAdsAudience = Type("reddit-ads-audience", func() {
+	Attribute("window", String, "The reporting window these counters cover, as UTC days (the Reddit campaign metrics read's range for the same window)", redditAudienceWindowEnum)
+	Attribute("buckets", ArrayOf(RedditAdsAudienceBucket), "Every bucket across the three breakdowns, discriminated by `dimension`. Ordered by dimension (gender, country, community), then impressions descending, then value (a value-less bucket last among equals).", func() {
+		Example([]map[string]any{redditAudienceGenderExample, redditAudienceCountryExample, redditAudienceCommunityExample})
+	})
+	Attribute("bucket_count", Int, "How many buckets are in `buckets`, across all three dimensions. Each dimension independently covers the same traffic, so summing any counter across dimensions triple-counts it — total within one dimension only.", func() { Example(3) })
+	Required("window", "buckets", "bucket_count")
+	// Type-level so bucket_count equals len(buckets) and the dimensions appear in order.
+	Example(map[string]any{
+		"window":       "last_30_days",
+		"buckets":      []map[string]any{redditAudienceGenderExample, redditAudienceCountryExample, redditAudienceCommunityExample},
+		"bucket_count": 3,
+	})
+})
+
 // HubSpotCampaign is one LF HubSpot marketing campaign.
 //
 // The `hs_utm` token is the point of this type: it is what makes a send attributable to a
@@ -1652,7 +1720,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("create-campaigns", func() {
-		Description("Create campaigns across the selected platforms (async -> job). One request shape is refused synchronously, before any job exists: an email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together. It returns 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. Every other dispatch failure still arrives later, as the job's own result.")
+		Description("Create campaigns across the selected platforms (async -> job). Besides the request-shape 400s (an unknown or duplicate platform, new_version on a platform that does not support it, and the like), two dispatch-time rules are refused synchronously, before any job exists. (1) An email campaign that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set to send based on recipients' time zones, which HubSpot does not allow together: 409 with reason=ab_test_unsupported_send_type; the remedy is to pick a different source email or turn the A/B test off. (2) A Reddit config that names a stored creative asset it cannot use, decided from the config alone: redditConfig.imageAssetId together with imageUrl or postUrl, an imageAssetId that is not a UUID, or imageAssetId while signed creative-asset URLs are not configured ('stored creative assets are not enabled for Reddit; supply imageUrl'): 400 with that message. Every other dispatch failure, including an imageAssetId that does not exist for this brief, still arrives later, as the job's own result.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only on CREATE: project_id is stamped into the campaign name and is the
@@ -2384,7 +2452,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"`ad_set_id` is validated before any connection work (400). The campaign must record its ad account and that account must be the connection's (409), and the ad set is then READ (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and must report THIS campaign under THAT account (409 otherwise) — all before anything is written. ACTIVE is allowed ONLY on the ad set this service created for the campaign (409 otherwise — a hand-added ad set's targeting was never verified here), and on an ADOPTED campaign, which records none, it is refused exactly as the campaign toggle refuses it; PAUSED is allowed on any of the campaign's ad sets. An ad set Meta reports DELETED or ARCHIVED is 409. " +
 			"When the read shows the requested status already, NOTHING is sent and the outcome is ALREADY_IN_STATE. Otherwise ONE POST /{ad_set_id} {status} is sent, never retried: 200 APPLIED when Meta confirms it. " +
 			"Failures: a failed pre-write read, a write never sent, or a write Meta definitely refused is 503 saying nothing was changed; a write that was sent and whose outcome is unknown (a throttle, a 5xx, a timeout, a transient or unrecognisable error, an unconfirmed 2xx) is 503 saying the change is UNCONFIRMED — read the ad sets before retrying — and the campaign's write lock is held for a cooldown. No Meta connection is 404; an unusable connection or one with no ad account is 409; a problem with the LF system connection, stored-credential decryption or this service itself is 500. If the write was APPLIED but the campaign row changed or was deleted concurrently, the answer is 409 stating that the ad set's status WAS changed on Meta. " +
-			"A DELIBERATE PAUSE OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: pausing the ad set this service created records the pause on the campaign row, and toggle-campaign-status ACTIVE then activates the campaign and its ads but leaves that ad set PAUSED; only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The record is written BEFORE the pause is sent, so a pause whose outcome is UNCONFIRMED normally stays on record (unknown is treated as paused), and it is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume does not clear it. The record is NOT guaranteed after every 503: when the 503 says the record could not be confirmed, or that the write lock was lost, re-read list-meta-ad-sets and do not assume `deliberately_paused` — pause the ad set again if it is not shown. list-meta-ad-sets reports it as `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED campaign, which records no ad set — records nothing, since the campaign cascade never re-activates it. " +
+			"A DELIBERATE PAUSE OF THE RECORDED AD SET SURVIVES A CAMPAIGN PAUSE/RESUME: pausing the ad set this service created records the pause on the campaign row, and toggle-campaign-status ACTIVE then activates the campaign and its ads but leaves that ad set PAUSED; only a CONFIRMED resume here (APPLIED or ALREADY_IN_STATE) clears the record. The record is written BEFORE the pause is sent, so a pause whose outcome is UNCONFIRMED normally stays on record (unknown is treated as paused), and it is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume does not clear it. The record is NOT guaranteed after every 503: when the 503 says the record could not be confirmed, or that the write lock was lost, re-read list-meta-ad-sets and do not assume `deliberately_paused` — after a pause, pause the ad set again if it is false; after a resume, resume it again if it is still true — and re-read the campaign for a fresh ETag before retrying (the ad-set read returns none). list-meta-ad-sets reports it as `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED campaign, which records no ad set — records nothing, since the campaign cascade never re-activates it. " +
 			"When the record is written the campaign row's version is bumped and the returned ETag (200 only) is the new one. An ERROR response carries no ETag, yet some 503 paths can still have bumped the version (a record written before an UNCONFIRMED write, or one withdrawn after a definite refusal), so after any error re-read the campaign for its current ETag before retrying; otherwise the ETag is the row's UNCHANGED version (as when a created_degraded campaign is paused). If recording fails before the write, nothing is sent (503, or 409 if the row changed); if it fails after Meta's definite answer, the 503/409 says what Meta now holds and that the record was not updated. Any platform but Meta is 400.")
 		Payload(func() {
 			bearerToken()
