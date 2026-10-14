@@ -75,10 +75,24 @@ the row is `pacing_unknown`, never a false alert.
   as the dispatcher does. Main's `TestListAccountCampaigns_FailedRowIsDecode` now gives its
   campaigns a campaign-level budget, since a budget-less one would send the read to the ad-set
   fallback its fixture does not serve.
+- **A budget edited inside the window is `pacing_unknown`.** Pacing applied today's budget to
+  every day of the window, so a mid-window edit raised false under/overspend alerts. Both reads
+  now request `updated_time`; a CBO campaign updated, or an ACTIVE ad set updated, on or after the
+  day before the window's first day (account-timezone margin) — or with an absent, null or
+  malformed `updated_time` — leaves the campaign `pacing_unknown`. Conservative: `updated_time`
+  moves on any edit. Meta's ad-account `/activities` edge (budget-update events with old/new
+  values) could reconstruct the per-day plan; noted, not built.
+- **A `null` campaign-level budget is unreadable.** The campaign-list budgets were decoded into
+  strings, so `null` read as absent and the campaign fell back to its ad-set budgets. They are
+  decoded raw now: null or non-string → `FetchFailed` (decode), no ad-set fallback.
+- **Catalog: the HubSpot account-monitor row restored.** A merge resolution had dropped main's
+  `GET .../connection-hubspot/account-monitor?days=` row from `docs/api-catalog.md`; it is back
+  verbatim. A row-by-row diff against `origin/main` found no other lost or reverted row.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against
   `float64(math.MaxInt64)`; now the 15-digit exactness ceiling above, well inside int64.)
 
-No API, design, gen or migration change. See `architecture/account-monitor-endpoints.md` and
+No API-shape or migration change (the published Meta monitor example and the generated specs
+carrying it did change, see above). See `architecture/account-monitor-endpoints.md` and
 `code/internal-platform-meta.md`.

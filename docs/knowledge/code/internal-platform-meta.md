@@ -801,7 +801,19 @@ decimal string (`^[0-9]+(\.[0-9]+)?$` — what Meta sends) that parses to a fini
 never paced. A campaign-list row reporting BOTH a positive `daily_budget` and `lifetime_budget`
 (Meta documents them as mutually exclusive) keeps neither — 0/0, pacing unknown, delivery intact,
 the same verdict as the mix on ad sets — and is not sent to the ad-set fallback;
-`metaExpectedSpend` refuses a row with both budgets too. The counters already refuse
+`metaExpectedSpend` refuses a row with both budgets too. **Budget edits inside the window**:
+pacing applies today's budget to every day of the window, and neither read carries budget
+history, so both reads also request `updated_time`. `budgetEditCutoff` is the window's first day
+at 00:00 UTC less one day (Meta reads since/until in the account timezone, up to ±14h), and
+`editedSince` is true for an `updated_time` at or after it or one that is absent, null or not a
+whole Meta timestamp. A CBO campaign so edited keeps its budget unknown (no ad-set fallback); an
+ACTIVE ad set so edited makes its campaign's ad-set total unknown. `updated_time` moves on any
+edit, not only a budget change, so this errs towards unknown. Meta's ad-account `/activities` edge
+(AdActivity, with budget-update event types carrying old and new values) could reconstruct the
+plan per day; it is not used. The campaign-list `daily_budget`/`lifetime_budget` are decoded RAW
+(`campaignBudgetField`): absent is "no budget", but an explicit `null` or a non-string value is
+unreadable — the row is `FetchFailed` and never sent to the ad-set fallback, matching the ad-set
+parser's fail-closed nulls. The counters already refuse
 negatives through `parseMetricInt`.
 
 See [internal/platform/meta](../../../internal/platform/meta).

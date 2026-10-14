@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
 // Ad-set budget pacing and account-currency scaling for the account monitor (LFXV2-2665).
@@ -21,11 +24,21 @@ const (
 	jpyAccount = `{"currency":"JPY","id":"act_123"}`
 )
 
+// settledUpdate is an updated_time well before any test window: the budget it guards was not
+// edited inside the window.
+const settledUpdate = `"updated_time":"2025-12-01T00:00:00+0000"`
+
 // monitorCampaign is one campaign-list row; budget fields are raw JSON members ("" omits both).
+// A row whose members do not name updated_time gets settledUpdate.
 func monitorCampaign(id, status, budgets string) string {
-	if budgets != "" {
-		budgets = "," + budgets
+	if !strings.Contains(budgets, "updated_time") {
+		if budgets == "" {
+			budgets = settledUpdate
+		} else {
+			budgets += "," + settledUpdate
+		}
 	}
+	budgets = "," + budgets
 	return fmt.Sprintf(`{"id":"%s","name":"Campaign %s","status":"%s","start_time":"2026-01-01T00:00:00-0800"%s}`, id, id, status, budgets)
 }
 
@@ -38,8 +51,16 @@ const adSetFlight = `"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10
 
 // monitorAdSetRow is one account-level /adsets row; budgets is raw JSON members ("" omits both).
 // A row whose members name neither start_time nor end_time gets adSetFlight, the flight every ad
-// set CreateCampaign makes carries — a budget is paced only against a known flight.
+// set CreateCampaign makes carries — a budget is paced only against a known flight. A row that
+// does not name updated_time gets settledUpdate.
 func monitorAdSetRow(id, campaignID, effectiveStatus, budgets string) string {
+	if !strings.Contains(budgets, "updated_time") {
+		if budgets == "" {
+			budgets = settledUpdate
+		} else {
+			budgets += "," + settledUpdate
+		}
+	}
 	if !strings.Contains(budgets, "start_time") && !strings.Contains(budgets, "end_time") {
 		if budgets == "" {
 			budgets = adSetFlight
@@ -134,7 +155,7 @@ func TestListAccountCampaigns_ABOBudget_SumsActiveAdSets(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want exactly ONE account-level ad-set read, got %v", got)
 	}
-	if !strings.HasPrefix(got[0], "/act_123/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500") {
+	if !strings.HasPrefix(got[0], "/act_123/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=500") {
 		t.Errorf("ad-set read = %s, want the account-level edge with the budget fields", got[0])
 	}
 	if strings.Contains(got[0], "tok-secret-abc") {
@@ -532,5 +553,123 @@ func TestListAccountCampaigns_CampaignWithBothBudgetsIsUnknown(t *testing.T) {
 	assertBudgets(t, rows["333"], 0, 9000)
 	if got := adSetRequests(rec); len(got) != 0 {
 		t.Errorf("a campaign with both budgets was sent to the ad-set fallback: %v", got)
+	}
+}
+
+// listMonitorRowsAt is listMonitorRows with the client's clock pinned, so the Insights window —
+// and the budget-edit cutoff derived from it — is known: days=30 read at 2026-10-14 12:00 UTC is
+// the window 2026-09-15..2026-10-14, and an edit at or after 2026-09-14T00:00Z (one day of
+// account-timezone margin) may have changed the plan for a day of it.
+func listMonitorRowsAt(t *testing.T, f monitorFixture) (map[string]AccountCampaignRow, *recordedURIs) {
+	t.Helper()
+	srv, rec := monitorServer(t, f)
+	clock := func() time.Time { return time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC) }
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, AccountConfig{}, WithBaseURL(srv.URL), WithClock(clock))
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+	if err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	byID := make(map[string]AccountCampaignRow, len(rows))
+	for _, r := range rows {
+		byID[r.CampaignID] = r
+	}
+	return byID, rec
+}
+
+// Pacing applies TODAY's budget to every day of the window, so a budget edited inside the
+// window raises false under/overspend alerts (PR #316 review). The read has no budget history,
+// only updated_time: a campaign-level (CBO) budget whose campaign was updated inside the window —
+// or whose updated_time is unreadable — is unknown, and is not sent to the ad-set fallback.
+func TestListAccountCampaigns_CampaignBudgetEditedInWindowIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name, updated string
+		wantDaily     float64
+	}{
+		{"edited inside the window", `"updated_time":"2026-10-01T08:00:00+0000"`, 0},
+		{"edited exactly at the cutoff", `"updated_time":"2026-09-14T00:00:00+0000"`, 0},
+		{"offset timestamp inside the window", `"updated_time":"2026-09-14T18:00:00-0700"`, 0},
+		{"edited just before the cutoff", `"updated_time":"2026-09-13T23:59:59+0000"`, 50},
+		{"offset timestamp before the cutoff in UTC", `"updated_time":"2026-09-14T01:00:00+0200"`, 50},
+		{"absent updated_time", `"updated_time_absent":true`, 0},
+		{"null updated_time", `"updated_time":null`, 0},
+		{"malformed updated_time", `"updated_time":"2026-09-01garbage"`, 0},
+		{"numeric updated_time", `"updated_time":1767225600`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, rec := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(
+					monitorCampaign("111", StatusActive, `"daily_budget":"5000",`+tc.updated),
+					monitorCampaign("222", StatusActive, `"daily_budget":"7000"`),
+				)},
+				insights: []string{insightsFor("111", "222")},
+				currency: usdAccount,
+			})
+			assertBudgets(t, rows["111"], tc.wantDaily, 0)
+			if rows["111"].FetchFailed || rows["111"].Impressions != 1000 {
+				t.Errorf("row 111 = %+v, want delivery kept and not FetchFailed", rows["111"])
+			}
+			assertBudgets(t, rows["222"], 70, 0)
+			if got := adSetRequests(rec); len(got) != 0 {
+				t.Errorf("a campaign-level budget sent the read to the ad-set fallback: %v", got)
+			}
+		})
+	}
+}
+
+// The same rule on the ad-set path: an ACTIVE ad set updated inside the window, or with an
+// unreadable updated_time, makes its campaign's ad-set budget unknown; a campaign whose ad sets
+// were last edited before the window is paced as before.
+func TestListAccountCampaigns_AdSetEditedInWindowIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name, updated string
+		wantDaily     float64
+	}{
+		{"edited inside the window", `"updated_time":"2026-10-10T08:00:00+0000"`, 0},
+		{"edited in the margin day", `"updated_time":"2026-09-14T00:00:00+0000"`, 0},
+		{"edited before the window", `"updated_time":"2026-09-13T12:00:00+0000"`, 20},
+		{"absent updated_time", `"updated_time_absent":true`, 0},
+		{"null updated_time", `"updated_time":null`, 0},
+		{"malformed updated_time", `"updated_time":"yesterday"`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, _ := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, ""), monitorCampaign("222", StatusActive, ""))},
+				insights:  []string{insightsFor("111", "222")},
+				currency:  usdAccount,
+				adSets: []string{monitorList(
+					monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`),
+					monitorAdSetRow("9002", "111", "ACTIVE", `"daily_budget":"1000",`+tc.updated),
+					monitorAdSetRow("9003", "222", "ACTIVE", `"daily_budget":"4000"`),
+				)},
+			})
+			assertBudgets(t, rows["111"], tc.wantDaily, 0)
+			assertBudgets(t, rows["222"], 40, 0)
+		})
+	}
+}
+
+// An explicit JSON null campaign budget is unknown — not zero and not absent (PR #316 review).
+// Decoded into a string it read as "" and sent the campaign to the ad-set fallback, pacing it
+// on amounts its own (unreadable) budget overrides. It is now unreadable like an unparseable
+// budget: FetchFailed (decode), no budget, no ad-set read. A non-string budget is the same.
+func TestListAccountCampaigns_NullCampaignBudgetIsUnreadable(t *testing.T) {
+	for _, field := range []string{`"daily_budget":null`, `"lifetime_budget":null`, `"daily_budget":5000`, `"daily_budget":null,"lifetime_budget":"900000"`} {
+		t.Run(field, func(t *testing.T) {
+			rows, rec := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, field), monitorCampaign("222", StatusActive, `"daily_budget":"7000"`))},
+				insights:  []string{insightsFor("111", "222")},
+				currency:  usdAccount,
+				adSets:    []string{monitorList(monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"4000"`))},
+			})
+			r := rows["111"]
+			if !r.FetchFailed || r.FailureClass != model.MonitorFailureDecode {
+				t.Errorf("row 111 = %+v, want FetchFailed (decode) for %s", r, field)
+			}
+			assertBudgets(t, r, 0, 0)
+			assertBudgets(t, rows["222"], 70, 0)
+			if got := adSetRequests(rec); len(got) != 0 {
+				t.Errorf("a null campaign budget sent the campaign to the ad-set fallback: %v", got)
+			}
+		})
 	}
 }

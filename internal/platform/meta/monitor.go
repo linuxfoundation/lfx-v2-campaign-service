@@ -132,6 +132,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		return nil, err
 	}
 
+	editCutoff, cutoffOK := budgetEditCutoff(window.since)
 	rows := make([]AccountCampaignRow, 0, len(campaigns))
 	// needAdSetBudget indexes (into rows) every admitted campaign with no campaign-level
 	// budget, whose budget therefore lives on its ad sets.
@@ -154,7 +155,13 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		// same mix on ad sets is, and the campaign is not sent to the ad-set fallback either,
 		// since it does report a campaign-level budget.
 		bothBudgets := positiveMinor(cm.DailyMinor) && positiveMinor(cm.LifetimeMinor)
-		if currencyKnown && !bothBudgets {
+		// Pacing applies TODAY's budget to every day of the window, so a campaign-level budget
+		// edited inside the window would raise a false under/overspend (PR #316 review). The
+		// read carries no budget history, only updated_time — which moves on ANY edit, so this is
+		// conservative — and a campaign updated inside the window (or whose updated_time is
+		// unreadable) keeps its budget unknown, never falling back to the ad sets either.
+		budgetEdited := !cutoffOK || editedSince(cm.UpdatedAt, editCutoff)
+		if currencyKnown && !bothBudgets && !budgetEdited {
 			row.DailyBudget = minorToWhole(cm.DailyMinor, offset)
 			row.LifetimeBudget = minorToWhole(cm.LifetimeMinor, offset)
 		}
@@ -192,7 +199,10 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	if len(needAdSetBudget) == 0 {
 		return rows, nil
 	}
-	totals, err := c.fetchAccountAdSetBudgets(ctx, accountID)
+	if !cutoffOK {
+		return rows, nil // no window to test edits against: every ad-set budget stays unknown
+	}
+	totals, err := c.fetchAccountAdSetBudgets(ctx, accountID, editCutoff)
 	if err != nil {
 		var unreadable *adSetBudgetsUnreadableError
 		if !errors.As(err, &unreadable) {
@@ -262,6 +272,8 @@ type metaCampaignListEntry struct {
 	LifetimeMinor *int64
 	StartDate     string
 	EndDate       string
+	// UpdatedAt is the campaign's updated_time; zero when absent, null or malformed.
+	UpdatedAt time.Time
 	// FetchFailed marks a campaign whose daily_budget/lifetime_budget string was present but
 	// unparseable — the row's budget fields are left nil and MUST NOT be read as a measured
 	// zero (round-31+ review, same convention as AccountCampaignRow.FetchFailed).
@@ -286,19 +298,23 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 	after := ""
 	seen := make(map[string]struct{})
 	for page := 0; page < monitorMaxPages; page++ {
-		path := "/" + accountID + "/campaigns?fields=id,name,status,daily_budget,lifetime_budget,start_time,stop_time&limit=" + strconv.Itoa(monitorPageSize)
+		path := "/" + accountID + "/campaigns?fields=id,name,status,daily_budget,lifetime_budget,start_time,stop_time,updated_time&limit=" + strconv.Itoa(monitorPageSize)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
 		var resp struct {
 			Data *[]struct {
-				ID             string `json:"id"`
-				Name           string `json:"name"`
-				Status         string `json:"status"`
-				DailyBudget    string `json:"daily_budget"`
-				LifetimeBudget string `json:"lifetime_budget"`
-				StartTime      string `json:"start_time"`
-				StopTime       string `json:"stop_time"`
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Status string `json:"status"`
+				// RAW, so an explicit JSON null (unknown — not zero, not absent) is told apart
+				// from an absent field (no budget at this level). Decoded into a string, null
+				// read as "" and sent the campaign to the ad-set fallback (PR #316 review).
+				DailyBudget    json.RawMessage `json:"daily_budget"`
+				LifetimeBudget json.RawMessage `json:"lifetime_budget"`
+				StartTime      string          `json:"start_time"`
+				StopTime       string          `json:"stop_time"`
+				UpdatedTime    json.RawMessage `json:"updated_time"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -319,8 +335,11 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 		}
 		for _, d := range *resp.Data {
 			var unparseable bool
-			dailyMinor := parseMinorUnits(d.DailyBudget, &unparseable)
-			lifetimeMinor := parseMinorUnits(d.LifetimeBudget, &unparseable)
+			dailyMinor := parseMinorUnits(campaignBudgetField(d.DailyBudget, &unparseable), &unparseable)
+			lifetimeMinor := parseMinorUnits(campaignBudgetField(d.LifetimeBudget, &unparseable), &unparseable)
+			if unparseable {
+				dailyMinor, lifetimeMinor = nil, nil
+			}
 			// A NEGATIVE budget parses but is not a budget, and it is not "no budget" either:
 			// read as non-positive it would send the campaign to the ad-set fallback, which
 			// could then pace it on amounts the campaign's own (unreadable) budget overrides.
@@ -338,6 +357,7 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				StartDate:     dateOnly(d.StartTime),
 				EndDate:       dateOnly(d.StopTime),
 				FetchFailed:   unparseable,
+				UpdatedAt:     metaTimeField(d.UpdatedTime),
 			})
 		}
 		if resp.Paging.Next == "" {
@@ -512,6 +532,62 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 // ("…+00:00" / "…Z") — the same pair the settings readback parses (dispatch/meta_settings.go).
 var metaTimestampLayouts = []string{"2006-01-02T15:04:05-0700", time.RFC3339}
 
+// campaignBudgetField reads one campaign-list budget member: ABSENT is "" (no budget at this
+// level, like the ad-set read); an explicit null or a non-string value sets *bad (unreadable —
+// not zero, not absent, so never a reason to fall back to the ad sets).
+func campaignBudgetField(raw json.RawMessage, bad *bool) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &s) != nil {
+		*bad = true
+		return ""
+	}
+	return s
+}
+
+// metaTimeField reads a raw Graph timestamp member (updated_time) as a whole Meta timestamp; the
+// zero time for an absent, null, non-string or malformed value.
+func metaTimeField(raw json.RawMessage) time.Time {
+	var s string
+	if json.Unmarshal(bytes.TrimSpace(raw), &s) != nil {
+		return time.Time{}
+	}
+	t, _ := parseMetaTimestamp(s)
+	return t
+}
+
+// parseMetaTimestamp parses a WHOLE Meta timestamp in one of metaTimestampLayouts.
+func parseMetaTimestamp(s string) (time.Time, bool) {
+	for _, layout := range metaTimestampLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// editedSince reports whether an object's updated_time may fall inside the spend window: true
+// when it is unknown (zero) or not before cutoff. See budgetEditCutoff.
+func editedSince(updated, cutoff time.Time) bool {
+	return updated.IsZero() || !updated.Before(cutoff)
+}
+
+// budgetEditCutoff is the earliest instant an edit could still have changed the plan for some
+// day of the Insights window: the window's first day at 00:00 UTC, less one day. Meta reads
+// since/until in the AD ACCOUNT's timezone (up to ±14h from UTC), so the extra day keeps an edit
+// made just before the window in UTC but inside it locally on the unknown side. ok=false when the
+// window's start does not parse.
+func budgetEditCutoff(since string) (time.Time, bool) {
+	d, err := time.Parse("2006-01-02", since)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return d.AddDate(0, 0, -1), true
+}
+
 // dateOnly parses a WHOLE Meta timestamp in one of metaTimestampLayouts and returns its
 // YYYY-MM-DD date as written (in the timestamp's own offset), matching
 // model.AccountCampaignMetrics.StartDate/EndDate's date-only contract. Anything else — empty,
@@ -520,10 +596,8 @@ var metaTimestampLayouts = []string{"2006-01-02T15:04:05-0700", time.RFC3339}
 // the first 10 characters, so a malformed timestamp with a plausible prefix was read as a flight
 // date (PR #316 review).
 func dateOnly(s string) string {
-	for _, layout := range metaTimestampLayouts {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.Format("2006-01-02")
-		}
+	if t, ok := parseMetaTimestamp(s); ok {
+		return t.Format("2006-01-02")
 	}
 	return ""
 }
@@ -619,11 +693,12 @@ type adSetBudgetWire struct {
 	LifetimeBudget  json.RawMessage `json:"lifetime_budget"`
 	StartTime       json.RawMessage `json:"start_time"`
 	EndTime         json.RawMessage `json:"end_time"`
+	UpdatedTime     json.RawMessage `json:"updated_time"`
 }
 
 // fetchAccountAdSetBudgets reads every ad set on the account with ONE account-level paged call,
 //
-//	GET /{accountID}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500
+//	GET /{accountID}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=500
 //
 // and sums their budgets per campaign_id. Every ad set must be ACTIVE: a campaign with any ad set
 // in another effective_status (paused itself, under a paused campaign, archived, in review …) is
@@ -648,7 +723,7 @@ type adSetBudgetWire struct {
 // mutually exclusive), neither (an active ad set under a campaign with no budget of its own has
 // nothing to pace against), or an unreadable effective_status. A row that cannot be attributed
 // at all — no canonical id or campaign_id, or an id seen twice — fails the whole read.
-func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string) (map[string]*adSetBudgetTotal, error) {
+func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string, editCutoff time.Time) (map[string]*adSetBudgetTotal, error) {
 	out := map[string]*adSetBudgetTotal{}
 	ids := map[string]struct{}{}
 	cursors := map[string]struct{}{}
@@ -656,7 +731,7 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 	for page := 0; page < monitorAdSetMaxPages; page++ {
 		// Built from the opaque cursor, never from Meta's absolute paging.next URL, which
 		// carries the access token as a query parameter.
-		path := "/" + accountID + "/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=" + strconv.Itoa(monitorAdSetPageSize)
+		path := "/" + accountID + "/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=" + strconv.Itoa(monitorAdSetPageSize)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
@@ -721,6 +796,13 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string)
 				continue
 			}
 			t.addWindow(adSetWindow(w.StartTime, w.EndTime))
+			// Today's budget is applied to every day of the window, so an ad set edited inside
+			// it — or one whose updated_time is unreadable — makes its campaign unknown: the
+			// plan for the window's earlier days cannot be reconstructed from this read
+			// (PR #316 review). updated_time moves on any edit, so this is conservative.
+			if editedSince(metaTimeField(w.UpdatedTime), editCutoff) {
+				t.unknown = true
+			}
 			daily, dailyOK := adSetBudgetField(w.DailyBudget)
 			lifetime, lifetimeOK := adSetBudgetField(w.LifetimeBudget)
 			switch {
