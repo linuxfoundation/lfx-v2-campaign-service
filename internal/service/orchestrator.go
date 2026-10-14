@@ -1257,7 +1257,7 @@ type platformResult struct {
 	// dispatch created (see reconcileRef), because the campaign row that would have held its
 	// result blob was never written. It lives in the stored job result for operators; GetJob's
 	// typed response does not carry it.
-	Reconcile map[string]string `json:"reconcile,omitempty"`
+	Reconcile map[string]any `json:"reconcile,omitempty"`
 }
 
 // hubspotURLFromResult reads the deep link a HubSpot dispatch stashed in the
@@ -2045,7 +2045,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 					// unwritten row would have held — and names reconciliation rather than a
 					// plain creation failure.
 					cancelPersist()
-					return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, perr)
+					return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, perr, derr)
 				case perr != nil:
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
@@ -2106,7 +2106,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// it was cleared and another row (an adoption, or a later dispatch's claim) now
 			// holds the slot, which the repository left untouched. The paid campaign exists
 			// and nothing here tracks it, so the job keeps its id and says so.
-			return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, uerr)
+			return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, uerr, nil)
 		}
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
@@ -2159,57 +2159,120 @@ const (
 // LinkedIn campaign / group 255, X entity 255, Meta creative 255, Reddit names built from a
 // 120-rune event name) and matches the bound the Meta client already puts on a name read back
 // verbatim (maxAdSetNameBytes, 1024), so no real identifier reaches it. A value that somehow
-// does is TRUNCATED, never dropped, and flagged with a "<key>Truncated": "true" entry, because
+// does is TRUNCATED, never dropped, and flagged with a "<key>Truncated": true entry, because
 // a dropped value is exactly the failure — nothing left to find the orphan by.
 const reconcileRefMaxRunes = 1024
 
+// reconcileIdentifierSuffixes are the key endings (lower-cased) that name an identifier in a
+// dispatcher's result blob: single ids and names (campaignId, campaignGroupName, AdID, AccountID)
+// and the identifier COLLECTIONS a partial-result contract keeps for reconciliation — Google
+// Ads' creativeAssetIds / extensionAssetIds ([]string) and LinkedIn's imageUrns (stored asset id
+// → urn:li:image). Longest first only for readability; any match keeps the key.
+var reconcileIdentifierSuffixes = []string{"ids", "urns", "names", "id", "urn", "name"}
+
+func isReconcileIdentifierKey(k string) bool {
+	lk := strings.ToLower(k)
+	for _, suf := range reconcileIdentifierSuffixes {
+		if strings.HasSuffix(lk, suf) {
+			return true
+		}
+	}
+	return false
+}
+
 // reconcileRef extracts the IDENTIFYING fields of a dispatch's result blob — what an operator
-// needs to find an untracked upstream campaign when the row that would have held the blob was
-// never written (domain.ErrDispatchClaimLost).
+// needs to find an untracked upstream campaign, and the resources created under it, when the row
+// that would have held the blob was never written (domain.ErrDispatchClaimLost).
 //
 // The blob itself is NOT copied. On a retained partial it is persisted onto the campaign row,
 // never into the job result or a log (the retry path logs only has_result), because it holds more
 // than identifiers: Steps can carry text the platform returned, and URLs and labels are not
-// needed to find anything. So this keeps only top-level STRING values whose key names an id or a
-// name (campaignId, campaignGroupId, adGroupName, AccountID, AdSetName, ...) — the
-// reconcile-by-name payload the dispatchers document — plus the campaign's own name and status
-// from the model, which are this service's values. Anything that is not a string is dropped;
-// an over-long string is truncated and flagged (see reconcileRefMaxRunes). nil when nothing
-// identifying is present.
-func reconcileRef(c *model.Campaign) map[string]string {
-	ref := map[string]string{}
-	keep := func(k, v string) {
+// needed to find anything. So this keeps only top-level fields whose key names an identifier
+// (isReconcileIdentifierKey) AND whose value is a string, an array of strings, or an object of
+// string values — the reconcile payload the dispatchers document — plus the campaign's own name
+// and status from the model, which are this service's values. Any other shape under an
+// identifier key (a number, a nested object) and every other key is dropped. Every string kept —
+// element, map key and map value alike — goes through the rune cap (reconcileRefMaxRunes): an
+// over-long one is truncated and the field flagged "<key>Truncated": true. Empty strings are
+// skipped. nil when nothing identifying is present.
+func reconcileRef(c *model.Campaign) map[string]any {
+	ref := map[string]any{}
+	// capped trims and caps one string; truncated reports whether it was cut.
+	capped := func(v string) (out string, truncated bool) {
 		v = strings.TrimSpace(v)
+		if utf8.RuneCountInString(v) > reconcileRefMaxRunes {
+			return string([]rune(v)[:reconcileRefMaxRunes]), true
+		}
+		return v, false
+	}
+	flag := func(k string, truncated bool) {
+		if truncated {
+			ref[k+"Truncated"] = true
+		}
+	}
+	keepString := func(k, v string) {
+		v, cut := capped(v)
 		if v == "" {
 			return
 		}
-		if utf8.RuneCountInString(v) > reconcileRefMaxRunes {
-			v = string([]rune(v)[:reconcileRefMaxRunes])
-			ref[k+"Truncated"] = "true"
-		}
 		ref[k] = v
+		flag(k, cut)
 	}
 	if len(c.Result) > 0 {
 		var top map[string]json.RawMessage
 		if json.Unmarshal(c.Result, &top) == nil {
 			for k, raw := range top {
-				lk := strings.ToLower(k)
-				if !strings.HasSuffix(lk, "id") && !strings.HasSuffix(lk, "name") {
+				if !isReconcileIdentifierKey(k) {
 					continue
 				}
-				var v string
-				if json.Unmarshal(raw, &v) == nil {
-					keep(k, v)
+				var str string
+				if json.Unmarshal(raw, &str) == nil {
+					keepString(k, str)
+					continue
+				}
+				var list []string
+				if json.Unmarshal(raw, &list) == nil {
+					kept, anyCut := make([]string, 0, len(list)), false
+					for _, e := range list {
+						e, cut := capped(e)
+						if e == "" {
+							continue
+						}
+						kept = append(kept, e)
+						anyCut = anyCut || cut
+					}
+					if len(kept) > 0 {
+						ref[k] = kept
+						flag(k, anyCut)
+					}
+					continue
+				}
+				var obj map[string]string
+				if json.Unmarshal(raw, &obj) == nil {
+					kept, anyCut := make(map[string]string, len(obj)), false
+					for mk, mv := range obj {
+						mk, kcut := capped(mk)
+						mv, vcut := capped(mv)
+						if mk == "" && mv == "" {
+							continue
+						}
+						kept[mk] = mv
+						anyCut = anyCut || kcut || vcut
+					}
+					if len(kept) > 0 {
+						ref[k] = kept
+						flag(k, anyCut)
+					}
 				}
 			}
 		}
 	}
 	if _, ok := ref["campaignName"]; !ok {
 		if _, ok := ref["CampaignName"]; !ok {
-			keep("campaignName", c.CampaignName)
+			keepString("campaignName", c.CampaignName)
 		}
 	}
-	keep("status", c.Status)
+	keepString("status", c.Status)
 	if len(ref) == 0 {
 		return nil
 	}
@@ -2221,7 +2284,14 @@ func reconcileRef(c *model.Campaign) map[string]string {
 // operator needs to find what was created: the upstream id when there is one, and the
 // identifying fields of the result blob (reconcileRef) either way. The blob would otherwise be
 // lost with the row that was never written.
-func lostClaimResult(ctx context.Context, res platformResult, jobID, projectID string, slotVersion int, c *model.Campaign, err error) platformResult {
+//
+// dispatchErr is the PROVIDER's error on the retained-partial path (nil on the success path). It
+// is logged as dispatch_error exactly as the retained-partial path logs it when the persist
+// succeeds ("error", derr — a provider response, which never passed through the credential blob,
+// so it is logged unredacted like every retained-claim branch), because returning here skips
+// that line and the log would otherwise show only the repository error. It never reaches the job
+// result, whose message stays one of the fixed lostClaim* strings.
+func lostClaimResult(ctx context.Context, res platformResult, jobID, projectID string, slotVersion int, c *model.Campaign, err, dispatchErr error) platformResult {
 	res.OK = false
 	res.CampaignID = c.PlatformCampaignID
 	res.Reconcile = reconcileRef(c)
@@ -2229,10 +2299,15 @@ func lostClaimResult(ctx context.Context, res platformResult, jobID, projectID s
 	if c.PlatformCampaignID == "" {
 		res.Error = lostClaimNoIDResultError
 	}
-	slog.ErrorContext(ctx, "dispatch claim lost before its result was recorded; upstream campaign untracked, reconciliation required",
+	attrs := []any{
 		"platform", res.Platform, "job_id", jobID, "project_id", projectID, "slot_version", slotVersion,
 		"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0,
-		"reconcile", res.Reconcile, "error", err)
+		"reconcile", res.Reconcile, "error", err,
+	}
+	if dispatchErr != nil {
+		attrs = append(attrs, "dispatch_error", dispatchErr)
+	}
+	slog.ErrorContext(ctx, "dispatch claim lost before its result was recorded; upstream campaign untracked, reconciliation required", attrs...)
 	return res
 }
 

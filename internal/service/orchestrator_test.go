@@ -3721,8 +3721,10 @@ func (idLessPartialDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrie
 		"steps":             []string{idLessPartialStepText},
 	})
 	return &model.Campaign{Status: model.CampaignStatusUnconfirmed, CampaignName: "camp-name-7", Result: blob},
-		errors.New("campaign create outcome unknown")
+		errors.New(idLessPartialDispatchErr)
 }
+
+const idLessPartialDispatchErr = "campaign create outcome unknown"
 
 // An id-less partial whose claim is lost has NO campaign_id, so the identifiers in its Result
 // blob are the only way to find what it created — and the row that would have held the blob was
@@ -3765,6 +3767,9 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 			t.Errorf("reconcile[%s] = %q, want %q (reconcile = %v)", k, got.Reconcile[k], v, got.Reconcile)
 		}
 	}
+	if strings.Contains(string(j.Result), idLessPartialDispatchErr) {
+		t.Errorf("job result %s carries the provider error; the client message must stay generic", j.Result)
+	}
 	if strings.Contains(string(j.Result), idLessPartialStepText) || strings.Contains(string(j.Result), "should-not-copy") {
 		t.Errorf("job result %s carries non-identifying blob content (steps / URL)", j.Result)
 	}
@@ -3776,13 +3781,15 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 		if !strings.Contains(rec.Message, "dispatch claim lost") {
 			continue
 		}
-		var gotJob, reconcile string
+		var gotJob, reconcile, dispatchErr string
 		rec.Attrs(func(a slog.Attr) bool {
 			switch a.Key {
 			case "job_id":
 				gotJob = a.Value.String()
 			case "reconcile":
 				reconcile = fmt.Sprint(a.Value.Any())
+			case "dispatch_error":
+				dispatchErr = fmt.Sprint(a.Value.Any())
 			}
 			return true
 		})
@@ -3790,6 +3797,11 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 			continue
 		}
 		found = true
+		// The provider's own failure: returning through the lost-claim path skips the
+		// retained-partial log line that normally carries it, so this record must.
+		if !strings.Contains(dispatchErr, idLessPartialDispatchErr) {
+			t.Errorf("lost-claim log dispatch_error = %q, want the provider error %q", dispatchErr, idLessPartialDispatchErr)
+		}
 		if !strings.Contains(reconcile, "grp-id-7") || !strings.Contains(reconcile, "camp-name-7") {
 			t.Errorf("lost-claim log reconcile = %q, want the group id and campaign name", reconcile)
 		}
@@ -3820,20 +3832,80 @@ func TestReconcileRefKeepsLongMultibyteNamesAndFlagsTruncation(t *testing.T) {
 	ref := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: blob})
 
 	if ref["campaignGroupName"] != name255 {
-		t.Errorf("255-rune multibyte name was not kept verbatim (got %d runes)", utf8.RuneCountInString(ref["campaignGroupName"]))
+		t.Errorf("255-rune multibyte name was not kept verbatim (got %d runes)", utf8.RuneCountInString(fmt.Sprint(ref["campaignGroupName"])))
 	}
 	if _, flagged := ref["campaignGroupNameTruncated"]; flagged {
 		t.Error("a name within the cap was flagged as truncated")
 	}
-	got := ref["campaignName"]
+	got, _ := ref["campaignName"].(string)
 	if utf8.RuneCountInString(got) != reconcileRefMaxRunes || !utf8.ValidString(got) {
 		t.Errorf("over-cap name: %d runes (valid UTF-8: %v), want truncated to %d valid runes",
 			utf8.RuneCountInString(got), utf8.ValidString(got), reconcileRefMaxRunes)
 	}
-	if ref["campaignNameTruncated"] != "true" {
+	if ref["campaignNameTruncated"] != true {
 		t.Errorf("over-cap name was not flagged as truncated: %v", ref["campaignNameTruncated"])
 	}
 	if ref["campaignGroupId"] != "grp-1" {
 		t.Errorf("campaignGroupId = %q, want grp-1", ref["campaignGroupId"])
+	}
+}
+
+// reconcileRef keeps the identifier COLLECTIONS a partial-result contract records for
+// reconciliation, not just scalar ids: Google Ads' creativeAssetIds / extensionAssetIds (the only
+// handle on account-level assets a failed create leaves behind) and LinkedIn's imageUrns (stored
+// asset id -> urn:li:image). A lost claim never writes the row that holds them, so dropping them
+// loses every handle. Steps, URLs and non-string shapes stay out; long elements are capped and
+// the field flagged.
+func TestReconcileRefKeepsIdentifierCollections(t *testing.T) {
+	longID := strings.Repeat("x", reconcileRefMaxRunes+5)
+	google, _ := json.Marshal(map[string]any{
+		"campaignId":        "",
+		"campaignName":      "g-camp",
+		"creativeAssetIds":  []string{"asset-1", "asset-2", longID},
+		"extensionAssetIds": []string{"ext-1"},
+		"steps":             []string{"provider said: internal error"},
+		"finalUrl":          "https://example.invalid/landing",
+		"budgetIds":         []int{7},
+	})
+	linkedin, _ := json.Marshal(map[string]any{
+		"campaignGroupId": "grp-9",
+		"imageUrns":       map[string]string{"stored-asset-1": "urn:li:image:C4D10AQ"},
+		"linkedInUrl":     "https://example.invalid/li",
+		"steps":           []string{"provider said: bad creative"},
+	})
+
+	g := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: google})
+	assets, _ := g["creativeAssetIds"].([]string)
+	if len(assets) != 3 || assets[0] != "asset-1" || assets[1] != "asset-2" || utf8.RuneCountInString(assets[2]) != reconcileRefMaxRunes {
+		t.Errorf("creativeAssetIds = %v, want both asset ids and the long one capped", g["creativeAssetIds"])
+	}
+	if g["creativeAssetIdsTruncated"] != true {
+		t.Errorf("creativeAssetIds with an over-cap element was not flagged: %v", g["creativeAssetIdsTruncated"])
+	}
+	if ext, _ := g["extensionAssetIds"].([]string); len(ext) != 1 || ext[0] != "ext-1" {
+		t.Errorf("extensionAssetIds = %v, want [ext-1]", g["extensionAssetIds"])
+	}
+	if _, ok := g["extensionAssetIdsTruncated"]; ok {
+		t.Error("extensionAssetIds flagged as truncated with nothing over the cap")
+	}
+
+	l := reconcileRef(&model.Campaign{Status: model.CampaignStatusGroupCreated, Result: linkedin})
+	if urns, _ := l["imageUrns"].(map[string]string); urns["stored-asset-1"] != "urn:li:image:C4D10AQ" {
+		t.Errorf("imageUrns = %v, want the stored asset id -> image urn", l["imageUrns"])
+	}
+	if l["campaignGroupId"] != "grp-9" {
+		t.Errorf("campaignGroupId = %v, want grp-9", l["campaignGroupId"])
+	}
+
+	for name, ref := range map[string]map[string]any{"google": g, "linkedin": l} {
+		dump := fmt.Sprint(ref)
+		for _, banned := range []string{"provider said", "example.invalid"} {
+			if strings.Contains(dump, banned) {
+				t.Errorf("%s reconcile %s carries non-identifier content %q", name, dump, banned)
+			}
+		}
+		if _, ok := ref["budgetIds"]; ok {
+			t.Errorf("%s reconcile kept a non-string collection: %v", name, ref["budgetIds"])
+		}
 	}
 }

@@ -155,11 +155,15 @@ row takes the slot, `UpsertCampaign` returns `domain.ErrDispatchClaimLost` witho
 "claim was cleared ... untracked, reconciliation required" error that keeps the upstream id in
 `CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). Because
 the row that would have held the dispatch's `Result` blob is never written, `lostClaimResult`
-also copies the blob's identifying fields (`reconcileRef`: top-level string values whose key ends
-in `id`/`name`, plus the campaign's name and status; never Steps text or URLs; capped at 1024
-RUNES, far above every lane platform's name limit, and truncated with a `<key>Truncated` flag
-rather than dropped past it) into the stored
-platform result's `reconcile` map and the ERROR log. An id-less partial gets its own message
+also copies the blob's identifying fields (`reconcileRef`: top-level fields whose key ends in
+`id`/`ids`/`urn`/`urns`/`name`/`names` and whose value is a string, a string array — Google's
+`creativeAssetIds`/`extensionAssetIds` — or a string map — LinkedIn's `imageUrns` — plus the
+campaign's name and status; never Steps text, URLs or other shapes; every string capped at 1024
+RUNES, far above every lane platform's name limit, and truncated with a `<key>Truncated: true`
+flag rather than dropped past it) into the stored
+platform result's `reconcile` map and the ERROR log. On the retained-partial path that log also
+carries the provider's error as `dispatch_error` (logged the way the retained-partial path
+always logs it), which the job result never does. An id-less partial gets its own message
 saying no campaign id was captured
 (`TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail`). `reconcile` is in the
 stored job result only; GetJob's typed response does not carry it. A worker that loses the claim reuses the existing row instead of dispatching

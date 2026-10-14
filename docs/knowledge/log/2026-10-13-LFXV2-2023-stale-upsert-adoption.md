@@ -29,3 +29,11 @@ Third follow-up, same review: `docs/channel-connections-schema.md` and the postg
 named "a concurrent `DeleteDispatchClaim`" as a way the claim row disappears before the upsert's
 INSERT arm. With the job-keyed release only an operator clear (`ClearDispatchClaim`, or by hand)
 can do that; both now say so, and that another row on the slot yields `ErrDispatchClaimLost`.
+
+Fourth follow-up, same review: `reconcileRef` kept only scalar ids and names, dropping the
+identifier collections partial results keep for reconciliation (Google's `creativeAssetIds` /
+`extensionAssetIds`, LinkedIn's `imageUrns`). It now keeps string arrays and string maps under
+`*ids`/`*urns`/`*names` (and the singular forms) keys, each string capped and the field flagged
+when cut, so `reconcile` became a structured map. And the lost-claim ERROR log on the
+retained-partial path now carries the provider's error as `dispatch_error`, which returning
+early had left out; the job result's message stays generic.
