@@ -1,7 +1,7 @@
 ---
 type: "Architecture Doc"
 title: "Keyword Targeting on Reddit and X"
-description: "The keyword levers for Reddit and X, where a keyword is an entry in the ad group's or line item's targeting rather than a pausable criterion: a live read, a reduce-only removal and a negative-keyword add, with ownership proven before any write, a compare-and-set revision on Reddit's whole-object write, and per-criterion outcomes on X; no per-keyword metrics."
+description: "The keyword levers for Reddit and X, where a keyword is an entry in the ad group's or line item's targeting rather than a pausable criterion: a live read, a reduce-only removal and a negative-keyword add, with ownership proven before any write, a compare-and-set revision on Reddit's whole-object write, and per-criterion outcomes on X; per-keyword metrics are a separate read-only Reddit read (keyword performance), and none on X."
 resource: "internal/service/brief_keyword_targeting.go"
 ---
 
@@ -22,7 +22,7 @@ which is untouched (its Google and Microsoft responses are byte-identical to bef
 | Read | `GET /ad_accounts/{account}/ad_groups/{id}` → `targeting.keywords` (the read the bid lever already makes). | `GET accounts/:account_id/targeting_criteria?line_item_ids=…&with_deleted=false`, cursor-paged; fields `id`, `line_item_id`, `targeting_type`, `targeting_value`, `operator_type`, `deleted`. |
 | Write | No per-keyword endpoint. `PATCH` the ad group's `targeting`, which is **replaced as a whole object**. | `DELETE accounts/:account_id/targeting_criteria/:id` per criterion. A batch endpoint exists; its size limit and atomicity could not be established (sources disagree), so it is not used. |
 | Pause? | No — a keyword has no status. | No — a criterion has no status. |
-| Per-keyword metrics | A `KEYWORD` report breakdown is listed by secondary sources, but Reddit reporting is itself default-off (`REDDIT_METRICS_ENABLED`) pending a live read. **Not built.** | Segmentation is async-job only, and the current analytics page lists `AGE, GENDER, METROS, REGIONS, PLATFORMS, CONVERSION_TAGS` — no keyword segmentation found. **Not built.** |
+| Per-keyword metrics | A `KEYWORD` report breakdown, confirmed in Reddit's v3 OpenAPI document — served by the separate read-only `get-reddit-ads-keywords` ([Reddit Keyword Performance](keyword-performance-reddit.md)); its rows carry keyword TEXT only, no id. | Segmentation is async-job only, and the current analytics page lists `AGE, GENDER, METROS, REGIONS, PLATFORMS, CONVERSION_TAGS` — no keyword segmentation found. **Not built.** |
 
 Sources: X Ads API Campaign Management reference
 (https://docs.x.com/x-ads-api/campaign-management/reference — too long to fetch whole; its
