@@ -1785,7 +1785,9 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   hook).
   The probe runs on its OWN connection (`probeRequiredIndexDeparse`) under `probeBudget` (3s),
   with `SET LOCAL statement_timeout`/`lock_timeout`, BEFORE the required checks' own deadline
-  starts, so it can never spend that deadline (`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`). CI pins `postgres:16-alpine`
+  starts, so it can never spend that deadline (`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`).
+  Its WARNs never carry the raw error (`probeErrAttrs`: step, `%T`, SQLSTATE, a fixed
+  `probeRedactedDiagnostic`), because pgx and server error text repeats DSN identifiers and roles. CI pins `postgres:16-alpine`
   (`.github/workflows/lfx-v2-campaign-service-build.yaml`); the deployed database is external
   (the chart only receives its connection settings), so its version is not pinned by this repo.
   **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so the

@@ -80,3 +80,12 @@ rows already key on the `aid=` of `microsoftAdsUrl` (the index's fallback), so a
 change nothing there; Reddit's and X's results carry only a constant ads-manager URL, so their
 account cannot be recovered from the JSON, and stamping the project's CURRENT connection account
 would be a guess (connections can be re-pointed). Re-dispatch remains the only safe provenance.
+
+#328 review: the deparse probe's WARNs no longer log the raw error. A pgx connect error repeats the
+DSN's host, user and database (a parse error can echo credential text), and PostgreSQL's own
+diagnostics quote the role and database, so both WARN sites now carry only the step, the error's
+Go type, the SQLSTATE when it is a server error, a `timeout` flag on deadline, and the fixed
+`probeRedactedDiagnostic` — the same withhold-don't-scrub rule as `dsnParseError` and
+`dbtest.SafeDSNErr`. `TestProbeWarningsWithholdDSNIdentifiersAndCredentials` connects with a
+password- and host-bearing DSN and injects a 28P01 naming a role, and asserts neither log line
+carries any of those values.

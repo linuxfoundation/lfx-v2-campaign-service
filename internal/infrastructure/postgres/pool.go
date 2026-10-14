@@ -24,6 +24,7 @@ import (
 	// pgxv5 is aliased because golang-migrate's driver above already occupies the
 	// identifier `pgx` (see the pgx.Postgres reference at the foot of this file).
 	pgxv5 "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -944,11 +945,33 @@ func probeRequiredIndexDeparse(dsn string) map[string]deparsedIndex {
 	var conn *pgxv5.Conn
 	if err := probeStep(ctx, "connect", func() (err error) { conn, err = pgxv5.Connect(ctx, dsn); return err }); err != nil {
 		slog.WarnContext(ctx, "required-index check: the deparse probe could not connect; comparing definitions as stored text",
-			"step", "connect", "error_class", fmt.Sprintf("%T", err), "error", err)
+			probeErrAttrs("connect", err)...)
 		return nil
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 	return serverDeparsedRequiredIndexes(ctx, conn)
+}
+
+// probeRedactedDiagnostic is the ONLY text the probe's warnings carry about a failure. The raw
+// error is never logged: a pgx connect or parse error repeats the DSN's identifiers (host, user,
+// database — and a parse error can echo credential text), and PostgreSQL's own diagnostics quote
+// the role and database (`password authentication failed for user "u"`). The same reasoning as
+// dsnParseError and dbtest.SafeDSNErr: nothing derived from the input or the server's message is
+// carried, only what identifies the failure's KIND.
+const probeRedactedDiagnostic = "error text withheld: it can repeat DATABASE_URL identifiers or credentials"
+
+// probeErrAttrs renders a probe failure for a log line: the step, the error's Go type, the
+// SQLSTATE when it is a server error (a code, never the message), and the fixed diagnostic.
+func probeErrAttrs(step string, err error) []any {
+	attrs := []any{"step", step, "error_class", fmt.Sprintf("%T", err)}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		attrs = append(attrs, "sqlstate", pgErr.Code)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		attrs = append(attrs, "timeout", true)
+	}
+	return append(attrs, "error", probeRedactedDiagnostic)
 }
 
 // probeFault, when set (tests only), is consulted before each probe-infrastructure step and
@@ -991,7 +1014,7 @@ func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) map[st
 	}
 	fallBack := func(step string, err error) map[string]deparsedIndex {
 		slog.WarnContext(ctx, "required-index check: the deparse probe could not run; comparing the remaining definitions as stored text (a Postgres upgrade that re-renders them could then report a mismatch)",
-			"step", step, "error_class", fmt.Sprintf("%T", err), "error", err)
+			probeErrAttrs(step, err)...)
 		return out
 	}
 
