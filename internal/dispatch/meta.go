@@ -1443,6 +1443,7 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 			MetricsWindowStart: r.MetricsSince,
 			MetricsWindowEnd:   r.MetricsUntil,
 			FetchFailed:        r.FetchFailed,
+			FailureClass:       r.FailureClass,
 		})
 	}
 	return out, nil

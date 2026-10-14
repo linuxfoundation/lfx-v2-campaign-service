@@ -41,6 +41,7 @@ Service metrics:
 | `campaign_job_transitions_total` | counter | `status` | Dispatch jobs reaching each state (`running`, `succeeded`, `partial`, `failed`). A growing gap between `running` and the terminal states means jobs are getting stuck — the terminal transition is recorded only when the status write actually persisted, so a job stuck by a failed write leaves the gap open rather than closing it. |
 | `campaign_upstream_calls_total` | counter | `platform`, `operation`, `outcome` | Upstream ad-platform API call volume and error rate. |
 | `campaign_upstream_call_duration_seconds` | histogram | `platform`, `operation`, `outcome` | Upstream ad-platform latency. Timed only after the pre-platform guards pass, so local refusals do not drag the quantiles toward zero. Bucketed on the service's own call budgets (10ms…45s, with edges on the 20s/30s/45s ceilings) rather than the OTel default, whose ms-scale boundaries would collapse every healthy call into one bucket. |
+| `campaign_monitor_unmeasured_rows_total` | counter | `platform`, `class` | Account-monitor campaign rows returned with `fetch_failed=true` — why the monitor's totals may understate an account. `class` is one of `auth`, `throttle`, `upstream_5xx`, `decode`, `no_report` (a report-backed account with no finished report yet — expected on a first read), `other` (a failure the client did not classify) or `unknown` (a client reported a class outside that set, i.e. classification drift). |
 | `campaign_db_pool_*` | gauge / counter | none | Database pool health: acquired, idle, total, max and newly-established connections, plus canceled and empty acquires. Exported only when a pool is actually wired — see below. |
 
 Plus the standard Go runtime and process collectors.
@@ -50,7 +51,7 @@ project id, job id, account id or URL as a label value — an unbounded
 label creates one retained time series per distinct value and is the
 classic way to take a Prometheus server down. `platform` is mapped
 through a closed provider set and anything outside it collapses to
-`unknown`; the outcome labels are closed enums; and `operation` passes a
+`unknown`; the outcome and monitor failure-class labels are closed enums; and `operation` passes a
 shape guard that admits short lower-snake tokens and degrades anything
 id-shaped or derived to `unknown`. No metric name, label
 or help string carries a credential, DSN or token.
@@ -181,9 +182,9 @@ openssl rand -base64 32
   a typo) fails closed, and
   `GET .../campaigns/{campaign_id}/metrics` answers 400 "not
   supported for this campaign's platform" for a Reddit campaign. It
-  also gates the Reddit audience read
-  (`GET /projects/{project_id}/reddit-ads/audience`), which answers 400
-  "not supported" while off.
+  also gates the Reddit audience and keyword performance reads
+  (`GET /projects/{project_id}/reddit-ads/audience` and
+  `.../reddit-ads/keywords`), which answer 400 "not supported" while off.
   Off by default because no request has yet been made against a live
   Reddit ad account (LFXV2-3282). The request and response shapes now
   follow Reddit's official public OpenAPI document, but behaviour a

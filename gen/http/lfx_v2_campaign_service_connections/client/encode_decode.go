@@ -10687,6 +10687,225 @@ func DecodeGetRedditAdsAudienceResponse(decoder func(*http.Response) goahttp.Dec
 	}
 }
 
+// BuildGetRedditAdsKeywordsRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-connections"
+// service "get-reddit-ads-keywords" endpoint
+func (c *Client) BuildGetRedditAdsKeywordsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", "*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: GetRedditAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeGetRedditAdsKeywordsRequest returns an encoder for requests sent to
+// the lfx-v2-campaign-service-connections get-reddit-ads-keywords server.
+func EncodeGetRedditAdsKeywordsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", "*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeGetRedditAdsKeywordsResponse returns a decoder for responses returned
+// by the lfx-v2-campaign-service-connections get-reddit-ads-keywords endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeGetRedditAdsKeywordsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignserviceconnections.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignserviceconnections.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignserviceconnections.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignserviceconnections.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignserviceconnections.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignserviceconnections.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignserviceconnections.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeGetRedditAdsKeywordsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body GetRedditAdsKeywordsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			res := NewGetRedditAdsKeywordsRedditAdsKeywordsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body GetRedditAdsKeywordsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, NewGetRedditAdsKeywordsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body GetRedditAdsKeywordsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, NewGetRedditAdsKeywordsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body GetRedditAdsKeywordsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, NewGetRedditAdsKeywordsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body GetRedditAdsKeywordsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, NewGetRedditAdsKeywordsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body GetRedditAdsKeywordsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, NewGetRedditAdsKeywordsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body GetRedditAdsKeywordsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, NewGetRedditAdsKeywordsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body GetRedditAdsKeywordsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			err = ValidateGetRedditAdsKeywordsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, NewGetRedditAdsKeywordsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-connections", "get-reddit-ads-keywords", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildResolveGoogleAdsCampaignRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-connections"
 // service "resolve-google-ads-campaign" endpoint
@@ -15475,6 +15694,22 @@ func unmarshalRedditAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectio
 	return res
 }
 
+// unmarshalRedditAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsRedditAdsKeyword
+// builds a value of type *lfxv2campaignserviceconnections.RedditAdsKeyword
+// from a value of type *RedditAdsKeywordResponseBody.
+func unmarshalRedditAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsRedditAdsKeyword(v *RedditAdsKeywordResponseBody) *lfxv2campaignserviceconnections.RedditAdsKeyword {
+	res := &lfxv2campaignserviceconnections.RedditAdsKeyword{
+		CampaignID:  *v.CampaignID,
+		Text:        v.Text,
+		Impressions: *v.Impressions,
+		Clicks:      *v.Clicks,
+		CostMicros:  *v.CostMicros,
+		Ctr:         *v.Ctr,
+	}
+
+	return res
+}
+
 // unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef
 // builds a value of type *lfxv2campaignserviceconnections.CampaignRef from a
 // value of type *CampaignRefResponseBody.
@@ -15567,11 +15802,12 @@ func unmarshalAccountMonitorActionItemResponseBodyToLfxv2campaignserviceconnecti
 // from a value of type *AccountMonitorTotalsResponseBody.
 func unmarshalAccountMonitorTotalsResponseBodyToLfxv2campaignserviceconnectionsAccountMonitorTotals(v *AccountMonitorTotalsResponseBody) *lfxv2campaignserviceconnections.AccountMonitorTotals {
 	res := &lfxv2campaignserviceconnections.AccountMonitorTotals{
-		Spend:         *v.Spend,
-		Impressions:   *v.Impressions,
-		Clicks:        *v.Clicks,
-		Conversions:   v.Conversions,
-		CampaignCount: *v.CampaignCount,
+		Spend:               *v.Spend,
+		Impressions:         *v.Impressions,
+		Clicks:              *v.Clicks,
+		Conversions:         v.Conversions,
+		CampaignCount:       *v.CampaignCount,
+		UnmeasuredCampaigns: *v.UnmeasuredCampaigns,
 	}
 
 	return res

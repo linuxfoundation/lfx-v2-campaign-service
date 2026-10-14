@@ -116,6 +116,10 @@ func (d *TwitterDispatcher) ListAccountCampaigns(ctx context.Context, projectID 
 				ranges = append(ranges, model.FlightRange{StartDate: f.StartDate, EndDate: f.EndDate})
 			}
 		}
+		var class model.MonitorFailureClass
+		if c.BudgetUnparseable || c.FlightUnparseable {
+			class = model.MonitorFailureDecode
+		}
 		out = append(out, model.AccountCampaignMetrics{
 			PlatformCampaignID: c.ID,
 			Name:               c.Name,
@@ -126,6 +130,7 @@ func (d *TwitterDispatcher) ListAccountCampaigns(ctx context.Context, projectID 
 			EndDate:            c.EndDate,
 			FlightRanges:       ranges,
 			FetchFailed:        c.BudgetUnparseable || c.FlightUnparseable,
+			FailureClass:       class,
 		})
 	}
 	return out, nil

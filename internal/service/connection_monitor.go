@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
@@ -101,6 +102,12 @@ func validateMonitorDays(days int) error {
 // to substitute; a Google row whose budget alone was unparseable (round-24/25 review)
 // contributes its genuinely non-zero spend/impressions/clicks, which is correct because only
 // its budget field — not summed here — was untrusted.
+//
+// What the sum cannot say by itself is that some of it was not measured: UnmeasuredCampaigns
+// counts the FetchFailed rows so the response does (#218). It counts every FetchFailed row,
+// the budget-only ones included, which makes it an upper bound on the rows missing from the
+// sum — see model.AccountMonitorTotals.UnmeasuredCampaigns. PacingUnknown alone is deliberately
+// not counted: it is about pacing inputs, which nothing here sums.
 func monitorTotals(rows []model.AccountCampaignMetrics) *model.AccountMonitorTotals {
 	t := &model.AccountMonitorTotals{CampaignCount: len(rows)}
 	var conversions float64
@@ -109,6 +116,9 @@ func monitorTotals(rows []model.AccountCampaignMetrics) *model.AccountMonitorTot
 		t.Spend += r.Spend
 		t.Impressions += r.Impressions
 		t.Clicks += r.Clicks
+		if r.FetchFailed {
+			t.UnmeasuredCampaigns++
+		}
 		if r.Conversions != nil {
 			conversions += *r.Conversions
 			measured = true
@@ -188,11 +198,12 @@ func toConnAccountMonitorActionItems(items []model.AccountMonitorActionItem) []*
 // toConnAccountMonitorTotals converts the domain totals to the generated response type.
 func toConnAccountMonitorTotals(t *model.AccountMonitorTotals) *conn.AccountMonitorTotals {
 	return &conn.AccountMonitorTotals{
-		Spend:         t.Spend,
-		Impressions:   t.Impressions,
-		Clicks:        t.Clicks,
-		Conversions:   t.Conversions,
-		CampaignCount: t.CampaignCount,
+		Spend:               t.Spend,
+		Impressions:         t.Impressions,
+		Clicks:              t.Clicks,
+		Conversions:         t.Conversions,
+		CampaignCount:       t.CampaignCount,
+		UnmeasuredCampaigns: t.UnmeasuredCampaigns,
 	}
 }
 
@@ -226,7 +237,69 @@ func (s *ConnectionService) monitorAccount(
 	}
 
 	rows, actionItems := evaluate(metricsRows)
+	reportUnmeasuredRows(ctx, orch.dispatchMetrics(), projectID, platform, rows)
 	return buildAccountMonitor(accountID, days, rows, actionItems), nil
+}
+
+// monitorFailureClassOrder is every model.MonitorFailureClass, in the order the summary log
+// lists them and the metric is recorded — fixed, so the log line has the same shape every time.
+var monitorFailureClassOrder = []model.MonitorFailureClass{
+	model.MonitorFailureAuth,
+	model.MonitorFailureThrottle,
+	model.MonitorFailureUpstream5xx,
+	model.MonitorFailureDecode,
+	model.MonitorFailureNoReport,
+	model.MonitorFailureOther,
+	model.MonitorFailureUnknown,
+}
+
+// reportUnmeasuredRows is the operational signal for the FetchFailed rows of one monitor
+// response (#220). The platform clients mark a failed row and drop the error — propagating it
+// would fail every other row with it — so without this nothing distinguished a revoked token
+// from a 429 burst from an upstream schema change when a response came back all fetch_failed.
+//
+// Per request, not per row: ONE Warn listing per-class counts, and one counter Add per class
+// present. A per-row log would be N lines for one broken token. The rows counted are the ones
+// returned (after the rule engine's filtering), the same rows totals.unmeasured_campaigns
+// counts, so the log, the metric and the response agree.
+//
+// Only bounded values are logged: the project id (the account monitor's existing log key —
+// the account id is not logged, matching the report-backed monitor's logs and the clients'
+// own redaction of it from errors), the platform, and integer counts per closed-set class. No
+// upstream error text, which can carry ids and response fragments.
+//
+// The Warn is skipped when every failed row is no_report: a report-backed account with no
+// finished report yet is the expected first read, not a fault. The metric still counts them.
+func reportUnmeasuredRows(ctx context.Context, m DispatchMetrics, projectID string, platform model.Provider, rows []model.AccountMonitorRow) {
+	counts := make(map[model.MonitorFailureClass]int, len(monitorFailureClassOrder))
+	total := 0
+	for _, r := range rows {
+		if !r.Metrics.FetchFailed {
+			continue
+		}
+		counts[model.NormalizeMonitorFailureClass(r.Metrics.FailureClass)]++
+		total++
+	}
+	if total == 0 {
+		return
+	}
+	byClass := make([]any, 0, len(monitorFailureClassOrder))
+	for _, c := range monitorFailureClassOrder {
+		if counts[c] > 0 {
+			m.RecordMonitorUnmeasuredRows(ctx, platform, string(c), counts[c])
+		}
+		byClass = append(byClass, slog.Int(string(c), counts[c]))
+	}
+	if counts[model.MonitorFailureNoReport] == total {
+		return
+	}
+	slog.WarnContext(ctx, "account monitor: some campaigns could not be measured; totals may understate the account",
+		"project_id", projectID,
+		"platform", string(platform),
+		"campaign_count", len(rows),
+		"unmeasured_campaigns", total,
+		slog.Group("unmeasured_by_class", byClass...),
+	)
 }
 
 // buildAccountMonitor assembles the response from the rule engine's output. Shared by the live
@@ -284,6 +357,7 @@ func (s *ConnectionService) monitorReportedAccount(
 		return nil, s.classifyDiscoveryError(ctx, projectID, discovery, rerr)
 	}
 	rows, actionItems := evaluate(read)
+	reportUnmeasuredRows(ctx, orch.dispatchMetrics(), projectID, platform, rows)
 	out := buildAccountMonitor(accountID, days, rows, actionItems)
 	if read.MetricsAsOf != nil {
 		asOf := read.MetricsAsOf.UTC().Format(time.RFC3339)

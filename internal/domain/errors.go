@@ -478,10 +478,12 @@ var (
 
 	// ErrKeywordReportScopeTooLarge indicates a report-backed keyword read refused because the
 	// project owns more campaigns on the platform than one report can be scoped to (Microsoft's
-	// AccountThroughAdGroupReportScope holds up to 300). Refused before any upstream call, and
-	// PERMANENT while the project stays that large: widening the scope to the account would read
-	// other projects' keywords, and serving a subset would present part of the project as all of
-	// it. The message is fixed, client-safe text: it reaches the HTTP body.
+	// AccountThroughAdGroupReportScope holds up to 300; Reddit's live keyword read covers at most
+	// reddit.MaxReportCampaigns, one report per campaign against its reporting quota). Refused
+	// before any upstream call, and PERMANENT while the project stays that large: widening the
+	// scope to the account would read other projects' keywords, and serving a subset would present
+	// part of the project as all of it. The message is fixed, client-safe text: it reaches the
+	// HTTP body.
 	ErrKeywordReportScopeTooLarge = errors.New("this project has more campaigns on the platform than one keyword report can be scoped to")
 
 	// ErrKeywordReportScopeInvalid indicates a report-backed keyword read refused because a
@@ -498,7 +500,7 @@ var (
 	// bound on the stats jobs one request creates and awaits); Microsoft's is
 	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
 	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
-	// counted over DISTINCT campaign ids; Reddit's is reddit.MaxAudienceCampaigns (a local bound
+	// counted over DISTINCT campaign ids; Reddit's is reddit.MaxReportCampaigns (a local bound
 	// on the per-campaign reports one read issues; the requests themselves are bounded by the ad account's
 	// reporting budget, reddit/report_budget.go). Refused before any upstream call and PERMANENT while the
 	// project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message is fixed,

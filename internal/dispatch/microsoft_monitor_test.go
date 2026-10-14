@@ -159,14 +159,14 @@ func TestMicrosoftMonitor_ListMapsBudgetFlags(t *testing.T) {
 	for _, r := range rows {
 		byID[r.PlatformCampaignID] = r
 	}
-	if own := byID["11"]; own.BudgetDay != 25.5 || own.PacingUnknown || own.FetchFailed || !own.IsSearchChannel {
+	if own := byID["11"]; own.BudgetDay != 25.5 || own.PacingUnknown || own.FetchFailed || own.FailureClass != "" || !own.IsSearchChannel {
 		t.Errorf("own-budget campaign = %+v", own)
 	}
 	if shared := byID["12"]; !shared.PacingUnknown || shared.FetchFailed || shared.IsSearchChannel {
 		t.Errorf("shared-budget campaign = %+v, want PacingUnknown, not FetchFailed, not search", shared)
 	}
-	if broken := byID["13"]; !broken.FetchFailed {
-		t.Errorf("unparseable-budget campaign = %+v, want FetchFailed", broken)
+	if broken := byID["13"]; !broken.FetchFailed || broken.FailureClass != model.MonitorFailureDecode {
+		t.Errorf("unparseable-budget campaign = %+v, want FetchFailed with failure class decode", broken)
 	}
 }
 

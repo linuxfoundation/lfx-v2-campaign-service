@@ -71,6 +71,7 @@ type Server struct {
 	GetMicrosoftAdsKeywords     http.Handler
 	GetMicrosoftAdsAudience     http.Handler
 	GetRedditAdsAudience        http.Handler
+	GetRedditAdsKeywords        http.Handler
 	ResolveGoogleAdsCampaign    http.Handler
 	ResolveMicrosoftAdsCampaign http.Handler
 	ResolveMetaAdsCampaign      http.Handler
@@ -173,6 +174,7 @@ func New(
 			{"GetMicrosoftAdsKeywords", "GET", "/projects/{project_id}/microsoft-ads/keywords"},
 			{"GetMicrosoftAdsAudience", "GET", "/projects/{project_id}/microsoft-ads/audience"},
 			{"GetRedditAdsAudience", "GET", "/projects/{project_id}/reddit-ads/audience"},
+			{"GetRedditAdsKeywords", "GET", "/projects/{project_id}/reddit-ads/keywords"},
 			{"ResolveGoogleAdsCampaign", "GET", "/projects/{project_id}/google-ads/campaign-ref"},
 			{"ResolveMicrosoftAdsCampaign", "GET", "/projects/{project_id}/microsoft-ads/campaign-ref"},
 			{"ResolveMetaAdsCampaign", "GET", "/projects/{project_id}/meta-ads/campaign-ref"},
@@ -246,6 +248,7 @@ func New(
 		GetMicrosoftAdsKeywords:     NewGetMicrosoftAdsKeywordsHandler(e.GetMicrosoftAdsKeywords, mux, decoder, encoder, errhandler, formatter),
 		GetMicrosoftAdsAudience:     NewGetMicrosoftAdsAudienceHandler(e.GetMicrosoftAdsAudience, mux, decoder, encoder, errhandler, formatter),
 		GetRedditAdsAudience:        NewGetRedditAdsAudienceHandler(e.GetRedditAdsAudience, mux, decoder, encoder, errhandler, formatter),
+		GetRedditAdsKeywords:        NewGetRedditAdsKeywordsHandler(e.GetRedditAdsKeywords, mux, decoder, encoder, errhandler, formatter),
 		ResolveGoogleAdsCampaign:    NewResolveGoogleAdsCampaignHandler(e.ResolveGoogleAdsCampaign, mux, decoder, encoder, errhandler, formatter),
 		ResolveMicrosoftAdsCampaign: NewResolveMicrosoftAdsCampaignHandler(e.ResolveMicrosoftAdsCampaign, mux, decoder, encoder, errhandler, formatter),
 		ResolveMetaAdsCampaign:      NewResolveMetaAdsCampaignHandler(e.ResolveMetaAdsCampaign, mux, decoder, encoder, errhandler, formatter),
@@ -326,6 +329,7 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.GetMicrosoftAdsKeywords = m(s.GetMicrosoftAdsKeywords)
 	s.GetMicrosoftAdsAudience = m(s.GetMicrosoftAdsAudience)
 	s.GetRedditAdsAudience = m(s.GetRedditAdsAudience)
+	s.GetRedditAdsKeywords = m(s.GetRedditAdsKeywords)
 	s.ResolveGoogleAdsCampaign = m(s.ResolveGoogleAdsCampaign)
 	s.ResolveMicrosoftAdsCampaign = m(s.ResolveMicrosoftAdsCampaign)
 	s.ResolveMetaAdsCampaign = m(s.ResolveMetaAdsCampaign)
@@ -406,6 +410,7 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountGetMicrosoftAdsKeywordsHandler(mux, h.GetMicrosoftAdsKeywords)
 	MountGetMicrosoftAdsAudienceHandler(mux, h.GetMicrosoftAdsAudience)
 	MountGetRedditAdsAudienceHandler(mux, h.GetRedditAdsAudience)
+	MountGetRedditAdsKeywordsHandler(mux, h.GetRedditAdsKeywords)
 	MountResolveGoogleAdsCampaignHandler(mux, h.ResolveGoogleAdsCampaign)
 	MountResolveMicrosoftAdsCampaignHandler(mux, h.ResolveMicrosoftAdsCampaign)
 	MountResolveMetaAdsCampaignHandler(mux, h.ResolveMetaAdsCampaign)
@@ -3185,6 +3190,61 @@ func NewGetRedditAdsAudienceHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "get-reddit-ads-audience")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountGetRedditAdsKeywordsHandler configures the mux to serve the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint.
+func MountGetRedditAdsKeywordsHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/projects/{project_id}/reddit-ads/keywords", f)
+}
+
+// NewGetRedditAdsKeywordsHandler creates a HTTP handler which loads the HTTP
+// request and calls the "lfx-v2-campaign-service-connections" service
+// "get-reddit-ads-keywords" endpoint.
+func NewGetRedditAdsKeywordsHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeGetRedditAdsKeywordsRequest(mux, decoder)
+		encodeResponse = EncodeGetRedditAdsKeywordsResponse(encoder)
+		encodeError    = EncodeGetRedditAdsKeywordsError(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "get-reddit-ads-keywords")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "lfx-v2-campaign-service-connections")
 		payload, err := decodeRequest(r)
 		if err != nil {

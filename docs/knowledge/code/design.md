@@ -327,3 +327,11 @@ maps), `buckets` of `RedditAdsAudienceBucket` (`dimension` gender | country | co
 `value` with the client's charset as `Pattern`, counters, `ctr`) and `bucket_count`. The bucket and
 envelope carry TYPE-LEVEL examples built from shared maps, as the Meta and X types do, so no
 published example is a response the endpoint cannot return.
+
+## Reddit keyword performance read (LFXV2-2665)
+
+`get-reddit-ads-keywords` returns `RedditAdsKeywords` (`window` on `redditAudienceWindowEnum`,
+`rows` of `RedditAdsKeyword`, `row_count`, `truncated`). The row keeps the Google/Microsoft keyword
+counters (`impressions`, `clicks`, `cost_micros`, `ctr`) and `campaign_id`, with optional `text`
+(`MaxLength(200)`) and no criterion handles — Reddit reports none, so the row is read-only. Both
+types carry type-level examples from one shared map.
