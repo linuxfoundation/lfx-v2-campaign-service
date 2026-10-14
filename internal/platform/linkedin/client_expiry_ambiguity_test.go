@@ -236,6 +236,7 @@ func TestCreateCampaign_GETSearch401StaysDefinite(t *testing.T) {
 // nothing about the 401 classification.
 func validCampaignInput() CampaignInput {
 	return CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/kubecon",

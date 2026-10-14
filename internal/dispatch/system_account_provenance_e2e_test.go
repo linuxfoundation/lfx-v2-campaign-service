@@ -345,7 +345,7 @@ func TestAllDispatchers_StampProvenanceOnEveryCampaignReturn(t *testing.T) {
 			func(r connReader) campaignDispatcher {
 				return NewLinkedInDispatcher(r, identityEncryptor{}, linkedin.WithBaseURL(linkedinSrv.URL))
 			},
-			json.RawMessage(`{"linkedInConfig":{"budgetUsd":50,"startDate":"2099-01-01","endDate":"2099-02-01","geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],"targetingProfile":"devs","targetingProfiles":[{"id":"devs","label":"Developers","skills":["urn:li:skill:1234"]}],"variants":[{"IntroText":"i","Headline":"h"}]}}`),
+			json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},"budgetUsd":50,"startDate":"2099-01-01","endDate":"2099-02-01","geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],"targetingProfile":"devs","targetingProfiles":[{"id":"devs","label":"Developers","skills":["urn:li:skill:1234"]}],"variants":[{"IntroText":"i","Headline":"h"}]}}`),
 			true,
 			"urn:li:share/ugcPost",
 		},

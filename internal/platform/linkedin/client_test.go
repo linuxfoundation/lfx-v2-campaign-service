@@ -507,6 +507,7 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 
 	in := CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		RegistrationURL:  "https://events.example.org/kubecon",
 		HSToken:          "hs-123",
@@ -587,20 +588,15 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 		t.Errorf("daily-budget campaign must not send totalBudget")
 	}
 
-	// AUTOMATIC bidding (no ManualCPCBid, LFXV2-2665): optimizationTargetType MAX_CONVERSION
-	// with costType CPM and NO unitCost. Before LFXV2-2665 this body sent costType CPC and no
-	// optimizationTargetType, which LinkedIn defaults to NONE — MANUAL bidding at unitCost 0,
-	// under which "the campaign does not deliver". LinkedIn charges auto-bidding by impressions
-	// ("costType is CPM ... (same as auto-bidding)"), so CPM here is the documented pairing, not
-	// a change in what the money buys. See campaignBidding.
-	if campaignBody["optimizationTargetType"] != "MAX_CONVERSION" {
-		t.Errorf("campaign optimizationTargetType: want MAX_CONVERSION (automatic), got %v", campaignBody["optimizationTargetType"])
+	// Bidding (LFXV2-2665): the input carries testManualBid, so the campaign is a manual max CPC —
+	// costType CPC, optimizationTargetType NONE, unitCost 1.00 USD. Before LFXV2-2665 this body
+	// sent costType CPC and NO optimizationTargetType, which LinkedIn defaults to manual at
+	// unitCost 0, under which "the campaign does not deliver".
+	if campaignBody["costType"] != "CPC" || campaignBody["optimizationTargetType"] != "NONE" {
+		t.Errorf("campaign costType/optimizationTargetType = %v/%v, want CPC/NONE", campaignBody["costType"], campaignBody["optimizationTargetType"])
 	}
-	if campaignBody["costType"] != "CPM" {
-		t.Errorf("campaign costType: want CPM (auto-bidding), got %v", campaignBody["costType"])
-	}
-	if _, has := campaignBody["unitCost"]; has {
-		t.Errorf("an automatic campaign must not send unitCost: %v", campaignBody["unitCost"])
+	if unit, _ := campaignBody["unitCost"].(map[string]any); unit["amount"] != "1.00" {
+		t.Errorf("campaign unitCost = %v, want amount 1.00", campaignBody["unitCost"])
 	}
 
 	// offsiteDeliveryEnabled must stay false. true opts the campaign into the
@@ -649,6 +645,7 @@ func TestCreateCampaign_LifetimeBudgetUsesTotalBudget(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "E",
 		Project:          "tlf",
 		RegistrationURL:  "https://x.org",

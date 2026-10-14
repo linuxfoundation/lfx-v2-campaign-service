@@ -4357,8 +4357,10 @@ most 1,000,000 and a whole number of micro-units (`exactScaled`, a round-trip te
 rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.ValidateMaxCPCBid`
 (0.01–1,000) plus the legacy `cpcBid` (alone = manual at that amount; with `bidding` it must agree,
 and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
-decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount`
-(whole cents); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn REFUSES automatic — explicit or by
+omission — because its Website conversions objective's only automated target (MAX_CONVERSION) cannot
+activate without a conversion association, then `linkedin.ValidateBidAmount` (whole cents); X
+nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
 `<configKey>.bidding: <reason>`.
 
 The rules run twice: in each lane dispatcher's `PreflightCreate` (a `service.CreatePreflighter`, so

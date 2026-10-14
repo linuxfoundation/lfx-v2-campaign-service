@@ -4277,23 +4277,26 @@ type CampaignCreateInputRequestBody struct {
 	// (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and
 	// linkedInConfig each accept an optional `bidding` object, {"strategy":
 	// "automatic" | "manual", "bidAmount": number}. Omitted means automatic
-	// (Microsoft MaxClicks, Meta LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO,
-	// LinkedIn MAX_CONVERSION — which LinkedIn will not activate until a
-	// conversion is associated with the campaign). `manual` requires `bidAmount`,
-	// the starting max cost-per-click bid in the ad account's own currency
-	// (LinkedIn: USD), greater than zero, at most 1,000,000 and a whole number of
-	// micro-units; it creates the campaign in the shape update-campaign-bid
-	// accepts. Per platform, a manual bid must also be: Microsoft within
-	// 0.01–1,000 (a legacy microsoftConfig.cpcBid without `bidding` still means a
-	// manual bid at that amount; with `bidding` it must be omitted or equal
-	// bidAmount); Meta at most two decimals, a whole minor unit of the account
-	// currency (checked against the currency at dispatch), and only for the
-	// traffic or leads objective; Reddit only for the traffic objective; LinkedIn
-	// whole cents. `automatic` with a `bidAmount`, an unknown strategy, or a bid
-	// breaking these rules is refused synchronously with 400 "invalid campaign
-	// config: <configKey>.bidding: ..." before any job exists.
-	// googleAdsConfig.bidding is refused with 400 (use
-	// googleAdsConfig.biddingStrategy).
+	// (Microsoft MaxClicks — a Search campaign created without a bid used to get
+	// Microsoft's EnhancedCpc default; Meta LOWEST_COST_WITHOUT_CAP; Reddit
+	// BIDLESS; X AUTO). LinkedIn REFUSES automatic, explicit or by omission, with
+	// 400: its campaigns use the Website conversions objective, whose only
+	// automated target (MAX_CONVERSION) LinkedIn will not activate without a
+	// conversion association this service does not make — a LinkedIn create must
+	// send `manual`. `manual` requires `bidAmount`, the starting max
+	// cost-per-click bid in the ad account's own currency (LinkedIn: USD), greater
+	// than zero, at most 1,000,000 and a whole number of micro-units; it creates
+	// the campaign in the shape update-campaign-bid accepts. Per platform, a
+	// manual bid must also be: Microsoft within 0.01–1,000 (a legacy
+	// microsoftConfig.cpcBid without `bidding` still means a manual bid at that
+	// amount; with `bidding` it must be omitted or equal bidAmount); Meta at most
+	// two decimals, a whole minor unit of the account currency (checked against
+	// the currency at dispatch), and only for the traffic or leads objective;
+	// Reddit only for the traffic objective; LinkedIn whole cents. `automatic`
+	// with a `bidAmount`, an unknown strategy, or a bid breaking these rules is
+	// refused synchronously with 400 "invalid campaign config:
+	// <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is
+	// refused with 400 (use googleAdsConfig.biddingStrategy).
 	Config any `form:"config,omitempty" json:"config,omitempty" xml:"config,omitempty"`
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

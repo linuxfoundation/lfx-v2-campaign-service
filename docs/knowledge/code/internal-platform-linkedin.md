@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding (automatic MAX_CONVERSION or manual CPC/NONE/unitCost) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding that is manual only (CPC/NONE/unitCost; automatic is refused because WEBSITE_CONVERSION's only auto target, MAX_CONVERSION, cannot activate without a conversion) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -888,18 +888,19 @@ An image failure returns the partial result with zero creatives. See
 
 **Bug fixed**: the create body used to send `costType` `CPC` with NO `optimizationTargetType`,
 which LinkedIn defaults to `NONE` — manual bidding — with `unitCost` defaulting to 0, under which
-"the campaign does not deliver". `campaignBidding` now always sends the bidding fields explicitly,
-merged into the campaign body by `createSponsoredCampaign`:
+"the campaign does not deliver". `campaignBidding` now sends the bidding fields explicitly, merged
+into the campaign body by `createSponsoredCampaign`, and it is MANUAL ONLY:
 
-- AUTOMATIC (`ManualCPCBid` 0): `optimizationTargetType` `MAX_CONVERSION`, `costType` `CPM`, no
-  `unitCost` — the objective table maps the Website conversions objective (`WEBSITE_CONVERSION`,
-  every campaign here) to autobidding that optimizes for conversions, and every AUTO row of the
-  page pairs `MAX_*` with `CPM`. LinkedIn: "Campaigns optimizing for MAX_CONVERSION must have a
-  conversion associated with it to be activated" — this service associates none.
-- MANUAL: `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost` `{amount, currencyCode
-  USD}` at whole cents through `ValidateBidAmount` (refused, never rounded) — exactly what
-  `CampaignSettings.ManualCPC` accepts.
+- MANUAL (`ManualCPCBid` > 0): `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost`
+  `{amount, currencyCode USD}` at whole cents through `ValidateBidAmount` (refused, never rounded) —
+  exactly what `CampaignSettings.ManualCPC` accepts, so the bid lever can re-bid it.
+- AUTOMATIC (`ManualCPCBid` 0) is REFUSED with `ErrAutomaticBiddingUnavailable` before any POST.
+  The create sends `objectiveType` `WEBSITE_CONVERSION`; LinkedIn's "Ad Budget Type Allowable
+  Combinations" (li-lms-2026-09), row `WEBSITE_CONVERSION`, allows `NONE`, `ENHANCED_CONVERSION`
+  (both manual) and `MAX_CONVERSION` (the only auto-bid target; `MAX_CLICK` is allowed only for
+  `CREATIVE_ENGAGEMENT`, `JOB_APPLICANT`, `TALENT_LEAD`, `WEBSITE_TRAFFIC`, `WEBSITE_VISIT`), and
+  "Create and Manage Campaigns" says a `MAX_CONVERSION` campaign "must have a conversion
+  associated with it to be activated" — which this service never does.
 
-The bid is resolved before the first POST (a refusal creates nothing, not even the group). Source:
-"Create and Manage Campaigns", Optimization of Campaigns (li-lms-2026-09), consulted 2026-10-13.
-Neither shape is verified against a live account.
+Every client test that reaches the API now names `testManualBid`. Neither shape is verified against
+a live account.

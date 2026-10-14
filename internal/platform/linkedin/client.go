@@ -252,8 +252,9 @@ type CampaignInput struct {
 	// runtime config's accounts list when set.
 	AdAccountID string
 	// ManualCPCBid is the manual starting bid (LFXV2-2665), in USD like BudgetUSD (every
-	// LinkedIn write here is USD). ZERO means AUTOMATIC bidding; a positive value creates a
-	// manual max-CPC campaign. See campaignBidding for both request shapes and the citations.
+	// LinkedIn write here is USD). REQUIRED: zero asks for automatic bidding, which the
+	// WEBSITE_CONVERSION objective cannot have without a conversion association, so CreateCampaign
+	// refuses it (ErrAutomaticBiddingUnavailable) before any request. See campaignBidding.
 	ManualCPCBid float64
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
@@ -1955,8 +1956,8 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"status":        "PAUSED",
 		"type":          "SPONSORED_UPDATES",
 		"objectiveType": "WEBSITE_CONVERSION",
-		// costType, optimizationTargetType and (for manual bidding) unitCost come from
-		// campaignBidding and are merged below. Before LFXV2-2665 this body sent costType CPC
+		// costType, optimizationTargetType and unitCost come from campaignBidding (always a
+		// manual max CPC) and are merged below. Before LFXV2-2665 this body sent costType CPC
 		// and NO optimizationTargetType, which LinkedIn defaults to NONE — manual bidding — with
 		// unitCost defaulting to 0, under which "the campaign does not deliver".
 		"locale": map[string]any{"country": "US", "language": "en"},
@@ -2491,8 +2492,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if _, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget); err != nil {
 		return nil, err
 	}
-	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of
-	// cents is refused here, with nothing created, rather than after the campaign group exists.
+	// The bidding fields, resolved BEFORE any POST: a missing bid (automatic, unavailable for this
+	// objective) or one that is not a whole number of cents is refused here, with nothing created,
+	// rather than after the campaign group exists.
 	bidding, err := campaignBidding(in.ManualCPCBid)
 	if err != nil {
 		return nil, err

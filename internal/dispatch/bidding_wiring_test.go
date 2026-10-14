@@ -6,6 +6,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -222,4 +223,41 @@ func TestLinkedIn_DispatchManualBiddingReachesTheCampaign(t *testing.T) {
 		}
 	}
 	assertManualRow(t, camp, 4.5)
+}
+
+// TestLinkedIn_DispatchWithoutManualBiddingCreatesNothing: a LinkedIn dispatch that omits
+// `bidding` (the automatic default) or asks for automatic is refused before any LinkedIn request,
+// with the claim released — the Website conversions objective's only automated bidding cannot be
+// activated without a conversion this service does not associate.
+func TestLinkedIn_DispatchWithoutManualBiddingCreatesNothing(t *testing.T) {
+	for name, cfg := range map[string]string{
+		"omitted":   `{"linkedInConfig":{"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01","variants":[{"introText":"Join us","headline":"KubeCon"}]}}`,
+		"automatic": `{"linkedInConfig":{"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01","variants":[{"introText":"Join us","headline":"KubeCon"}],"bidding":{"strategy":"automatic"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mu.Lock()
+				requests++
+				mu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer srv.Close()
+			d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, json.RawMessage(cfg))
+			var nuc interface{ NoUpstreamCreate() bool }
+			if err == nil || camp != nil || !errors.As(err, &nuc) || !nuc.NoUpstreamCreate() {
+				t.Fatalf("Dispatch = %+v, %v; want a NoUpstreamCreate refusal", camp, err)
+			}
+			if !strings.Contains(err.Error(), "automatic bidding is not available on LinkedIn") {
+				t.Errorf("err = %v, want the automatic-bidding refusal", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if requests != 0 {
+				t.Fatalf("%d LinkedIn requests for a refused config, want 0", requests)
+			}
+		})
+	}
 }

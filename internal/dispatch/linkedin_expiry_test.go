@@ -147,7 +147,7 @@ func TestLinkedIn_ExpiredCredentialsAreTaggedOnEveryPath(t *testing.T) {
 			// A VALID config, so the call reaches the client and fails on the credential
 			// rather than on config validation — otherwise the subtest would pass for the
 			// wrong reason and prove nothing about the expiry tagging.
-			cfg := json.RawMessage(`{"linkedInConfig":{
+			cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
 				"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 				"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 				"targetingProfile":"cloud-native",
@@ -263,7 +263,7 @@ func TestLinkedIn_InvalidClientIsTaggedOnEveryPath(t *testing.T) {
 		call func(d *LinkedInDispatcher) error
 	}{
 		{"Dispatch", func(d *LinkedInDispatcher) error {
-			cfg := json.RawMessage(`{"linkedInConfig":{
+			cfg := json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
 				"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 				"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 				"targetingProfile":"cloud-native",

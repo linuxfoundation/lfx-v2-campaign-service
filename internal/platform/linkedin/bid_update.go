@@ -73,39 +73,38 @@ func (s *CampaignSettings) ManualCPC() bool {
 	return false
 }
 
-// OptimizationTargetMaxConversion is the AUTOMATIC bidding target the create path sends
-// (LFXV2-2665). See campaignBidding.
-const OptimizationTargetMaxConversion = "MAX_CONVERSION"
+// ErrAutomaticBiddingUnavailable refuses a create that asks for automatic bidding (LFXV2-2665).
+// It is a property of the objective this client sends, not of the request's amount, so it is not a
+// bidAmountError; the dispatcher refuses the same request first, as a 400.
+var ErrAutomaticBiddingUnavailable = errors.New("linkedin: automatic bidding is not available for the Website conversions objective without a conversion associated with the campaign, which this service does not do; create the campaign with a manual bid")
 
-// costTypeCPM is the cost type LinkedIn pairs with auto-bidding targets.
-const costTypeCPM = "CPM"
-
-// campaignBidding returns the campaign-create fields that set its bidding (LFXV2-2665), from
-// LinkedIn's "Create and Manage Campaigns" page, "Optimization of Campaigns" (li-lms-2026-09),
-// https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaigns
-// consulted 2026-10-13.
+// campaignBidding returns the campaign-create fields that set its bidding (LFXV2-2665).
 //
-// AUTOMATIC (manualBid == 0): optimizationTargetType MAX_CONVERSION with costType CPM and no
-// unitCost. The page: "Setting optimizationTargetType to one of the following activates
-// auto-bidding", and its objective table maps the "Website conversions" objective — the
-// WEBSITE_CONVERSION objectiveType every campaign here carries — to autobidding that "Optimizes
-// for conversions" (MAX_CONVERSION: "Maximize the campaign's number of conversions and spend the
-// daily budget without an advertiser specifying bid"). Every AUTO row of the page's
-// optimizationTargetType tables pairs MAX_* with costType CPM ("cost cap bidding charges by
-// impressions (same as auto-bidding)"). The page also states: "Campaigns optimizing for
-// MAX_CONVERSION must have a conversion associated with it to be activated" — this service
-// associates none, so an operator associates one in Campaign Manager before activating.
+// THE OBJECTIVE DECIDES WHAT AUTOMATIC CAN BE. createSponsoredCampaign sends one objectiveType,
+// WEBSITE_CONVERSION. LinkedIn's "Ad Budget Type Allowable Combinations" page (li-lms-2026-09,
+// https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ad-budget-pricing-type-combinations,
+// consulted 2026-10-13), Objective Type Descriptions table, row WEBSITE_CONVERSION: "Allowed
+// optimizationTargetType Combination: NONE, ENHANCED_CONVERSION, MAX_CONVERSION" — and "Advertisers
+// need to install LinkedIn InsightTag so that LinkedIn can track conversion events". Of those three,
+// NONE and ENHANCED_CONVERSION are listed under "keeps a campaign in manual-bidding mode", and the
+// only auto-bidding target is MAX_CONVERSION. MAX_CLICK — automated bidding for clicks — is allowed
+// only for CREATIVE_ENGAGEMENT, JOB_APPLICANT, TALENT_LEAD, WEBSITE_TRAFFIC and WEBSITE_VISIT
+// (same page, auto-bidding table, MAX_CLICK row), not for WEBSITE_CONVERSION. And "Create and
+// Manage Campaigns" (Optimization of Campaigns, li-lms-2026-09) states: "Campaigns optimizing for
+// MAX_CONVERSION must have a conversion associated with it to be activated." This service associates
+// no conversion, so an automatic campaign here could be created but never activated. AUTOMATIC IS
+// THEREFORE REFUSED (ErrAutomaticBiddingUnavailable) rather than created dead — the same reason the
+// old body (costType CPC, no optimizationTargetType: NONE at unitCost 0, "the campaign does not
+// deliver") was a bug. Offering automatic would need a different objective (WEBSITE_VISIT +
+// MAX_CLICK) or a conversion association, each its own change.
 //
 // MANUAL (manualBid > 0): costType CPC, optimizationTargetType NONE ("keeps a campaign in manual
 // bidding mode") and unitCost = the bid ("amount to bid (for manual bidding)"), in USD at whole
-// cents (ValidateBidAmount — refused, never rounded). That is exactly the setup the bid lever
-// reads as a manual max CPC (CampaignSettings.ManualCPC), so it can re-bid the campaign later.
+// cents (ValidateBidAmount — refused, never rounded). That is exactly the setup the bid lever reads
+// as a manual max CPC (CampaignSettings.ManualCPC), so it can re-bid the campaign later.
 func campaignBidding(manualBid float64) (map[string]any, error) {
 	if manualBid == 0 {
-		return map[string]any{
-			"costType":               costTypeCPM,
-			"optimizationTargetType": OptimizationTargetMaxConversion,
-		}, nil
+		return nil, ErrAutomaticBiddingUnavailable
 	}
 	wire, err := ValidateBidAmount(manualBid)
 	if err != nil {

@@ -192,6 +192,7 @@ func TestCreateCampaign_RejectsBadRegistrationURLBeforeAnyPOST(t *testing.T) {
 
 	for _, bad := range []string{"", "/relative/only"} {
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 			EventName:        "E",
 			Project:          "tlf",
 			RegistrationURL:  bad,
@@ -251,6 +252,7 @@ func TestCreateCampaign_PartialVariantFailureReported(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/kubecon",
@@ -305,6 +307,7 @@ func TestCreateCampaign_UnknownAccountFailsClosed(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "E",
 		Project:          "tlf",
 		AdAccountID:      "000000", // not in the runtime config
@@ -357,6 +360,7 @@ func TestCreateCampaign_RejectsBadBudgetBeforeAnyPOST(t *testing.T) {
 	budgets := []float64{0, -1, math.NaN(), math.Inf(1), math.Inf(-1)}
 	for _, b := range budgets {
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 			EventName:        "E",
 			Project:          "tlf",
 			RegistrationURL:  "https://events.example.org/reg",
@@ -386,6 +390,7 @@ func TestCreateCampaign_RejectsEmptyGeoBeforeAnyPOST(t *testing.T) {
 	// resolved slice and reports "Atlantis" as unresolved.
 	geos, _ := ResolveGeoTargets([]string{"Atlantis"})
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "E",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -446,6 +451,7 @@ func TestCreateCampaign_TrimsRegistrationURLForUTM(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "  https://events.example.org/reg  ", // surrounding whitespace
@@ -631,6 +637,7 @@ func TestCreateCampaign_RejectsWhitespaceEventNameBeforeAnyPOST(t *testing.T) {
 
 	for _, name := range []string{"", "   ", "\t\n "} {
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 			EventName:        name,
 			RegistrationURL:  "https://events.example.org/reg",
 			BudgetUSD:        100,
@@ -706,6 +713,7 @@ func TestCreateCampaign_TrimsEventNameInResourceNames(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "  KubeCon  ", // surrounding whitespace
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -755,6 +763,7 @@ func TestCreateCampaign_ProjectRequiredAndTrimmed(t *testing.T) {
 		srv := noPOSTServer(t)
 		c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 			EventName:        "KubeCon",
 			Project:          empty,
 			RegistrationURL:  "https://events.example.org/reg",
@@ -778,6 +787,7 @@ func TestCreateCampaign_ProjectRequiredAndTrimmed(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "  cncf  ",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -816,6 +826,7 @@ func TestCreateCampaign_SanitizesPipeInEventNameAndProject(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "Kube|Con",
 		Project:          "cn|cf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -867,6 +878,7 @@ func TestCreateCampaign_RejectsEmptyVariantContentBeforeAnyPOST(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 				EventName:        "KubeCon",
 				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
@@ -926,6 +938,7 @@ func TestCreateCampaign_RejectsBadScheduleBeforeAnyLookupEvenWhenResourcesExist(
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 				EventName:        "KubeCon",
 				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
@@ -983,6 +996,7 @@ func TestCreateCampaign_PartialFailureReportsDarkPostWhenCreativeFails(t *testin
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/kubecon",
@@ -1039,6 +1053,7 @@ func TestCreateCampaign_RejectsSubCentBudgetBeforeAnyPOST(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "E",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1105,6 +1120,7 @@ func TestCreateCampaign_RejectsNonNumericOrgBeforeAnyPOST(t *testing.T) {
 	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "E",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1183,6 +1199,7 @@ func TestCreateCampaign_RejectsMalformedGeoURNBeforeAnyPOST(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1205,6 +1222,7 @@ func TestCreateCampaign_RejectsOverlongNameBeforeAnyPOST(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        strings.Repeat("X", 300),
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1270,6 +1288,7 @@ func TestCreateCampaign_RejectsBelowMinimumBudgetBeforeAnyPOST(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 				EventName:        "E",
 				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
@@ -1311,6 +1330,7 @@ func TestCreateCampaign_AcceptsMinimumBudget(t *testing.T) {
 			defer srv.Close()
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 				EventName:        "E",
 				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
@@ -1350,6 +1370,7 @@ func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
 			defer srv.Close()
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 				EventName:        "E",
 				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
@@ -1381,6 +1402,7 @@ func TestCreateCampaign_BudgetMinimumChecksRoundedValue(t *testing.T) {
 			defer srv.Close()
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 				EventName:        "E",
 				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
@@ -1418,6 +1440,7 @@ func TestCreateCampaign_RejectsMalformedImageURNBeforeAnyPOST(t *testing.T) {
 			defer srv.Close()
 			c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 			_, err := c.CreateCampaign(context.Background(), CampaignInput{
+				ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 				EventName:        "KubeCon",
 				Project:          "tlf",
 				RegistrationURL:  "https://events.example.org/reg",
@@ -1566,6 +1589,7 @@ func TestCreateCampaign_SingleScheduleComputation(t *testing.T) {
 	wantStart, wantEnd := testScheduleMs(t, c)
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1654,6 +1678,7 @@ func TestCreateCampaign_AcceptsEmptySkillsGroupsWhenJobFunctionsPresent(t *testi
 	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1709,6 +1734,7 @@ func TestValidatePrerequisites_RejectsOnlyTrulyEmptyCriteria(t *testing.T) {
 // TestCreateCampaign_EmptyConfigRejectedIdenticallyForCustomAndCloudNative.)
 func TestCreateCampaign_CustomProfileRequiresCloudNativePresent(t *testing.T) {
 	base := CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1772,6 +1798,7 @@ func TestCreateCampaign_AcceptsBlankOnlyFacetsWhenJobFunctionsPresent(t *testing
 	c := NewClient(Credentials{AccessToken: "t"}, cfg, WithBaseURL(srv.URL), WithClock(fixedClock()))
 
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "E",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1848,6 +1875,7 @@ func TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -1879,6 +1907,7 @@ func TestCreateCampaign_SurfacesGroupWhenCampaignCreateFails(t *testing.T) {
 // malformed skill/group/employer facet is rejected before any POST.
 func TestCreateCampaign_RejectsMalformedFacetBeforeAnyPOST(t *testing.T) {
 	base := CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -2073,6 +2102,7 @@ func TestCreateCampaign_404OnSearchDoesNotCreate(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -2240,6 +2270,7 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -2285,6 +2316,7 @@ func TestCreateCampaign_StepWordingNeutralForFoundCampaign(t *testing.T) {
 // names — never one but not the other.
 func TestCreateCampaign_EmptyConfigHandledIdenticallyForCustomAndCloudNative(t *testing.T) {
 	base := CampaignInput{
+		ManualCPCBid:    testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:       "KubeCon",
 		Project:         "tlf",
 		RegistrationURL: "https://events.example.org/reg",
@@ -2361,6 +2393,7 @@ func TestCreateCampaign_RejectsEmptyAccessTokenBeforeAnyRequest(t *testing.T) {
 	for _, tok := range []string{"", "   ", "\t\n", " token ", "token\n", "\ttoken"} {
 		c := NewClient(Credentials{AccessToken: tok}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 		_, err := c.CreateCampaign(context.Background(), CampaignInput{
+			ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 			EventName:        "E",
 			Project:          "tlf",
 			RegistrationURL:  "https://example.com/reg",
@@ -2437,6 +2470,7 @@ func TestCreateCampaign_IdlessGroupMatchIssuesNoCreate(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -2633,6 +2667,7 @@ func TestCreateCampaign_TrailingEmptyGroupMatchIssuesNoCreate(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, err := c.CreateCampaign(context.Background(), CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/reg",
@@ -2820,6 +2855,7 @@ func TestFindMatch_NameDelimitersSurviveTheWire(t *testing.T) {
 // tests exercise the create-response paths rather than tripping an earlier guard.
 func baseValidInput() CampaignInput {
 	return CampaignInput{
+		ManualCPCBid:     testManualBid, // LFXV2-2665: automatic is refused for this objective
 		EventName:        "KubeCon",
 		Project:          "tlf",
 		RegistrationURL:  "https://events.example.org/kubecon",

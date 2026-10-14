@@ -15,6 +15,10 @@ import (
 	"testing"
 )
 
+// testManualBid is the manual bid the other LinkedIn create tests send: LinkedIn creates refuse
+// automatic bidding (LFXV2-2665), so every create that is meant to reach the API names one.
+const testManualBid = 1.0
+
 // biddingCreateServer answers a full CreateCampaign and captures the campaign POST body. posts
 // counts every mutating request, so a refusal can prove nothing was sent.
 func biddingCreateServer(t *testing.T) (*httptest.Server, func() map[string]any, func() int) {
@@ -95,21 +99,26 @@ func TestCreateCampaign_ManualBidSendsTheShapeTheBidLeverAccepts(t *testing.T) {
 	}
 }
 
-// TestCreateCampaign_AutomaticBidIsNotWhatTheBidLeverAccepts is the other side: the automatic
-// shape is auto-bidding, which the lever refuses.
-func TestCreateCampaign_AutomaticBidIsNotWhatTheBidLeverAccepts(t *testing.T) {
-	srv, body, _ := biddingCreateServer(t)
+// TestCreateCampaign_AutomaticBiddingIsRefusedBeforeAnyPost: the objective this client sends,
+// WEBSITE_CONVERSION, has one auto-bidding target, MAX_CONVERSION, which LinkedIn will not activate
+// without a conversion association this service never makes. So a create with no manual bid is
+// refused with nothing created — not even the campaign group — rather than leaving a campaign that
+// cannot go live.
+func TestCreateCampaign_AutomaticBiddingIsRefusedBeforeAnyPost(t *testing.T) {
+	srv, _, posts := biddingCreateServer(t)
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	if _, err := c.CreateCampaign(context.Background(), biddingCreateInput(0)); err != nil {
-		t.Fatalf("CreateCampaign: %v", err)
+	res, err := c.CreateCampaign(context.Background(), biddingCreateInput(0))
+	if !errors.Is(err, ErrAutomaticBiddingUnavailable) {
+		t.Fatalf("err = %v, want ErrAutomaticBiddingUnavailable", err)
 	}
-	b := body()
-	costType, target := b["costType"].(string), b["optimizationTargetType"].(string)
-	if costType != "CPM" || target != OptimizationTargetMaxConversion {
-		t.Fatalf("automatic campaign: costType=%q optimizationTargetType=%q, want CPM/MAX_CONVERSION", costType, target)
+	if res != nil || posts() != 0 {
+		t.Fatalf("result=%+v posts=%d, want nil and 0", res, posts())
 	}
-	if (&CampaignSettings{CostType: &costType, OptimizationTargetType: &target}).ManualCPC() {
-		t.Fatal("an automatic campaign must not read as a manual max CPC")
+	// And the bid lever keeps refusing an auto-bid campaign (one an operator switched, or one
+	// from before this change): MAX_CONVERSION/CPM is not a manual max CPC.
+	cpm, maxConv := "CPM", "MAX_CONVERSION"
+	if (&CampaignSettings{CostType: &cpm, OptimizationTargetType: &maxConv}).ManualCPC() {
+		t.Fatal("an auto-bid campaign must not read as a manual max CPC")
 	}
 }
 

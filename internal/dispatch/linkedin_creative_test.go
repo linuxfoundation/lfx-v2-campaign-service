@@ -99,7 +99,7 @@ func newLIImageDispatcher(api *liImageAPI, assets creativeAssetReader, reserver 
 
 // liImageConfig builds a linkedInConfig whose variants carry the given raw JSON fragments.
 func liImageConfig(variants ...string) json.RawMessage {
-	return json.RawMessage(`{"linkedInConfig":{
+	return json.RawMessage(`{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":1},
 		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
 		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
 		"targetingProfile":"cloud-native",

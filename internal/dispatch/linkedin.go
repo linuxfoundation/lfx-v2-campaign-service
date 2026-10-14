@@ -193,22 +193,34 @@ type linkedinConfig struct {
 	AdAccountID        string                            `json:"adAccountId"`
 	TargetingProfiles  []linkedin.TargetingProfileConfig `json:"targetingProfiles"`
 	EmployerExclusions []string                          `json:"employerExclusions"`
-	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
-	// the campaign is created with optimizationTargetType MAX_CONVERSION. See linkedinBidPlan.
+	// Bidding is the per-campaign bidding choice (bidding.go). On LinkedIn it must be MANUAL:
+	// omitted (the automatic default) and explicit automatic are both refused. See linkedinBidPlan.
 	Bidding *biddingConfig `json:"bidding"`
 }
 
-// linkedinBidPlan resolves linkedInConfig's bidding choice. Manual bidding creates the campaign
-// with costType CPC, optimizationTargetType NONE and unitCost = the bid — the setup the bid lever
-// reads as a manual max CPC — and every LinkedIn write here is in USD at whole cents, so a manual
-// amount must be a whole number of cents (linkedin.ValidateBidAmount, refused rather than rounded).
-// LinkedIn's bid floor depends on the audience and is not a fixed figure this service can check
-// ahead of it; its refusal fails the job.
+// linkedinBidPlan resolves linkedInConfig's bidding choice.
+//
+// AUTOMATIC IS REFUSED, including the default when `bidding` is omitted. Every LinkedIn campaign
+// here carries objectiveType WEBSITE_CONVERSION, whose only auto-bidding target is MAX_CONVERSION
+// (LinkedIn "Ad Budget Type Allowable Combinations", WEBSITE_CONVERSION row: NONE,
+// ENHANCED_CONVERSION, MAX_CONVERSION), and LinkedIn will not activate a MAX_CONVERSION campaign
+// without an associated conversion, which this service never creates. A refusal here is a 400 the
+// caller can act on; creating the campaign would leave one that cannot go live. See
+// linkedin.campaignBidding for the citations.
+//
+// Manual bidding creates the campaign with costType CPC, optimizationTargetType NONE and unitCost =
+// the bid — the setup the bid lever reads as a manual max CPC — and every LinkedIn write here is in
+// USD at whole cents, so a manual amount must be a whole number of cents (linkedin.ValidateBidAmount,
+// refused rather than rounded). LinkedIn's bid floor depends on the audience and is not a fixed
+// figure this service can check ahead of it; its refusal fails the job.
 func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
 	const key = "linkedInConfig"
 	plan, err := resolveBidding(key, cfg.Bidding)
-	if err != nil || !plan.manual() {
+	if err != nil {
 		return plan, err
+	}
+	if !plan.manual() {
+		return bidPlan{}, biddingInvalid(key, "automatic bidding is not available on LinkedIn: these campaigns use the Website conversions objective, whose only automated bidding (MAX_CONVERSION) cannot be activated without a conversion associated with the campaign, which this service does not do; send strategy \"manual\" with bidAmount (USD)")
 	}
 	if _, verr := linkedin.ValidateBidAmount(plan.amount); verr != nil {
 		reason, ok := linkedin.BidAmountReason(verr)
@@ -221,8 +233,8 @@ func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
 }
 
 // PreflightCreate refuses, before the create job exists, a linkedInConfig whose bidding cannot be
-// created as asked. It never calls LinkedIn, so every other outcome is ErrPreflightNotApplicable;
-// a config that does not decode is left to Dispatch.
+// created as asked — automatic (explicit or by omission) included. It never calls LinkedIn, so every
+// other outcome is ErrPreflightNotApplicable; a config that does not decode is left to Dispatch.
 func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	var cfg linkedinConfig
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
