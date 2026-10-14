@@ -103,12 +103,23 @@ name's LAST occurrence: the last `app.extraEnv` entry wins, an `app.environment`
 `value` when the key is present and its `valueFrom` otherwise, and a `valueFrom` on the effective
 entry (unreadable at render time) counts as on (`TestDeploymentRefusesXStatsJobsOnMultipleReplicas`).
 
-`REDDIT_METRICS_ENABLED` has the same render-time guard, judged on the effective value exactly as
-above (`TestDeploymentRefusesRedditReportsOnMultipleReplicas`): the Reddit reporting budget
-(`internal/platform/reddit/report_budget.go`, 45 of the ad account's 60 report requests a minute)
-is a per-process ledger, so N replicas could send N × 45. Unlike the X flag there is NO runtime
-lease behind it — the chart refusal is the only thing holding the quota account-wide until the
-ledger is shared, and it cannot see an out-of-band scale or an external HPA.
+A second render-time guard refuses more than one replica UNCONDITIONALLY — `replicaCount` > 1 or
+`autoscaling.enabled` with `maxReplicas` > 1, whatever any flag says
+(`TestDeploymentRefusesRedditReportsOnMultipleReplicas`). The Reddit reporting budget
+(`internal/platform/reddit/report_budget.go`, 45 of an ad account's 60 report requests a minute)
+is a per-process ledger, so N replicas could send N × 45. It is not keyed on
+`REDDIT_METRICS_ENABLED` because that flag gates only the Reddit metrics and audience reads: the
+Reddit account monitor (`connection-reddit-ads/account-monitor` →
+`RedditDispatcher.ListAccountCampaignMetrics` → `reddit.Client.ListAccountCampaigns`) is ungated,
+always routed, and spends the same reports quota. (X differs: `TWITTER_METRICS_ENABLED` gates the
+X monitor too, and a runtime lease confines its stats jobs to one pod.) Gating the monitor behind
+the flag instead was rejected: it is a shipped, flag-free feature (with its own alert rules, `internal/service/rules/monitor_reddit.go`),
+and gating it would turn its working answer into a 400. The default deploy is unaffected — the chart ships
+`replicaCount: 1` and no HPA, and the Recreate rollout's migration ordering
+(`TestDeploymentUsesRecreateStrategy`) already rests on one replica. There is no runtime lease
+behind this guard, so it cannot see an out-of-band scale or an external HPA; a shared ledger is
+what would lift it. Because it refuses every multi-replica render, the X guard's test now judges
+each case by WHICH guard's message appears.
 
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while

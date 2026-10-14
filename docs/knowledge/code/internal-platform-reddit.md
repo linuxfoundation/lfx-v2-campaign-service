@@ -750,4 +750,12 @@ ledger of their own; the package's tests run on an unlimited default ledger
 (`report_budget_main_test.go`) and `report_budget_test.go` exercises the real limits
 (`TestReportBudgets_UnsentAttemptsSpendNothing`: cancelled before the take, cancelled during a
 wait, a cancelled client read and a failing token refresh all leave `used` at zero). The ledger is
-per process, so the chart refuses `REDDIT_METRICS_ENABLED` with more than one replica.
+per process and the ungated account monitor spends it too, so the chart refuses more than one
+replica unconditionally (see [Deployment](../kubernetes/deployment.md)).
+
+`acquireReportSlot` returns a release func (`ReportBudgets.reserve`; `acquire` is `reserve`
+without it). The request loop calls it on exactly one branch: a `Do` error that
+`isPreSendDialError` proves was never sent, so a DNS or connect outage does not burn the budget.
+Every other `Do` error may have been sent and keeps its slot. Release removes exactly the
+recorded slot, once (`TestReportBudgets_PreSendDialFailureReleasesTheSlot`,
+`TestReportBudgets_ReleaseIsExactAndIdempotent`).

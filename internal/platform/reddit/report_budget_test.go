@@ -297,3 +297,37 @@ func TestReportBudgets_UnsentAttemptsSpendNothing(t *testing.T) {
 		}
 	})
 }
+
+// A pre-send dial failure (here: connection refused) is proven unsent, so its slot is handed back;
+// an outage must not burn the account's reporting budget.
+func TestReportBudgets_PreSendDialFailureReleasesTheSlot(t *testing.T) {
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadURL := dead.URL
+	dead.Close() // nothing listens there now: every dial is refused
+	b := NewReportBudgets(time.Minute, 100, 100)
+	// One report request (the metrics read), so no sibling attempt can be cancelled mid-send.
+	_, err := budgetClient(t, deadURL, b).GetCampaignMetrics(context.Background(), "t3_a", model.MetricsWindowToday)
+	if err == nil || !isPreSendDialError(err) {
+		t.Fatalf("error = %v, want a pre-send dial failure", err)
+	}
+	if all, _ := b.used("t2_test"); all != 0 {
+		t.Errorf("ledger = %d after a refused connection, want 0", all)
+	}
+}
+
+// release hands back exactly the slot it was issued for, once.
+func TestReportBudgets_ReleaseIsExactAndIdempotent(t *testing.T) {
+	b, _ := fakeLedger(5, 5)
+	if err := b.acquire(context.Background(), "t2_a", true); err != nil {
+		t.Fatal(err)
+	}
+	release, err := b.reserve(context.Background(), "t2_a", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	release()
+	if all, ins := b.used("t2_a"); all != 1 || ins != 1 {
+		t.Errorf("used = %d/%d, want 1/1 — only the released slot is returned, and only once", all, ins)
+	}
+}

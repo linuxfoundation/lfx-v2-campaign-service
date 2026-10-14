@@ -1254,7 +1254,8 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 		// the send, so an attempt that fails before it could be sent spends no slot. Nothing has
 		// been sent when this fails. Taken before the per-attempt deadline starts, so a wait for
 		// a slot does not eat into the attempt's own timeout.
-		if err := c.acquireReportSlot(ctx, rawPath); err != nil {
+		releaseSlot, err := c.acquireReportSlot(ctx, rawPath)
+		if err != nil {
 			return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 		}
 		// Bound EACH attempt with a per-attempt context deadline, not just the
@@ -1276,6 +1277,10 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 			// / may have been sent: wrap it as transportError so callers treat the
 			// create as "may exist".
 			if isPreSendDialError(err) {
+				// Proven NOT sent, so Reddit counted nothing: hand the reporting slot back, or
+				// a DNS/connect outage would burn the account's budget on requests that never
+				// left. Every other Do error may have been sent and keeps its slot.
+				releaseSlot()
 				return nil, fmt.Errorf("reddit API %s %s: %w", method, path, err)
 			}
 			return nil, &transportError{Method: method, Path: path, Err: err}

@@ -62,8 +62,11 @@ blocks are Reddit's own.
   actually sent spends a slot: the client refreshes the token and builds the request FIRST and takes
   the slot immediately before the send, and `acquire` refuses a done context before every take
   (before the first and after each wait), so a failed refresh or a cancelled caller costs nothing.
-  The ledger is PER PROCESS: with several replicas the account-wide figure multiplies, so the chart
-  refuses to render `REDDIT_METRICS_ENABLED` with more than one replica (see
+  A pre-send dial failure (DNS, connection refused, no route — `isPreSendDialError`) is proven
+  unsent, so the client hands its slot back (`ReportBudgets.reserve`'s release); any other send
+  error may have reached Reddit and keeps its slot. The ledger is PER PROCESS: with several
+  replicas the account-wide figure multiplies, and the always-on Reddit account monitor spends it
+  too, so the chart refuses more than one replica whatever `REDDIT_METRICS_ENABLED` says (see
   [Deployment](../kubernetes/deployment.md)); a shared ledger is what would lift that.
 - **Identical concurrent reads share one upstream read** (`internal/dispatch/reddit_report_guard.go`):
   keyed by account, window, UTC day and the sorted campaign set, single-flight with leader-context
@@ -101,7 +104,7 @@ blocks are Reddit's own.
 | Service | `internal/service/connection_reddit_audience.go` (`GetRedditAdsAudience`, window subset, `classifyInsightsErrorFor`); `Orchestrator.ReadRedditAudienceInsights` + `RedditAudienceReader` in `orchestrator.go` |
 | Dispatch | `internal/dispatch/reddit_audience.go` (`AudienceEnabled`, `ReadRedditAudienceInsights`, `redditScopeForAccount`) |
 | Platform | `internal/platform/reddit/audience.go` (`GetAudienceInsights`) |
-| Chart | `httproute.yaml` `(meta-ads|reddit-ads|twitter-ads)/audience`; `ruleset.yaml` entry; `parity_test.go` rows |
+| Chart | `httproute.yaml` `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience` (the whole routed audience family; this read is the `reddit-ads` member); `ruleset.yaml` entry; `parity_test.go` rows |
 
 ## Not verified
 

@@ -43,3 +43,11 @@ audience reads. See [Reddit Audience Insights](../architecture/audience-insights
   either env input or a secret) with `replicaCount` > 1 or autoscaling past one, the X guard's twin
   (`TestDeploymentRefusesRedditReportsOnMultipleReplicas`). Also: the API catalog and chart now
   list the Reddit and LinkedIn audience routes together after the merge of `main`.
+- **PR #306 review, third round.** (1) The Reddit replica guard is now UNCONDITIONAL: the Reddit
+  account monitor is ungated, always routed and spends the same per-process reports ledger, so
+  `REDDIT_METRICS_ENABLED` did not cover all the traffic. Gating the monitor instead was rejected
+  (a shipped, flag-free feature would turn into a 400). The default deploy (`replicaCount: 1`, no
+  HPA, Recreate) is unaffected. The X guard's test now checks which guard refused. (2) A pre-send
+  dial failure now releases its reporting slot (`ReportBudgets.reserve` returns a release func);
+  any other send error keeps it. (3) The Reddit concept's chart row lists the whole routed family
+  `(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`, as does the LinkedIn concept's.

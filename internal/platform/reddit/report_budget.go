@@ -109,29 +109,66 @@ func newReportBudgets(window time.Duration, total, insights int, now func() time
 // again after every wait — because the caller would not send the attempt, and a slot spent on an
 // attempt that is never sent is quota the account's other readers lose for a full window.
 func (b *ReportBudgets) acquire(ctx context.Context, accountID string, insights bool) error {
+	_, err := b.reserve(ctx, accountID, insights)
+	return err
+}
+
+// reserve is acquire that also returns a release func for the slot it took. A caller that
+// proves the attempt was NOT sent after taking the slot — a pre-send dial failure: DNS, connection
+// refused, no route — calls release to hand the slot back; without it an outage would burn the
+// account's budget on requests that never reached Reddit. release is idempotent and is a no-op once
+// the slot has aged out of the window. It must NOT be called for an attempt that may have been
+// sent: Reddit counts those.
+func (b *ReportBudgets) reserve(ctx context.Context, accountID string, insights bool) (release func(), err error) {
 	if b.total <= 0 || (insights && b.insights <= 0) {
-		return ErrReportBudgetExhausted // a slot can never free up
+		return nil, ErrReportBudgetExhausted // a slot can never free up
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("%w: %w", ErrReportBudgetExhausted, err)
+			return nil, fmt.Errorf("%w: %w", ErrReportBudgetExhausted, err)
 		}
-		wait, ok := b.tryTake(accountID, insights)
+		at, wait, ok := b.tryTake(accountID, insights)
 		if ok {
-			return nil
+			var once sync.Once
+			return func() { once.Do(func() { b.release(accountID, insights, at) }) }, nil
 		}
 		if dl, has := ctx.Deadline(); has && b.now().Add(wait).After(dl) {
-			return ErrReportBudgetExhausted
+			return nil, ErrReportBudgetExhausted
 		}
 		if err := b.sleep(ctx, wait); err != nil {
-			return fmt.Errorf("%w: %w", ErrReportBudgetExhausted, err)
+			return nil, fmt.Errorf("%w: %w", ErrReportBudgetExhausted, err)
 		}
 	}
 }
 
-// tryTake records an attempt if both applicable limits have room, or reports how long until the
-// earliest blocking slot expires.
-func (b *ReportBudgets) tryTake(accountID string, insights bool) (time.Duration, bool) {
+// release removes one slot recorded at `at` from the account's ledger (and from its insight
+// sub-ledger for an insight attempt). Slots recorded at the same instant are interchangeable, so
+// removing any one of them is exact.
+func (b *ReportBudgets) release(accountID string, insights bool, at time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	l := b.byAccount[accountID]
+	if l == nil {
+		return
+	}
+	l.all = removeOne(l.all, at)
+	if insights {
+		l.insights = removeOne(l.insights, at)
+	}
+}
+
+func removeOne(ts []time.Time, at time.Time) []time.Time {
+	for i, t := range ts {
+		if t.Equal(at) {
+			return append(ts[:i:i], ts[i+1:]...)
+		}
+	}
+	return ts
+}
+
+// tryTake records an attempt if both applicable limits have room (returning the time it recorded),
+// or reports how long until the earliest blocking slot expires.
+func (b *ReportBudgets) tryTake(accountID string, insights bool) (time.Time, time.Duration, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
@@ -156,13 +193,13 @@ func (b *ReportBudgets) tryTake(accountID string, insights bool) (time.Duration,
 				wait = w
 			}
 		}
-		return wait, false
+		return time.Time{}, wait, false
 	}
 	l.all = append(l.all, now)
 	if insights {
 		l.insights = append(l.insights, now)
 	}
-	return 0, true
+	return now, 0, true
 }
 
 // used reports how many attempts the account has inside the window (all, insights). Tests only.
@@ -195,16 +232,16 @@ func WithReportBudgets(b *ReportBudgets) Option {
 	return func(c *Client) { c.reportBudgets = b }
 }
 
-// acquireReportSlot takes a budget slot when rawPath is the reporting operation; any other path is
-// unbudgeted.
-func (c *Client) acquireReportSlot(ctx context.Context, rawPath string) error {
+// acquireReportSlot takes a budget slot when rawPath is the reporting operation, returning the
+// slot's release func (see reserve); any other path is unbudgeted and gets a no-op release.
+func (c *Client) acquireReportSlot(ctx context.Context, rawPath string) (release func(), err error) {
 	m := reportPathRE.FindStringSubmatch(rawPath)
 	if m == nil {
-		return nil
+		return func() {}, nil
 	}
 	b := c.reportBudgets
 	if b == nil {
 		b = defaultReportBudgets
 	}
-	return b.acquire(ctx, m[1], isInsightsReports(ctx))
+	return b.reserve(ctx, m[1], isInsightsReports(ctx))
 }
