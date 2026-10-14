@@ -5133,7 +5133,7 @@ paths:
                 "200":
                     description: OK response.
                     schema:
-                        $ref: '#/definitions/AccountMonitor'
+                        $ref: '#/definitions/GoogleAdsAccountMonitorResponseBody'
                         required:
                             - account_id
                             - days
@@ -6563,7 +6563,7 @@ paths:
                 "200":
                     description: OK response.
                     schema:
-                        $ref: '#/definitions/AccountMonitor'
+                        $ref: '#/definitions/LinkedinAdsAccountMonitorResponseBody'
                         required:
                             - account_id
                             - days
@@ -7200,7 +7200,7 @@ paths:
                 "200":
                     description: OK response.
                     schema:
-                        $ref: '#/definitions/AccountMonitor'
+                        $ref: '#/definitions/MetaAdsAccountMonitorResponseBody'
                         required:
                             - account_id
                             - days
@@ -7837,7 +7837,7 @@ paths:
                 "200":
                     description: OK response.
                     schema:
-                        $ref: '#/definitions/AccountMonitor'
+                        $ref: '#/definitions/MicrosoftAdsAccountMonitorResponseBody'
                         required:
                             - account_id
                             - days
@@ -8474,7 +8474,7 @@ paths:
                 "200":
                     description: OK response.
                     schema:
-                        $ref: '#/definitions/AccountMonitor'
+                        $ref: '#/definitions/RedditAdsAccountMonitorResponseBody'
                         required:
                             - account_id
                             - days
@@ -9111,7 +9111,7 @@ paths:
                 "200":
                     description: OK response.
                     schema:
-                        $ref: '#/definitions/AccountMonitor'
+                        $ref: '#/definitions/TwitterAdsAccountMonitorResponseBody'
                         required:
                             - account_id
                             - days
@@ -10784,156 +10784,6 @@ definitions:
             label: Praesentium ut et sit expedita.
         required:
             - id
-    AccountMonitor:
-        title: AccountMonitor
-        type: object
-        properties:
-            account_id:
-                type: string
-                description: The account this read covers, echoed back from the request.
-                example: "8666746580"
-            action_items:
-                type: array
-                items:
-                    $ref: '#/definitions/AccountMonitorActionItem'
-                description: The rule engine's findings across the account's campaigns.
-                example:
-                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
-                      campaign_id: "24183781329"
-                      campaign_name: KubeCon NA 2026 - Search
-                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
-                      priority: MED
-            campaigns:
-                type: array
-                items:
-                    $ref: '#/definitions/AccountMonitorCampaign'
-                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
-                example:
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: underspending
-                      pacing_pct: 42
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 1890
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 0
-                    - budget_day: 200
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
-                      clicks: 8310
-                      conversions: 200
-                      ctr: 6.11
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 136000
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Brand
-                      pacing_label: normal
-                      pacing_pct: 70
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781330"
-                      spend: 4200
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 0
-            days:
-                type: integer
-                description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
-                example: 30
-                format: int64
-            metrics_as_of:
-                type: string
-                description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
-                example: "2026-10-05T14:30:00Z"
-                format: date-time
-            metrics_pending:
-                type: boolean
-                description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
-                example: false
-            metrics_window_end:
-                type: string
-                description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
-                example: "2026-10-05"
-                format: date
-            metrics_window_start:
-                type: string
-                description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
-                example: "2026-09-06"
-                format: date
-            totals:
-                $ref: '#/definitions/AccountMonitorTotals'
-        example:
-            account_id: "8666746580"
-            action_items:
-                - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
-                  campaign_id: "24183781329"
-                  campaign_name: KubeCon NA 2026 - Search
-                  issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
-                  priority: MED
-            campaigns:
-                - budget_day: 150
-                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                  clicks: 3110
-                  conversions: 12.5
-                  ctr: 6.45
-                  end_date: "2026-11-30"
-                  fetch_failed: false
-                  impressions: 48200
-                  is_search_channel: true
-                  name: KubeCon NA 2026 - Search
-                  pacing_label: underspending
-                  pacing_pct: 42
-                  pacing_unknown: false
-                  platform_campaign_id: "24183781329"
-                  spend: 1890
-                  start_date: "2026-08-01"
-                  status: ENABLED
-                  total_budget: 0
-                - budget_day: 200
-                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
-                  clicks: 8310
-                  conversions: 200
-                  ctr: 6.11
-                  end_date: "2026-11-30"
-                  fetch_failed: false
-                  impressions: 136000
-                  is_search_channel: true
-                  name: KubeCon NA 2026 - Brand
-                  pacing_label: normal
-                  pacing_pct: 70
-                  pacing_unknown: false
-                  platform_campaign_id: "24183781330"
-                  spend: 4200
-                  start_date: "2026-08-01"
-                  status: ENABLED
-                  total_budget: 0
-            days: 30
-            metrics_as_of: "2026-10-05T14:30:00Z"
-            metrics_pending: false
-            metrics_window_end: "2026-10-05"
-            metrics_window_start: "2026-09-06"
-            totals:
-                campaign_count: 2
-                clicks: 11420
-                conversions: 212.5
-                impressions: 184200
-                spend: 6090
-                unmeasured_campaigns: 0
-        required:
-            - account_id
-            - days
-            - campaigns
-            - action_items
-            - totals
     AccountMonitorActionItem:
         title: AccountMonitorActionItem
         type: object
@@ -11065,25 +10915,6 @@ definitions:
                 description: Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.
                 example: 0
                 format: double
-        example:
-            budget_day: 150
-            campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-            clicks: 3110
-            conversions: 12.5
-            ctr: 6.45
-            end_date: "2026-11-30"
-            fetch_failed: false
-            impressions: 48200
-            is_search_channel: true
-            name: KubeCon NA 2026 - Search
-            pacing_label: underspending
-            pacing_pct: 42
-            pacing_unknown: false
-            platform_campaign_id: "24183781329"
-            spend: 1890
-            start_date: "2026-08-01"
-            status: ENABLED
-            total_budget: 0
         required:
             - platform_campaign_id
             - name
@@ -13790,6 +13621,60 @@ definitions:
             url: Quas dolorem molestiae eveniet suscipit in dicta.
         required:
             - extracted_from
+    GoogleAdsAccountMonitor:
+        title: GoogleAdsAccountMonitor
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The account this read covers, echoed back from the request.
+                example: "8666746580"
+            action_items:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorActionItem'
+                description: The rule engine's findings across the account's campaigns.
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorCampaign'
+                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            days:
+                type: integer
+                description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                example: 30
+                format: int64
+            metrics_as_of:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                example: false
+            metrics_window_end:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                example: "2026-10-05"
+                format: date
+            metrics_window_start:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                example: "2026-09-06"
+                format: date
+            totals:
+                $ref: '#/definitions/AccountMonitorTotals'
+        description: The Google Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Google Ads's own shape.
+        required:
+            - account_id
+            - days
+            - campaigns
+            - action_items
+            - totals
+    GoogleAdsAccountMonitorResponseBody:
+        title: GoogleAdsAccountMonitorResponseBody
+        $ref: '#/definitions/GoogleAdsAccountMonitor'
     GoogleAdsAudience:
         title: GoogleAdsAudience
         type: object
@@ -16728,6 +16613,60 @@ definitions:
                 label: Est corporis libero quis eum laudantium.
         required:
             - config
+    LinkedinAdsAccountMonitor:
+        title: LinkedinAdsAccountMonitor
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The account this read covers, echoed back from the request.
+                example: "8666746580"
+            action_items:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorActionItem'
+                description: The rule engine's findings across the account's campaigns.
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorCampaign'
+                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            days:
+                type: integer
+                description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                example: 30
+                format: int64
+            metrics_as_of:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                example: false
+            metrics_window_end:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                example: "2026-10-05"
+                format: date
+            metrics_window_start:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                example: "2026-09-06"
+                format: date
+            totals:
+                $ref: '#/definitions/AccountMonitorTotals'
+        description: The LinkedIn Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in LinkedIn Ads's own shape.
+        required:
+            - account_id
+            - days
+            - campaigns
+            - action_items
+            - totals
+    LinkedinAdsAccountMonitorResponseBody:
+        title: LinkedinAdsAccountMonitorResponseBody
+        $ref: '#/definitions/LinkedinAdsAccountMonitor'
     LinkedinAdsAudience:
         title: LinkedinAdsAudience
         type: object
@@ -17251,6 +17190,60 @@ definitions:
             - read_at
             - ad_sets
             - ad_set_count
+    MetaAdsAccountMonitor:
+        title: MetaAdsAccountMonitor
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The account this read covers, echoed back from the request.
+                example: "8666746580"
+            action_items:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorActionItem'
+                description: The rule engine's findings across the account's campaigns.
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorCampaign'
+                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            days:
+                type: integer
+                description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                example: 30
+                format: int64
+            metrics_as_of:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                example: false
+            metrics_window_end:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                example: "2026-10-05"
+                format: date
+            metrics_window_start:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                example: "2026-09-06"
+                format: date
+            totals:
+                $ref: '#/definitions/AccountMonitorTotals'
+        description: The Meta Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Meta Ads's own shape.
+        required:
+            - account_id
+            - days
+            - campaigns
+            - action_items
+            - totals
+    MetaAdsAccountMonitorResponseBody:
+        title: MetaAdsAccountMonitorResponseBody
+        $ref: '#/definitions/MetaAdsAccountMonitor'
     MetaAdsAudience:
         title: MetaAdsAudience
         type: object
@@ -17494,6 +17487,60 @@ definitions:
         required:
             - access_token
             - app_secret
+    MicrosoftAdsAccountMonitor:
+        title: MicrosoftAdsAccountMonitor
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The account this read covers, echoed back from the request.
+                example: "8666746580"
+            action_items:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorActionItem'
+                description: The rule engine's findings across the account's campaigns.
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorCampaign'
+                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            days:
+                type: integer
+                description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                example: 30
+                format: int64
+            metrics_as_of:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                example: false
+            metrics_window_end:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                example: "2026-10-05"
+                format: date
+            metrics_window_start:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                example: "2026-09-06"
+                format: date
+            totals:
+                $ref: '#/definitions/AccountMonitorTotals'
+        description: The Microsoft Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Microsoft Ads's own shape.
+        required:
+            - account_id
+            - days
+            - campaigns
+            - action_items
+            - totals
+    MicrosoftAdsAccountMonitorResponseBody:
+        title: MicrosoftAdsAccountMonitorResponseBody
+        $ref: '#/definitions/MicrosoftAdsAccountMonitor'
     MicrosoftAdsAudience:
         title: MicrosoftAdsAudience
         type: object
@@ -18153,6 +18200,60 @@ definitions:
         required:
             - code
             - message
+    RedditAdsAccountMonitor:
+        title: RedditAdsAccountMonitor
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The account this read covers, echoed back from the request.
+                example: "8666746580"
+            action_items:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorActionItem'
+                description: The rule engine's findings across the account's campaigns.
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorCampaign'
+                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            days:
+                type: integer
+                description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                example: 30
+                format: int64
+            metrics_as_of:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                example: false
+            metrics_window_end:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                example: "2026-10-05"
+                format: date
+            metrics_window_start:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                example: "2026-09-06"
+                format: date
+            totals:
+                $ref: '#/definitions/AccountMonitorTotals'
+        description: The Reddit Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Reddit Ads's own shape.
+        required:
+            - account_id
+            - days
+            - campaigns
+            - action_items
+            - totals
+    RedditAdsAccountMonitorResponseBody:
+        title: RedditAdsAccountMonitorResponseBody
+        $ref: '#/definitions/RedditAdsAccountMonitor'
     RedditAdsAudience:
         title: RedditAdsAudience
         type: object
@@ -18379,6 +18480,60 @@ definitions:
             - client_id
             - client_secret
             - refresh_token
+    TwitterAdsAccountMonitor:
+        title: TwitterAdsAccountMonitor
+        type: object
+        properties:
+            account_id:
+                type: string
+                description: The account this read covers, echoed back from the request.
+                example: "8666746580"
+            action_items:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorActionItem'
+                description: The rule engine's findings across the account's campaigns.
+            campaigns:
+                type: array
+                items:
+                    $ref: '#/definitions/AccountMonitorCampaign'
+                description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            days:
+                type: integer
+                description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                example: 30
+                format: int64
+            metrics_as_of:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                example: "2026-10-05T14:30:00Z"
+                format: date-time
+            metrics_pending:
+                type: boolean
+                description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                example: false
+            metrics_window_end:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                example: "2026-10-05"
+                format: date
+            metrics_window_start:
+                type: string
+                description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                example: "2026-09-06"
+                format: date
+            totals:
+                $ref: '#/definitions/AccountMonitorTotals'
+        description: The X Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in X Ads's own shape.
+        required:
+            - account_id
+            - days
+            - campaigns
+            - action_items
+            - totals
+    TwitterAdsAccountMonitorResponseBody:
+        title: TwitterAdsAccountMonitorResponseBody
+        $ref: '#/definitions/TwitterAdsAccountMonitor'
     TwitterAdsAudience:
         title: TwitterAdsAudience
         type: object

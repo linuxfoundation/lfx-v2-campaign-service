@@ -43,3 +43,17 @@ evaluator emits for these rows, in the evaluator's own wording, naming the under
 `EvaluateGoogleMonitor` (which labels through `StandardLadder`), requires `pacing_pct`,
 `pacing_label` and `pacing_unknown` to match, and requires `action_items` to equal the
 evaluator's findings. A row that is not Google-shaped fails the test instead of going unchecked.
+
+Follow-up (#319, per-platform examples): the one `AccountMonitor` example was Google-shaped
+(`campaign_url`, `is_search_channel: true`, `ENABLED`, and flight dates Google never reports) and
+was reused by all six monitor operations, so five of them advertised responses their handlers
+cannot return; the example test then chose the Google evaluator because it saw `campaign_url`, not
+because of the endpoint. Each monitor method now has its own 200 body type, which `Extend`s
+`AccountMonitor` (the wire tags are unchanged and the service still returns the shared result).
+Each body type carries an example in its platform's shape, with that platform's status literal and
+fields, and pacing and findings from its own evaluator; Microsoft and X also get their report-window
+fields. `AccountMonitor` and `AccountMonitorCampaign` no longer carry a whole example. The new
+`TestPublishedAccountMonitorExamplesMatchTheirOperation` maps each operation id to its evaluator and
+fails on an unmapped one or on an account-monitor example not attached to an operation. Against the
+old examples it failed on every non-Google operation, on Google's flight dates, and on the shared
+OpenAPI 2 definition. See `architecture/account-monitor-endpoints.md`.

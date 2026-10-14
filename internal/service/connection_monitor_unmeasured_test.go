@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -16,7 +15,6 @@ import (
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
-	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 )
 
 // unmeasuredLogMessage is the one summary line reportUnmeasuredRows writes per request.
@@ -283,8 +281,8 @@ func TestMonitorMicrosoftAdsAccount_DispatcherDecodeClassIsWarned(t *testing.T) 
 // counts are a subset of the rows campaign_count counts. Where the totals sit beside the campaigns
 // array they sum (every account-monitor response example), campaign_count must also equal that
 // array's length and unmeasured_campaigns the number of its rows with fetch_failed=true: bounds
-// alone let the examples publish counts that no row beside them backs. Each row's pacing is also
-// recomputed with the monitor's own evaluator (see checkExamplePacingAgainstEvaluator).
+// alone let the examples publish counts that no row beside them backs. Whether each example is a
+// response its own OPERATION could return is TestPublishedAccountMonitorExamplesMatchTheirOperation.
 func TestPublishedAccountMonitorTotalsExamplesArePossible(t *testing.T) {
 	for _, spec := range hubspotMonitorSpecs {
 		t.Run(spec, func(t *testing.T) {
@@ -299,7 +297,6 @@ func TestPublishedAccountMonitorTotalsExamplesArePossible(t *testing.T) {
 						if rows, ok := n["campaigns"].([]any); ok {
 							enclosed++
 							checkUnmeasuredAgainstCampaigns(t, path, totals, rows)
-							checkExamplePacingAgainstEvaluator(t, path, n["days"], rows, n["action_items"])
 						}
 					}
 					cc, hasCC := n["campaign_count"].(float64)
@@ -320,7 +317,10 @@ func TestPublishedAccountMonitorTotalsExamplesArePossible(t *testing.T) {
 			if seen == 0 {
 				t.Fatalf("no account-monitor totals example found in %s; the scan is vacuous", spec)
 			}
-			if enclosed == 0 {
+			// OpenAPI 2 carries no per-operation response example, and the shared schemas carry
+			// no account-level one (see TestPublishedAccountMonitorExamplesMatchTheirOperation),
+			// so only the OpenAPI 3 documents have totals beside campaigns.
+			if enclosed == 0 && strings.HasSuffix(spec, "openapi3.json") {
 				t.Fatalf("no account-monitor example with totals beside campaigns found in %s; the scan is vacuous", spec)
 			}
 		})
@@ -350,83 +350,5 @@ func checkUnmeasuredAgainstCampaigns(t *testing.T, path string, totals map[strin
 	if u != float64(failed) {
 		t.Errorf("%s: totals.unmeasured_campaigns = %v, but %d of the %d campaign rows beside it have fetch_failed=true",
 			path, u, failed, len(rows))
-	}
-}
-
-// checkExamplePacingAgainstEvaluator recomputes every example campaign row's pacing with the
-// evaluator the service runs for that row's shape, over the example's own days, and requires
-// pacing_pct, pacing_label and pacing_unknown to be what that evaluator produces — a published
-// row the service could never emit is as misleading as an inconsistent count. Only the Google
-// shape (a row carrying campaign_url) is modelled; any other shape fails rather than passing
-// unchecked, so a future example on another platform's shape has to bring its evaluator here.
-// The example's action_items must likewise be exactly the evaluator's findings for those rows.
-func checkExamplePacingAgainstEvaluator(t *testing.T, path string, daysV any, rows []any, itemsV any) {
-	t.Helper()
-	days, ok := daysV.(float64)
-	if !ok {
-		t.Errorf("%s: account-monitor example has no days to pace over", path)
-		return
-	}
-	num := func(r map[string]any, k string) float64 { f, _ := r[k].(float64); return f }
-	var all []model.AccountCampaignMetrics
-	for i, r := range rows {
-		row, ok := r.(map[string]any)
-		if !ok {
-			t.Errorf("%s: campaigns[%d] is not an object", path, i)
-			continue
-		}
-		if _, google := row["campaign_url"]; !google {
-			t.Errorf("%s: campaigns[%d] is not Google-shaped (no campaign_url); add its platform's evaluator to this check", path, i)
-			continue
-		}
-		m := model.AccountCampaignMetrics{
-			PlatformCampaignID: fmt.Sprint(row["platform_campaign_id"]),
-			Name:               fmt.Sprint(row["name"]),
-			Status:             fmt.Sprint(row["status"]),
-			Spend:              num(row, "spend"),
-			Impressions:        int64(num(row, "impressions")),
-			Clicks:             int64(num(row, "clicks")),
-			Ctr:                num(row, "ctr"),
-			BudgetDay:          num(row, "budget_day"),
-			TotalBudget:        num(row, "total_budget"),
-			StartDate:          fmt.Sprint(row["start_date"]),
-			EndDate:            fmt.Sprint(row["end_date"]),
-			IsSearchChannel:    row["is_search_channel"] == true,
-			FetchFailed:        row["fetch_failed"] == true,
-		}
-		if c, ok := row["conversions"].(float64); ok {
-			m.Conversions = &c
-		}
-		all = append(all, m)
-		got, _ := rules.EvaluateGoogleMonitor([]model.AccountCampaignMetrics{m}, int(days))
-		if len(got) != 1 {
-			t.Errorf("%s: campaigns[%d] (%v) is dropped by the Google evaluator", path, i, row["name"])
-			continue
-		}
-		want := got[0]
-		if num(row, "pacing_pct") != want.PacingPct || row["pacing_label"] != string(want.PacingLabel) ||
-			row["pacing_unknown"] != want.Metrics.PacingUnknown {
-			t.Errorf("%s: campaigns[%d] (%v) publishes pacing_pct=%v label=%v pacing_unknown=%v, but the Google evaluator over days=%v gives %v/%s/%v",
-				path, i, row["name"], row["pacing_pct"], row["pacing_label"], row["pacing_unknown"],
-				days, want.PacingPct, want.PacingLabel, want.Metrics.PacingUnknown)
-		}
-	}
-	if len(all) != len(rows) {
-		return
-	}
-	_, wantItems := rules.EvaluateGoogleMonitor(all, int(days))
-	items, _ := itemsV.([]any)
-	if len(items) != len(wantItems) {
-		t.Errorf("%s: action_items example has %d items, but the Google evaluator gives %d for these rows: %+v",
-			path, len(items), len(wantItems), wantItems)
-		return
-	}
-	for i, it := range items {
-		got, _ := it.(map[string]any)
-		w := wantItems[i]
-		if got["campaign_id"] != w.CampaignID || got["campaign_name"] != w.CampaignName ||
-			got["priority"] != string(w.Priority) || got["issue"] != w.Issue || got["action"] != w.Action {
-			t.Errorf("%s: action_items[%d] = %v, but the Google evaluator gives %+v", path, i, got, w)
-		}
 	}
 }

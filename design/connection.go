@@ -1185,6 +1185,11 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 	Required("platform_campaign_id", "name", "status", "spend", "impressions", "clicks", "ctr",
 		"budget_day", "total_budget", "start_date", "end_date", "pacing_unknown",
 		"is_search_channel", "fetch_failed", "pacing_pct", "pacing_label")
+	// No whole-row example: composed from the attribute examples above it would pair Google's
+	// campaign_url with flight dates Google never reports — a row no platform returns. Each
+	// monitor method's response example shows rows in its own platform's shape
+	// (design/account_monitor_examples.go).
+	Meta("openapi:example", "false")
 })
 
 // AccountMonitorActionItem is one rule-engine finding, produced per platform in
@@ -1203,8 +1208,8 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	// attribute examples alone, Goa would put the HubSpot-only email_id beside a Google campaign
 	// id and an underspend issue — a finding no monitor can produce. monitor-hubspot-account's
 	// action_items attribute carries its own example, with email_id. The text is exactly what
-	// rules.EvaluateGoogleMonitor emits for the underspending row of AccountMonitor's campaigns
-	// example (42% of a $150/day budget over 30 days).
+	// rules.EvaluateGoogleMonitor emits for the underspending row of the Google Ads monitor's
+	// example (design/account_monitor_examples.go).
 	Example(map[string]any{
 		"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
 		"issue":  "Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected",
@@ -1228,9 +1233,9 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	// count rather than a boolean so a renderer can say how much of the account is missing.
 	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
 		Minimum(0)
-		// 0, not a non-zero count: every campaign row in the AccountMonitor campaigns example
-		// beside these totals has fetch_failed=false, so any other value here would publish a
-		// count no row backs.
+		// 0, not a non-zero count: no campaign row in any monitor method's example
+		// (design/account_monitor_examples.go) has fetch_failed=true, so any other value here
+		// would publish a count no row backs.
 		Example(0)
 	})
 	Required("spend", "impressions", "clicks", "campaign_count", "unmeasured_campaigns")
@@ -1251,44 +1256,14 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 var AccountMonitor = Type("account-monitor", func() {
 	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
 	Attribute("days", Int, "The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X's 90-day cap by an hour.", func() { Example(30) })
-	// An explicit example, not one composed from AccountMonitorCampaign's attribute examples:
-	// Goa would otherwise pick a different array length per method, and no single
-	// totals.campaign_count example could then equal len(campaigns) in every response. The two
-	// rows sum to the totals example (spend, impressions, clicks, conversions), neither is
-	// fetch_failed (unmeasured_campaigns 0), and the underspending row is the one the
-	// action-item example names. Both are Google-shaped (campaign_url) and their pacing is what
-	// rules.EvaluateGoogleMonitor gives over the days example (30): expected spend is
-	// budget_day*days, so 1890/(150*30) = 42% (underspending, below 50) and 4200/(200*30) = 70%
-	// (normal, 50-90). TestPublishedAccountMonitorTotalsExamplesArePossible recomputes both.
+	// No example on campaigns or action_items (nor on the type, below): rows and findings differ
+	// per platform, so each monitor method publishes its own whole-response example — see
+	// design/account_monitor_examples.go.
 	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.", func() {
-		Example([]map[string]any{
-			{
-				"platform_campaign_id": "24183781329", "name": "KubeCon NA 2026 - Search", "status": "ENABLED",
-				"spend": 1890.0, "impressions": 48200, "clicks": 3110, "ctr": 6.45, "conversions": 12.5,
-				"budget_day": 150, "total_budget": 0, "start_date": "2026-08-01", "end_date": "2026-11-30",
-				"pacing_unknown": false, "is_search_channel": true, "fetch_failed": false,
-				"pacing_pct": 42, "pacing_label": "underspending",
-				"campaign_url": "https://ads.google.com/aw/campaigns?campaignId=24183781329",
-			},
-			{
-				"platform_campaign_id": "24183781330", "name": "KubeCon NA 2026 - Brand", "status": "ENABLED",
-				"spend": 4200.0, "impressions": 136000, "clicks": 8310, "ctr": 6.11, "conversions": 200.0,
-				"budget_day": 200, "total_budget": 0, "start_date": "2026-08-01", "end_date": "2026-11-30",
-				"pacing_unknown": false, "is_search_channel": true, "fetch_failed": false,
-				"pacing_pct": 70, "pacing_label": "normal",
-				"campaign_url": "https://ads.google.com/aw/campaigns?campaignId=24183781330",
-			},
-		})
+		Meta("openapi:example", "false")
 	})
-	// Explicit for the same reason as campaigns: composed, Goa repeats the one item example a
-	// random number of times, publishing duplicate findings. This is exactly the list
-	// rules.EvaluateGoogleMonitor produces for the campaigns example above.
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.", func() {
-		Example([]map[string]any{{
-			"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
-			"issue":  "Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected",
-			"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
-		}})
+		Meta("openapi:example", "false")
 	})
 	Attribute("totals", AccountMonitorTotals)
 	Attribute("metrics_as_of", String, "Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
@@ -1305,6 +1280,9 @@ var AccountMonitor = Type("account-monitor", func() {
 	})
 	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
+	// Shared by six platforms whose responses differ, so no example here: one would describe five
+	// of them wrongly. Each method's 200 body carries its own (design/account_monitor_examples.go).
+	Meta("openapi:example", "false")
 })
 
 // HubSpotEmailMonitorEmail is one marketing email in the HubSpot email account monitor
@@ -2517,7 +2495,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
-			Response(StatusOK)
+			Response(StatusOK, accountMonitorExampleBody(googleAccountMonitorBody, googleAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -2555,7 +2533,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
-			Response(StatusOK)
+			Response(StatusOK, accountMonitorExampleBody(linkedinAccountMonitorBody, linkedinAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -2593,7 +2571,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
-			Response(StatusOK)
+			Response(StatusOK, accountMonitorExampleBody(metaAccountMonitorBody, metaAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -2630,7 +2608,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
-			Response(StatusOK)
+			Response(StatusOK, accountMonitorExampleBody(redditAccountMonitorBody, redditAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -2677,7 +2655,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
-			Response(StatusOK)
+			Response(StatusOK, accountMonitorExampleBody(microsoftAccountMonitorBody, microsoftAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("InternalServerError", StatusInternalServerError)
 			Response("ServiceUnavailable", StatusServiceUnavailable)
@@ -2731,7 +2709,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			connectionAuthErrorResponses()
 			Param("account_id")
 			Param("days")
-			Response(StatusOK)
+			Response(StatusOK, accountMonitorExampleBody(twitterAccountMonitorBody, twitterAccountMonitorExample()))
 			Response("NotFound", StatusNotFound)
 			Response("Conflict", StatusConflict)
 			Response("InternalServerError", StatusInternalServerError)

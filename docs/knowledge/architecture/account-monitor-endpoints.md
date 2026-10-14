@@ -37,6 +37,20 @@ reaches), not project-scoped ones.
   nesting; removed (2026-09-18) once the BFF source showed no ad-group/keyword
   data exists anywhere in the monitor response being ported — only in a
   wholly separate `getKeywords` endpoint.
+- **Published examples are per operation** (`design/account_monitor_examples.go`). The six
+  platforms' rows differ (status literals, `campaign_url`, search channel, flight dates, lifetime
+  budget, conversions, pacing formula, the report-window fields), so `AccountMonitor` and
+  `AccountMonitorCampaign` carry no example and each monitor method's 200 body is a type of its
+  own that `Extend`s `AccountMonitor` — same fields and wire tags, so the service still returns
+  the shared result — published as `GoogleAdsAccountMonitor`, `LinkedinAdsAccountMonitor`, … with
+  an example in that platform's shape. Each needs an explicit `openapi:typename` (type and body),
+  because OpenAPI 3 deduplicates identical shapes and would otherwise point all six operations at
+  Google's. OpenAPI 2 has no per-operation response example, so there the six definitions carry
+  none. `TestPublishedAccountMonitorExamplesMatchTheirOperation` maps each operation id to its
+  handler's evaluator (live platforms read at the examples' `2026-10-05T14:30:00Z`, X on its
+  report window), recomputes pacing and action items, checks the platform's row shape and the
+  totals, and fails on an unmapped monitor operation or an account-monitor example not attached
+  to one.
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
