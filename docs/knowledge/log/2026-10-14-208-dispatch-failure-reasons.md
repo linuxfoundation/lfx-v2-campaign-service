@@ -40,3 +40,17 @@ Pre-PR review follow-ups, folded into the same change:
   generic string instead of "may need re-authorizing".
 - X's `validateDate` and `validateImageInput` refusals are now marked.
 
+PR #335 bot review follow-ups, folded into the same change:
+
+- `CallerValue` also withholds a value containing `=` or `&`, so a bare query such as
+  `access_token=…&scope=ads` is not quoted back. It also withholds an opaque token: a run of
+  32+ characters from `[A-Za-z0-9+/_-]` with a digit that is not a canonical UUID. Every call
+  site's real shapes survive: dates, numeric and short ids, `urn:li:` URNs, and the UUIDs used
+  for asset and project ids.
+- X's composed campaign and line-item name checks are marked, along with its composed
+  tweet-length check, all of which run before `verifyAccount`. A 200-rune event name passes
+  its own bound but overflows the 255-rune composed name, and that refusal now reaches the
+  job result. Also marked: Microsoft's connection account/customer id checks, Meta's variant
+  image choice, and LinkedIn's stored-image validation. Reddit's composed-name checks stay
+  unmarked because they run after the account-verify GET.
+

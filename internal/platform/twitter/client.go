@@ -3341,7 +3341,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		text, err := composeTweetText(in.TweetText, destURL)
 		if err != nil {
-			return nil, err
+			// Fixed text and counts only (never the URL or the copy): operator-safe.
+			return nil, domain.WrapPreflightRefusal(err)
 		}
 		// This is the one workflow that publishes URLs verbatim — the registration
 		// URL's pre-existing query AND any link the caller put in their own copy.
@@ -3396,12 +3397,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// names can exceed X's 255-rune entity-name limit, so reject an oversized name
 	// up front rather than after a wasted account-verify / lookup round trip.
 	campaignName := buildTwitterCampaignName(in)
+	// Fixed labels and counts only, raised before verifyAccount (the first request), so
+	// operator-safe (issue #208): a 200-rune event name passes its own bound and can still
+	// overflow the composed name.
 	if err := validateEntityName("campaign", campaignName); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | AUTO", strings.ReplaceAll(in.EventName, "|", "-"))
 	if err := validateEntityName("line item", lineItemName); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	// Step 1: verify account (non-fatal).

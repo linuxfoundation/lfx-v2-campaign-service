@@ -6,6 +6,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -108,15 +109,21 @@ const callerValueWithheld = "(value withheld)"
 // value can be arbitrarily long or carry control characters. So, modelled on the dispatchers'
 // safeAssetIDForError:
 //
-//   - a value containing "://", "?", "#", "@" or any whitespace is not shown at all — those are
-//     the shapes of a URL, a query, a userinfo credential or a multi-line paste, and no field
-//     these refusals quote legitimately contains one;
+//   - a value is not shown at all when it is shaped like something that carries a secret:
+//     it contains "://", "?", "#", "@", "=", "&" or any whitespace (a URL, a query — including
+//     a bare one such as "access_token=…&scope=ads" — a userinfo credential, or a multi-line
+//     paste), or it contains an opaque token: a run of 32 or more characters from
+//     [A-Za-z0-9+/_-] that includes a digit and is not a canonical UUID (base64, base64url
+//     and hex tokens). No value these refusals quote legitimately has either shape: dates,
+//     numeric and short alphanumeric account/tweet/pixel/list ids, "urn:li:…" URNs (the
+//     colons break the run), objectives and CTAs are all far shorter, and the UUIDs used as
+//     asset and project ids are exempted by shape. A digit-free run (a long slug) is kept;
 //   - otherwise it is cut to maxCallerValueRunes (marked with "…"), every non-graphic rune is
 //     replaced with U+FFFD, and the result is quoted.
 //
 // Every caller-supplied value formatted into a PreflightRefusal must go through this.
 func CallerValue(s string) string {
-	if strings.Contains(s, "://") || strings.ContainsAny(s, "?#@") || strings.IndexFunc(s, unicode.IsSpace) >= 0 {
+	if strings.Contains(s, "://") || strings.ContainsAny(s, "?#@=&") || strings.IndexFunc(s, unicode.IsSpace) >= 0 || hasOpaqueToken(s) {
 		return callerValueWithheld
 	}
 	var b strings.Builder
@@ -133,6 +140,25 @@ func CallerValue(s string) string {
 		n++
 	}
 	return strconv.Quote(b.String())
+}
+
+var (
+	opaqueTokenRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{32,}`)
+	canonicalUUID  = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+)
+
+// hasOpaqueToken reports whether s contains a run shaped like a credential token (see
+// CallerValue).
+func hasOpaqueToken(s string) bool {
+	for _, run := range opaqueTokenRun.FindAllString(s, -1) {
+		if canonicalUUID.MatchString(run) {
+			continue
+		}
+		if strings.ContainsAny(run, "0123456789") {
+			return true
+		}
+	}
+	return false
 }
 
 // UpstreamStatusCarrier is implemented by a platform client's HTTP error type: the platform

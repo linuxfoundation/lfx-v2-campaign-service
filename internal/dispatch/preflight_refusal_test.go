@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -300,6 +301,10 @@ func TestDispatch_RefusalsNeverEchoHostileCallerInput(t *testing.T) {
 		{"x tweet id is a secret-bearing URL", model.ProviderTwitterAds, x, xCfg(hostileURL), "invalid tweet id: (value withheld)"},
 		{"x tweet id is over-long", model.ProviderTwitterAds, x, xCfg(long), `invalid tweet id: "` + strings.Repeat("a", 64) + `…"`},
 		{"x tweet id spans lines", model.ProviderTwitterAds, x, xCfg("123\nSECRET-208"), "invalid tweet id: (value withheld)"},
+		{"x tweet id is a bare query", model.ProviderTwitterAds, x, xCfg("access_token=SECRET-208&scope=ads"), "invalid tweet id: (value withheld)"},
+		{"x tweet id is a long opaque token", model.ProviderTwitterAds, x, xCfg("ghp_SECRET208abcdefghijklmnopqrstuvwxyz0123"), "invalid tweet id: (value withheld)"},
+		{"linkedin image urn is a bare query", model.ProviderLinkedInAds, li, liCfg("urn:li:image:1?access_token=SECRET-208&scope=ads"), "variant-1 image URN (value withheld) is malformed"},
+		{"linkedin image urn carries a long opaque token", model.ProviderLinkedInAds, li, liCfg("urn:li:digitalmediaAsset:SECRET208abcdefghijklmnopqrstuvwxyz0123"), "variant-1 image URN (value withheld) is malformed"},
 		{"linkedin image urn is a secret-bearing URL", model.ProviderLinkedInAds, li, liCfg(hostileURL), "variant-1 image URN (value withheld) is malformed"},
 		{"linkedin image urn spans lines", model.ProviderLinkedInAds, li, liCfg("urn:li:image:1\nSECRET-208"), "variant-1 image URN (value withheld) is malformed"},
 	} {
@@ -325,5 +330,30 @@ func TestDispatch_RefusalsNeverEchoHostileCallerInput(t *testing.T) {
 				t.Errorf("%d request(s) sent before a pre-flight refusal", n)
 			}
 		})
+	}
+}
+
+// TestDispatch_XComposedNameOverflowIsARefusal: a 200-rune event name passes X's own event-name
+// bound (maxEventNameLen) yet overflows the 255-rune COMPOSED campaign name. That check runs
+// before verifyAccount, so it is a pre-flight refusal and must reach the job result verbatim
+// rather than as the generic string.
+func TestDispatch_XComposedNameOverflowIsARefusal(t *testing.T) {
+	event := strings.Repeat("e", 200)
+	brief := testBrief()
+	brief.EventDetails = json.RawMessage(`{"eventName":"` + event + `","registrationUrl":"https://events.example/kc","project":"cncf"}`)
+	tr := &noSendTransport{}
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithHTTPClient(&http.Client{Transport: tr}))
+	_, err := d.Dispatch(context.Background(), brief, model.ProviderTwitterAds,
+		json.RawMessage(`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":"1234567890"}}`))
+	if err == nil {
+		t.Fatal("expected the composed-name refusal")
+	}
+	name := "Events | " + event + " | Global | Awareness | Prospecting | Promoted Post | cncf | MoFU"
+	want := fmt.Sprintf("invalid campaign name: composed name is %d characters, exceeds X's 255-character limit", len([]rune(name)))
+	if got := service.DispatchFailureMessage(model.ProviderTwitterAds, err, true); got != want {
+		t.Errorf("job result error = %q\nwant               %q", got, want)
+	}
+	if n := tr.sent.Load(); n != 0 {
+		t.Errorf("%d request(s) sent before the composed-name refusal", n)
 	}
 }

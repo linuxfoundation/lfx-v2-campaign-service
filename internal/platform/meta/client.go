@@ -2908,7 +2908,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// BOTH an image URL and an image asset — fails before any paid resource
 		// exists rather than at the non-fatal per-variant creative create.
 		if err := validateVariantImage(v); err != nil {
-			return nil, fmt.Errorf("variant %d: %w", i+1, err)
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("variant %d: %w", i+1, err))
 		}
 	}
 

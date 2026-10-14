@@ -17,6 +17,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // LinkedIn creative image upload (LFXV2-2665).
@@ -124,7 +126,7 @@ func ValidateImage(in ImageUpload) error {
 		return fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
 	}
 	if format != wantFormat {
-		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, format, in.MimeType)
+		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.CallerValue(in.MimeType))
 	}
 	w, h := cfg.Width, cfg.Height
 	if int64(w)*int64(h) >= maxImagePixels {

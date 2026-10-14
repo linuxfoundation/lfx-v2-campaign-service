@@ -914,14 +914,14 @@ func (c *Client) validateAccountIDs() error {
 	// installer and the connection probe all refused them — the account half of this same
 	// function was already held to both.
 	if !accountIDRE.MatchString(c.account.AccountID) {
-		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be digits only", clipID(c.account.AccountID))
+		return fmt.Errorf("invalid Microsoft Advertising account id %s: must be digits only", domain.CallerValue(c.account.AccountID))
 	}
 	if err := ValidateAccountID(c.account.AccountID); err != nil {
 		return err
 	}
 	if c.account.CustomerID != "" {
 		if !accountIDRE.MatchString(c.account.CustomerID) {
-			return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+			return fmt.Errorf("invalid Microsoft Advertising customer id %s: must be digits only", domain.CallerValue(c.account.CustomerID))
 		}
 		if err := ValidateCustomerID(c.account.CustomerID); err != nil {
 			return err

@@ -4416,18 +4416,23 @@ goal/**conversion pixel**/CTA/headline/account id/geo), LinkedIn up to the group
 (account, targeting profile, event name, **budget minimums**, variants, project, geo, schedule,
 name lengths), Meta up to the account preflight GET (variants and lengths, budget, currency
 offset, dates, account/page id, project, event, IG id, DSA pair, objective, placements, promoted
-object), X up to `verifyAccount` (event, project, budget, date format and calendar validity
-(`validateDate`), date order and lead time, tweet id, image placement and `validateImageInput`,
-account/funding instrument), and Microsoft up to geo resolution (project, event, budget,
-name length, composed URL length, ad copy, keywords, bid, geo codes). Dispatcher-authored ones
+object, variant image choice), X up to `verifyAccount` (event, project, budget, date format and
+calendar validity (`validateDate`), date order and lead time, tweet id, composed tweet length,
+image placement and `validateImageInput`, account/funding instrument, and the composed
+campaign and line-item name lengths), and Microsoft up to geo resolution (account/customer ids, project, event, budget,
+name length, composed URL length, ad copy, keywords, bid, geo codes). LinkedIn's stored-image
+checks (`ValidateImage`) are marked too. Reddit's composed campaign / ad-group name length
+checks are NOT: they run after the account-verify GET, so a request was already sent. Dispatcher-authored ones
 are marked too: Reddit's stored-asset choice, LinkedIn's inactive / incomplete / missing-org /
 no-variant / foreign-account refusals, X's missing funding instrument, and HubSpot's missing
 `sourceEmailId` and send-list-in-suppression check. Every CALLER or connection value a marked
 refusal names — dates, ids, URNs, objectives, keywords, CTA, video goal, list ids, targeting
 profile and facet names — is rendered through `domain.CallerValue`. That function quotes the
 value, cuts it to 64 runes, replaces non-graphic runes, and withholds it entirely
-("(value withheld)") when it contains `://`, `?`, `#`, `@` or whitespace, so a pasted
-secret-bearing URL in an id field never reaches the job result. The shared helpers whose text
+("(value withheld)") when it contains `://`, `?`, `#`, `@`, `=`, `&` or whitespace, or an
+opaque token (a run of 32+ characters from `[A-Za-z0-9+/_-]` that includes a digit and is
+not a canonical UUID). So a pasted secret-bearing URL, a bare query, or a token in an id
+field never reaches the job result. The shared helpers whose text
 reaches a marked refusal (LinkedIn `toMs`/`validateSchedule`/`resolveAccountID`/`resolveOrgID`/
 targeting profile and facet checks, Meta `buildPromotedObject`, Microsoft keyword/geo/ad-copy
 validators, X `validateDate`/`validateImageInput`, Reddit's asset-id check) use it too.

@@ -2541,7 +2541,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				return nil, domain.PreflightRefusalf("variant-%d names stored image asset %s, which was not supplied", i+1, domain.CallerValue(variant.ImageAssetID))
 			}
 			if err := ValidateImage(img); err != nil {
-				return nil, fmt.Errorf("variant-%d image asset %s: %w", i+1, variant.ImageAssetID, err)
+				return nil, domain.WrapPreflightRefusal(fmt.Errorf("variant-%d image asset %s: %w", i+1, domain.CallerValue(variant.ImageAssetID), err))
 			}
 		}
 	}

@@ -395,8 +395,10 @@ type queryCampaignsRequest struct {
 //     caller must reconcile by name before retrying rather than blind-creating.
 //   - A definite 4xx (Microsoft rejected the request outright) is a clean failure.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+	// Connection ids rendered through domain.CallerValue, checked before any request: an
+	// operator-safe refusal (issue #208).
 	if err := c.validateAccountIDs(); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 	// Require BOTH attribution fields, validated on the SANITIZED value (a
 	// delimiter-only value like "|||" passes a raw TrimSpace check yet sanitizes to
