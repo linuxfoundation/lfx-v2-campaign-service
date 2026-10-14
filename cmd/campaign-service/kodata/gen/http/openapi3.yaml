@@ -14218,6 +14218,7 @@ paths:
                                             - Enim possimus provident.
                                             - Aspernatur odio recusandae.
                                             - Labore dolorem cupiditate vero.
+                                      reconcile_truncated: false
                                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                                       error: Eaque omnis quo fugit eum.
                                       hubspot_url: Ab magnam quis qui labore.
@@ -14260,6 +14261,7 @@ paths:
                                             - Enim possimus provident.
                                             - Aspernatur odio recusandae.
                                             - Labore dolorem cupiditate vero.
+                                      reconcile_truncated: false
                                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                                       error: Eaque omnis quo fugit eum.
                                       hubspot_url: Ab magnam quis qui labore.
@@ -14302,6 +14304,7 @@ paths:
                                             - Enim possimus provident.
                                             - Aspernatur odio recusandae.
                                             - Labore dolorem cupiditate vero.
+                                      reconcile_truncated: false
                                 status: succeeded
                 "400":
                     description: 'BadRequest: Bad request'
@@ -20479,6 +20482,7 @@ components:
                                 - Enim possimus provident.
                                 - Aspernatur odio recusandae.
                                 - Labore dolorem cupiditate vero.
+                          reconcile_truncated: false
                         - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                           error: Eaque omnis quo fugit eum.
                           hubspot_url: Ab magnam quis qui labore.
@@ -20521,6 +20525,7 @@ components:
                                 - Enim possimus provident.
                                 - Aspernatur odio recusandae.
                                 - Labore dolorem cupiditate vero.
+                          reconcile_truncated: false
                         - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                           error: Eaque omnis quo fugit eum.
                           hubspot_url: Ab magnam quis qui labore.
@@ -20563,6 +20568,7 @@ components:
                                 - Enim possimus provident.
                                 - Aspernatur odio recusandae.
                                 - Labore dolorem cupiditate vero.
+                          reconcile_truncated: false
                 status:
                     type: string
                     description: Job status
@@ -20619,6 +20625,7 @@ components:
                             - Enim possimus provident.
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
+                      reconcile_truncated: false
                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                       error: Eaque omnis quo fugit eum.
                       hubspot_url: Ab magnam quis qui labore.
@@ -20661,6 +20668,7 @@ components:
                             - Enim possimus provident.
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
+                      reconcile_truncated: false
                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                       error: Eaque omnis quo fugit eum.
                       hubspot_url: Ab magnam quis qui labore.
@@ -20703,6 +20711,7 @@ components:
                             - Enim possimus provident.
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
+                      reconcile_truncated: false
                 status: succeeded
             required:
                 - job_id
@@ -22682,7 +22691,7 @@ components:
                     type: array
                     items:
                         $ref: '#/components/schemas/ReconcileIdentifier'
-                    description: 'Present only when this dispatch''s claim was lost before its result was recorded: the identifiers of what it created upstream, which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).'
+                    description: 'Present only when this dispatch''s claim was lost before its result was recorded: the identifiers of what it created upstream (ids, names, urns, image hashes — never state, platform text or URLs), which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).'
                     example:
                         - entries:
                             Nihil odit aut.: Tempora molestiae voluptatem laborum quos culpa.
@@ -22720,6 +22729,10 @@ components:
                             - Enim possimus provident.
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
+                reconcile_truncated:
+                    type: boolean
+                    description: True when the result held more identifiers than one job result may carry, so reconcile lists only the first of them in key order
+                    example: false
             example:
                 campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                 error: Eaque omnis quo fugit eum.
@@ -22763,6 +22776,7 @@ components:
                         - Enim possimus provident.
                         - Aspernatur odio recusandae.
                         - Labore dolorem cupiditate vero.
+                reconcile_truncated: false
             required:
                 - platform
                 - ok
@@ -22833,7 +22847,7 @@ components:
                         example: Molestiae aut.
                 key:
                     type: string
-                    description: Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds, imageUrns
+                    description: Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds, imageUrns; a dotted path for one found in a nested object or list, e.g. abTestVariant.id, adGroups[0].adIds
                     example: Sed quia dignissimos saepe quam ut cumque.
                 truncated:
                     type: boolean

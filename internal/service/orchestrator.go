@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1263,6 +1264,9 @@ type platformResult struct {
 	// result blob was never written. GetJob returns it as PlatformResult.reconcile (see
 	// reconcileIdentifiers), so the lost-claim message's pointer to it is one a caller can follow.
 	Reconcile map[string]any `json:"reconcile,omitempty"`
+	// ReconcileTruncated is set when reconcileRef's payload bounds stopped collection before the
+	// blob was exhausted, so Reconcile is a prefix (in sorted key order), not the whole set.
+	ReconcileTruncated bool `json:"reconcile_truncated,omitempty"`
 }
 
 // hubspotURLFromResult reads the deep link a HubSpot dispatch stashed in the
@@ -2169,11 +2173,11 @@ const (
 const reconcileRefMaxRunes = 1024
 
 // reconcileIdentifierSuffixes are the key endings (lower-cased) that name an identifier in a
-// dispatcher's result blob: single ids and names (campaignId, campaignGroupName, AdID, AccountID)
-// and the identifier COLLECTIONS a partial-result contract keeps for reconciliation — Google
-// Ads' creativeAssetIds / extensionAssetIds ([]string) and LinkedIn's imageUrns (stored asset id
-// → urn:li:image). Longest first only for readability; any match keeps the key.
-var reconcileIdentifierSuffixes = []string{"ids", "urns", "names", "id", "urn", "name"}
+// dispatcher's result blob: single ids and names (campaignId, campaignGroupName, AdID, AccountID),
+// the identifier COLLECTIONS a partial-result contract keeps for reconciliation — Google Ads'
+// creativeAssetIds / extensionAssetIds ([]string) and LinkedIn's imageUrns (stored asset id →
+// urn:li:image) — and Meta's per-ad ImageHash, the account-scoped key of the image behind an ad.
+var reconcileIdentifierSuffixes = []string{"ids", "urns", "names", "id", "urn", "name", "hash"}
 
 func isReconcileIdentifierKey(k string) bool {
 	lk := strings.ToLower(k)
@@ -2185,91 +2189,161 @@ func isReconcileIdentifierKey(k string) bool {
 	return false
 }
 
+const (
+	// reconcileRefMaxDepth bounds how far reconcileRef descends into nested objects and arrays
+	// of objects: depth 1 is the blob's top level, so 3 reaches e.g. adGroups[0].adIds. Every
+	// nested identifier a dispatcher records today sits at depth 2 (HubSpot abTestVariant.id,
+	// Google adGroups[i].id, Meta Ads[i].AdID).
+	reconcileRefMaxDepth = 3
+	// reconcileRefMaxStrings and reconcileRefMaxTotalRunes bound the whole reconcile payload — a
+	// pathological blob (thousands of ads, or a deep array) must not bloat the job result. Every
+	// kept string (a scalar, a list element, a map key or value) counts toward both. Once either
+	// is reached collection stops and the result is flagged ReconcileTruncated, so a reader
+	// knows the list is incomplete rather than whole.
+	reconcileRefMaxStrings    = 256
+	reconcileRefMaxTotalRunes = 32 * 1024
+)
+
 // reconcileRef extracts the IDENTIFYING fields of a dispatch's result blob — what an operator
 // needs to find an untracked upstream campaign, and the resources created under it, when the row
-// that would have held the blob was never written (domain.ErrDispatchClaimLost).
+// that would have held the blob was never written (domain.ErrDispatchClaimLost). It returns the
+// identifiers and whether the payload bounds cut collection short.
 //
 // The blob itself is NOT copied. On a retained partial it is persisted onto the campaign row,
 // never into the job result or a log (the retry path logs only has_result), because it holds more
-// than identifiers: Steps can carry text the platform returned, and URLs and labels are not
-// needed to find anything. So this keeps only top-level fields whose key names an identifier
-// (isReconcileIdentifierKey) AND whose value is a string, an array of strings, or an object of
-// string values — the reconcile payload the dispatchers document — plus the campaign's own name
-// and status from the model, which are this service's values. Any other shape under an
-// identifier key (a number, a nested object) and every other key is dropped. Every string kept —
-// element, map key and map value alike — goes through the rune cap (reconcileRefMaxRunes): an
-// over-long one is truncated and the field flagged "<key>Truncated": true. Empty strings are
-// skipped. nil when nothing identifying is present.
-func reconcileRef(c *model.Campaign) map[string]any {
+// than identifiers: Steps can carry text the platform returned, and URLs, subjects and labels are
+// not needed to find anything. So only fields whose key names an identifier
+// (isReconcileIdentifierKey) are kept, and only when the value is a string, an array of strings,
+// or an object of string values. Nested objects and arrays of objects are DESCENDED into
+// whatever their own key, to reconcileRefMaxDepth, because dispatchers keep identifiers there
+// too (HubSpot's abTestVariant, Google's adGroups, Meta's Ads); a nested identifier is kept
+// under its dotted path, e.g. "abTestVariant.id", "adGroups[0].adIds", "Ads[1].ImageHash".
+// Every other value is dropped. Keys are visited in sorted order so the same blob always yields
+// the same identifiers, including where the bounds cut it.
+//
+// Every string kept goes through the rune cap (reconcileRefMaxRunes): an over-long one is
+// truncated and the field flagged "<key>Truncated": true. Empty strings are skipped. The
+// campaign's own name is added when the blob carries none. Its STATUS is not: it is state, not a
+// handle to look anything up by, and the lost-claim log carries it instead. nil when nothing
+// identifying is present.
+func reconcileRef(c *model.Campaign) (map[string]any, bool) {
 	ref := map[string]any{}
-	// capped trims and caps one string; truncated reports whether it was cut.
-	capped := func(v string) (out string, truncated bool) {
+	count, totalRunes, capped := 0, 0, false
+	// admit charges one string against the payload bounds, reporting false once they are spent.
+	admit := func(v string) bool {
+		n := utf8.RuneCountInString(v)
+		if capped || count+1 > reconcileRefMaxStrings || totalRunes+n > reconcileRefMaxTotalRunes {
+			capped = true
+			return false
+		}
+		count++
+		totalRunes += n
+		return true
+	}
+	// clip trims and caps one string; cut reports whether it was shortened.
+	clip := func(v string) (out string, cut bool) {
 		v = strings.TrimSpace(v)
 		if utf8.RuneCountInString(v) > reconcileRefMaxRunes {
 			return string([]rune(v)[:reconcileRefMaxRunes]), true
 		}
 		return v, false
 	}
-	flag := func(k string, truncated bool) {
-		if truncated {
+	flag := func(k string, cut bool) {
+		if cut {
 			ref[k+"Truncated"] = true
 		}
 	}
-	keepString := func(k, v string) {
-		v, cut := capped(v)
-		if v == "" {
+	keepString := func(path, v string) {
+		v, cut := clip(v)
+		if v == "" || !admit(v) {
 			return
 		}
-		ref[k] = v
-		flag(k, cut)
+		ref[path] = v
+		flag(path, cut)
 	}
-	if len(c.Result) > 0 {
-		var top map[string]json.RawMessage
-		if json.Unmarshal(c.Result, &top) == nil {
-			for k, raw := range top {
-				if !isReconcileIdentifierKey(k) {
-					continue
-				}
+	var walk func(prefix string, obj map[string]json.RawMessage, depth int)
+	walk = func(prefix string, obj map[string]json.RawMessage, depth int) {
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if capped {
+				return
+			}
+			raw, path := obj[k], prefix+k
+			if isReconcileIdentifierKey(k) {
 				var str string
 				if json.Unmarshal(raw, &str) == nil {
-					keepString(k, str)
+					keepString(path, str)
 					continue
 				}
 				var list []string
 				if json.Unmarshal(raw, &list) == nil {
 					kept, anyCut := make([]string, 0, len(list)), false
 					for _, e := range list {
-						e, cut := capped(e)
-						if e == "" {
+						e, cut := clip(e)
+						if e == "" || !admit(e) {
 							continue
 						}
 						kept = append(kept, e)
 						anyCut = anyCut || cut
 					}
 					if len(kept) > 0 {
-						ref[k] = kept
-						flag(k, anyCut)
+						ref[path] = kept
+						flag(path, anyCut)
 					}
 					continue
 				}
-				var obj map[string]string
-				if json.Unmarshal(raw, &obj) == nil {
-					kept, anyCut := make(map[string]string, len(obj)), false
-					for mk, mv := range obj {
-						mk, kcut := capped(mk)
-						mv, vcut := capped(mv)
-						if mk == "" && mv == "" {
+				var entries map[string]string
+				if json.Unmarshal(raw, &entries) == nil {
+					ek := make([]string, 0, len(entries))
+					for mk := range entries {
+						ek = append(ek, mk)
+					}
+					sort.Strings(ek)
+					kept, anyCut := make(map[string]string, len(entries)), false
+					for _, mk := range ek {
+						ck, kcut := clip(mk)
+						cv, vcut := clip(entries[mk])
+						if (ck == "" && cv == "") || !admit(ck) || !admit(cv) {
 							continue
 						}
-						kept[mk] = mv
+						kept[ck] = cv
 						anyCut = anyCut || kcut || vcut
 					}
 					if len(kept) > 0 {
-						ref[k] = kept
-						flag(k, anyCut)
+						ref[path] = kept
+						flag(path, anyCut)
+					}
+					continue
+				}
+			}
+			if depth >= reconcileRefMaxDepth {
+				continue
+			}
+			// A nested object or array of objects, whatever its key: descend.
+			var child map[string]json.RawMessage
+			if json.Unmarshal(raw, &child) == nil {
+				walk(path+".", child, depth+1)
+				continue
+			}
+			var children []json.RawMessage
+			if json.Unmarshal(raw, &children) == nil {
+				for idx, el := range children {
+					var elem map[string]json.RawMessage
+					if json.Unmarshal(el, &elem) == nil {
+						walk(fmt.Sprintf("%s[%d].", path, idx), elem, depth+1)
 					}
 				}
 			}
+		}
+	}
+	if len(c.Result) > 0 {
+		var top map[string]json.RawMessage
+		if json.Unmarshal(c.Result, &top) == nil {
+			walk("", top, 1)
 		}
 	}
 	if _, ok := ref["campaignName"]; !ok {
@@ -2277,11 +2351,10 @@ func reconcileRef(c *model.Campaign) map[string]any {
 			keepString("campaignName", c.CampaignName)
 		}
 	}
-	keepString("status", c.Status)
 	if len(ref) == 0 {
-		return nil
+		return nil, capped
 	}
-	return ref
+	return ref, capped
 }
 
 // lostClaimResult turns a domain.ErrDispatchClaimLost from either persist (the success upsert or
@@ -2299,7 +2372,7 @@ func reconcileRef(c *model.Campaign) map[string]any {
 func lostClaimResult(ctx context.Context, res platformResult, jobID, projectID string, slotVersion int, c *model.Campaign, err, dispatchErr error) platformResult {
 	res.OK = false
 	res.CampaignID = c.PlatformCampaignID
-	res.Reconcile = reconcileRef(c)
+	res.Reconcile, res.ReconcileTruncated = reconcileRef(c)
 	res.Error = lostClaimResultError
 	if c.PlatformCampaignID == "" {
 		res.Error = lostClaimNoIDResultError
@@ -2307,7 +2380,9 @@ func lostClaimResult(ctx context.Context, res platformResult, jobID, projectID s
 	attrs := []any{
 		"platform", res.Platform, "job_id", jobID, "project_id", projectID, "slot_version", slotVersion,
 		"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0,
-		"reconcile", res.Reconcile, "error", err,
+		"reconcile", res.Reconcile, "reconcile_truncated", res.ReconcileTruncated,
+		// status is state, not a lookup handle, so it is not in Reconcile; the log keeps it.
+		"status", c.Status, "error", err,
 	}
 	if dispatchErr != nil {
 		attrs = append(attrs, "dispatch_error", dispatchErr)

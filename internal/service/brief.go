@@ -1913,7 +1913,8 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			// Reconcile is the orchestrator's platformResult.Reconcile (see reconcileRef):
 			// identifier fields of what a lost-claim dispatch created. Decoded per value so an
 			// unexpected shape is skipped rather than failing the whole poll.
-			Reconcile map[string]json.RawMessage `json:"reconcile"`
+			Reconcile          map[string]json.RawMessage `json:"reconcile"`
+			ReconcileTruncated bool                       `json:"reconcile_truncated"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -1943,6 +1944,10 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 				pr.HubspotURL = &u
 			}
 			pr.Reconcile = reconcileIdentifiers(r.Reconcile)
+			if r.ReconcileTruncated {
+				t := true
+				pr.ReconcileTruncated = &t
+			}
 			switch {
 			case r.Skipped && !r.OK:
 				// A SKIPPED platform is OK=false but is NOT a failure — a concurrent

@@ -71,7 +71,7 @@ A campaign is subordinate to a brief. This is a **collection** under the brief (
 | GET | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Get one campaign execution; returns ETag. |
 | PUT | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Replace a campaign execution (requires `If-Match`). |
 | DELETE | `/projects/{projectId}/briefs/{briefId}/campaigns/{campaign_id}` | `campaign_manager` | JSON | Delete a campaign (soft delete; requires `If-Match`). **Local only — does NOT touch the ad platform.** Frees the campaign's `(brief, platform)` slot so the brief can be re-dispatched to that platform. `409` if the campaign is mid-dispatch. |
-| GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status (`JobPollResponse`). A platform whose dispatch created something upstream but lost its claim before recording it (an operator cleared the claim and another campaign, such as an adoption, took the slot) fails with a reconciliation-required error and carries `reconcile`: the identifiers of what was created (ids, names, urns — never platform text or URLs), the only handle on it when no `campaignId` was captured. |
+| GET | `/projects/{projectId}/jobs/{jobId}` | `campaign_manager` | JSON | Poll campaign creation job status (`JobPollResponse`). A platform whose dispatch created something upstream but lost its claim before recording it (an operator cleared the claim and another campaign, such as an adoption, took the slot) fails with a reconciliation-required error and carries `reconcile`: the identifiers of what was created (ids, names, urns, image hashes — including those nested in the platform's result, under a dotted path such as `adGroups[0].id` — never state, platform text or URLs), the only handle on it when no `campaignId` was captured. `reconcileTruncated` is set when there were more than one job result may carry. |
 
 **Deleting a campaign.** A campaign row occupies its brief's slot for one platform — the `(brief_id, platform, variant)` uniqueness that makes dispatch idempotent (a retry cannot create a second paid campaign upstream) also means a campaign created with the wrong budget, or one whose upstream create failed ambiguously, would block that pair forever. `DELETE` frees the slot: the row is soft-deleted (`status = 'deleted'`) and excluded from the partial unique index, so a re-dispatch to the same `(brief, platform, variant)` succeeds while two *live* campaigns for the pair are still rejected. The soft-deleted row is retained deliberately — it holds `platform_campaign_id`, the only local pointer to a campaign that may still exist upstream — and becomes invisible to reads (`GET` returns `404`).
 
@@ -1965,12 +1965,20 @@ hubspotUrl?: string     — Deep link to this campaign's email in the HubSpot ed
                           for campaigns created before this field existed.
 reconcile?: ReconcileIdentifier[]
                         — Only when the dispatch's claim was lost before its result was
-                          recorded: identifiers of what it created upstream, which the
-                          service no longer tracks, sorted by key. Each is
+                          recorded: identifiers of what it created upstream (ids, names,
+                          urns, image hashes; never state, platform text or URLs), which
+                          the service no longer tracks, sorted by key. Each is
                           { key, values?: string[], entries?: {string: string},
                             truncated?: boolean } — values for an id/name or a list
                           (e.g. creativeAssetIds), entries for a keyed map (e.g. LinkedIn
                           imageUrns), truncated when a value passed the 1024-character cap.
+                          An identifier found in a nested object or list is keyed by its
+                          dotted path, e.g. abTestVariant.id, adGroups[0].adIds, Ads[1].AdID
+                          (descended to depth 3).
+reconcileTruncated?: boolean
+                        — True when the result held more identifiers than one job result
+                          may carry (256 strings / 32,768 characters), so reconcile lists
+                          only the first of them in key order.
 ```
 
 Per-platform errors are carried inside each `result` entry rather than in a

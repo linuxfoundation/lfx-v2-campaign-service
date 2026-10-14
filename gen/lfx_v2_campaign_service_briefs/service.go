@@ -1761,10 +1761,14 @@ type PlatformResult struct {
 	// known.
 	HubspotURL *string
 	// Present only when this dispatch's claim was lost before its result was
-	// recorded: the identifiers of what it created upstream, which this service no
+	// recorded: the identifiers of what it created upstream (ids, names, urns,
+	// image hashes — never state, platform text or URLs), which this service no
 	// longer tracks, sorted by key. The only handle on an id-less partial (no
 	// campaign_id).
 	Reconcile []*ReconcileIdentifier
+	// True when the result held more identifiers than one job result may carry, so
+	// reconcile lists only the first of them in key order
+	ReconcileTruncated *bool
 }
 
 type PreconditionFailedError struct {
@@ -1783,7 +1787,8 @@ type PreconditionRequiredError struct {
 
 type ReconcileIdentifier struct {
 	// Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds,
-	// imageUrns
+	// imageUrns; a dotted path for one found in a nested object or list, e.g.
+	// abTestVariant.id, adGroups[0].adIds
 	Key string
 	// The identifier(s): one element for a single id or name, several for a list
 	// such as creativeAssetIds. Absent when entries is set.

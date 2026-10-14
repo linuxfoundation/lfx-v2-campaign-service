@@ -8450,11 +8450,12 @@ func unmarshalMetaAdSetResponseBodyToLfxv2campaignservicebriefsMetaAdSet(v *Meta
 // value of type *PlatformResultResponseBody.
 func unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResult(v *PlatformResultResponseBody) *lfxv2campaignservicebriefs.PlatformResult {
 	res := &lfxv2campaignservicebriefs.PlatformResult{
-		Platform:   *v.Platform,
-		OK:         *v.OK,
-		CampaignID: v.CampaignID,
-		Error:      v.Error,
-		HubspotURL: v.HubspotURL,
+		Platform:           *v.Platform,
+		OK:                 *v.OK,
+		CampaignID:         v.CampaignID,
+		Error:              v.Error,
+		HubspotURL:         v.HubspotURL,
+		ReconcileTruncated: v.ReconcileTruncated,
 	}
 	if v.Reconcile != nil {
 		res.Reconcile = make([]*lfxv2campaignservicebriefs.ReconcileIdentifier, len(v.Reconcile))

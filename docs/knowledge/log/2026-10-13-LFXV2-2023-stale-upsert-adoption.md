@@ -51,3 +51,10 @@ operator clear and an adopt (always slot 1) misses the four-column arbiter and v
 three-column index on the INSERT arm; `UpsertCampaign` now reports that as
 `ErrDispatchClaimLost` too, instead of an ordinary persist failure that claimed the claim was
 retained.
+
+Sixth follow-up, same review: `reconcileRef` now descends into nested objects and arrays of
+objects (depth 3), keeping identifier-keyed values under dotted paths (HubSpot
+`abTestVariant.id`, Google `adGroups[0].adIds`, Meta `Ads[1].ImageHash`; `hash` joined the key
+rule for Meta's image hashes), with the whole payload bounded at 256 strings / 32,768 runes and
+`reconcile_truncated` set past it (new `PlatformResult` field, regenerated). The campaign's
+status is no longer a `reconcile` entry — it is state, not a handle — and is logged instead.

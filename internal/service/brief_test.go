@@ -5707,11 +5707,14 @@ func TestBriefService_GetJob_LostClaimReconcileIsPolled(t *testing.T) {
 	}
 	for k, v := range map[string]string{
 		"campaignGroupId": "grp-id-7", "campaignGroupName": "grp-name-7",
-		"campaignName": "camp-name-7", "accountId": "acct-7", "status": model.CampaignStatusUnconfirmed,
+		"campaignName": "camp-name-7", "accountId": "acct-7",
 	} {
 		if vs := got[k]; len(vs) != 1 || vs[0] != v {
 			t.Errorf("polled reconcile[%s] = %v, want [%s] (keys %v)", k, vs, v, keys)
 		}
+	}
+	if _, ok := got["status"]; ok {
+		t.Errorf("polled reconcile carries status; the list holds identifiers only (keys %v)", keys)
 	}
 	if !sort.StringsAreSorted(keys) {
 		t.Errorf("polled reconcile keys %v are not sorted; two polls must render identically", keys)
@@ -5744,5 +5747,28 @@ func TestReconcileIdentifiersMapsEveryStoredShape(t *testing.T) {
 	}
 	if r := byKey["campaignName"]; r == nil || len(r.Values) != 1 || r.Values[0] != "n" || r.Truncated != nil {
 		t.Errorf("campaignName = %+v, want [n] and no truncated flag", r)
+	}
+}
+
+// A capped reconcile list says so on the poll, so a caller never reads a prefix as the whole set.
+func TestBriefService_GetJob_ReconcileTruncatedIsPolled(t *testing.T) {
+	resultJSON, err := json.Marshal([]platformResult{{
+		Platform: "meta-ads", Error: lostClaimNoIDResultError,
+		Reconcile: map[string]any{"Ads[0].AdID": "ad-1"}, ReconcileTruncated: true,
+	}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := getJobTestService(&model.CampaignJob{ID: "j1", BriefID: "b1", Status: model.JobFailed, Result: resultJSON})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	pr := resp.Result[0]
+	if pr.ReconcileTruncated == nil || !*pr.ReconcileTruncated {
+		t.Errorf("reconcile_truncated = %v, want true", pr.ReconcileTruncated)
+	}
+	if len(pr.Reconcile) != 1 || pr.Reconcile[0].Key != "Ads[0].AdID" {
+		t.Errorf("reconcile = %+v, want the one stored identifier", pr.Reconcile)
 	}
 }

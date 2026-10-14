@@ -4125,17 +4125,22 @@ type PlatformResultResponseBody struct {
 	// known.
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 	// Present only when this dispatch's claim was lost before its result was
-	// recorded: the identifiers of what it created upstream, which this service no
+	// recorded: the identifiers of what it created upstream (ids, names, urns,
+	// image hashes — never state, platform text or URLs), which this service no
 	// longer tracks, sorted by key. The only handle on an id-less partial (no
 	// campaign_id).
 	Reconcile []*ReconcileIdentifierResponseBody `form:"reconcile,omitempty" json:"reconcile,omitempty" xml:"reconcile,omitempty"`
+	// True when the result held more identifiers than one job result may carry, so
+	// reconcile lists only the first of them in key order
+	ReconcileTruncated *bool `form:"reconcile_truncated,omitempty" json:"reconcile_truncated,omitempty" xml:"reconcile_truncated,omitempty"`
 }
 
 // ReconcileIdentifierResponseBody is used to define fields on response body
 // types.
 type ReconcileIdentifierResponseBody struct {
 	// Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds,
-	// imageUrns
+	// imageUrns; a dotted path for one found in a nested object or list, e.g.
+	// abTestVariant.id, adGroups[0].adIds
 	Key string `form:"key" json:"key" xml:"key"`
 	// The identifier(s): one element for a single id or name, several for a list
 	// such as creativeAssetIds. Absent when entries is set.

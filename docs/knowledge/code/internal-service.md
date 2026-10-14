@@ -155,19 +155,23 @@ row takes the slot, `UpsertCampaign` returns `domain.ErrDispatchClaimLost` witho
 "claim was cleared ... untracked, reconciliation required" error that keeps the upstream id in
 `CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). Because
 the row that would have held the dispatch's `Result` blob is never written, `lostClaimResult`
-also copies the blob's identifying fields (`reconcileRef`: top-level fields whose key ends in
-`id`/`ids`/`urn`/`urns`/`name`/`names` and whose value is a string, a string array — Google's
-`creativeAssetIds`/`extensionAssetIds` — or a string map — LinkedIn's `imageUrns` — plus the
-campaign's name and status; never Steps text, URLs or other shapes; every string capped at 1024
-RUNES, far above every lane platform's name limit, and truncated with a `<key>Truncated: true`
-flag rather than dropped past it) into the stored
+also copies the blob's identifying fields (`reconcileRef`: fields whose key ends in
+`id`/`ids`/`urn`/`urns`/`name`/`names`/`hash` and whose value is a string, a string array — Google's
+`creativeAssetIds`/`extensionAssetIds` — or a string map — LinkedIn's `imageUrns`; nested objects
+and arrays of objects are descended to depth 3 and their identifiers kept under a dotted path —
+HubSpot `abTestVariant.id`, Google `adGroups[0].adIds`, Meta `Ads[1].ImageHash`; plus the
+campaign's name when the blob has none; never status, Steps text, URLs or other shapes; every
+string capped at 1024 RUNES and truncated with a `<key>Truncated: true` flag rather than dropped;
+the whole payload bounded at 256 strings / 32,768 runes in sorted key order, past which
+`reconcile_truncated` is set) into the stored
 platform result's `reconcile` map and the ERROR log. On the retained-partial path that log also
 carries the provider's error as `dispatch_error` (logged the way the retained-partial path
 always logs it), which the job result never does. An id-less partial gets its own message
 saying no campaign id was captured
 (`TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail`). `GetJob` returns
 `reconcile` as the typed `PlatformResult.reconcile` list (`{key, values | entries, truncated}`,
-sorted by key; `reconcileIdentifiers` folds each `<key>Truncated` flag into its identifier)
+sorted by key; `reconcileIdentifiers` folds each `<key>Truncated` flag into its identifier) and
+`reconcile_truncated`; the campaign's status goes to the lost-claim log only
 (`TestBriefService_GetJob_LostClaimReconcileIsPolled`). A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
 orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs

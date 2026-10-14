@@ -3760,12 +3760,16 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 	}
 	want := map[string]string{
 		"campaignGroupId": "grp-id-7", "campaignGroupName": "grp-name-7",
-		"campaignName": "camp-name-7", "accountId": "acct-7", "status": model.CampaignStatusUnconfirmed,
+		"campaignName": "camp-name-7", "accountId": "acct-7",
 	}
 	for k, v := range want {
 		if got.Reconcile[k] != v {
 			t.Errorf("reconcile[%s] = %q, want %q (reconcile = %v)", k, got.Reconcile[k], v, got.Reconcile)
 		}
+	}
+	// Status is state, not a lookup handle: it belongs in the log, never in reconcile.
+	if _, ok := got.Reconcile["status"]; ok {
+		t.Errorf("reconcile carries status (%v); it holds identifiers only", got.Reconcile["status"])
 	}
 	if strings.Contains(string(j.Result), idLessPartialDispatchErr) {
 		t.Errorf("job result %s carries the provider error; the client message must stay generic", j.Result)
@@ -3781,7 +3785,7 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 		if !strings.Contains(rec.Message, "dispatch claim lost") {
 			continue
 		}
-		var gotJob, reconcile, dispatchErr string
+		var gotJob, reconcile, dispatchErr, status string
 		rec.Attrs(func(a slog.Attr) bool {
 			switch a.Key {
 			case "job_id":
@@ -3790,6 +3794,8 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 				reconcile = fmt.Sprint(a.Value.Any())
 			case "dispatch_error":
 				dispatchErr = fmt.Sprint(a.Value.Any())
+			case "status":
+				status = a.Value.String()
 			}
 			return true
 		})
@@ -3799,6 +3805,9 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 		found = true
 		// The provider's own failure: returning through the lost-claim path skips the
 		// retained-partial log line that normally carries it, so this record must.
+		if status != model.CampaignStatusUnconfirmed {
+			t.Errorf("lost-claim log status = %q, want %q (kept in the log, not in reconcile)", status, model.CampaignStatusUnconfirmed)
+		}
 		if !strings.Contains(dispatchErr, idLessPartialDispatchErr) {
 			t.Errorf("lost-claim log dispatch_error = %q, want the provider error %q", dispatchErr, idLessPartialDispatchErr)
 		}
@@ -3829,7 +3838,7 @@ func TestReconcileRefKeepsLongMultibyteNamesAndFlagsTruncation(t *testing.T) {
 		"campaignGroupId":   "grp-1",
 		"campaignName":      huge,
 	})
-	ref := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: blob})
+	ref, _ := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: blob})
 
 	if ref["campaignGroupName"] != name255 {
 		t.Errorf("255-rune multibyte name was not kept verbatim (got %d runes)", utf8.RuneCountInString(fmt.Sprint(ref["campaignGroupName"])))
@@ -3874,7 +3883,7 @@ func TestReconcileRefKeepsIdentifierCollections(t *testing.T) {
 		"steps":           []string{"provider said: bad creative"},
 	})
 
-	g := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: google})
+	g, _ := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: google})
 	assets, _ := g["creativeAssetIds"].([]string)
 	if len(assets) != 3 || assets[0] != "asset-1" || assets[1] != "asset-2" || utf8.RuneCountInString(assets[2]) != reconcileRefMaxRunes {
 		t.Errorf("creativeAssetIds = %v, want both asset ids and the long one capped", g["creativeAssetIds"])
@@ -3889,7 +3898,7 @@ func TestReconcileRefKeepsIdentifierCollections(t *testing.T) {
 		t.Error("extensionAssetIds flagged as truncated with nothing over the cap")
 	}
 
-	l := reconcileRef(&model.Campaign{Status: model.CampaignStatusGroupCreated, Result: linkedin})
+	l, _ := reconcileRef(&model.Campaign{Status: model.CampaignStatusGroupCreated, Result: linkedin})
 	if urns, _ := l["imageUrns"].(map[string]string); urns["stored-asset-1"] != "urn:li:image:C4D10AQ" {
 		t.Errorf("imageUrns = %v, want the stored asset id -> image urn", l["imageUrns"])
 	}
@@ -3907,5 +3916,110 @@ func TestReconcileRefKeepsIdentifierCollections(t *testing.T) {
 		if _, ok := ref["budgetIds"]; ok {
 			t.Errorf("%s reconcile kept a non-string collection: %v", name, ref["budgetIds"])
 		}
+	}
+}
+
+// Dispatchers keep identifiers in NESTED structures too, and a lost claim never writes the row
+// that holds them: HubSpot's abTestVariant (the A/B variant email), Google's adGroups (every ad
+// group the cascade attempted, with its ads and criteria), and Meta's Ads (per-ad ad, creative
+// and image-hash ids). reconcileRef descends into objects and arrays of objects and keeps their
+// identifier-keyed values under a dotted path, while still dropping text (subjects, Steps),
+// URLs, numbers and state.
+func TestReconcileRefKeepsNestedIdentifiers(t *testing.T) {
+	hubspot, _ := json.Marshal(map[string]any{
+		"id": "email-1", "name": "Launch email", "subject": "Big news inside", "state": "DRAFT",
+		"hubspotUrl":    "https://example.invalid/hs",
+		"abTestVariant": map[string]any{"id": "email-2", "name": "Launch email (B)", "subject": "Variant subject"},
+	})
+	google, _ := json.Marshal(map[string]any{
+		"campaignId": "", "campaignName": "LFX | Search Campaign | x",
+		"adGroups": []map[string]any{
+			{"name": "grp-a", "id": "111", "adIds": []string{"a1", "a2"}, "keywordCriteriaIds": []string{"k1"}},
+			{"name": "grp-b", "id": ""},
+		},
+		"steps": []string{"provider said: partial failure"},
+	})
+	meta, _ := json.Marshal(map[string]any{
+		"CampaignID": "c-1", "AdSetID": "as-1", "AdCount": 2, "MetaURL": "https://example.invalid/meta",
+		"Ads": []map[string]any{
+			{"Variant": 1, "AdID": "ad-1", "CreativeID": "cr-1", "ImageHash": "h-1"},
+			{"Variant": 2, "AdID": "ad-2", "CreativeID": "cr-2"},
+		},
+		"Steps": []string{"provider said: variant 3 failed"},
+	})
+
+	for _, tc := range []struct {
+		name string
+		blob []byte
+		want map[string]any
+	}{
+		{"hubspot", hubspot, map[string]any{
+			"id": "email-1", "name": "Launch email",
+			"abTestVariant.id": "email-2", "abTestVariant.name": "Launch email (B)",
+		}},
+		{"google", google, map[string]any{
+			"campaignName":     "LFX | Search Campaign | x",
+			"adGroups[0].name": "grp-a", "adGroups[0].id": "111",
+			"adGroups[0].adIds": []string{"a1", "a2"}, "adGroups[0].keywordCriteriaIds": []string{"k1"},
+			"adGroups[1].name": "grp-b",
+		}},
+		{"meta", meta, map[string]any{
+			"CampaignID": "c-1", "AdSetID": "as-1",
+			"Ads[0].AdID": "ad-1", "Ads[0].CreativeID": "cr-1", "Ads[0].ImageHash": "h-1",
+			"Ads[1].AdID": "ad-2", "Ads[1].CreativeID": "cr-2",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ref, capped := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: tc.blob})
+			if capped {
+				t.Error("a small blob was reported as capped")
+			}
+			for k, v := range tc.want {
+				if fmt.Sprint(ref[k]) != fmt.Sprint(v) {
+					t.Errorf("ref[%s] = %v, want %v (ref = %v)", k, ref[k], v, ref)
+				}
+			}
+			if len(ref) != len(tc.want) {
+				t.Errorf("ref has %d keys, want exactly %d: %v", len(ref), len(tc.want), ref)
+			}
+			dump := fmt.Sprint(ref)
+			for _, banned := range []string{"provider said", "example.invalid", "subject", "Big news", "DRAFT", "Unconfirmed", "unconfirmed"} {
+				if strings.Contains(dump, banned) {
+					t.Errorf("reconcile %s carries non-identifier content %q", dump, banned)
+				}
+			}
+		})
+	}
+}
+
+// The recursion and the payload are bounded: a blob deeper than reconcileRefMaxDepth is not
+// followed past it, and one with more identifiers than reconcileRefMaxStrings stops at the cap
+// and says so, in sorted key order so the same blob always keeps the same prefix.
+func TestReconcileRefIsBounded(t *testing.T) {
+	deep, _ := json.Marshal(map[string]any{
+		"a": map[string]any{"id": "d2", "b": map[string]any{"id": "d3", "c": map[string]any{"id": "d4"}}},
+	})
+	ref, _ := reconcileRef(&model.Campaign{Result: deep})
+	if ref["a.id"] != "d2" || ref["a.b.id"] != "d3" {
+		t.Errorf("depth 2 and 3 identifiers missing: %v", ref)
+	}
+	if _, ok := ref["a.b.c.id"]; ok {
+		t.Errorf("descended past depth %d: %v", reconcileRefMaxDepth, ref)
+	}
+
+	ads := make([]map[string]any, reconcileRefMaxStrings+50)
+	for i := range ads {
+		ads[i] = map[string]any{"AdID": fmt.Sprintf("ad-%04d", i)}
+	}
+	huge, _ := json.Marshal(map[string]any{"Ads": ads})
+	ref, capped := reconcileRef(&model.Campaign{Result: huge})
+	if !capped {
+		t.Error("a blob past the string cap was not reported as capped")
+	}
+	if len(ref) != reconcileRefMaxStrings {
+		t.Errorf("kept %d identifiers, want exactly the %d cap", len(ref), reconcileRefMaxStrings)
+	}
+	if ref["Ads[0].AdID"] != "ad-0000" {
+		t.Errorf("the first identifier in key order was not kept: %v", ref["Ads[0].AdID"])
 	}
 }
