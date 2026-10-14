@@ -34,8 +34,8 @@ var _ service.LinkedInAudienceReader = (*LinkedInDispatcher)(nil)
 //     to. ANY mismatch refuses the whole read (ErrCampaignAccountMismatch, 409) rather than
 //     dropping the entry — see googleAdsScopeForCustomer for why a silently reduced scope is worse
 //     than a refusal. An unrecorded account ("") is unknown and proceeds.
-//  4. The client names only those campaign URNs, plus the bound account's URN as the `accounts`
-//     facet, and checks every returned element against the campaign scope.
+//  4. The client issues one Analytics-finder request per (pivot, campaign), each naming that one
+//     campaign URN and the bound account's URN as the `accounts` facet, and sums the answers.
 func (d *LinkedInDispatcher) ReadLinkedInAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.LinkedInAudienceInsights, error) {
 	const op = "read linkedin audience insights"
 	if werr := linkedin.ValidateMetricsWindow(window); werr != nil {

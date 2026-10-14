@@ -271,11 +271,13 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to removing keywords from a Reddit ad group's
-    # targeting (remove-keyword-targeting, LFXV2-2665). Default off: Reddit
+    # Opts this deployment IN to BOTH Reddit ad-group targeting writes
+    # (LFXV2-2665): removing keywords (remove-keyword-targeting) and adding
+    # negative keywords to excluded_keywords (add-negative-keywords) — enabling
+    # it enables both. Default off: Reddit
     # replaces an ad group's targeting object as a whole, so the write sends
     # back every dimension it read, and that round trip has not been exercised
-    # against a live Reddit ad account. While off, the endpoint answers 400 for
+    # against a live Reddit ad account. While off, both endpoints answer 400 for
     # Reddit campaigns; the keyword-targeting READ is not gated. Any value other
     # than "true" is treated as off, so a typo fails closed.
     REDDIT_KEYWORD_TARGETING_WRITES_ENABLED:
