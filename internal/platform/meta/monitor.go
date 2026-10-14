@@ -520,7 +520,12 @@ func (t *adSetBudgetTotal) addWindow(start, end string, ok bool) {
 }
 
 // adSetWindow reads an ad set's start_time/end_time into date-only form. ok=false when the
-// start is absent, null or malformed, or the end is null or malformed; an ABSENT end is "".
+// start is absent, empty, null or malformed, or the end is null or malformed. An ABSENT or EMPTY
+// ("") end is an open-ended flight, end "" — the same reading the campaign list gives an empty
+// stop_time (PR #316 review: an empty end_time was classified as malformed, which left every
+// open-ended DAILY ABO campaign pacing unknown). Daily pacing then runs to the window's edge;
+// a lifetime budget with no end stays unknown in the rules layer. Only a non-empty value that is
+// not a whole Meta timestamp (dateOnly) is malformed.
 func adSetWindow(startRaw, endRaw json.RawMessage) (start, end string, ok bool) {
 	timeField := func(raw json.RawMessage) (v string, present, valid bool) {
 		raw = bytes.TrimSpace(raw)
@@ -530,6 +535,9 @@ func adSetWindow(startRaw, endRaw json.RawMessage) (start, end string, ok bool) 
 		var s string
 		if bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &s) != nil {
 			return "", true, false
+		}
+		if s == "" {
+			return "", false, true // reported as empty: no value, like an absent field
 		}
 		d := dateOnly(s)
 		return d, true, d != ""

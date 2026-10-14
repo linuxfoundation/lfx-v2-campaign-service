@@ -41,7 +41,13 @@ func TestBidToMinorUnits(t *testing.T) {
 		// The product overflows int64 although the amount is within metaMaxBid: refused, never
 		// converted to an implementation-defined (negative) minor-unit bid (PR #316 review).
 		{1_000_000, 10_000_000_000_000, 0, true},
-		{1, math.MaxInt64, 0, true}, // exactly float64(math.MaxInt64): the boundary is refused too
+		// The boundary is the EXACT product's (PR #316 review): MaxInt64 minor units fits, one
+		// past it does not.
+		{1, math.MaxInt64, math.MaxInt64, false},
+		{2, math.MaxInt64, 0, true},
+		// Exact, not a float product: 90071.99*1e11 is 9007199000000001 as a float.
+		{90_071.99, 100_000_000_000, 9_007_199_000_000_000, false},
+		{999_999.99, 100, 99_999_999, false},
 	} {
 		got, err := bidToMinorUnits(tc.amount, tc.offset)
 		if tc.refused {

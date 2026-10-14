@@ -380,6 +380,14 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 		{"daily ad sets with differing windows are unknown", []string{daily(oct), daily(nov)}, 0, 0, "", ""},
 		{"a daily ad set with no start_time is unknown", []string{`"daily_budget":"1000","end_time":"2026-10-31T23:59:59+0000"`}, 0, 0, "", ""},
 		{"an open-ended daily ad set keeps its budget", []string{daily(openEnd)}, 10, 0, "2026-10-01", ""},
+		// An EMPTY end_time is "no end", like an absent one (PR #316 review): it used to be read as
+		// a malformed flight, leaving every open-ended daily ABO campaign pacing unknown. A
+		// lifetime budget with no end is left to the rules layer, which reports it unknown.
+		{"an empty end_time on a daily ad set is open-ended", []string{daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":""`)}, 10, 0, "2026-10-01", ""},
+		{"an empty end_time on a lifetime ad set is open-ended", []string{life(`"start_time":"2026-10-01T09:00:00-0700","end_time":""`)}, 0, 1000, "2026-10-01", ""},
+		{"an empty end_time beside an absent one is the same window", []string{daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":""`), daily(openEnd)}, 20, 0, "2026-10-01", ""},
+		{"an empty start_time is unknown", []string{daily(`"start_time":"","end_time":"2026-10-31T23:59:59+0000"`)}, 0, 0, "", ""},
+		{"a whitespace end_time is malformed", []string{daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":" "`)}, 0, 0, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rowsJSON := make([]string, 0, len(tc.adSets))

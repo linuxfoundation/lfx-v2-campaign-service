@@ -1563,9 +1563,16 @@ Meta (Facebook/Instagram) per-platform config. **Budget is in the ad ACCOUNT's c
 
 ```
 budget: number                  — Whole units of the account currency (e.g. 2500 = 2500 USD/JPY/…).
-                                  Must be POSITIVE and round to at least one minor unit; a budget
-                                  that fails this is rejected by the client during dispatch (a
-                                  pre-create job failure, since CreateCampaigns is async).
+                                  Must be POSITIVE, at least one minor unit of the account
+                                  currency, and a WHOLE number of minor units: a fraction of one
+                                  (25.505 on a USD account, 1.4 on a JPY one) is REFUSED, never
+                                  rounded (#235) — "enter at most 2 decimal places" / "enter
+                                  whole amounts for this currency". It is converted to minor
+                                  units EXACTLY (no float product) and must fit int64. The same
+                                  encoder serves PATCH .../budget, so create and edit refuse the
+                                  same amounts. A budget that fails this is rejected by the
+                                  client during dispatch (a pre-create job failure, since
+                                  CreateCampaigns is async).
 lifetimeBudget?: boolean        — true → lifetime budget over the flight; false/absent → daily budget
 startDate: string               — YYYY-MM-DD. Must NOT be before today (UTC).
 endDate: string                 — YYYY-MM-DD. Must be STRICTLY AFTER startDate. (Both date rules are

@@ -50,6 +50,15 @@ func TestBudgetToMinorUnits(t *testing.T) {
 		// float to int64 is implementation-defined, so the product is range-checked
 		// as a float BEFORE the conversion.
 		{name: "overflows int64 after scaling", budget: math.MaxFloat64, offset: 100, wantErr: "budget too large"},
+		// The ENCODING is exact, not only the fraction check (PR #316 review): the float product
+		// 90071992547253.9*100 is 9007199254725391, one minor unit too many.
+		{name: "large amount encodes exactly", budget: 90071992547253.9, offset: 100, want: 9007199254725390},
+		{name: "large amount with cents encodes exactly", budget: 90071992547253.97, offset: 100, want: 9007199254725397},
+		// The int64 boundary is the EXACT product's: MaxInt64 minor units fits, which the old float
+		// comparison against float64(MaxInt64) (= 2^63) could not tell from one past it.
+		{name: "exactly MaxInt64 minor units fits", budget: 1, offset: math.MaxInt64, want: math.MaxInt64},
+		{name: "past MaxInt64 minor units is too large", budget: 2, offset: math.MaxInt64, wantErr: "budget too large"},
+		{name: "a float at 2^63 is too large", budget: 9223372036854775808, offset: 1, wantErr: "budget too large"},
 		{name: "positive infinity", budget: math.Inf(1), offset: 100, wantErr: "budget too large"},
 		// NaN fails every ordered comparison, so it would slip past the range check
 		// and convert to an implementation-defined int64 unless named explicitly.

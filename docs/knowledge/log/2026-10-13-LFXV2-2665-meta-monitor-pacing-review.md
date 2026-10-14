@@ -33,9 +33,22 @@ the row is `pacing_unknown`, never a false alert.
   unknown date, which leaves an ABO budget unknown). `docs/api-catalog.md` now states that any
   non-ACTIVE ad set makes an ABO campaign `pacing_unknown` and that daily ABO budgets also need a
   shared, readable window.
-- **`bidToMinorUnits` overflow guard restored.** A scaled bid at or above
-  `float64(math.MaxInt64)` is refused exactly as `budgetToMinorUnits` refuses it, instead of
-  converting to an implementation-defined (possibly negative) minor-unit bid.
+- **An empty `end_time` is open-ended.** `adSetWindow` read an ad set's `end_time: ""` as a
+  malformed flight, so open-ended DAILY ABO campaigns stayed `pacing_unknown`. Empty is now "no
+  end", like an absent field and like the campaign list's empty `stop_time`: daily pacing runs to
+  the window's edge, and a lifetime budget with no end stays unknown in the rules layer. Only a
+  non-empty value that is not a whole Meta timestamp is malformed.
+- **Minor units are converted exactly.** The fractional-unit check was decimal, but the encoding
+  still multiplied in binary float, so `90071992547253.9` × 100 was written as 9007199254725391.
+  `minorUnitsExact` now computes amount×offset with `big.Rat` from the amount's shortest decimal
+  form; the exact product decides too large (past `math.MaxInt64` — MaxInt64 itself now fits),
+  too small and fractional, and is what is encoded, for budgets and bids alike. The settings
+  readback encodes the recorded amount the same way. The `MetaConfig` create contract in
+  `docs/api-catalog.md` now says a fraction of a minor unit is refused at create too, not rounded.
+- **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
+  exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
+  (possibly negative) minor-unit bid. (First a float comparison against
+  `float64(math.MaxInt64)`; since the exact-conversion fix above, the exact product's range.)
 
 No API, design, gen or migration change. See `architecture/account-monitor-endpoints.md` and
 `code/internal-platform-meta.md`.

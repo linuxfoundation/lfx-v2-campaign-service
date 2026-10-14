@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -157,62 +158,89 @@ func (c *Client) resolveCurrencyOffset(acctCurrency string, preflightErr error) 
 // CREATE with cannot be reached by EDITING — the divergence the Google Ads and LinkedIn slices
 // closed the same way.
 //
-// The int64 range check comes FIRST and is the only budget-magnitude ceiling (there is no fixed
-// major-unit cap): both the amount and the offset are otherwise unbounded, so a genuinely huge
-// budget — or a bogus large explicit/preflight offset — could push the product past int64, and
-// converting an out-of-range float to int64 is implementation-defined. math.MaxInt64 is not
-// exactly representable as a float64, so the comparison is against float64(math.MaxInt64),
-// which rounds up; a scaled value at or above it (including +Inf) is out of range.
+// The conversion is EXACT (PR #316 review): amount×offset is computed in rational arithmetic
+// from the amount's shortest round-tripping decimal form (minorUnitsExact), never as a binary
+// float product. The decimal fraction check alone did not make the ENCODING exact —
+// 90071992547253.9 × 100 passed it and was then written as 9007199254725391 rather than
+// 9007199254725390. The exact product is the authority for every refusal:
 //
-// NaN is rejected explicitly rather than left to the comparisons: NaN fails every ordered
-// comparison, so it would slip past the range check and convert to an implementation-defined
-// int64 rather than being named for what it is.
+//   - too large: it exceeds math.MaxInt64 (an amount that fits exactly — MaxInt64 itself — is
+//     accepted; the old float comparison against float64(MaxInt64), which rounds up to 2^63,
+//     could not tell the two apart). This is the only budget-magnitude ceiling; +Inf is too large;
+//   - too small: below one minor unit (zero and negatives included);
+//   - finer than one minor unit (1.4 on a JPY account, 25.505 on a USD one): REFUSED before
+//     anything is written, not rounded (#235).
 //
-// An amount finer than one minor unit (1.4 on a JPY account, 25.505 on a USD one) is REFUSED
-// before anything is written, not rounded: see fractionalMinorUnits (#235).
+// NaN is rejected explicitly and named for what it is.
 // Every refusal wraps ErrBudgetAmountInvalid; the currency-offset failures above deliberately
 // do NOT, because those are upstream account configuration, not the caller's amount.
 func budgetToMinorUnits(budget float64, offset int64) (int64, error) {
 	if math.IsNaN(budget) {
 		return 0, invalidBudgetAmount("budget must be a finite number, got %v", budget)
 	}
-	scaled := budget * float64(offset)
-	if scaled >= float64(math.MaxInt64) {
+	switch minor, verdict := minorUnitsExact(budget, offset); verdict {
+	case minorTooLarge:
 		return 0, invalidBudgetAmount("budget too large after applying currency offset %d: exceeds the representable minor-unit range", offset)
-	}
-	if scaled < 1 {
+	case minorTooSmall:
 		return 0, invalidBudgetAmount("budget too small: must be at least one minor currency unit (offset %d)", offset)
-	}
-	// A fraction of a minor unit is REFUSED, never rounded (#235): rounding 1.4 on a JPY account
-	// to ¥1 and answering 200 is a silent change to money the caller never asked for.
-	if fractionalMinorUnits(budget, offset) {
+	case minorFractional:
+		// A fraction of a minor unit is REFUSED, never rounded (#235): rounding 1.4 on a JPY
+		// account to ¥1 and answering 200 is a silent change to money the caller never asked for.
 		return 0, invalidBudgetAmount("budget %s is finer than the ad account currency's smallest unit; %s",
 			strconv.FormatFloat(budget, 'f', -1, 64), wholeAmountsAdvice(offset))
+	default:
+		return minor, nil
 	}
-	return int64(math.Round(scaled)), nil
 }
 
-// fractionalMinorUnits reports whether amount, in whole account-currency units, carries a
-// fraction of the currency's minor unit — i.e. whether amount×offset is not an integer.
-//
-// For a power-of-ten offset (every entry in currencyMinorUnitOffset) the check is DECIMAL, not a
-// float comparison: the amount's shortest round-tripping decimal form (the digits the caller
-// sent — a JSON number is parsed from exactly that text) may carry at most log10(offset)
-// fractional digits. That is immune to binary representation error in both directions — 19.99
-// is accepted although 19.99*100 is 1998.9999999999998, and 1.005 is refused although a float
-// tolerance wide enough for large amounts would round it. Any other offset falls back to an
-// epsilon comparison on the product.
-func fractionalMinorUnits(amount float64, offset int64) bool {
-	places, ok := decimalPlaces(offset)
+// minorVerdict is minorUnitsExact's classification of amount×offset.
+type minorVerdict int
+
+const (
+	minorOK minorVerdict = iota
+	minorTooLarge
+	minorTooSmall
+	minorFractional
+)
+
+var maxInt64Rat = new(big.Rat).SetInt64(math.MaxInt64)
+
+// minorUnitsExact computes amount×offset EXACTLY and classifies it, in this order: above
+// math.MaxInt64 (or +Inf) is minorTooLarge, below 1 (or -Inf, zero, negative) is minorTooSmall,
+// a non-integer is minorFractional; otherwise minorOK with the product. The amount is taken as
+// its shortest round-tripping decimal form — the digits the caller sent, since a JSON number is
+// parsed from exactly that text — so 19.99 is 1999 minor units although 19.99*100 is
+// 1998.9999999999998 as a float, and 1.005 is fractional. NaN is the caller's to refuse first; it
+// is reported minorTooSmall here. offset must be positive (resolveCurrencyOffset guarantees it).
+func minorUnitsExact(amount float64, offset int64) (int64, minorVerdict) {
+	switch {
+	case math.IsInf(amount, 1):
+		return 0, minorTooLarge
+	case math.IsNaN(amount) || math.IsInf(amount, -1) || offset <= 0:
+		return 0, minorTooSmall
+	}
+	r, ok := new(big.Rat).SetString(strconv.FormatFloat(amount, 'f', -1, 64))
 	if !ok {
-		scaled := amount * float64(offset)
-		return math.Abs(scaled-math.Round(scaled)) > 1e-6
+		return 0, minorTooSmall // unreachable: 'f' formatting of a finite float always parses
 	}
-	s := strconv.FormatFloat(math.Abs(amount), 'f', -1, 64)
-	if i := strings.IndexByte(s, '.'); i >= 0 {
-		return len(s)-i-1 > places
+	r.Mul(r, new(big.Rat).SetInt64(offset))
+	switch {
+	case r.Cmp(maxInt64Rat) > 0:
+		return 0, minorTooLarge
+	case r.Cmp(big.NewRat(1, 1)) < 0:
+		return 0, minorTooSmall
+	case !r.IsInt():
+		return 0, minorFractional
 	}
-	return false
+	return r.Num().Int64(), minorOK
+}
+
+// MinorUnitsExact is minorUnitsExact for callers outside this package that must encode a
+// recorded amount exactly as the create and write paths do (the settings readback). ok=false
+// when the encoders would refuse it.
+func MinorUnitsExact(amount float64, offset int64) (int64, bool) {
+	minor, verdict := minorUnitsExact(amount, offset)
+	return minor, verdict == minorOK
 }
 
 // decimalPlaces returns n for offset == 10^n (n >= 0), ok=false otherwise.

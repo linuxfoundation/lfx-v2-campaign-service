@@ -394,11 +394,16 @@ which rejects NaN explicitly rather than relying on an ordered comparison (NaN f
 so it previously reached the `int64` conversion), refuses an amount below one minor unit,
 refuses one that overflows the representable range after scaling, and refuses one FINER than one
 minor unit (`1.4` on a JPY account, `25.505` on a USD one) instead of rounding it — it used to be
-written as ¥1 / $25.51 and answered 200 (#235). That check (`fractionalMinorUnits`) is DECIMAL:
-the amount's shortest round-tripping decimal form may carry at most log10(offset) fractional
-digits, so `19.99` is accepted although `19.99*100` is `1998.9999999999998` as a float, and no
-float tolerance has to be chosen; a non-power-of-ten offset (none is in the map) falls back to an
-epsilon comparison. The sentence ends "enter whole amounts for this currency" (offset 1) or
+written as ¥1 / $25.51 and answered 200 (#235). The whole conversion is EXACT
+(`minorUnitsExact`, PR #316 review): amount×offset is computed with `math/big.Rat` from the
+amount's shortest round-tripping decimal form (the digits the caller sent), and that exact product
+decides every refusal — above `math.MaxInt64` too large (MaxInt64 itself fits), below 1 too small,
+a non-integer fractional — and is the integer encoded. So `19.99` is 1999 although `19.99*100` is
+`1998.9999999999998` as a float, and `90071992547253.9` is 9007199254725390 where the old float
+product wrote 9007199254725391 after the fraction check had passed it. No float tolerance is
+chosen, for any offset. `MinorUnitsExact` exports it for the settings readback
+(`dispatch.metaRecordedMinor`), which encodes the recorded amount the same way, falling back to
+`round(amount × offset)` only for a pre-#235 row the encoder would now refuse. The sentence ends "enter whole amounts for this currency" (offset 1) or
 "enter at most 2 decimal places for this currency" (offset 100). Because the encoder is shared,
 the create path refuses the same amounts. **Those four refusals wrap
 `ErrBudgetAmountInvalid`** and expose their sentence through `BudgetAmountReason(err)`; the
@@ -465,10 +470,10 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
   (`ErrInvalidAccountID`) before any request, since the id is spliced into the Graph path; then
   the account preflight plus `resolveCurrencyOffset` (the
   create/budget scale), then `bidToMinorUnits`: finite, positive, at most 1,000,000, at least one
-  minor unit, and no finer than one (the same decimal `fractionalMinorUnits` check — a ¥1.4 bid is
-  refused, never written as ¥1, #235), with the same overflow guard as `budgetToMinorUnits` (a
-  scaled product at or above `float64(math.MaxInt64)` is refused, never converted to an
-  implementation-defined, possibly negative, minor-unit bid); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
+  minor unit, and no finer than one — the same exact `minorUnitsExact` conversion as
+  `budgetToMinorUnits` (a ¥1.4 bid is refused, never written as ¥1, #235; a product past
+  `math.MaxInt64` is refused, never converted to an implementation-defined, possibly negative,
+  minor-unit bid; the bid encoded is the exact product, not a rounded float); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
   currency wraps `ErrAccountCurrencyUnresolvable`.
 - `GetAdSetBid(ctx, adSetID)` — `GET /{id}?fields=id,campaign_id,bid_strategy,billing_event,optimization_goal,bid_amount`;
   a pure read; an answer for another ad set is an error; a non-numeric id is `ErrInvalidAdSetID`
@@ -764,7 +769,8 @@ Graph error) fails the monitor like its sibling reads. **Flight from the ad sets
 the campaign-list row has no dates and a lifetime budget could not be paced. The same read takes
 the active ad sets' window: when they all share one it becomes the row's flight (and a lifetime
 budget is paced on it); when they disagree, or one's `start_time` is absent/null/malformed or its
-`end_time` null/malformed, the budget stays unknown, daily or lifetime — an absent `end_time` is an
+`end_time` null/malformed, the budget stays unknown, daily or lifetime — an absent or empty (`""`)
+`end_time` is an
 open-ended flight, and an open-ended window differs from a bounded one with the same start. A
 daily ad-set budget is likewise used only with one shared window, since daily pacing now counts
 the flight's days in the window too. "Malformed" is decided by `dateOnly`, which parses the WHOLE

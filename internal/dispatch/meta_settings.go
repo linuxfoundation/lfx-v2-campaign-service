@@ -157,10 +157,15 @@ func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, pla
 	return rb, nil
 }
 
-// metaRecordedMinor encodes a recorded whole-unit amount exactly as the create path's
-// budgetToMinorUnits did — round(amount × offset) — so the recorded side is compared as the
-// integer Meta was actually sent.
+// metaRecordedMinor encodes a recorded whole-unit amount exactly as the create path's encoder
+// does (meta.MinorUnitsExact — exact rational arithmetic, PR #316 review), so the recorded side
+// is compared as the integer Meta was actually sent. An amount that encoder would refuse can only
+// be a row recorded before #235 refused fractional minor units; it falls back to that era's
+// round(amount × offset), which is what was sent then.
 func metaRecordedMinor(amount float64, offset int64) int64 {
+	if minor, ok := meta.MinorUnitsExact(amount, offset); ok {
+		return minor
+	}
 	return int64(math.Round(amount * float64(offset)))
 }
 
