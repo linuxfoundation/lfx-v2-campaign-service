@@ -1788,10 +1788,14 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   starts, so it can never spend that deadline (`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`). CI pins `postgres:16-alpine`
   (`.github/workflows/lfx-v2-campaign-service-build.yaml`); the deployed database is external
   (the chart only receives its connection settings), so its version is not pinned by this repo.
-  **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so they
-  never block a legitimate binding; `AdoptCampaign` closes the other side with
-  `adoptBindingLegacyQuery` — it refuses (AlreadyBound) to adopt an id a live account-less row of
-  that platform holds. All six index names are in `platformCampaignBindingIndexes`, which
+  **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so the
+  index alone would let a second binding of their upstream campaign through. `refuseLegacyBinding`
+  closes that on BOTH write paths — `AdoptCampaign` and `UpsertCampaign` (dispatch: X reuses a
+  campaign by an event+project name, so a second brief's dispatch can resolve to it): inside the
+  writer's transaction, under a `pg_advisory_xact_lock` on (platform, upstream id), it refuses
+  (AlreadyBound) an id a live account-less row of that platform holds, excluding the writer's own
+  slot so a retried persist of the legacy row itself is not refused. It never blocks a different
+  upstream id. All six index names are in `platformCampaignBindingIndexes`, which
   `isPlatformCampaignBindingViolation` reads for both adoption and `UpsertCampaign` (dispatch).
   Live coverage: `adopt_binding_providers_live_test.go` (concurrent adoption: one success + one
   AlreadyBound per provider; different accounts both bind on the account-keyed three; dispatch

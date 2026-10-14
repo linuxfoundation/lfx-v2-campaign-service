@@ -16,9 +16,9 @@ CONCURRENTLY down), decided per provider:
 An account key is exact whether the ids are global (one id always carries one account) or per
 account (no false reject), so it is the safe choice where the docs are silent. The account is
 extracted from the `result` provenance JSON exactly as each dispatcher's `*CreationAccountID`
-reads it. **Legacy rows** recording no account are NULL in the key and never block a legitimate
-binding; `AdoptCampaign` refuses to adopt an id a live account-less row holds, so they cannot slip
-a second binding through adoption (a dispatch under a known account is not blocked by them).
+reads it. **Legacy rows** recording no account are NULL in the key, so the index alone would let a
+second binding of their campaign through; both `AdoptCampaign` and `UpsertCampaign` refuse (see the
+last paragraph) to bind an id such a row holds.
 
 All six binding indexes are registered in `requiredIndexes`; the boot check now reads keys with
 `pg_get_indexdef(index, n, true)` so expression keys are verified. `isPlatformCampaignBindingViolation`
@@ -68,3 +68,15 @@ starts, so a slow server or a held lock degrades it to the text comparison inste
 (`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`). The OpenAPI specs (and their kodata
 copies) already carried the per-provider cardinality text from 9c2a81b8e; `make apigen` produces
 no diff.
+
+#328 review: the legacy account-less refusal now also runs on the DISPATCH path. X's create path
+reuses a campaign by a name built from the event and project, so a second brief's dispatch could
+resolve to the campaign a legacy (pre-`AccountID`) row binds; the index sees NULL for that row and
+let the new row in. `refuseLegacyBinding` runs inside `UpsertCampaign`'s transaction (and
+`AdoptCampaign`'s), under a transaction-scoped advisory lock on (platform, upstream id), excludes
+the writer's own slot, and returns the named AlreadyBound conflict — the orchestrator keeps the
+claim and the upstream id as for an index violation. **Backfill:** not proposed. Microsoft legacy
+rows already key on the `aid=` of `microsoftAdsUrl` (the index's fallback), so a backfill would
+change nothing there; Reddit's and X's results carry only a constant ads-manager URL, so their
+account cannot be recovered from the JSON, and stamping the project's CURRENT connection account
+would be a guess (connections can be re-pointed). Re-dispatch remains the only safe provenance.

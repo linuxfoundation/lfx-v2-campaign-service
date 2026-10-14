@@ -151,10 +151,12 @@ func TestLiveDispatchOntoABoundCampaignIsAlreadyBoundPerProvider(t *testing.T) {
 }
 
 // LEGACY rows on the account-keyed indexes: a live row recording NO account is NULL in the key,
-// so it never blocks a legitimate binding (a dispatch under a known account inserts), but
-// adoption refuses to bind an id such a row already holds rather than slip a second binding past
-// the index.
-func TestLiveLegacyAccountlessRowsNeitherBlockNorSlipThrough(t *testing.T) {
+// so the index alone would let a second binding of its upstream campaign through. The guard closes
+// that on BOTH paths: adoption, and dispatch (UpsertCampaign) — X's create path reuses a campaign by
+// a name built from the event and project, so a second brief's dispatch can resolve to the very
+// campaign a legacy row binds. A legacy row re-written in its OWN slot (a retried persist) is not
+// refused, and an unrelated upstream id is never blocked.
+func TestLiveLegacyAccountlessRowsCannotBeBoundTwice(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
 	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
@@ -180,8 +182,28 @@ func TestLiveLegacyAccountlessRowsNeitherBlockNorSlipThrough(t *testing.T) {
 			dispBrief, dispProject := insertApprovedBrief(ctx, t, pool)
 			row := adoptRow(t, p, dispProject, dispBrief, upstream, p.result(uniqueUpstreamID()))
 			row.SlotVersion = 1
-			if _, err := repo.UpsertCampaign(ctx, row, nil); err != nil {
-				t.Fatalf("a dispatch under a known account was blocked by an account-less legacy row: %v", err)
+			if _, err := repo.UpsertCampaign(ctx, row, nil); !errors.Is(err, domain.ErrPlatformCampaignAlreadyBound) {
+				t.Fatalf("a dispatch resolving to an id an account-less live row holds: err = %v, want ErrPlatformCampaignAlreadyBound", err)
+			}
+			var live int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM campaigns WHERE platform = $1 AND platform_campaign_id = $2 AND status <> 'deleted'`,
+				string(p.platform), upstream).Scan(&live); err != nil || live != 1 {
+				t.Fatalf("live rows for the legacy id = %d (%v), want only the legacy row", live, err)
+			}
+
+			// The legacy row re-written in its OWN slot is not a second binding.
+			own := &model.Campaign{ProjectID: legacyProject, BriefID: legacyBrief, Platform: p.platform,
+				Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: upstream,
+				CampaignName: dbtest.UniqueID(t, "campaign"), Status: model.CampaignStatusCreated, Result: json.RawMessage(`{}`)}
+			if _, err := repo.UpsertCampaign(ctx, own, nil); err != nil {
+				t.Fatalf("re-writing the legacy row in its own slot was refused: %v", err)
+			}
+
+			// An unrelated upstream id under a known account is never blocked.
+			other := adoptRow(t, p, dispProject, dispBrief, uniqueUpstreamID(), p.result(uniqueUpstreamID()))
+			other.SlotVersion = 1
+			if _, err := repo.UpsertCampaign(ctx, other, nil); err != nil {
+				t.Fatalf("an unrelated dispatch was blocked: %v", err)
 			}
 		})
 	}
