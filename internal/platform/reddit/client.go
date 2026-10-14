@@ -31,6 +31,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -789,6 +791,9 @@ func (c *Client) refreshToken(ctx context.Context) (string, error) {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, redditRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)
 			cancel()
+			// Tagged so the async create job can report "the token refresh failed" without
+			// rendering this error's text (issue #208). Error() and errors.Is are unchanged.
+			err = domain.MarkTokenRefreshFailure(err)
 
 			c.mu.Lock()
 			inflight.token = token
@@ -984,6 +989,11 @@ type apiError struct {
 	StatusCode int
 	Body       string
 }
+
+// UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
+// answered with, and nothing else from the response — so the async create job can report it
+// (issue #208) without any path that could reach the body.
+func (e *apiError) UpstreamStatus() int { return e.StatusCode }
 
 func (e *apiError) Error() string {
 	// Deliberately DO NOT include e.Body: the upstream response body is untrusted
@@ -1541,7 +1551,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// front (before any mutating call) so it can't create paid resources with an
 	// empty name segment. Mirrors the meta/twitter clients.
 	if strings.TrimSpace(in.EventName) == "" {
-		return nil, fmt.Errorf("event name is required")
+		return nil, domain.PreflightRefusalf("event name is required")
 	}
 	// Project must be the caller's canonical LFX slug — it is the Project segment
 	// of the campaign name that the data pipeline joins on for foundation
@@ -1553,7 +1563,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// consumers all see the same value.
 	in.Project = strings.TrimSpace(in.Project)
 	if in.Project == "" {
-		return nil, fmt.Errorf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
+		return nil, domain.PreflightRefusalf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
 	}
 	// Normalize EventName in place too so the campaign name, ad-group/ad names,
 	// and UTM fields all use the same trimmed value (a padded name otherwise
@@ -1565,16 +1575,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// exists, orphaning it. Fail before any mutating call instead. The bounds leave
 	// headroom for the fixed name-template segments within Reddit's name limit.
 	if n := utf8.RuneCountInString(in.EventName); n > maxEventNameRunes {
-		return nil, fmt.Errorf("event name is too long: %d characters (max %d)", n, maxEventNameRunes)
+		return nil, domain.PreflightRefusalf("event name is too long: %d characters (max %d)", n, maxEventNameRunes)
 	}
 	if n := utf8.RuneCountInString(in.Project); n > maxProjectRunes {
-		return nil, fmt.Errorf("project is too long: %d characters (max %d)", n, maxProjectRunes)
+		return nil, domain.PreflightRefusalf("project is too long: %d characters (max %d)", n, maxProjectRunes)
 	}
 	switch {
 	case math.IsNaN(in.BudgetUSD) || math.IsInf(in.BudgetUSD, 0) || in.BudgetUSD <= 0:
-		return nil, fmt.Errorf("invalid budget: must be a positive number")
+		return nil, domain.PreflightRefusalf("invalid budget: must be a positive number")
 	case in.BudgetUSD > redditMaxBudgetUSD:
-		return nil, fmt.Errorf("invalid budget: must be a finite value in (0, %.0f]", redditMaxBudgetUSD)
+		return nil, domain.PreflightRefusalf("invalid budget: must be a finite value in (0, %.0f]", redditMaxBudgetUSD)
 	}
 	// A positive-but-tiny budget can still round to zero micro-dollars (e.g.
 	// 0.0000001 USD), which would send goal_value: 0 to Reddit. Budgets are
@@ -1583,19 +1593,19 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// USD); reject anything below that.
 	budgetMicros := toMicrodollars(in.BudgetUSD)
 	if budgetMicros <= 0 {
-		return nil, fmt.Errorf("invalid budget: %g USD rounds to zero micro-dollars; must round to at least one micro-dollar (>= 0.0000005 USD)", in.BudgetUSD)
+		return nil, domain.PreflightRefusalf("invalid budget: %g USD rounds to zero micro-dollars; must round to at least one micro-dollar (>= 0.0000005 USD)", in.BudgetUSD)
 	}
 	// Parse for calendar validity (rejects e.g. 2026-02-31), not just format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
 	if err != nil {
-		return nil, fmt.Errorf("invalid start date: %s -- expected a valid YYYY-MM-DD", in.StartDate)
+		return nil, domain.PreflightRefusalf("invalid start date: %s -- expected a valid YYYY-MM-DD", in.StartDate)
 	}
 	endDate, err := time.Parse("2006-01-02", in.EndDate)
 	if err != nil {
-		return nil, fmt.Errorf("invalid end date: %s -- expected a valid YYYY-MM-DD", in.EndDate)
+		return nil, domain.PreflightRefusalf("invalid end date: %s -- expected a valid YYYY-MM-DD", in.EndDate)
 	}
 	if !endDate.After(startDate) {
-		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+		return nil, domain.PreflightRefusalf("end date %s must be after start date %s", in.EndDate, in.StartDate)
 	}
 
 	// Validate the registration URL before any mutating call: it becomes the ad
@@ -1613,7 +1623,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	objParams, objOK := redditObjectiveParams[objective]
 	if !objOK {
-		return nil, fmt.Errorf("unsupported Reddit objective: %s", objective)
+		return nil, domain.PreflightRefusalf("unsupported Reddit objective: %s", objective)
 	}
 
 	// Resolve the effective optimization goal. Most objectives carry a static goal
@@ -1624,7 +1634,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if objective == "video_views" {
 		videoGoal := strings.ToUpper(strings.TrimSpace(in.VideoGoal))
 		if !validVideoGoals[videoGoal] {
-			return nil, fmt.Errorf("invalid video goal %q for objective video_views: must be one of VIDEO_VIEW_6S, VIDEO_VIEW_15S", in.VideoGoal)
+			return nil, domain.PreflightRefusalf("invalid video goal %q for objective video_views: must be one of VIDEO_VIEW_6S, VIDEO_VIEW_15S", in.VideoGoal)
 		}
 		optimizationGoal = videoGoal
 	}
@@ -1654,7 +1664,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// Refused BEFORE any upstream call: Reddit rejects this create, so sending it would
 		// spend a round trip to learn what is already known. The message names the connection
 		// because that is where the fix is -- not in the campaign the operator was editing.
-		return nil, fmt.Errorf("reddit requires a conversion pixel id and none is configured: add it to this project's Reddit connection (Reddit Ads → Events Manager lists the account's pixel)")
+		return nil, domain.PreflightRefusalf("reddit requires a conversion pixel id and none is configured: add it to this project's Reddit connection (Reddit Ads → Events Manager lists the account's pixel)")
 	}
 
 	var validatedPostID string
@@ -1688,7 +1698,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	)
 	if validatedPostID == "" && (strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil) {
 		if in.ImageURLSource != nil && strings.TrimSpace(in.ImageURL) != "" {
-			return nil, fmt.Errorf("supply ImageURL or ImageURLSource, not both")
+			return nil, domain.PreflightRefusalf("supply ImageURL or ImageURLSource, not both")
 		}
 		if in.ImageURLSource == nil {
 			imageURL := strings.TrimSpace(in.ImageURL)
@@ -1708,7 +1718,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		} else if canonical, ok := redditCTAs[strings.ToUpper(cta)]; ok {
 			postCTA = canonical
 		} else {
-			return nil, fmt.Errorf("invalid Reddit call to action %q: must be one of %s", in.CallToAction, redditCTAList())
+			return nil, domain.PreflightRefusalf("invalid Reddit call to action %q: must be one of %s", in.CallToAction, redditCTAList())
 		}
 
 		// Headline: prefer the first ad variant's headline (already the operator's
@@ -1719,7 +1729,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			postHeadline = strings.TrimSpace(in.Variants[0].Headline)
 		}
 		if n := utf8.RuneCountInString(postHeadline); n > maxRedditHeadlineRunes {
-			return nil, fmt.Errorf("promoted-post headline is too long: %d characters (max %d)", n, maxRedditHeadlineRunes)
+			return nil, domain.PreflightRefusalf("promoted-post headline is too long: %d characters (max %d)", n, maxRedditHeadlineRunes)
 		}
 	}
 
@@ -1732,10 +1742,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// underscore), so restrict to that charset.
 	accountID := strings.TrimSpace(c.account.AccountID)
 	if accountID == "" {
-		return nil, fmt.Errorf("reddit account ID is required")
+		return nil, domain.PreflightRefusalf("reddit account ID is required")
 	}
 	if !accountIDRe.MatchString(accountID) {
-		return nil, fmt.Errorf("invalid reddit account ID %q: must contain only letters, digits, and underscores", accountID)
+		return nil, domain.PreflightRefusalf("invalid reddit account ID %q: must contain only letters, digits, and underscores", accountID)
 	}
 	label := c.account.Label
 	if label == "" {
@@ -1754,7 +1764,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			continue
 		}
 		if !geoCodeRE.MatchString(g) || !iso3166Alpha2[g] {
-			return nil, fmt.Errorf("invalid geo target %q: must be an ISO 3166-1 alpha-2 country code", g)
+			return nil, domain.PreflightRefusalf("invalid geo target %q: must be an ISO 3166-1 alpha-2 country code", g)
 		}
 		geos = append(geos, g)
 	}

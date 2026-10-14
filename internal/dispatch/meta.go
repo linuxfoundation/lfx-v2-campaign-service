@@ -567,13 +567,12 @@ func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID s
 // naming the missing choice: domain.ErrAccountNotSelected alongside
 // domain.ErrConnectionNotUsable, which unusableConnectionReason reports as
 // "account_not_selected". That pair is a CLASSIFICATION, not a status code, and the reason
-// token reaches an operator through the LOG — not the job result. Be precise about this,
-// because the natural assumption is wrong: the only caller is Dispatch, which is queued work,
-// and dispatchPlatform collapses EVERY dispatcher error into the same
-// "platform campaign creation failed" job result (internal/service/orchestrator.go). Nothing
-// returned here reaches the caller as text. Google Ads' create path is in exactly the same
-// position and says so at validateGoogleAdsConnection's call site; classification there buys
-// log hygiene and claim semantics, and it buys the same here.
+// token reaches an operator through the LOG and, since issue #208, through the job result.
+// Be precise about this: the only caller is Dispatch, which is queued work, and
+// dispatchPlatform reports a dispatcher error in the job result only by CLASSIFICATION
+// (DispatchFailureMessage, internal/service/dispatch_failure.go) — here "this project's
+// meta-ads connection cannot be used as configured (reason: account_not_selected)". The error's
+// own text never reaches the caller.
 //
 // The same sentinels DO drive a synchronous 409 (internal/service/brief.go) — which is why
 // they are used rather than a bespoke error — but only from the status toggle and metrics

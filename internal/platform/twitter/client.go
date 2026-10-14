@@ -36,6 +36,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
@@ -708,6 +709,11 @@ type apiError struct {
 // Unwrap exposes the cause behind an inferred status (see err) so errors.Is/As can
 // still reach it. Nil for the ordinary response-derived case.
 func (e *apiError) Unwrap() error { return e.err }
+
+// UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
+// answered with, and nothing else from the response — so the async create job can report it
+// (issue #208) without any path that could reach the body.
+func (e *apiError) UpstreamStatus() int { return e.StatusCode }
 
 func (e *apiError) Error() string {
 	// Deliberately DO NOT include e.ErrorCodes (or any body-derived text): the
@@ -3235,10 +3241,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// the cleaned value.
 	in.EventName = strings.TrimSpace(in.EventName)
 	if in.EventName == "" {
-		return nil, fmt.Errorf("invalid event name: must not be empty")
+		return nil, domain.PreflightRefusalf("invalid event name: must not be empty")
 	}
 	if utf8.RuneCountInString(in.EventName) > maxEventNameLen {
-		return nil, fmt.Errorf("invalid event name: exceeds %d characters", maxEventNameLen)
+		return nil, domain.PreflightRefusalf("invalid event name: exceeds %d characters", maxEventNameLen)
 	}
 
 	// Validate Project before any mutating call. The Project segment of the
@@ -3249,7 +3255,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// store the cleaned value so every downstream builder sees the same input.
 	in.Project = strings.TrimSpace(in.Project)
 	if in.Project == "" {
-		return nil, fmt.Errorf("invalid project: must not be empty")
+		return nil, domain.PreflightRefusalf("invalid project: must not be empty")
 	}
 
 	// Validate budget. Reject NaN/Inf/non-positive, reject values above the
@@ -3257,13 +3263,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// negative) micro-units — such a value passes a naive >0 check but would send
 	// a zero/negative daily_budget_amount_local_micro.
 	if math.IsNaN(in.BudgetUsd) || math.IsInf(in.BudgetUsd, 0) || in.BudgetUsd <= 0 {
-		return nil, fmt.Errorf("invalid budget: must be a positive number")
+		return nil, domain.PreflightRefusalf("invalid budget: must be a positive number")
 	}
 	if in.BudgetUsd > maxBudgetUsd {
-		return nil, fmt.Errorf("invalid budget: must be at most %v", maxBudgetUsd)
+		return nil, domain.PreflightRefusalf("invalid budget: must be at most %v", maxBudgetUsd)
 	}
 	if toMicroCurrency(in.BudgetUsd) <= 0 {
-		return nil, fmt.Errorf("invalid budget: %g rounds to zero micro-units", in.BudgetUsd)
+		return nil, domain.PreflightRefusalf("invalid budget: %g rounds to zero micro-units", in.BudgetUsd)
 	}
 	if err := validateDate("start", in.StartDate); err != nil {
 		return nil, err
@@ -3272,7 +3278,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 	if in.EndDate <= in.StartDate {
-		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+		return nil, domain.PreflightRefusalf("end date %s must be after start date %s", in.EndDate, in.StartDate)
 	}
 	// X requires a line-item start_time in the FUTURE. A past start is only caught at the
 	// line-item POST, AFTER the campaign is already created — leaving a retained orphan.
@@ -3285,7 +3291,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// through the whole create flow.
 	if start, perr := time.Parse(time.RFC3339, toIso8601Utc(in.StartDate)); perr == nil {
 		if !start.After(c.timeFn().UTC().Add(minStartLead)) {
-			return nil, fmt.Errorf("start date %s is too soon (X requires a start_time in the future; it must be at least %s ahead of now to survive the create flow; the date is sent as %s)", in.StartDate, minStartLead, toIso8601Utc(in.StartDate))
+			return nil, domain.PreflightRefusalf("start date %s is too soon (X requires a start_time in the future; it must be at least %s ahead of now to survive the create flow; the date is sent as %s)", in.StartDate, minStartLead, toIso8601Utc(in.StartDate))
 		}
 	}
 
@@ -3308,14 +3314,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	in.TweetID = strings.TrimSpace(in.TweetID)
 	if in.TweetID != "" {
 		if !tweetIDRe.MatchString(in.TweetID) {
-			return nil, fmt.Errorf("invalid tweet id: %q must be a numeric X Tweet id", in.TweetID)
+			return nil, domain.PreflightRefusalf("invalid tweet id: %q must be a numeric X Tweet id", in.TweetID)
 		}
 		// The 1–19 digit shape still admits values above the max positive int64
 		// snowflake (e.g. 9999999999999999999); parse to reject those before any
 		// mutating call rather than letting X reject tweet_ids after the campaign
 		// and line item exist.
 		if _, perr := strconv.ParseInt(in.TweetID, 10, 64); perr != nil {
-			return nil, fmt.Errorf("invalid tweet id: %q is out of range for an X Tweet id", in.TweetID)
+			return nil, domain.PreflightRefusalf("invalid tweet id: %q is out of range for an X Tweet id", in.TweetID)
 		}
 	}
 
@@ -3351,7 +3357,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// serve without the image the caller asked for.
 	if in.Image != nil {
 		if composedTweetText == "" {
-			return nil, fmt.Errorf("invalid creative image: an image is attached only to an authored tweet, so it requires tweetText and no tweetId")
+			return nil, domain.PreflightRefusalf("invalid creative image: an image is attached only to an authored tweet, so it requires tweetText and no tweetId")
 		}
 		if err := validateImageInput(in.Image); err != nil {
 			return nil, err
@@ -3367,20 +3373,20 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// checking the stored (trimmed) value here means a whitespace-only input is
 	// rejected outright rather than corrupting the account path / funding param.
 	if c.account.AccountID == "" {
-		return nil, fmt.Errorf("invalid account config: account_id must not be empty")
+		return nil, domain.PreflightRefusalf("invalid account config: account_id must not be empty")
 	}
 	if !accountIDRe.MatchString(c.account.AccountID) {
 		// A non-empty check is not enough: account_id is interpolated into the
 		// account-scoped request path (accountURL), so a value with '/', '?', '#',
 		// or whitespace/control chars could redirect this POST to a different
 		// account path. Reject anything outside the safe alphanumeric charset.
-		return nil, fmt.Errorf("invalid account config: account_id %q must contain only letters and digits", c.account.AccountID)
+		return nil, domain.PreflightRefusalf("invalid account config: account_id %q must contain only letters and digits", c.account.AccountID)
 	}
 	if c.account.FundingInstrumentID == "" {
-		return nil, fmt.Errorf("invalid account config: funding_instrument_id must not be empty")
+		return nil, domain.PreflightRefusalf("invalid account config: funding_instrument_id must not be empty")
 	}
 	if !accountIDRe.MatchString(c.account.FundingInstrumentID) {
-		return nil, fmt.Errorf("invalid account config: funding_instrument_id %q must contain only letters and digits", c.account.FundingInstrumentID)
+		return nil, domain.PreflightRefusalf("invalid account config: funding_instrument_id %q must contain only letters and digits", c.account.FundingInstrumentID)
 	}
 
 	// Compose and validate the entity names before ANY network call: even with

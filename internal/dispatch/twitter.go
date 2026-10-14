@@ -196,7 +196,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// toggle, so it is checked here rather than in the shared validator.
 	fundingID := strings.TrimSpace(res.providerConfig["funding_instrument_id"])
 	if fundingID == "" {
-		return nil, notCreated(fmt.Errorf("twitter connection for project %s is missing funding instrument id", brief.ProjectID))
+		return nil, notCreated(domain.PreflightRefusalf("twitter connection for project %s is missing funding instrument id", brief.ProjectID))
 	}
 
 	var cfg twitterConfig

@@ -21,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // Client is a standalone LinkedIn Marketing API client. Construct it with
@@ -426,6 +428,11 @@ type apiError struct {
 	// Body's 400-character cut. Never surfaced, exactly like Body. See bidAmountRefused.
 	raw []byte
 }
+
+// UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
+// answered with, and nothing else from the response — so the async create job can report it
+// (issue #208) without any path that could reach the body.
+func (e *apiError) UpstreamStatus() int { return e.StatusCode }
 
 func (e *apiError) Error() string {
 	// Deliberately DO NOT include e.Body: the upstream response body is untrusted
@@ -2426,13 +2433,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 
+	// The refusals from here to the first findOrCreateCampaignGroup call are raised before any
+	// LinkedIn request and are service-authored (runtime config, caller config scalars, this
+	// client's own limits), so they are marked operator-safe for the async create job (issue
+	// #208). The credential-shape check above and the registration-URL check below are NOT:
+	// the first is about credential material and the second can quote a URL.
 	accountID, err := c.resolveAccountID(in.AdAccountID)
 	if err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	if err := c.validatePrerequisites(accountID, in.TargetingProfile); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	// EventName is semantically required: it is the sole distinguishing token in
@@ -2448,7 +2460,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// whitespace and an inconsistent idempotency key.
 	eventName := strings.TrimSpace(in.EventName)
 	if eventName == "" {
-		return nil, fmt.Errorf("event name is required and must not be empty or whitespace-only")
+		return nil, domain.PreflightRefusalf("event name is required and must not be empty or whitespace-only")
 	}
 	// The campaign-group/campaign names are pipe-delimited ("Events | <name> | ..."),
 	// so a caller value containing "|" would inject extra fields and corrupt the
@@ -2482,14 +2494,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// path would have refused to CREATE it with. The rules and their error texts
 	// are unchanged by the extraction.
 	if _, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
 	// leave an orphaned, un-adorned campaign upstream.
 	if len(in.Variants) == 0 {
-		return nil, fmt.Errorf("at least one creative variant is required")
+		return nil, domain.PreflightRefusalf("at least one creative variant is required")
 	}
 
 	// Validate every variant's mandatory CONTENT up front, before any POST.
@@ -2504,10 +2516,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// for the article dark post, so both are validated.
 	for i, variant := range in.Variants {
 		if normalizeCreativeText(variant.Headline) == "" {
-			return nil, fmt.Errorf("variant-%d headline is required and must not be empty, whitespace-only, or dash-only after normalization", i+1)
+			return nil, domain.PreflightRefusalf("variant-%d headline is required and must not be empty, whitespace-only, or dash-only after normalization", i+1)
 		}
 		if normalizeCreativeText(variant.IntroText) == "" {
-			return nil, fmt.Errorf("variant-%d intro text is required and must not be empty, whitespace-only, or dash-only after normalization", i+1)
+			return nil, domain.PreflightRefusalf("variant-%d intro text is required and must not be empty, whitespace-only, or dash-only after normalization", i+1)
 		}
 		// ImageURN is optional public/AI-derived input. When non-empty it is sent
 		// verbatim as the article thumbnail by createDarkPost, so validate its
@@ -2516,17 +2528,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// campaign (permanent resources) already exist. An empty ImageURN stays
 		// allowed.
 		if variant.ImageURN != "" && !imageURNRE.MatchString(variant.ImageURN) {
-			return nil, fmt.Errorf("variant-%d image URN %q is malformed: expected an Images-API urn:li:image:<id> (the legacy urn:li:digitalmediaAsset form is not accepted by the Posts API)", i+1, variant.ImageURN)
+			return nil, domain.PreflightRefusalf("variant-%d image URN %q is malformed: expected an Images-API urn:li:image:<id> (the legacy urn:li:digitalmediaAsset form is not accepted by the Posts API)", i+1, variant.ImageURN)
 		}
 		// A stored image is validated here too, so it is refused before any POST however the
 		// client is called (images.go).
 		if variant.ImageAssetID != "" {
 			if variant.ImageURN != "" {
-				return nil, fmt.Errorf("variant-%d names both an image URN and a stored image asset; supply one", i+1)
+				return nil, domain.PreflightRefusalf("variant-%d names both an image URN and a stored image asset; supply one", i+1)
 			}
 			img, ok := in.Images[variant.ImageAssetID]
 			if !ok {
-				return nil, fmt.Errorf("variant-%d names stored image asset %s, which was not supplied", i+1, variant.ImageAssetID)
+				return nil, domain.PreflightRefusalf("variant-%d names stored image asset %s, which was not supplied", i+1, variant.ImageAssetID)
 			}
 			if err := ValidateImage(img); err != nil {
 				return nil, fmt.Errorf("variant-%d image asset %s: %w", i+1, variant.ImageAssetID, err)
@@ -2542,7 +2554,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// sanitize "|" -> "-" so it can't inject extra pipe-delimited name fields.
 	project := strings.ReplaceAll(strings.TrimSpace(in.Project), "|", "-")
 	if project == "" {
-		return nil, fmt.Errorf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
+		return nil, domain.PreflightRefusalf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
 	}
 
 	steps := []string{}
@@ -2575,12 +2587,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// caller can pass a malformed URN. Reject it up front rather than sending an
 		// invalid location to LinkedIn only after the campaign group is created.
 		if !geoURNRE.MatchString(g.URN) {
-			return nil, fmt.Errorf("invalid geo target URN %q: expected urn:li:geo:<id>", g.URN)
+			return nil, domain.PreflightRefusalf("invalid geo target URN %q: expected urn:li:geo:<id>", g.URN)
 		}
 		geoURNs = append(geoURNs, g.URN)
 	}
 	if len(geoURNs) == 0 {
-		return nil, fmt.Errorf("no usable geo targets: all supplied geos resolved to nothing — refusing to create a campaign with empty geo targeting")
+		return nil, domain.PreflightRefusalf("no usable geo targets: all supplied geos resolved to nothing — refusing to create a campaign with empty geo targeting")
 	}
 	if len(droppedGeos) > 0 {
 		steps = append(steps, fmt.Sprintf("Geo targets not resolved (omitted from targeting — not in the resolver map): %s", strings.Join(droppedGeos, ", ")))
@@ -2598,7 +2610,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// ~5min) could otherwise push a once-computed start into the past by POST time.
 	_, endMs, err := c.validateSchedule(in.StartDate, in.EndDate)
 	if err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	groupName := fmt.Sprintf("Events | %s | %s", eventName, project)
@@ -2607,10 +2619,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// both generated names before the first create so an over-long event name/project
 	// fails fast instead of after the group is created.
 	if n := len([]rune(groupName)); n > maxNameLen {
-		return nil, fmt.Errorf("campaign group name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
+		return nil, domain.PreflightRefusalf("campaign group name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 	if n := len([]rune(campaignName)); n > maxNameLen {
-		return nil, fmt.Errorf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
+		return nil, domain.PreflightRefusalf("campaign name is %d characters, exceeds the %d-character limit; shorten the event name or project", n, maxNameLen)
 	}
 
 	groupID, err := c.findOrCreateCampaignGroup(ctx, accountID, groupName, in.StartDate, endMs)

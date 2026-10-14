@@ -2262,10 +2262,10 @@ parked mid-bootstrap would fail `Dispatch` with an error nothing classifies — 
 learn that the campaign did not launch, not that the reason is a choice they have not made.
 `requireMetaAccountID` supplies that tagging. Note the shape of that answer: campaign create is ASYNCHRONOUS (`design/brief.go`
 answers `StatusAccepted`), so no error of any kind surfaces as a 409 — `docs/api-catalog.md`
-records the same split for Google Ads. Nor does the reason reach the polled job result:
-`dispatchPlatform` collapses every dispatcher error into the fixed string
-`"platform campaign creation failed"` (`internal/service/orchestrator.go`), so the job says the
-create failed and never says why. The synchronous 409 that
+records the same split for Google Ads. Since issue #208 the reason DOES reach the polled job
+result, as a classification only: `DispatchFailureMessage` (`internal/service/dispatch_failure.go`)
+reports this as "this project's meta-ads connection cannot be used as configured (reason:
+account_not_selected); nothing was sent", never quoting the error. The synchronous 409 that
 names the missing account belongs to `ToggleStatus` and `ReadMetrics`, and neither needs
 anything here: both target the campaign node by id and document that they need no account id
 (`internal/dispatch/meta.go`), so they already work on an account-less row. `Dispatch` is
@@ -4392,3 +4392,38 @@ malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefec
 (503). Tests: `linkedin_audience_test.go` (every pivot mapped, LF fallback refused with zero upstream
 calls, foreign/legacy-URL/mixed provenance 409 with zero calls, unknown provenance proceeds, window
 and scope faults beat an inactive connection, 401 → expired, 5xx unclassified without its body).
+
+## Operator-safe pre-flight refusals (issue #208)
+
+`internal/domain/dispatch_failure.go` defines the three markers the async create job's
+`DispatchFailureMessage` (internal/service) reads:
+
+- `domain.PreflightRefusal`: a refusal THIS service wrote and raised before the first
+  upstream request. It is built with `PreflightRefusalf`, which renders an `error` argument as
+  `(detail withheld)` and never as its text, or with `WrapPreflightRefusal(err)`, where the
+  caller vouches for the whole chain. `Error()` is unchanged and `Unwrap` keeps
+  `errors.Is`/`As` working (for example `BudgetAmountReason`). It deliberately has **no**
+  `NoUpstreamCreate`, so marking a message never changes a claim verdict.
+- `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every non-Google client's HTTP
+  error type (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot). It exposes the
+  status and nothing else.
+- `domain.TokenRefreshFailure`: `MarkTokenRefreshFailure` wraps the token-exchange result in
+  the reddit, microsoft and linkedin refresh leaders.
+
+Marked refusals: the pre-send validation in each client's `CreateCampaign`, up to its first
+request. That is Reddit up to the account-verify GET (name/project/budget/dates/objective/video
+goal/**conversion pixel**/CTA/headline/account id/geo), LinkedIn up to the group find-or-create
+(account, targeting profile, event name, **budget minimums**, variants, project, geo, schedule,
+name lengths), Meta up to the account preflight GET (variants and lengths, budget, currency
+offset, dates, account/page id, project, event, IG id, DSA pair, objective, placements, promoted
+object), X up to `verifyAccount` (event, project, budget, dates/lead time, tweet id, image,
+account/funding instrument), and Microsoft up to geo resolution (project, event, budget,
+name length, composed URL length, ad copy, keywords, bid, geo codes). Dispatcher-authored ones
+are marked too: Reddit's stored-asset choice, LinkedIn's inactive / incomplete / missing-org /
+no-variant / foreign-account refusals, X's missing funding instrument, and HubSpot's missing
+`sourceEmailId` and send-list-in-suppression check. Refusals that can quote a URL
+(registration, image or post URL validators), carry credential-derived text (credential shape,
+JSON decode) or come after a read was sent (Meta's inactive-account check) are deliberately
+**not** marked. Google Ads (`googleads*.go`, `platform/googleads`) is untouched until its owner
+opts in. Pinned by `preflight_refusal_test.go` (one refusal per platform, verbatim, nothing
+sent; a real Meta 4xx/5xx whose body carries a secret query; a real Reddit token refusal).

@@ -2185,3 +2185,29 @@ LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics f
 (the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
 `true` on the wire. Tests: `linkedin_audience_test.go`. See
 [LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).
+
+## Dispatch failure reasons in the job result (`dispatch_failure.go`, issue #208)
+
+`dispatchPlatform` used to set every failed platform's `PlatformResult.error` to
+`"platform campaign creation failed"`, logging the real cause and then dropping it. It now
+calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoting the error:
+
+- `preCreate` is the orchestrator's own claim verdict (`dispatchErrIsPreCreate(derr) &&
+  campaign == nil`), computed once and shared by the claim and the message, so the two cannot
+  disagree. A retained failure (something may exist) is always reported as **could not be
+  confirmed**, with the upstream HTTP status when the chain carries one — never a refusal or a
+  connection class, even if the chain has one.
+- On the pre-create path the arms follow `classifyDiscoveryError`'s order: service defect → LF
+  system connection missing → no connection (`ErrConnectionAbsent`) → decrypt fault → LF
+  system / own connection unusable (with the `unusableConnectionReason` token) → a
+  `domain.PreflightRefusal`, **echoed verbatim** → token refresh failed
+  (`domain.TokenRefreshFailure`) → platform refused the create (status only,
+  `domain.UpstreamStatusCarrier`) → the generic string.
+- The connection arms precede the refusal arm so that a chain carrying credential-derived text
+  can never be echoed, even if someone wraps it as a refusal.
+
+The message is the only change. Claim release/retention, the retained row's status and the
+job's aggregate status are decided before it runs. `TestOrchestrator_PreCreateFailureLogsAClassifiedReason`
+now asserts that the job result carries `(reason: account_not_selected)` and not the error text.
+Google Ads reaches the generic classes only (connection, unconfirmed, fallback); its client
+errors are not marked yet.
