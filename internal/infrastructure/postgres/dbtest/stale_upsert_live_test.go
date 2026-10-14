@@ -190,3 +190,60 @@ func TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim(t *testing.T) {
 		t.Fatalf("live rows after B's own release = %d, want 0", live)
 	}
 }
+
+// TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim pins PR #260's slot-2 thread. An adopt
+// always writes slot_version 1, so after a cleared slot-2 claim it does not take the stale
+// upsert's four-column arbiter: the upsert goes to its INSERT arm and violates 000022's
+// three-column index on the adopted row instead. That must be the same lost claim the conflict
+// arm reports — the upstream id named, nothing written, the adoption untouched — not an
+// ordinary persist failure that says the (cleared) claim was retained.
+func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+
+	// Slot 1 completed and then soft-deleted: the only way a slot-2 claim is admitted while
+	// 000022's index still holds one live campaign per slot.
+	first := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
+	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status = 'deleted' WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("soft-delete slot 1: %v", err)
+	}
+	staleJob := uuid.NewString()
+	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, 2, staleJob, nil); err != nil || !claimed {
+		t.Fatalf("slot-2 claim: claimed=%v err=%v", claimed, err)
+	}
+	if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, 2); err != nil {
+		t.Fatalf("operator clear of the slot-2 claim: %v", err)
+	}
+	adopted, err := adoptInto(ctx, t, repo, project, briefID, p)
+	if err != nil {
+		t.Fatalf("adopt into the emptied slot: %v", err)
+	}
+	if adopted.SlotVersion != model.FirstSlotVersion {
+		t.Fatalf("adopted slot_version = %d, want 1", adopted.SlotVersion)
+	}
+	before := readSlotRow(ctx, t, pool, adopted.ID)
+
+	staleUpstream := dbtest.UniqueID(t, "stale-upstream")
+	_, err = repo.UpsertCampaign(ctx, &model.Campaign{
+		ProjectID: project, BriefID: briefID, JobID: &staleJob,
+		Platform: p, Variant: model.VariantDefault, SlotVersion: 2,
+		CampaignName: dbtest.UniqueID(t, "campaign"), Status: model.CampaignStatusCreated,
+		PlatformCampaignID: staleUpstream,
+	}, nil)
+	if !errors.Is(err, domain.ErrDispatchClaimLost) {
+		t.Fatalf("stale slot-2 upsert beside the adoption: err = %v, want ErrDispatchClaimLost", err)
+	}
+	if !strings.Contains(err.Error(), staleUpstream) {
+		t.Errorf("lost-claim error %q does not name the untracked upstream id %s", err, staleUpstream)
+	}
+	if after := readSlotRow(ctx, t, pool, adopted.ID); after.version != before.version ||
+		after.platformCampaignID == nil || *after.platformCampaignID != adopted.PlatformCampaignID {
+		t.Fatalf("adopted row changed: before=%+v after=%+v", before, after)
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live rows on the slot = %d, want 1 (the adoption only)", live)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -5669,5 +5670,79 @@ func TestBriefService_CreateCampaigns_APreCheckThatCannotRunDoesNotBlockTheCreat
 	}
 	if !strings.Contains(string(stub.gotConfig), `"abTestEnabled":true`) {
 		t.Errorf("pre-check config %s does not carry the caller's A/B flag", stub.gotConfig)
+	}
+}
+
+// TestBriefService_GetJob_LostClaimReconcileIsPolled is the poll-path half of the lost-claim
+// contract. The id-less lost-claim message sends the caller to "the identifiers recorded in the
+// stored job result", so GET .../jobs/{jobId} must return them: the job result is produced by a
+// real dispatch (an id-less partial whose claim is lost) and read back through GetJob, which
+// before this decoded only the original PlatformResult fields and dropped `reconcile`.
+func TestBriefService_GetJob_LostClaimReconcileIsPolled(t *testing.T) {
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&lostClaimCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: idLessPartialDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+
+	s := getJobTestService(&model.CampaignJob{ID: "j1", BriefID: "b1", Status: j.Status, Result: j.Result})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if len(resp.Result) != 1 {
+		t.Fatalf("results = %d, want 1", len(resp.Result))
+	}
+	pr := resp.Result[0]
+	if pr.CampaignID != nil {
+		t.Errorf("campaign_id = %q, want none for an id-less partial", *pr.CampaignID)
+	}
+	got := map[string][]string{}
+	var keys []string
+	for _, r := range pr.Reconcile {
+		got[r.Key] = r.Values
+		keys = append(keys, r.Key)
+	}
+	for k, v := range map[string]string{
+		"campaignGroupId": "grp-id-7", "campaignGroupName": "grp-name-7",
+		"campaignName": "camp-name-7", "accountId": "acct-7", "status": model.CampaignStatusUnconfirmed,
+	} {
+		if vs := got[k]; len(vs) != 1 || vs[0] != v {
+			t.Errorf("polled reconcile[%s] = %v, want [%s] (keys %v)", k, vs, v, keys)
+		}
+	}
+	if !sort.StringsAreSorted(keys) {
+		t.Errorf("polled reconcile keys %v are not sorted; two polls must render identically", keys)
+	}
+}
+
+// The poll mapping keeps the stored shapes: a list stays a list, a keyed map stays entries, and a
+// truncation flag folds into its identifier instead of becoming an entry of its own.
+func TestReconcileIdentifiersMapsEveryStoredShape(t *testing.T) {
+	stored := map[string]json.RawMessage{
+		"campaignName":              json.RawMessage(`"n"`),
+		"creativeAssetIds":          json.RawMessage(`["a1","a2"]`),
+		"creativeAssetIdsTruncated": json.RawMessage(`true`),
+		"imageUrns":                 json.RawMessage(`{"asset-1":"urn:li:image:1"}`),
+		"unknownShape":              json.RawMessage(`42`),
+	}
+	got := reconcileIdentifiers(stored)
+	if len(got) != 3 {
+		t.Fatalf("identifiers = %d, want 3 (the flag folds in, the unknown shape is skipped): %+v", len(got), got)
+	}
+	byKey := map[string]*briefs.ReconcileIdentifier{}
+	for _, r := range got {
+		byKey[r.Key] = r
+	}
+	if r := byKey["creativeAssetIds"]; r == nil || len(r.Values) != 2 || r.Truncated == nil || !*r.Truncated {
+		t.Errorf("creativeAssetIds = %+v, want both values and truncated=true", r)
+	}
+	if r := byKey["imageUrns"]; r == nil || r.Entries["asset-1"] != "urn:li:image:1" || r.Values != nil {
+		t.Errorf("imageUrns = %+v, want entries only", r)
+	}
+	if r := byKey["campaignName"]; r == nil || len(r.Values) != 1 || r.Values[0] != "n" || r.Truncated != nil {
+		t.Errorf("campaignName = %+v, want [n] and no truncated flag", r)
 	}
 }

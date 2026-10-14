@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1909,6 +1910,10 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			Error      string `json:"error"`
 			Skipped    bool   `json:"skipped"`
 			HubspotURL string `json:"hubspot_url"`
+			// Reconcile is the orchestrator's platformResult.Reconcile (see reconcileRef):
+			// identifier fields of what a lost-claim dispatch created. Decoded per value so an
+			// unexpected shape is skipped rather than failing the whole poll.
+			Reconcile map[string]json.RawMessage `json:"reconcile"`
 		}
 		if err := json.Unmarshal(j.Result, &stored); err != nil {
 			// A persisted result that won't decode is corruption, not a valid empty
@@ -1937,6 +1942,7 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 				u := r.HubspotURL
 				pr.HubspotURL = &u
 			}
+			pr.Reconcile = reconcileIdentifiers(r.Reconcile)
 			switch {
 			case r.Skipped && !r.OK:
 				// A SKIPPED platform is OK=false but is NOT a failure — a concurrent
@@ -1975,6 +1981,59 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 }
 
 // ─── mapping helpers ───
+
+// reconcileIdentifiers maps a stored platformResult.Reconcile map onto the typed poll response,
+// sorted by key so two polls of one job render identically. The orchestrator stores each
+// identifier as a string, a string array or a string map, and flags a cut value with a sibling
+// "<key>Truncated": true; a flag folds into its identifier's truncated field rather than becoming
+// an entry of its own. Any other shape is skipped: the stored result is this service's own
+// output, so an unknown shape is a newer writer's field, not corruption worth failing the poll.
+func reconcileIdentifiers(stored map[string]json.RawMessage) []*briefs.ReconcileIdentifier {
+	if len(stored) == 0 {
+		return nil
+	}
+	const truncatedSuffix = "Truncated"
+	byKey := make(map[string]*briefs.ReconcileIdentifier, len(stored))
+	truncated := map[string]bool{}
+	for k, raw := range stored {
+		var flag bool
+		if strings.HasSuffix(k, truncatedSuffix) && json.Unmarshal(raw, &flag) == nil {
+			if flag {
+				truncated[strings.TrimSuffix(k, truncatedSuffix)] = true
+			}
+			continue
+		}
+		var str string
+		var list []string
+		var entries map[string]string
+		switch {
+		case json.Unmarshal(raw, &str) == nil:
+			byKey[k] = &briefs.ReconcileIdentifier{Key: k, Values: []string{str}}
+		case json.Unmarshal(raw, &list) == nil:
+			byKey[k] = &briefs.ReconcileIdentifier{Key: k, Values: list}
+		case json.Unmarshal(raw, &entries) == nil:
+			byKey[k] = &briefs.ReconcileIdentifier{Key: k, Entries: entries}
+		}
+	}
+	if len(byKey) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]*briefs.ReconcileIdentifier, 0, len(keys))
+	for _, k := range keys {
+		id := byKey[k]
+		if truncated[k] {
+			t := true
+			id.Truncated = &t
+		}
+		out = append(out, id)
+	}
+	return out
+}
 
 func briefResult(b *model.CampaignBrief) *briefs.Brief {
 	// Both are REQUIRED on the response, so the generated type takes plain strings rather than

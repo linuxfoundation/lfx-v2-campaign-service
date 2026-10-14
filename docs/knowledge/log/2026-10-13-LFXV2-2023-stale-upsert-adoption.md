@@ -43,3 +43,11 @@ Merge with main's #328 (legacy-binding refusal): `UpsertCampaign` takes the per-
 binding order, so no writer holds the binding lock while waiting for a slot. The job-id guard
 still decides the conflict arm, so the legacy-row live test now seeds its row with a job id and
 re-writes it as that job.
+
+Fifth follow-up, same review: `reconcile` is now returned by `GET .../jobs/{jobId}` as a typed
+`PlatformResult.reconcile` list (design + `make apigen`; `BriefService.GetJob` maps it), so the
+lost-claim message points at identifiers a caller can fetch. And a stale slot-2 upsert after an
+operator clear and an adopt (always slot 1) misses the four-column arbiter and violates 000022's
+three-column index on the INSERT arm; `UpsertCampaign` now reports that as
+`ErrDispatchClaimLost` too, instead of an ordinary persist failure that claimed the claim was
+retained.

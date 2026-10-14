@@ -219,7 +219,11 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   own finalized row). Strict `=`, so a write with no job id never updates an existing row. Zero
   rows back is `domain.ErrDispatchClaimLost` (error text names the upstream id, slot version and
   job); nothing is written. Pinned by `TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption` and
-  `TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim`.
+  `TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim`. A unique violation on 000022's
+  three-column index during the upsert is the same loss: it can only fire on the INSERT arm, which
+  runs only when this slot version has no live row, so another live row holds the slot at a
+  different version (a cleared slot-2 claim, then an adopt at slot 1). It is also
+  `ErrDispatchClaimLost` (`TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim`).
 
   The same job id keys the RELEASE. `DeleteDispatchClaim(..., slotVersion, jobID)` deletes only a
   `pending` row whose `job_id` is that job's, so the orchestrator's pre-create release and the

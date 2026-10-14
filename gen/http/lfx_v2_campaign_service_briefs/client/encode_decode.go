@@ -8456,6 +8456,42 @@ func unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResu
 		Error:      v.Error,
 		HubspotURL: v.HubspotURL,
 	}
+	if v.Reconcile != nil {
+		res.Reconcile = make([]*lfxv2campaignservicebriefs.ReconcileIdentifier, len(v.Reconcile))
+		for i, val := range v.Reconcile {
+			if val == nil {
+				res.Reconcile[i] = nil
+				continue
+			}
+			res.Reconcile[i] = unmarshalReconcileIdentifierResponseBodyToLfxv2campaignservicebriefsReconcileIdentifier(val)
+		}
+	}
+
+	return res
+}
+
+// unmarshalReconcileIdentifierResponseBodyToLfxv2campaignservicebriefsReconcileIdentifier
+// builds a value of type *lfxv2campaignservicebriefs.ReconcileIdentifier from
+// a value of type *ReconcileIdentifierResponseBody.
+func unmarshalReconcileIdentifierResponseBodyToLfxv2campaignservicebriefsReconcileIdentifier(v *ReconcileIdentifierResponseBody) *lfxv2campaignservicebriefs.ReconcileIdentifier {
+	res := &lfxv2campaignservicebriefs.ReconcileIdentifier{
+		Key:       *v.Key,
+		Truncated: v.Truncated,
+	}
+	if v.Values != nil {
+		res.Values = make([]string, len(v.Values))
+		for i, val := range v.Values {
+			res.Values[i] = val
+		}
+	}
+	if v.Entries != nil {
+		res.Entries = make(map[string]string, len(v.Entries))
+		for key, val := range v.Entries {
+			tk := key
+			tv := val
+			res.Entries[tk] = tv
+		}
+	}
 
 	return res
 }

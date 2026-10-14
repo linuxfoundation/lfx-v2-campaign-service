@@ -981,7 +981,17 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// The INSERT arm always returns its row, so no row back means the conflict arm's
 		// ownership guard declined: the live row on this slot version is not this job's claim.
 		// Nothing was written, and the upstream id is named so the caller can keep it.
-		if errors.Is(err, pgx.ErrNoRows) {
+		//
+		// 000022's three-column index is the SAME loss reached through the other arm. It can
+		// only fire on the INSERT arm (the conflict arm never changes brief, platform or
+		// variant), and the INSERT arm runs only when this slot version has no live row — so a
+		// violation means ANOTHER live row holds the slot at a different version while this
+		// job's claim is gone. The case that reaches it: a slot-2 claim cleared by an operator,
+		// then an adopt (always slot 1) binding the emptied slot; the stale slot-2 upsert does
+		// not conflict on the four-column arbiter and hits the legacy index instead. Reported as
+		// a lost claim, not a persist failure that would claim the cleared claim is "retained".
+		// Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim.
+		if errors.Is(err, pgx.ErrNoRows) || isUniqueViolationOn(err, legacySlotUniqueIndex) {
 			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s (slot version %d) is no longer held by job %s",
 				domain.ErrDispatchClaimLost, c.Platform, c.PlatformCampaignID,
 				model.NormalizeSlotVersion(c.SlotVersion), derefStr(c.JobID))

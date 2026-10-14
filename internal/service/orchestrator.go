@@ -1255,8 +1255,8 @@ type platformResult struct {
 	HubspotURL string `json:"hubspot_url,omitempty"`
 	// Reconcile is set only for domain.ErrDispatchClaimLost: the identifying fields of what the
 	// dispatch created (see reconcileRef), because the campaign row that would have held its
-	// result blob was never written. It lives in the stored job result for operators; GetJob's
-	// typed response does not carry it.
+	// result blob was never written. GetJob returns it as PlatformResult.reconcile (see
+	// reconcileIdentifiers), so the lost-claim message's pointer to it is one a caller can follow.
 	Reconcile map[string]any `json:"reconcile,omitempty"`
 }
 
@@ -2149,7 +2149,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 // campaign_id that is absent.
 const (
 	lostClaimResultError     = "created upstream campaign but this dispatch's claim was cleared and the slot is now bound to another campaign; the upstream campaign is untracked, reconciliation required"
-	lostClaimNoIDResultError = "this dispatch may have created upstream resources but no campaign id was captured, and its claim was cleared and the slot is now bound to another campaign; they are untracked, reconcile by the identifiers recorded in the stored job result and the service log"
+	lostClaimNoIDResultError = "this dispatch may have created upstream resources but no campaign id was captured, and its claim was cleared and the slot is now bound to another campaign; they are untracked, reconcile by the identifiers in this result's reconcile field"
 )
 
 // reconcileRefMaxRunes bounds each value copied into platformResult.Reconcile, in CHARACTERS

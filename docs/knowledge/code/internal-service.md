@@ -165,8 +165,10 @@ platform result's `reconcile` map and the ERROR log. On the retained-partial pat
 carries the provider's error as `dispatch_error` (logged the way the retained-partial path
 always logs it), which the job result never does. An id-less partial gets its own message
 saying no campaign id was captured
-(`TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail`). `reconcile` is in the
-stored job result only; GetJob's typed response does not carry it. A worker that loses the claim reuses the existing row instead of dispatching
+(`TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail`). `GetJob` returns
+`reconcile` as the typed `PlatformResult.reconcile` list (`{key, values | entries, truncated}`,
+sorted by key; `reconcileIdentifiers` folds each `<key>Truncated` flag into its identifier)
+(`TestBriefService_GetJob_LostClaimReconcileIsPolled`). A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
 orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on
