@@ -172,22 +172,23 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		hsToken = bf.HSToken
 	}
 
-	// A stored creative asset becomes the signed URL Reddit fetches, resolved here — after
-	// the config is parsed and BEFORE any Reddit call — so a refused or foreign asset fails
-	// the platform pre-create and releases the claim. cfg itself is left untouched, so the
-	// persisted config snapshot records imageAssetId and never the minted URL.
-	imageURL := cfg.ImageURL
+	// A stored creative asset is CHECKED here — after the config is parsed and BEFORE any
+	// Reddit call — so a refused or foreign asset fails the platform pre-create and releases
+	// the claim. Its signed URL is NOT minted here: the client mints it through
+	// ImageURLSource immediately before the post request that hands it to Reddit, so the
+	// account verification and any throttle wait in between cannot expire it. cfg itself is
+	// left untouched, so the persisted config snapshot records imageAssetId and never a URL.
 	var signedURL string
+	var imageURLSource func(context.Context) (string, error)
 	assetID, err := d.checkRedditAssetChoice(cfg)
 	if err != nil {
 		return nil, notCreated(err)
 	}
 	if assetID != "" {
-		signedURL, err = d.resolveRedditAssetURL(ctx, brief, assetID)
-		if err != nil {
+		if err := d.checkRedditAsset(ctx, brief, assetID); err != nil {
 			return nil, notCreated(err)
 		}
-		imageURL = signedURL
+		imageURLSource = d.lateAssetURL(brief, assetID, &signedURL)
 	}
 
 	in := reddit.CampaignInput{
@@ -210,7 +211,8 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		Keywords:          cfg.Keywords,
 		Variants:          cfg.Variants,
 		PostURL:           cfg.PostURL,
-		ImageURL:          imageURL,
+		ImageURL:          cfg.ImageURL,
+		ImageURLSource:    imageURLSource,
 		CallToAction:      cfg.CallToAction,
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,

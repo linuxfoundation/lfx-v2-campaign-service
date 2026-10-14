@@ -6,9 +6,9 @@
 // Reddit Ads API v3 accepts a promoted-post image only as a PUBLIC URL that Reddit fetches
 // and re-hosts at post creation; it has no upload endpoint. To let a Reddit dispatch use an
 // image stored through upload-creative-asset, the service serves that one asset's bytes at a
-// short-lived, HMAC-signed URL that the Reddit dispatch mints for itself and hands to Reddit
-// as media_url. See docs/knowledge/architecture/signed-creative-asset-urls.md for the full
-// security model.
+// short-lived, HMAC-signed URL that the Reddit client mints immediately before the
+// promoted-post request that hands it to Reddit as media_url. See
+// docs/knowledge/architecture/signed-creative-asset-urls.md for the full security model.
 //
 // The route is UNAUTHENTICATED BY DESIGN — Reddit's fetcher carries no LFX credential — so the
 // signature IS the authorization. It is a service of its own, with no Security, so no JWT
@@ -53,7 +53,7 @@ var SignedCreativeAssetResult = Type("signed-creative-asset-result", func() {
 })
 
 var _ = Service("lfx-v2-campaign-service-signed-assets", func() {
-	Description("Serves one stored creative asset at a short-lived HMAC-signed URL minted by the Reddit dispatch. Unauthenticated by design: the signature is the authorization.")
+	Description("Serves one stored creative asset at a short-lived HMAC-signed URL that the Reddit client mints immediately before post creation. Unauthenticated by design: the signature is the authorization.")
 	// Hidden from the OpenAPI documents as a whole (not only the method), so not even the
 	// service tag is published: no API client calls this route.
 	Meta("swagger:generate", "false")
