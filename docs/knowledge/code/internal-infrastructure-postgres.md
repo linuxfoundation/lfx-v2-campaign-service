@@ -1751,8 +1751,35 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   failed to record it". Live coverage: `adopt_linkedin_binding_live_test.go` (two concurrent
   adoptions into two projects' briefs → exactly one success and one AlreadyBound; a dispatch
   onto a bound id → AlreadyBound, freed by soft delete; the raw index refuses LinkedIn across
-  projects and leaves Meta alone). Meta, Reddit, X and Microsoft adoption still have no binding
-  index; each needs its own per-provider decision (Microsoft's ids are account-scoped).
+  projects and leaves other platforms alone).
+- **`uq_campaigns_meta_campaign_live`, `uq_campaigns_microsoft_campaign_live`,
+  `uq_campaigns_reddit_campaign_live`, `uq_campaigns_twitter_campaign_live`** (migrations
+  000043-000046, LFXV2-2665) — the same binding guard for the remaining adoptable providers, one
+  SEPARATE index each, decided per provider:
+  - **Meta (000043): GLOBAL** `(platform, platform_campaign_id)`. A campaign is a Graph API node,
+    "an individual object with a unique ID" (https://developers.facebook.com/docs/graph-api/overview),
+    read as `GET /{id}` with no account.
+  - **Microsoft (000044): per AD ACCOUNT.** Ids are account-scoped (LFXV2-3056; every Campaign
+    Management call carries `CustomerAccountId`). Third key: `COALESCE(NULLIF(result->>'accountId',''),
+    NULLIF(substring(result->>'microsoftAdsUrl' from '[?&]aid=([^&#]+)'),''))` — exactly
+    `microsoftCreationAccountID`'s reading, legacy `aid=` fallback included.
+  - **Reddit (000045) and X (000046): per AD ACCOUNT**, because neither documents its ids as global
+    (every campaign path is account-scoped). An account key is exact either way: global ids always
+    carry one account, so duplicates are still refused, and per-account ids cannot false-reject.
+    Keys: `NULLIF(result->>'accountId','')` (Reddit) and `NULLIF(result->>'AccountID','')` (X — its
+    result struct is marshalled untagged).
+  The expression keys made `requiredIndexes` compare keys via `pg_get_indexdef(index, n, true)`
+  (a bare column name, or an expression key's deparsed text) instead of `pg_attribute`, which
+  silently dropped expression keys; `createSQL` parenthesises an expression key.
+  **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so they
+  never block a legitimate binding; `AdoptCampaign` closes the other side with
+  `adoptBindingLegacyQuery` — it refuses (AlreadyBound) to adopt an id a live account-less row of
+  that platform holds. All six index names are in `platformCampaignBindingIndexes`, which
+  `isPlatformCampaignBindingViolation` reads for both adoption and `UpsertCampaign` (dispatch).
+  Live coverage: `adopt_binding_providers_live_test.go` (concurrent adoption: one success + one
+  AlreadyBound per provider; different accounts both bind on the account-keyed three; dispatch
+  duplicates; legacy rows). **Deploy risk:** existing duplicate live bindings make the
+  CONCURRENTLY build fail and stop the deploy — resolve, drop the INVALID index, re-run.
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.

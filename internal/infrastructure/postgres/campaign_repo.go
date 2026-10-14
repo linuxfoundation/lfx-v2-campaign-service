@@ -106,13 +106,46 @@ const platformCampaignUniqueIndex = "uq_campaigns_platform_campaign_live"
 // ids are globally unique). Its violation means ErrPlatformCampaignAlreadyBound too.
 const linkedInCampaignUniqueIndex = "uq_campaigns_linkedin_campaign_live"
 
-// isPlatformCampaignBindingViolation reports whether err violates one of the per-provider
-// "one upstream campaign, one live row" indexes (000020 for Google Ads, 000042 for LinkedIn).
-// Each provider keeps its OWN index — see 000042 for why they are not one widened predicate —
-// and every one of them means the same thing to a caller.
-func isPlatformCampaignBindingViolation(err error) bool {
-	return isUniqueViolationOn(err, platformCampaignUniqueIndex) || isUniqueViolationOn(err, linkedInCampaignUniqueIndex)
+// platformCampaignBindingIndexes are the per-provider "one upstream campaign, one live row"
+// indexes: 000020 (Google Ads) and 000042 (LinkedIn), both global; 000043 (Meta), global; and
+// 000044-000046 (Microsoft, Reddit, X), keyed on the ad account too. Each provider keeps its OWN
+// index — see 000042 for why they are not one widened predicate — and a violation of any of them
+// means the same thing to a caller: ErrPlatformCampaignAlreadyBound.
+var platformCampaignBindingIndexes = []string{
+	platformCampaignUniqueIndex,
+	linkedInCampaignUniqueIndex,
+	"uq_campaigns_meta_campaign_live",
+	"uq_campaigns_microsoft_campaign_live",
+	"uq_campaigns_reddit_campaign_live",
+	"uq_campaigns_twitter_campaign_live",
 }
+
+// isPlatformCampaignBindingViolation reports whether err violates one of
+// platformCampaignBindingIndexes.
+func isPlatformCampaignBindingViolation(err error) bool {
+	for _, name := range platformCampaignBindingIndexes {
+		if isUniqueViolationOn(err, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// accountKeyedBindingSQL is, per provider whose binding index is keyed on the ad account
+// (000044-000046), the SQL that extracts that account from a row's result JSON — the same
+// expression as the index key. A live row where it is NULL records no account (a legacy row) and
+// so is invisible to that provider's index; adoptBindingLegacyQuery uses it to refuse adopting an
+// id such a row already holds, rather than let a second binding slip past the index.
+var accountKeyedBindingSQL = map[model.Provider]string{
+	model.ProviderMicrosoftAds: `COALESCE(NULLIF(result ->> 'accountId', ''), NULLIF(substring(result ->> 'microsoftAdsUrl' from '[?&]aid=([^&#]+)'), ''))`,
+	model.ProviderRedditAds:    `NULLIF(result ->> 'accountId', '')`,
+	model.ProviderTwitterAds:   `NULLIF(result ->> 'AccountID', '')`,
+}
+
+// adoptBindingLegacyQuery reports whether a live row of the platform already holds the upstream
+// id while recording NO account (the %s is the provider's account expression).
+const adoptBindingLegacyQuery = `SELECT EXISTS (SELECT 1 FROM campaigns
+	WHERE platform = $1 AND platform_campaign_id = $2 AND status <> 'deleted' AND (%s) IS NULL)`
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
@@ -842,6 +875,21 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 	}
 	if status != "approved" || version != expectedVersion {
 		return nil, domain.ErrStaleApproval
+	}
+
+	// LEGACY ROWS on an account-keyed binding index (000044-000046): a live row that records no
+	// account is NULL in the index key, so it can neither block nor be blocked by it. Adoption must
+	// not use that gap to bind the same upstream campaign a second time, so an id such a row holds
+	// is refused as already bound — conservatively, since the legacy row's account is unknown.
+	if expr, ok := accountKeyedBindingSQL[c.Platform]; ok && c.PlatformCampaignID != "" {
+		var held bool
+		if qerr := tx.QueryRow(ctx, fmt.Sprintf(adoptBindingLegacyQuery, expr), string(c.Platform), c.PlatformCampaignID).Scan(&held); qerr != nil {
+			return nil, fmt.Errorf("adopt campaign: check legacy bindings: %w", qerr)
+		}
+		if held {
+			return nil, fmt.Errorf("%w: %s campaign %s is already bound to a brief (by a row that records no ad account)",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+		}
 	}
 
 	// Both actor columns from ONE value: adoption creates the row and is also the last

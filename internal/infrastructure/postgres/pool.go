@@ -397,6 +397,45 @@ var requiredIndexes = []requiredIndex{{
 	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
 		"(platform = 'linkedin-ads'::text))",
 }, {
+	// One live row per Meta campaign (000043). GLOBAL key: a Meta campaign is a Graph node with
+	// a globally unique id. Built without IF NOT EXISTS for 000020's reason.
+	name:   "uq_campaigns_meta_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id"},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'meta-ads'::text))",
+}, {
+	// One live row per Microsoft campaign PER AD ACCOUNT (000044): Microsoft ids are
+	// account-scoped, so the third key is the account extracted exactly as
+	// microsoftCreationAccountID reads it (accountId, else the aid= of microsoftAdsUrl).
+	// Deparsed against PostgreSQL 16 — note the quoted "substring".
+	name:   "uq_campaigns_microsoft_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys: []string{"platform", "platform_campaign_id",
+		`COALESCE(NULLIF(result ->> 'accountId'::text, ''::text), NULLIF("substring"(result ->> 'microsoftAdsUrl'::text, '[?&]aid=([^&#]+)'::text), ''::text))`},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'microsoft-ads'::text))",
+}, {
+	// One live row per Reddit campaign PER AD ACCOUNT (000045): Reddit does not document its
+	// ids as global, so the account (result.accountId, redditCreationAccountID's field) keys it.
+	name:   "uq_campaigns_reddit_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id", "NULLIF(result ->> 'accountId'::text, ''::text)"},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'reddit-ads'::text))",
+}, {
+	// One live row per X campaign PER AD ACCOUNT (000046): X does not document its ids as
+	// global, so the account (result.AccountID, twitterCreationAccountID's field) keys it.
+	name:   "uq_campaigns_twitter_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id", "NULLIF(result ->> 'AccountID'::text, ''::text)"},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'twitter-ads'::text))",
+}, {
 	// at most one LIVE brief per (project, event slug, delivery type, stage). 000003 does not
 	// add this index alongside a constraint — it DROPs campaign_briefs_project_id_event_slug_key
 	// and replaces it, so from 000003 onward the index is the only thing there is. Absent, two
@@ -477,7 +516,18 @@ func (r requiredIndex) createSQL() string {
 	if r.unique {
 		b.WriteString("UNIQUE ")
 	}
-	fmt.Fprintf(&b, "INDEX %s ON %s (%s)", r.name, r.table, strings.Join(r.keys, ", "))
+	keys := make([]string, len(r.keys))
+	for i, k := range r.keys {
+		// A plain column key is an identifier; an EXPRESSION key (the account extracted from
+		// result JSON, 000044-000046) must be parenthesised in CREATE INDEX. The stored key is
+		// the deparsed form pg_get_indexdef renders, so the round trip holds either way.
+		if identifierRe.MatchString(k) {
+			keys[i] = k
+		} else {
+			keys[i] = "(" + k + ")"
+		}
+	}
+	fmt.Fprintf(&b, "INDEX %s ON %s (%s)", r.name, r.table, strings.Join(keys, ", "))
 	if r.predicate != "" {
 		// The stored predicate is the DEPARSED form, which is itself valid SQL — it is
 		// what pg_get_expr renders and what pg_get_indexdef embeds. Round-tripping it is
@@ -529,10 +579,16 @@ func describeMissing(names []string) string {
 
 // requiredIndex is an index whose absence — or silent replacement by something of the
 // same name — leaves an invariant unenforced with no other symptom.
+// identifierRe matches a plain column name — what pg_get_indexdef renders for a column key, as
+// opposed to an expression key.
+var identifierRe = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
 type requiredIndex struct {
-	name      string
-	table     string
-	unique    bool
+	name   string
+	table  string
+	unique bool
+	// keys are the index's key columns IN ORDER, each as pg_get_indexdef(index, n, true)
+	// renders it: a bare column name, or the deparsed text of an expression key.
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
 }
@@ -708,10 +764,8 @@ const requiredIndexQuery = `SELECT
 		i.indrelid = to_regclass($2),
 		COALESCE(pg_get_expr(i.indpred, i.indrelid), ''),
 		COALESCE((
-			SELECT array_agg(a.attname ORDER BY k.ord)
-			FROM unnest(string_to_array(i.indkey::text, ' ')::int2[]) WITH ORDINALITY AS k(attnum, ord)
-			JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
-			WHERE k.ord <= i.indnkeyatts
+			SELECT array_agg(pg_get_indexdef(i.indexrelid, k.ord, true) ORDER BY k.ord)
+			FROM generate_series(1, i.indnkeyatts::int) AS k(ord)
 		), '{}')
 	FROM pg_class c
 	JOIN pg_namespace n ON n.oid = c.relnamespace
