@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
 // monitorReportConcurrency bounds how many per-campaign report calls ListAccountCampaigns
@@ -80,6 +82,9 @@ type AccountCampaignRow struct {
 	// of the reasons the field exists, so this port sets it instead of fabricating the zero.
 	// This is a disclosed, deliberate divergence, not a preserved bug.
 	FetchFailed bool
+	// FailureClass is why FetchFailed is set (monitorFailureClass), so the service layer can
+	// tell a refused token from a throttle from a malformed report without the dropped error.
+	FailureClass model.MonitorFailureClass
 }
 
 // campaignElement is one entry of the campaign-list response, per the fields
@@ -330,7 +335,7 @@ func (c *Client) fetchMonitorCampaignReport(ctx context.Context, accountID, camp
 	werr := c.walkPages(ctx, http.MethodPost, "/ad_accounts/"+accountID+"/reports", reqBody, func(_ int, resp *apiResponse) error {
 		pageRows, derr := decodeReportRows(resp.Data)
 		if derr != nil {
-			return derr
+			return fmt.Errorf("%w: %w", errMonitorReportUndecodable, derr)
 		}
 		rows = append(rows, pageRows...)
 		return nil
@@ -338,7 +343,50 @@ func (c *Client) fetchMonitorCampaignReport(ctx context.Context, accountID, camp
 	if werr != nil {
 		return 0, 0, 0, werr
 	}
-	return sumReportRows(rows, campaignID)
+	impressions, clicks, spendMicros, err = sumReportRows(rows, campaignID)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("%w: %w", errMonitorReportUndecodable, err)
+	}
+	return impressions, clicks, spendMicros, nil
+}
+
+// errMonitorReportUndecodable marks a per-campaign report Reddit answered but this client could
+// not believe — undecodable, attributed to another campaign, missing a field, or overflowing —
+// so monitorFailureClass can call it decode rather than other.
+var errMonitorReportUndecodable = errors.New("reddit: campaign report could not be decoded")
+
+// monitorFailureClass maps the error a per-campaign monitor report read failed with onto the
+// closed model.MonitorFailureClass set. Only the error's TYPE and STATUS are read, never its
+// text, which is the point: the class reaches a log line and a metric label.
+//
+// A 2xx whose envelope is not valid JSON is decode even though request() wraps it in a
+// transportError (errUndecodable2xxResponse is checked before anything transport-shaped); a 2xx
+// body that could not be READ is a failed round trip and stays other.
+//
+// A 429 that aborted because Reddit's Retry-After exceeded the wait cap surfaces as a
+// transportError and so classes as other; a 429 after the bounded retry is an apiError and
+// classes as throttle.
+func monitorFailureClass(err error) model.MonitorFailureClass {
+	var ae *apiError
+	switch {
+	case errors.Is(err, errMonitorReportUndecodable), errors.Is(err, errPageCapReached),
+		errors.Is(err, errUndecodable2xxResponse):
+		return model.MonitorFailureDecode
+	case errors.Is(err, ErrCredentialRejected):
+		return model.MonitorFailureAuth
+	case errors.Is(err, errTokenEndpointUnavailable):
+		return model.MonitorFailureUpstream5xx
+	case errors.As(err, &ae):
+		switch {
+		case ae.StatusCode == http.StatusUnauthorized, ae.StatusCode == http.StatusForbidden:
+			return model.MonitorFailureAuth
+		case ae.StatusCode == http.StatusTooManyRequests:
+			return model.MonitorFailureThrottle
+		case ae.StatusCode >= 500:
+			return model.MonitorFailureUpstream5xx
+		}
+	}
+	return model.MonitorFailureOther
 }
 
 // ValidateAccountID checks accountID against the same charset restriction
@@ -396,6 +444,9 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	}
 
 	rows := make([]AccountCampaignRow, len(active))
+	// ctxFailed[i] is true when row i's report failed with a context error, so the check after
+	// Wait can tell a row the request's own deadline killed from one that failed on its own.
+	ctxFailed := make([]bool, len(active))
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(monitorReportConcurrency)
 	for i, e := range active {
@@ -441,6 +492,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			// one filter term into two and silently widen the report to another campaign.
 			if !accountIDRe.MatchString(e.ID) {
 				row.FetchFailed = true
+				row.FailureClass = model.MonitorFailureDecode
 				rows[i] = row
 				return nil
 			}
@@ -448,7 +500,11 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			impressions, clicks, spendMicros, ferr := c.fetchMonitorCampaignReport(gctx, accountID, e.ID, startsAt, endsAt)
 			if ferr != nil {
 				// DIVERGES from the BFF here — see AccountCampaignRow.FetchFailed's doc comment.
+				// The error itself is dropped (see below); its class is kept for the service
+				// layer's per-request summary log and metric (#220).
 				row.FetchFailed = true
+				row.FailureClass = monitorFailureClass(ferr)
+				ctxFailed[i] = errors.Is(ferr, context.DeadlineExceeded) || errors.Is(ferr, context.Canceled)
 			} else {
 				row.Impressions = impressions
 				row.Clicks = clicks
@@ -468,6 +524,19 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	// that starts propagating an error cannot silently drop it.
 	if werr := g.Wait(); werr != nil {
 		return nil, fmt.Errorf("list account campaigns: %w", werr)
+	}
+	// The caller's deadline or cancellation fails every report still in flight, and each of
+	// those rows would read as one campaign's failure. When the caller's context is done and a
+	// row failed on a context error, the account was not read — say so, rather than answer with
+	// unmeasured rows that are an artefact of the request running out of time (#220). A row
+	// that failed on its own (a 5xx, a per-attempt timeout while the caller's context is still
+	// live) keeps its FetchFailed answer.
+	if cerr := ctx.Err(); cerr != nil {
+		for _, failed := range ctxFailed {
+			if failed {
+				return nil, fmt.Errorf("list account campaigns: %w", cerr)
+			}
+		}
 	}
 	return rows, nil
 }

@@ -722,6 +722,9 @@ type DispatchMetrics interface {
 	RecordDispatch(ctx context.Context, platform model.Provider, outcome string)
 	RecordJobTransition(ctx context.Context, status model.JobStatus)
 	RecordUpstreamCall(ctx context.Context, platform model.Provider, operation, outcome string, seconds float64)
+	// RecordMonitorUnmeasuredRows counts n account-monitor rows returned FetchFailed with one
+	// failure class (a model.MonitorFailureClass value) — see reportUnmeasuredRows.
+	RecordMonitorUnmeasuredRows(ctx context.Context, platform model.Provider, class string, n int)
 }
 
 // Dispatch outcome tokens. These MIRROR the constants in
@@ -893,6 +896,8 @@ type noopDispatchMetrics struct{}
 func (noopDispatchMetrics) RecordDispatch(context.Context, model.Provider, string) {}
 func (noopDispatchMetrics) RecordJobTransition(context.Context, model.JobStatus)   {}
 func (noopDispatchMetrics) RecordUpstreamCall(context.Context, model.Provider, string, string, float64) {
+}
+func (noopDispatchMetrics) RecordMonitorUnmeasuredRows(context.Context, model.Provider, string, int) {
 }
 
 // SetMetrics late-binds the metrics recorder from the container. Passing nil

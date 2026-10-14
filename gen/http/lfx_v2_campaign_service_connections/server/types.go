@@ -1192,284 +1192,32 @@ type CreateHubspotCampaignResponseBody struct {
 // MonitorGoogleAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body.
-type MonitorGoogleAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorGoogleAdsAccountResponseBody GoogleAdsAccountMonitorResponseBody
 
 // MonitorLinkedinAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
 // endpoint HTTP response body.
-type MonitorLinkedinAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorLinkedinAdsAccountResponseBody LinkedinAdsAccountMonitorResponseBody
 
 // MonitorMetaAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body.
-type MonitorMetaAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorMetaAdsAccountResponseBody MetaAdsAccountMonitorResponseBody
 
 // MonitorRedditAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
 // endpoint HTTP response body.
-type MonitorRedditAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorRedditAdsAccountResponseBody RedditAdsAccountMonitorResponseBody
 
 // MonitorMicrosoftAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "monitor-microsoft-ads-account" endpoint HTTP response body.
-type MonitorMicrosoftAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorMicrosoftAdsAccountResponseBody MicrosoftAdsAccountMonitorResponseBody
 
 // MonitorTwitterAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body.
-type MonitorTwitterAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorTwitterAdsAccountResponseBody TwitterAdsAccountMonitorResponseBody
 
 // MonitorHubspotAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
@@ -6500,6 +6248,52 @@ type HubspotCampaignResponseBody struct {
 	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
 }
 
+// GoogleAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type GoogleAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
 // AccountMonitorCampaignResponseBody is used to define fields on response body
 // types.
 type AccountMonitorCampaignResponseBody struct {
@@ -6597,6 +6391,246 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many campaigns the totals reflect: the length of the campaigns array
 	// these totals sum.
 	CampaignCount int `form:"campaign_count" json:"campaign_count" xml:"campaign_count"`
+	// How many of the campaign_count campaigns have fetch_failed=true. The totals
+	// include those rows at what they carry — zero for a row whose metrics could
+	// not be read — so a non-zero value means the totals may UNDERSTATE the
+	// account, by up to this many campaigns' delivery. An upper bound rather than
+	// an exact count of rows missing from the sum: fetch_failed also marks a row
+	// whose budget or flight alone was unreadable while its metrics were read and
+	// summed. pacing_unknown=true alone does not count a row (every fetch_failed
+	// row also has it, but most pacing_unknown rows were read in full). 0 means
+	// every campaign in the sum was fully read.
+	UnmeasuredCampaigns int `form:"unmeasured_campaigns" json:"unmeasured_campaigns" xml:"unmeasured_campaigns"`
+}
+
+// LinkedinAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MetaAdsAccountMonitorResponseBody is used to define fields on response body
+// types.
+type MetaAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// RedditAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type RedditAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MicrosoftAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// TwitterAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type TwitterAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // HubspotEmailMonitorEmailResponseBody is used to define fields on response
