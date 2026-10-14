@@ -177,7 +177,15 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err != nil {
 		return nil, notCreated(err)
 	}
-	defer func() { plan.stamp(camp) }()
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -287,6 +295,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	// `created_degraded` status (the warning text is already carried in Result). A
 	// human/monitor reconciles the ad; the campaign is not silently "succeeded".
 	// Mirrors the twitter adapter's PromotedTweetWarning handling.
+	bidApplied = result.BidApplied
 	camp = campaignFromReddit(ctx, result, cfg)
 	if strings.TrimSpace(result.AdWarning) != "" {
 		camp.Status = campaignStatusCreatedDegraded

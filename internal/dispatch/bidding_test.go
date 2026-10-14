@@ -155,9 +155,13 @@ func TestMicrosoft_PreflightCreate_Bidding(t *testing.T) {
 		{name: "undecodable is left to dispatch", config: `{"microsoftConfig":{"bidding":"manual"}}`},
 		{name: "automatic with cpcBid", config: `{"microsoftConfig":{"cpcBid":1.5,"bidding":{"strategy":"automatic"}}}`, want: "automatic (MaxClicks) strategy ignores"},
 		{name: "manual with a different cpcBid", config: `{"microsoftConfig":{"cpcBid":2,"bidding":{"strategy":"manual","bidAmount":1.5}}}`, want: "two different starting bids"},
-		{name: "manual below Microsoft's floor", config: `{"microsoftConfig":{"bidding":{"strategy":"manual","bidAmount":0.005}}}`, want: "below the minimum"},
+		// Below the 0.01 floor every positive amount has a third decimal, so precision refuses it first.
+		{name: "manual below Microsoft's floor", config: `{"microsoftConfig":{"bidding":{"strategy":"manual","bidAmount":0.005}}}`, want: "more than two decimal places"},
 		{name: "manual above Microsoft's ceiling", config: `{"microsoftConfig":{"bidding":{"strategy":"manual","bidAmount":1000.5}}}`, want: "exceeds the maximum"},
-		{name: "legacy cpcBid below the floor", config: `{"microsoftConfig":{"cpcBid":0.001}}`, want: "cpcBid: "},
+		{name: "legacy cpcBid below the floor", config: `{"microsoftConfig":{"cpcBid":0.004}}`, want: "more than two decimal places"},
+		{name: "manual with three decimals", config: `{"microsoftConfig":{"bidding":{"strategy":"manual","bidAmount":1.005}}}`, want: "bidding.bidAmount 1.005 has more than two decimal places"},
+		{name: "legacy cpcBid with three decimals", config: `{"microsoftConfig":{"cpcBid":1.005}}`, want: "cpcBid 1.005 has more than two decimal places"},
+		{name: "manual at the floor", config: `{"microsoftConfig":{"bidding":{"strategy":"manual","bidAmount":0.01}}}`},
 		{name: "manual without amount", config: `{"microsoftConfig":{"bidding":{"strategy":"manual"}}}`, want: "requires bidAmount"},
 	})
 }
@@ -173,6 +177,10 @@ func TestMeta_PreflightCreate_Bidding(t *testing.T) {
 		{name: "manual on conversions", config: `{"metaConfig":{"objective":"conversions","bidding":{"strategy":"manual","bidAmount":1}}}`, want: "traffic or leads objective"},
 		{name: "manual with three decimals", config: `{"metaConfig":{"bidding":{"strategy":"manual","bidAmount":1.255}}}`, want: "more than two decimal places"},
 		{name: "automatic with an amount", config: `{"metaConfig":{"bidding":{"bidAmount":1}}}`, want: "only accepted with strategy"},
+		// Meta's documented minimum: a click-billed bid cap needs a DAILY budget >= 5 x bid.
+		{name: "daily budget exactly five times the bid", config: `{"metaConfig":{"budget":6.25,"bidding":{"strategy":"manual","bidAmount":1.25}}}`},
+		{name: "daily budget under five times the bid", config: `{"metaConfig":{"budget":6.24,"bidding":{"strategy":"manual","bidAmount":1.25}}}`, want: "daily budget of at least 5 times the bid"},
+		{name: "lifetime budget is Meta's to judge", config: `{"metaConfig":{"budget":5,"lifetimeBudget":true,"bidding":{"strategy":"manual","bidAmount":1.25}}}`},
 	})
 }
 

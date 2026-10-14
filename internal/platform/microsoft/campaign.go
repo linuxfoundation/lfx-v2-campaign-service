@@ -241,6 +241,12 @@ type CampaignResult struct {
 	// (At the campaign level, a reused campaign is one found by findCampaignByName OR one
 	// reconciled by the duplicate-name self-heal after losing a create race.)
 	AlreadyExisted bool `json:"alreadyExisted,omitempty"`
+	// BidApplied reports that THIS run created both entities that carry the requested bidding
+	// (LFXV2-2665): the campaign, which holds the BiddingScheme, and the ad group, which holds
+	// the CpcBid. A reused campaign or ad group keeps whatever bidding it already had, so the
+	// dispatcher records the strategy and starting bid ONLY when this is true. Set only on a
+	// successful result; a partial never carries it.
+	BidApplied bool `json:"bidApplied,omitempty"`
 	// ImageMediaID / ImageAdExtensionID record the campaign image extension (LFXV2-2665),
 	// set by the DISPATCHER after AttachCampaignImage — CreateCampaign never sets them. They
 	// are the persisted record of the upload, mirroring the Meta result's per-ad ImageHash:

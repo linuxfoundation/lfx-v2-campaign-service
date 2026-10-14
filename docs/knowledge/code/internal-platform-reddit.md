@@ -722,3 +722,6 @@ whole number of micro-units; both run before the first mutating call. The Reddit
 not be re-fetched from the authoring environment (the host refuses automated fetches); the field
 names match the create body and the bid lever's, and a secondary reference states the CBO
 matching rule.
+
+`CampaignResult.BidApplied` is always true on success: this client never reuses a campaign or ad
+group by name.

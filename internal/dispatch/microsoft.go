@@ -186,7 +186,15 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err != nil {
 		return nil, notCreated(err)
 	}
-	defer func() { plan.stamp(camp) }()
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -271,6 +279,7 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	// The image extension is attached only to a CONFIRMED campaign, and its failure degrades
 	// the campaign rather than failing the job: the campaign exists, so an error here would
 	// retain the claim for a reconcile that cannot re-run this step (see attachMicrosoftImage).
+	bidApplied = result.BidApplied
 	degraded := d.attachMicrosoftImage(ctx, client, result, img)
 	camp = campaignFromMicrosoft(ctx, result, cfg)
 	if degraded {
@@ -330,10 +339,21 @@ func microsoftBidPlan(cfg microsoftConfig) (bidPlan, error) {
 }
 
 // microsoftManualPlan validates a manual starting bid against the generic rules and Microsoft's.
+//
+// PRECISION: at most two decimal places, mirroring metaBidPlan. A Microsoft bid is a plain decimal
+// in the account currency (Bid.Amount), and the bid is sent as the ad group's CpcBid only AFTER the
+// campaign POST, so an amount Microsoft cannot hold must be refused here, before anything exists,
+// rather than rounded or refused mid-tree. Two decimals is the finest minor unit of the currencies
+// these accounts use; the account currency is not known before dispatch (the create path never
+// reads it), so a zero-decimal account (JPY) is not checked for whole units here — Microsoft's own
+// validation of the account currency decides that, as ValidateMaxCPCBid's comment already states.
 func microsoftManualPlan(key string, b *biddingConfig, field string) (bidPlan, error) {
 	plan, err := resolveBidding(key, b)
 	if err != nil {
 		return bidPlan{}, err
+	}
+	if _, ok := exactScaled(plan.amount, 100); !ok {
+		return bidPlan{}, biddingInvalid(key, "%s %s has more than two decimal places; Microsoft Advertising bids are set in the account currency to at most two, so it is refused rather than rounded", field, formatBid(plan.amount))
 	}
 	if verr := microsoft.ValidateMaxCPCBid(plan.amount); verr != nil {
 		reason, ok := microsoft.BidAmountReason(verr)

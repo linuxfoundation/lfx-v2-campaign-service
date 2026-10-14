@@ -2820,6 +2820,11 @@ type CampaignResult struct {
 	AdCount   int
 	MetaURL   string
 	Steps     []string
+	// BidApplied reports that THIS run created the ad set, which carries the bid strategy,
+	// billing event and bid cap (LFXV2-2665). A reused ad set keeps its existing bidding, so the
+	// dispatcher records the strategy and starting bid only when this is true. Set only on the
+	// successful result.
+	BidApplied bool
 	// Ads carries one entry per SUCCESSFULLY-created ad (so len(Ads) == AdCount), in
 	// variant order, each with its ad/creative ids and the image_hash attached to its
 	// creative. A per-variant failure contributes a Steps line, not an Ads entry.
@@ -3178,6 +3183,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 		if bidCapMinor, err = CreateBidMinorUnits(in.BidCap, offset); err != nil {
 			return nil, err
+		}
+		// A daily budget under BidCapDailyBudgetMultiple x the bid is refused by Meta at the
+		// ad-set POST, after the campaign exists — so refuse it here, in exact minor units.
+		if !in.LifetimeBudget && budgetMinor < BidCapDailyBudgetMultiple*bidCapMinor {
+			return nil, &bidAmountError{msg: fmt.Sprintf("a link-click bid cap needs a daily budget of at least %d times the bid (Meta's minimum)", BidCapDailyBudgetMultiple)}
 		}
 	}
 
@@ -3561,10 +3571,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			return partialResult(), fmt.Errorf("meta ad set lookup UNCONFIRMED (reused campaign %s, PAUSED; cannot confirm ad set %q is absent; verify in Meta Ads Manager before retrying): %w", campaignID, adSetName, errors.Join(errLookupAmbiguous, adSetLookupErr))
 		}
 	}
+	adSetCreated := false
 	if existingAdSetID != "" {
 		adSetID = existingAdSetID
 		steps = append(steps, fmt.Sprintf("Ad set already exists by name: %s (not re-created)", adSetID))
+		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused ad set %s; its existing bidding is unchanged — verify its bid strategy in Meta Ads Manager", adSetID))
 	} else {
+		adSetCreated = true
 		var adSetResp createResponse
 		if err := c.doCreate(ctx, "/"+accountID+"/adsets", adSetBody, &adSetResp); err != nil {
 			// The campaign was already created (PAUSED). Return a partial result carrying
@@ -3708,7 +3721,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// Success: partialResult() now carries the fully-created campaign, ad set, and
 	// ad count (same fields as a bespoke literal); reuse it so success and partial
 	// failure return an identically-shaped result.
-	return partialResult(), nil
+	r := partialResult()
+	r.BidApplied = adSetCreated
+	return r, nil
 }
 
 // objectStorySpec builds a creative's object_story_spec for a single-image (or,

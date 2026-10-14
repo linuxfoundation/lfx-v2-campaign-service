@@ -915,3 +915,6 @@ same-group campaign reporting a different `objectiveType` (`responseElement.Obje
 an unreported objective cannot contradict, so it is reused. The two strategies' names already
 differ in the Objective segment, which also changes the automatic campaigns' `utm_term`. The bid is
 resolved before the first POST. Neither shape is verified against a live account.
+
+`CampaignResult.BidApplied` is false when `createSponsoredCampaign` reused a campaign found by name
+in the group (it now returns `(id, reused, err)`), with a "bid NOT applied to reused campaign" step.

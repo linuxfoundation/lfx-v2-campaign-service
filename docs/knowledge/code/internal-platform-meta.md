@@ -842,3 +842,8 @@ optimize for `LINK_CLICKS` (`ManualBidSupported`: traffic, or leads, which runs 
 lever's rounding `bidToMinorUnits` — an amount that is not a whole minor unit (`ErrBidAmountInvalid`).
 Campaign Budget Optimization is not used (`is_adset_budget_sharing_enabled: false`, budget on the
 ad set), so the strategy lives on the ad set, not the campaign.
+
+`CampaignResult.BidApplied` is true only when the run created the ad set; a reused ad set (reachable
+only with `ReconcileByName`) adds a "bid NOT applied to reused ad set" step. A daily budget under
+`BidCapDailyBudgetMultiple` (5) × the bid is refused before any mutation — the Ad Set reference's
+`LOWEST_COST_WITH_BID_CAP` minimum, "Clicks/Actions: 5x the bid_amount".

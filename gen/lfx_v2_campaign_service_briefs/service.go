@@ -59,8 +59,14 @@ type Service interface {
 	// that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email
 	// set to send based on recipients' time zones, which HubSpot does not allow
 	// together. It returns 409 with reason=ab_test_unsupported_send_type; the
-	// remedy is to pick a different source email or turn the A/B test off. Every
-	// other dispatch failure still arrives later, as the job's own result.
+	// remedy is to pick a different source email or turn the A/B test off. An
+	// invalid per-platform `bidding` object (see the config attribute) is also
+	// refused synchronously, with 400 "invalid campaign config:
+	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
+	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
+	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; the bid lever applies only to
+	// campaigns created with strategy manual. Every other dispatch failure still
+	// arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
@@ -272,7 +278,11 @@ type Service interface {
 	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
 	// first and then the ad group's: with Campaign Budget Optimization on (as on
 	// every campaign this service creates) the ad group's strategy must match the
-	// campaign's, so both must be MANUAL_BIDDING. CAMPAIGNS THIS SERVICE CREATES:
+	// campaign's, so both must be MANUAL_BIDDING. THE BID LEVER APPLIES ONLY TO
+	// CAMPAIGNS CREATED WITH STRATEGY MANUAL: since LFXV2-2665 a Microsoft
+	// campaign created without `bidding` (and without cpcBid) is MaxClicks, not
+	// Microsoft's EnhancedCpc default, so this endpoint answers 409 for it, and a
+	// LinkedIn one is WEBSITE_VISIT + MAX_CLICK. CAMPAIGNS THIS SERVICE CREATES:
 	// one created with the dispatch config's `bidding.strategy` `manual`
 	// (create-campaigns) is created in exactly the shape this endpoint accepts on
 	// its platform — Microsoft EnhancedCpc with the ad group's CpcBid, Meta a
@@ -841,27 +851,31 @@ type CampaignCreateInput struct {
 	// (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and
 	// linkedInConfig each accept an optional `bidding` object, {"strategy":
 	// "automatic" | "manual", "bidAmount": number}. Omitted means automatic
-	// (Microsoft MaxClicks — a Search campaign created without a bid used to get
-	// Microsoft's EnhancedCpc default; Meta LOWEST_COST_WITHOUT_CAP; Reddit
-	// BIDLESS; X AUTO). LinkedIn automatic creates an objectiveType WEBSITE_VISIT
-	// campaign bidding MAX_CLICK with costType CPM (decision 2026-10-13: automatic
-	// LinkedIn campaigns optimise for clicks because MAX_CONVERSION, the only
-	// automated target of WEBSITE_CONVERSION, needs a conversion association this
-	// service doesn't create); LinkedIn manual keeps objectiveType
-	// WEBSITE_CONVERSION. `manual` requires `bidAmount`, the starting max
-	// cost-per-click bid in the ad account's own currency (LinkedIn: USD), greater
-	// than zero, at most 1,000,000 and a whole number of micro-units; it creates
-	// the campaign in the shape update-campaign-bid accepts. Per platform, a
-	// manual bid must also be: Microsoft within 0.01–1,000 (a legacy
-	// microsoftConfig.cpcBid without `bidding` still means a manual bid at that
-	// amount; with `bidding` it must be omitted or equal bidAmount); Meta at most
-	// two decimals, a whole minor unit of the account currency (checked against
-	// the currency at dispatch), and only for the traffic or leads objective;
-	// Reddit only for the traffic objective; LinkedIn whole cents. `automatic`
-	// with a `bidAmount`, an unknown strategy, or a bid breaking these rules is
-	// refused synchronously with 400 "invalid campaign config:
-	// <configKey>.bidding: ..." before any job exists. googleAdsConfig.bidding is
-	// refused with 400 (use googleAdsConfig.biddingStrategy).
+	// (Microsoft MaxClicks; Meta LOWEST_COST_WITHOUT_CAP; Reddit BIDLESS; X AUTO).
+	// DEFAULT CHANGES: a Microsoft campaign created with no bidding and no cpcBid
+	// used to get Microsoft's EnhancedCpc default and is now MaxClicks, so
+	// update-campaign-bid answers 409 for it; a LinkedIn campaign created with no
+	// bidding is now WEBSITE_VISIT / MAX_CLICK / CPM with a Traffic name segment.
+	// The bid lever applies only to campaigns created with strategy manual.
+	// LinkedIn automatic creates an objectiveType WEBSITE_VISIT campaign bidding
+	// MAX_CLICK with costType CPM (decision 2026-10-13: automatic LinkedIn
+	// campaigns optimise for clicks because MAX_CONVERSION, the only automated
+	// target of WEBSITE_CONVERSION, needs a conversion association this service
+	// doesn't create); LinkedIn manual keeps objectiveType WEBSITE_CONVERSION.
+	// `manual` requires `bidAmount`, the starting max cost-per-click bid in the ad
+	// account's own currency (LinkedIn: USD), greater than zero, at most 1,000,000
+	// and a whole number of micro-units; it creates the campaign in the shape
+	// update-campaign-bid accepts. Per platform, a manual bid must also be:
+	// Microsoft within 0.01–1,000 (a legacy microsoftConfig.cpcBid without
+	// `bidding` still means a manual bid at that amount; with `bidding` it must be
+	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
+	// of the account currency (checked against the currency at dispatch), and only
+	// for the traffic or leads objective; Reddit only for the traffic objective;
+	// LinkedIn whole cents. `automatic` with a `bidAmount`, an unknown strategy,
+	// or a bid breaking these rules is refused synchronously with 400 "invalid
+	// campaign config: <configKey>.bidding: ..." before any job exists.
+	// googleAdsConfig.bidding is refused with 400 (use
+	// googleAdsConfig.biddingStrategy).
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed

@@ -60,5 +60,29 @@ again in `Dispatch`, before any upstream call. `googleAdsConfig.bidding` is refu
 service layer; no Google code changed. Migration `000047` adds `campaigns.bidding_strategy`. A
 manual create also writes its starting bid to `max_cpc_bid`. The upsert fills both columns only
 while they are empty. The campaign resource now returns `bidding_strategy` and `max_cpc_bid`.
-`000043`–`000046` belong to the open `fix/LFXV2-2665-adoption-binding-indexes` PR. The gap is
-recorded in `allowedVersionGaps`, and whichever PR merges second may need to renumber.
+**Migration order: 000047 must apply after 000043–000046.** Those four belong to #328
+(`fix/LFXV2-2665-adoption-binding-indexes`). golang-migrate never applies a lower version after a
+higher one, so this PR depends on #328 and merges only after it, rebased onto it. The gap sits in
+`allowedVersionGaps`, which only keeps the contiguity test green. The real guard is
+`TestMigration000047_RequiresItsPredecessorsEmbedded`: it fails while the embedded migrations carry
+000047 without 000043–000046, so CI stays red until the rebase.
+
+**The bid is recorded only when it was applied.** Each client reports `BidApplied`, which is true
+when the run created the entity carrying the bid:
+- Microsoft: the campaign and the ad group.
+- Meta: the ad set.
+- Reddit: always, since it never reuses.
+- X: the line item.
+- LinkedIn: the campaign.
+
+The dispatcher records `bidding_strategy` and `max_cpc_bid` only on a successful dispatch with
+`BidApplied`. An entity reused by name keeps its bidding, and the job steps say "bid NOT applied to
+reused <entity>; its existing bidding is unchanged". A partial records nothing. X line items are now
+named by strategy (`| AUTO` / `| MAX`), so a retry never crosses strategies.
+
+**Precision and minimums**:
+- Microsoft manual bids are limited to two decimals (`1.005` is refused). The account currency is
+  not known before dispatch, so a zero-decimal account is Microsoft's to judge.
+- Meta refuses a manual bid whose daily budget is under 5 × the bid. Source: the Ad Set reference,
+  `LOWEST_COST_WITH_BID_CAP`: "Clicks/Actions: 5x the bid_amount for a Click or Action". A lifetime
+  budget is not checked, because the rule names the daily budget.

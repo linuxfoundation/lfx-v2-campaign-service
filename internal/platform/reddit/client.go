@@ -516,7 +516,11 @@ type CampaignResult struct {
 	AdGroupName string `json:"adGroupName"`
 	AdGroupID   string `json:"adGroupId"`
 	AdCount     int    `json:"adCount"`
-	AdID        string `json:"adId,omitempty"`
+	// BidApplied reports that THIS run created the campaign and ad group that carry the
+	// requested bidding (LFXV2-2665); the dispatcher records the strategy and starting bid only
+	// when it is true. Set only on the successful result.
+	BidApplied bool   `json:"bidApplied,omitempty"`
+	AdID       string `json:"adId,omitempty"`
 	// AdWarning is set (non-empty) whenever an ad was REQUESTED and the result does
 	// not carry a confirmed one. That covers three shortfalls:
 	//   - the ad POST failed, or returned a 2xx with no ad id;
@@ -2491,6 +2495,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		AccountID:    c.account.AccountID,
 		RedditURL:    redditAdsManagerURL,
 		Steps:        steps,
+		// Reddit never reuses a campaign or ad group by name, so a successful run created both
+		// entities carrying the bidding (LFXV2-2665).
+		BidApplied: true,
 	}, nil
 }
 

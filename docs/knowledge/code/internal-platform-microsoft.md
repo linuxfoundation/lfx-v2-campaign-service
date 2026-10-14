@@ -1367,3 +1367,8 @@ set to enhanced CPC" (ManualCpcBiddingScheme reference). `""` sends no scheme (t
 body; Microsoft's Search default is EnhancedCpc). `validateBiddingScheme` refuses MaxClicks with a
 bid, EnhancedCpc without one, or any other value before any request. A campaign reused by name
 keeps its existing scheme.
+
+`CampaignResult.BidApplied` is true only when the run created BOTH the campaign (the scheme) and
+the ad group (the bid); a reused campaign — found by name or by the duplicate-name self-heal — or a
+reused ad group sets it false and adds the step "Warning: bid NOT applied to reused campaign|ad group
+<id>; its existing bidding is unchanged".

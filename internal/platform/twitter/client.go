@@ -3187,7 +3187,12 @@ type CampaignResult struct {
 	// in Steps. Consumers MUST NOT treat a reused result as an unqualified success:
 	// the campaign may be serving under a DIFFERENT budget/config, or an existing line
 	// item may already be ENABLED under different dates than this request expects.
-	Reused     bool
+	Reused bool
+	// BidApplied reports that THIS run created the line item, which carries the bid strategy,
+	// charge unit and bid (LFXV2-2665). A reused line item keeps its existing bidding, so the
+	// dispatcher records the strategy and starting bid only when this is true. Set only on the
+	// successful result.
+	BidApplied bool
 	TwitterURL string
 	Steps      []string
 }
@@ -3419,7 +3424,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err := validateEntityName("campaign", campaignName); err != nil {
 		return nil, err
 	}
-	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | AUTO", strings.ReplaceAll(in.EventName, "|", "-"))
+	// The last segment names the line item's bid strategy (LFXV2-2665): AUTO for automatic, MAX
+	// for a manual bid. A manual line item named AUTO would misstate its bidding, and the two
+	// strategies sharing a name would let a retry of one reuse the other's line item.
+	lineItemBid := "AUTO"
+	if in.MaxBid != 0 {
+		lineItemBid = BidStrategyMax
+	}
+	lineItemName := fmt.Sprintf("Events | %s | Promoted Tweets | %s", strings.ReplaceAll(in.EventName, "|", "-"), lineItemBid)
 	if err := validateEntityName("line item", lineItemName); err != nil {
 		return nil, err
 	}
@@ -3590,6 +3602,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// knows delivery may not be gated as expected.
 		steps = append(steps, fmt.Sprintf("Reusing existing line item: %s", lineItemID))
 		steps = append(steps, fmt.Sprintf("Warning: reused existing line item %s by name; its entity_status/flight dates were NOT reset to the requested PAUSED/%s–%s — it may already be ENABLED and serving; verify in X Ads Manager", lineItemID, in.StartDate, in.EndDate))
+		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused line item %s; its existing bidding is unchanged — verify its bid strategy in X Ads Manager", lineItemID))
 	} else {
 		// X Ads v12 line_items: params go on the query string; start_time and
 		// end_time are REQUIRED; bid_strategy=AUTO selects automatic bidding
@@ -3846,6 +3859,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		PromotedTweetID:      promotedTweetID,
 		PromotedTweetWarning: promotedTweetWarning,
 		Reused:               campaignReused || lineItemReused,
+		BidApplied:           !lineItemReused,
 		AccountID:            c.account.AccountID,
 		TwitterURL:           AdsManagerURL,
 		Steps:                steps,

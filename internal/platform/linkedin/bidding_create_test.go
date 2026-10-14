@@ -77,8 +77,12 @@ func biddingCreateInput(manualBid float64) CampaignInput {
 func TestCreateCampaign_ManualBidSendsTheShapeTheBidLeverAccepts(t *testing.T) {
 	srv, body, _ := biddingCreateServer(t)
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
-	if _, err := c.CreateCampaign(context.Background(), biddingCreateInput(4.5)); err != nil {
+	res, err := c.CreateCampaign(context.Background(), biddingCreateInput(4.5))
+	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
+	}
+	if !res.BidApplied {
+		t.Error("BidApplied = false on a run that created the campaign")
 	}
 	b := body()
 	if b["costType"] != "CPC" || b["optimizationTargetType"] != "NONE" || b["objectiveType"] != ObjectiveWebsiteConversion {
@@ -174,5 +178,59 @@ func TestFindCampaignByNameInGroup_RefusesAnObjectiveMismatch(t *testing.T) {
 				t.Fatalf("id=%q err=%v, want %q", id, err, tc.wantID)
 			}
 		})
+	}
+}
+
+// TestCreateCampaign_ReusedCampaignDoesNotApplyTheBid: a same-name campaign found in the group is
+// reused with its existing bidding — no campaign POST, BidApplied false and the warning step, so
+// the dispatcher records no bid.
+func TestCreateCampaign_ReusedCampaignDoesNotApplyTheBid(t *testing.T) {
+	const name = "Events | KubeCon | LinkedIn | Conversions | Prospecting | Static | CNCF | MoFU"
+	var mu sync.Mutex
+	campaignPosts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			if strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:777","campaignGroup":"urn:li:sponsoredCampaignGroup:100","objectiveType":"WEBSITE_CONVERSION"}],"metadata":{"nextPageToken":""}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			mu.Lock()
+			campaignPosts++
+			mu.Unlock()
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
+	res, err := c.CreateCampaign(context.Background(), biddingCreateInput(4.5))
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	posts := campaignPosts
+	mu.Unlock()
+	if res.CampaignID != "777" || posts != 0 {
+		t.Fatalf("campaign = %q, campaign POSTs = %d; want the reused 777 and none", res.CampaignID, posts)
+	}
+	if res.BidApplied {
+		t.Fatal("BidApplied = true on a run that reused the campaign")
+	}
+	if !strings.Contains(strings.Join(res.Steps, "\n"), "bid NOT applied to reused campaign 777") {
+		t.Fatalf("steps %v lack the bid-not-applied warning", res.Steps)
 	}
 }

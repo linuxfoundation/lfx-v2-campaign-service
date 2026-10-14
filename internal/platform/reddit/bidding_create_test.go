@@ -22,6 +22,14 @@ type redditBiddingServer struct {
 	posts                 int
 }
 
+// snapshot returns the captured bodies and the mutating-request count under the lock: the handler
+// writes them on the server's goroutine.
+func (s *redditBiddingServer) snapshot() (campaign, adGroup map[string]any, posts int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.campaignBody, s.adGroup, s.posts
+}
+
 func (s *redditBiddingServer) client(t *testing.T) *Client {
 	t.Helper()
 	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,14 +92,19 @@ func redditBiddingInput(objective string, bid float64) CampaignInput {
 // campaign and ad group BIDLESS, no bid_value.
 func TestCreateCampaign_AutomaticBiddingStaysBidless(t *testing.T) {
 	s := &redditBiddingServer{}
-	if _, err := s.client(t).CreateCampaign(context.Background(), redditBiddingInput("traffic", 0)); err != nil {
+	res, err := s.client(t).CreateCampaign(context.Background(), redditBiddingInput("traffic", 0))
+	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if s.campaignBody["bid_strategy"] != "BIDLESS" || s.adGroup["bid_strategy"] != "BIDLESS" {
-		t.Fatalf("automatic: campaign %v / ad group %v, want BIDLESS on both", s.campaignBody["bid_strategy"], s.adGroup["bid_strategy"])
+	campaign, adGroup, _ := s.snapshot()
+	if campaign["bid_strategy"] != "BIDLESS" || adGroup["bid_strategy"] != "BIDLESS" {
+		t.Fatalf("automatic: campaign %v / ad group %v, want BIDLESS on both", campaign["bid_strategy"], adGroup["bid_strategy"])
 	}
-	if _, has := s.adGroup["bid_value"]; has {
-		t.Fatalf("an automatic ad group must not send bid_value: %v", s.adGroup["bid_value"])
+	if _, has := adGroup["bid_value"]; has {
+		t.Fatalf("an automatic ad group must not send bid_value: %v", adGroup["bid_value"])
+	}
+	if !res.BidApplied {
+		t.Error("BidApplied = false on a run that created the campaign and ad group")
 	}
 }
 
@@ -103,13 +116,14 @@ func TestCreateCampaign_ManualBiddingIsWhatTheBidLeverAccepts(t *testing.T) {
 	if _, err := s.client(t).CreateCampaign(context.Background(), redditBiddingInput("traffic", 0.75)); err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	for name, body := range map[string]map[string]any{"campaign": s.campaignBody, "ad group": s.adGroup} {
+	campaign, adGroup, _ := s.snapshot()
+	for name, body := range map[string]map[string]any{"campaign": campaign, "ad group": adGroup} {
 		if body["bid_strategy"] != BidStrategyManual || body["bid_type"] != BidTypeCPC {
 			t.Errorf("%s: bid_strategy=%v bid_type=%v, want MANUAL_BIDDING/CPC", name, body["bid_strategy"], body["bid_type"])
 		}
 	}
-	if s.adGroup["bid_value"] != float64(750000) {
-		t.Fatalf("ad group bid_value = %v, want 750000 micro-units", s.adGroup["bid_value"])
+	if adGroup["bid_value"] != float64(750000) {
+		t.Fatalf("ad group bid_value = %v, want 750000 micro-units", adGroup["bid_value"])
 	}
 }
 
@@ -127,8 +141,8 @@ func TestCreateCampaign_ManualBidRefusalsSendNoMutation(t *testing.T) {
 			if err == nil || !errors.Is(err, ErrBidAmountInvalid) {
 				t.Fatalf("err = %v, want ErrBidAmountInvalid", err)
 			}
-			if res != nil || s.posts != 0 {
-				t.Fatalf("result=%+v posts=%d, want nil and 0", res, s.posts)
+			if _, _, posts := s.snapshot(); res != nil || posts != 0 {
+				t.Fatalf("result=%+v posts=%d, want nil and 0", res, posts)
 			}
 		})
 	}

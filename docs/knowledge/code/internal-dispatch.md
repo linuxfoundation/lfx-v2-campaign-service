@@ -4369,6 +4369,14 @@ the create path answers a synchronous 400 before any job; it returns `ErrPreflig
 otherwise and never calls a platform), and again in `Dispatch` before any upstream call
 (`notCreated`, claim released). `Dispatch` passes the plan to the client (Microsoft
 `BiddingScheme` + `CpcBid`, Meta `BidCap`, Reddit `ManualCPCBid`, X `MaxBid`, LinkedIn
-`ManualCPCBid`) and `defer plan.stamp(camp)` records `BiddingStrategy` and, for manual, the starting
-bid in `MaxCPCBid` on every returned row (partials included). `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
+`ManualCPCBid`); a deferred `plan.stamp(camp)` records `BiddingStrategy` and, for manual, the
+starting bid in `MaxCPCBid` ONLY when the dispatch succeeded (`err == nil`) AND the client's result
+reports `BidApplied` — the run created the entity carrying the bid. A reused entity (the client adds
+a "bid NOT applied to reused …" step) or a partial leaves both NULL, so the row never claims a bid
+the platform was not given. Microsoft also requires at most two decimals; Meta a daily budget of at
+least 5 × the bid (`meta.BidCapDailyBudgetMultiple`, from the Ad Set reference). `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
 drives a manual create and then `WriteBid` on the returned row.
+
+`TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400` (`bidding_create_e2e_test.go`)
+drives the real Meta and Microsoft dispatchers through `service.BriefService.CreateCampaigns`: a bad
+`bidding` is a synchronous 400 naming `<configKey>.bidding` and no job is created.

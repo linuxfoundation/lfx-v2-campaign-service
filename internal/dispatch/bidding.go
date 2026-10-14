@@ -76,7 +76,10 @@ func (p bidPlan) manual() bool { return p.strategy == model.BiddingManual }
 
 // stamp records the plan on the campaign row a dispatch returns: the strategy always, and the
 // starting bid onto max_cpc_bid when it is manual (the bid lever later overwrites it). nil-safe,
-// so it can sit in a defer over a named return that may be nil.
+// so it can sit in a defer over a named return that may be nil. Each Dispatch calls it ONLY on a
+// successful result whose client reports BidApplied — the run created the entity carrying the
+// bid. A reused entity, or a partial, leaves both columns NULL: the row must never claim a bid the
+// platform was not given.
 func (p bidPlan) stamp(c *model.Campaign) {
 	if c == nil || p.strategy == "" {
 		return

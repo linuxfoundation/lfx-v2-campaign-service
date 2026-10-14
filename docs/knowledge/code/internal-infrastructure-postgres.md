@@ -202,8 +202,11 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `replaceCampaignQuery`, and filled-only-while-empty by the upsert. Pinned by
   `TestUpsertCampaignFillsBiddingOnlyWhileEmpty` and live by
   `TestLiveCampaignBiddingStrategyRoundTrips`. `000047` sits above `000043`–`000046`, claimed by
-  the open `fix/LFXV2-2665-adoption-binding-indexes` PR; the gap is recorded in
-  `allowedVersionGaps`, and this branch must merge after that one (or renumber).
+  #328 (`fix/LFXV2-2665-adoption-binding-indexes`); 000047 MUST apply after them. The gap is recorded
+  in `allowedVersionGaps` (which only keeps the contiguity test green), and
+  `TestMigration000047_RequiresItsPredecessorsEmbedded` (`migration_order_test.go`) FAILS while the
+  embedded migrations carry 000047 without 000043–000046 — CI stays red until this branch is
+  rebased onto #328.
 
   **Authoring rule — expand/contract, one release apart.** The general form of the
   constraint `000013`/`000014` had to break: *a migration that removes or narrows something

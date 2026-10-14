@@ -1387,3 +1387,7 @@ A positive `MaxBid` is MANUAL: `bid_strategy` `MAX`, `pay_by` `LINK_CLICK` and
 in the up-front validation block (`manualMaxBidMicros`): finite, positive, at most 1,000,000 and a
 WHOLE number of micro-units (refused, never rounded). The line-item step names the bid. A reused
 line item keeps whatever bidding it had.
+
+`CampaignResult.BidApplied` is false when the line item was reused by name (with a "bid NOT applied
+to reused line item" warning step). The line item's name ends in its strategy — `| AUTO` or `| MAX`
+— so a retry of one strategy never finds the other's line item.

@@ -95,6 +95,9 @@ func TestCreateCampaign_ManualBiddingIsWhatTheBidLeverAccepts(t *testing.T) {
 	if !(&LineItemBid{BidStrategy: q.Get("bid_strategy"), PayBy: q.Get("pay_by")}).ManualCPC() {
 		t.Fatalf("manual line item params %v are not the MAX/LINK_CLICK the bid lever accepts", q)
 	}
+	if !res.BidApplied || q.Get("name") != "Events | KubeCon | Promoted Tweets | MAX" {
+		t.Errorf("BidApplied=%v name=%q, want true and the MAX-named line item", res.BidApplied, q.Get("name"))
+	}
 	if !strings.Contains(strings.Join(res.Steps, "\n"), "MAX bid 2.5 per link click") {
 		t.Errorf("steps do not record the manual bid: %v", res.Steps)
 	}
@@ -109,5 +112,59 @@ func TestCreateCampaign_SubMicroManualBidIsRefusedBeforeAnyPost(t *testing.T) {
 	}
 	if res != nil || posts() != 0 {
 		t.Fatalf("result=%+v posts=%d, want nil and 0", res, posts())
+	}
+}
+
+// TestCreateCampaign_ReusedLineItemDoesNotApplyTheBid: a same-name line item found under the
+// campaign is reused with its existing bidding — BidApplied false and the warning step, so the
+// dispatcher records no bid. The manual line item is named "| MAX", the automatic one "| AUTO".
+func TestCreateCampaign_ReusedLineItemDoesNotApplyTheBid(t *testing.T) {
+	const name = "Events | KubeCon | Promoted Tweets | MAX"
+	var mu sync.Mutex
+	lineItemCreates := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"li9","name":"` + name + `"}]}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case strings.HasSuffix(r.URL.Path, "line_items"):
+			mu.Lock()
+			lineItemCreates++
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(
+		Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+		WithBaseURL(srv.URL), WithWriteDelay(0),
+	)
+	c.nonceFn = func() string { return "n" }
+	c.timeFn = staticTime
+	res, err := c.CreateCampaign(context.Background(), twitterBiddingInput(2.5))
+	if err != nil {
+		t.Fatalf("CreateCampaign: %v", err)
+	}
+	mu.Lock()
+	creates := lineItemCreates
+	mu.Unlock()
+	if res.LineItemID != "li9" || creates != 0 {
+		t.Fatalf("line item = %q, creates = %d; want the reused li9 and no create", res.LineItemID, creates)
+	}
+	if res.BidApplied {
+		t.Fatal("BidApplied = true on a run that reused the line item")
+	}
+	if !strings.Contains(strings.Join(res.Steps, "\n"), "bid NOT applied to reused line item li9") {
+		t.Fatalf("steps %v lack the bid-not-applied warning", res.Steps)
 	}
 }

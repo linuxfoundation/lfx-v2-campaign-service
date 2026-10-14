@@ -336,9 +336,11 @@ func TestMigration000020_ScopesTheIndexToGoogleAds(t *testing.T) {
 // entry, so the merge that closes a gap cannot be green while its excuse survives.
 var allowedVersionGaps = map[int]string{
 	// 43 — OPEN (LFXV2-2665). 000043-000046 (per-provider adoption binding indexes) are claimed by
-	// the open PR fix/LFXV2-2665-adoption-binding-indexes; this branch's
+	// PR #328 (fix/LFXV2-2665-adoption-binding-indexes); this branch's
 	// 000047_campaigns_bidding_strategy_column sits above them. MERGE ORDER OBLIGATION: this branch
-	// must merge AFTER that PR (then delete this entry), or renumber to 000043 if it merges first.
+	// merges AFTER #328, rebased onto it (then delete this entry). This entry only keeps the
+	// contiguity test green; TestMigration000047_RequiresItsPredecessorsEmbedded is the guard that
+	// fails while the order is wrong.
 	43: "000043-000046 claimed by fix/LFXV2-2665-adoption-binding-indexes (unmerged); 000047 is the bidding_strategy column",
 	// 19 — REMOVED (LFXV2-3056). 000019_audience_actor_columns was claimed by PR #103
 	// (LFXV2-3055) while it was unmerged, and this entry excused the gap so this branch could

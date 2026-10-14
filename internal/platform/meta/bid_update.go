@@ -136,6 +136,12 @@ func CreateBidMinorUnits(amount float64, offset int64) (int64, error) {
 	return minor, nil
 }
 
+// BidCapDailyBudgetMultiple is Meta's minimum DAILY budget for a click-billed bid cap, as a
+// multiple of bid_amount. Ad Set reference (Graph API v25.0), daily_budget minimums under
+// LOWEST_COST_WITH_BID_CAP: "Clicks/Actions: 5x the bid_amount for a Click or Action. For example,
+// if the bid amount is $5 per click/action, then $25 will be the minimum budget required."
+const BidCapDailyBudgetMultiple = 5
+
 // ManualBidSupported reports whether a campaign with this objective can be created with manual
 // bidding: only an objective whose ad set optimizes for LINK_CLICKS (traffic, and leads, which runs
 // as traffic here) can carry the link-click bid cap the bid lever reads as a max CPC. objective is

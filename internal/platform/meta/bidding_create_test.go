@@ -80,6 +80,7 @@ func TestCreateCampaign_ManualBidRefusalsSendNoMutation(t *testing.T) {
 		{"fractional cent", 100, "traffic", 1.255, "not a whole number"},
 		{"awareness optimizes for reach", 100, "awareness", 2, "link clicks"},
 		{"conversions optimizes for conversions", 100, "conversions", 2, "link clicks"},
+		{"daily budget under five times the bid", 100, "traffic", 101, "at least 5 times the bid"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

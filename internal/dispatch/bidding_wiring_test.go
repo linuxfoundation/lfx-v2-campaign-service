@@ -17,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 )
@@ -281,4 +282,129 @@ func TestLinkedIn_DispatchAutomaticBiddingIsWebsiteVisitMaxClick(t *testing.T) {
 			}
 		})
 	}
+}
+
+// assertNoBiddingRecorded: a reused bid-carrying entity, or a partial, must leave the row's
+// strategy and bid NULL — the row must never claim a bid the platform was not given.
+func assertNoBiddingRecorded(t *testing.T, camp *model.Campaign) {
+	t.Helper()
+	if camp == nil {
+		t.Fatal("no campaign row returned")
+	}
+	if camp.BiddingStrategy != nil || camp.MaxCPCBid != nil {
+		t.Fatalf("row records bidding %v / %v, want both nil (bid not applied)", camp.BiddingStrategy, camp.MaxCPCBid)
+	}
+}
+
+func TestTwitter_DispatchReusedLineItemRecordsNoBid(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts/acc1"):
+			_, _ = w.Write([]byte(`{"data":{"name":"LF Events"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "line_items"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"li9","name":"Events | KubeCon NA 2026 | Promoted Tweets | MAX"}]}`))
+		case r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case strings.HasSuffix(r.URL.Path, "campaigns"):
+			_, _ = w.Write([]byte(`{"data":{"id":"cmp1"}}`))
+		case strings.HasSuffix(r.URL.Path, "line_items"):
+			t.Errorf("a reused line item must not be re-created")
+			_, _ = w.Write([]byte(`{"data":{"id":"li1"}}`))
+		case strings.HasSuffix(r.URL.Path, "promoted_tweets"):
+			_, _ = w.Write([]byte(`{"data":[{"id":"pt1"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{},
+		twitter.WithBaseURL(srv.URL), twitter.WithWriteDelay(0))
+	cfg := json.RawMessage(`{"twitterConfig":{"budgetAmount":500,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":"1234567890","bidding":{"strategy":"manual","bidAmount":2.5}}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderTwitterAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	assertNoBiddingRecorded(t, camp)
+}
+
+func TestLinkedIn_DispatchReusedCampaignRecordsNoBid(t *testing.T) {
+	const name = "Events | KubeCon NA 2026 | LinkedIn | Conversions | Prospecting | Static | cncf | MoFU"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			if strings.Contains(r.URL.Path, "adCampaigns") && !strings.Contains(r.URL.Path, "adCampaignGroups") {
+				_, _ = io.WriteString(w, `{"elements":[{"name":"`+name+`","status":"PAUSED","id":"urn:li:sponsoredCampaign:777","campaignGroup":"urn:li:sponsoredCampaignGroup:100"}],"metadata":{"nextPageToken":""}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"elements":[],"metadata":{}}`)
+			return
+		}
+		switch {
+		case strings.Contains(r.URL.Path, "adCampaignGroups"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCampaignGroup:100"}`)
+		case strings.Contains(r.URL.Path, "adCampaigns"):
+			t.Errorf("a reused campaign must not be re-created")
+			w.Header().Set("x-restli-id", "urn:li:sponsoredCampaign:200")
+			_, _ = io.WriteString(w, `{}`)
+		case strings.Contains(r.URL.Path, "posts"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:share:300"}`)
+		case strings.Contains(r.URL.Path, "creatives"):
+			_, _ = io.WriteString(w, `{"id":"urn:li:sponsoredCreative:400"}`)
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithBaseURL(srv.URL), linkedin.WithClock(func() time.Time { return time.Date(2098, 1, 1, 0, 0, 0, 0, time.UTC) }))
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}],
+		"bidding":{"strategy":"manual","bidAmount":4.5}
+	}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if camp.PlatformCampaignID != "777" {
+		t.Fatalf("campaign = %q, want the reused 777", camp.PlatformCampaignID)
+	}
+	assertNoBiddingRecorded(t, camp)
+}
+
+// TestMicrosoft_DispatchPartialRecordsNoBid: the campaign was created but the ad group POST is
+// ambiguous (5xx), so the UNCONFIRMED partial row carries no recorded bidding.
+func TestMicrosoft_DispatchPartialRecordsNoBid(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"at","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "/Campaigns/QueryByAccountId"):
+			_, _ = io.WriteString(w, `{"Campaigns":[]}`)
+		case strings.HasSuffix(p, "/AdGroups/QueryByCampaignId"):
+			_, _ = io.WriteString(w, `{"AdGroups":[]}`)
+		case strings.HasSuffix(p, "/Campaigns"):
+			_, _ = io.WriteString(w, `{"CampaignIds":[321],"PartialErrors":[]}`)
+		case strings.HasSuffix(p, "/AdGroups"):
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer apiSrv.Close()
+	d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+		microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithBaseURL(apiSrv.URL))
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderMicrosoftAds,
+		json.RawMessage(`{"microsoftConfig":{"budget":50,"bidding":{"strategy":"manual","bidAmount":1.5}}}`))
+	if err == nil {
+		t.Fatal("Dispatch succeeded; want an UNCONFIRMED partial")
+	}
+	assertNoBiddingRecorded(t, camp)
 }

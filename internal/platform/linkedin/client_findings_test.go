@@ -520,7 +520,7 @@ func TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched(t *testing.T) 
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, endMs := testScheduleMs(t, c)
-	id, err := c.createSponsoredCampaign(
+	id, _, err := c.createSponsoredCampaign(
 		context.Background(),
 		"123456789", wantGroupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",
@@ -562,7 +562,7 @@ func TestCreateSponsoredCampaign_SameNameSameGroupMatched(t *testing.T) {
 
 	c := NewClient(Credentials{AccessToken: "t"}, testConfig(), WithBaseURL(srv.URL), WithClock(fixedClock()))
 	_, endMs := testScheduleMs(t, c)
-	id, err := c.createSponsoredCampaign(
+	id, _, err := c.createSponsoredCampaign(
 		context.Background(),
 		"123456789", groupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",

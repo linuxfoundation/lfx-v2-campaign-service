@@ -286,6 +286,10 @@ type CampaignResult struct {
 	// the Images API — including one that then failed to upload or process, so the result names
 	// every image this run created. Omitted when no variant named a stored asset.
 	ImageURNs map[string]string `json:"imageUrns,omitempty"`
+	// BidApplied reports that THIS run created the campaign, which carries the bidding
+	// (LFXV2-2665). A campaign reused by name keeps its existing bidding, so the dispatcher records
+	// the strategy and starting bid only when this is true. Set only on the successful result.
+	BidApplied bool `json:"bidApplied,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -1915,7 +1919,7 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool, bidding campaignBiddingPlan) (string, error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool, bidding campaignBiddingPlan) (id string, reused bool, err error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -1926,10 +1930,10 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// silently run the other bidding strategy.
 	existing, err := c.findCampaignByNameInGroup(ctx, campaignsPath, name, groupID, bidding.objectiveType)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if existing != "" {
-		return existing, nil
+		return existing, true, nil
 	}
 
 	// Re-derive the campaign's start JUST BEFORE this mutating POST, rather than
@@ -1944,19 +1948,19 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// a fixed calendar instant that does not drift) and threaded through unchanged.
 	startMs, err := c.toMs(startDate, false)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	// Guard the recomputed start against the (fixed) end: a start nudged forward by
 	// the buffer must still precede the end, or LinkedIn would reject the schedule
 	// only after the group already exists. This can only trip for an end date very
 	// close to now, but fail closed rather than POST an invalid schedule.
 	if endMs <= startMs {
-		return "", fmt.Errorf("campaign start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
+		return "", false, fmt.Errorf("campaign start (now+%s buffer) is not before the end date — the run window is too short", startTimeBuffer)
 	}
 
 	targeting, err := c.buildTargetingCriteria(targetingProfile, geoURNs)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	// Budget as a decimal string, e.g. "100.00" — not micros. Mirrors toFixed(2).
@@ -2000,13 +2004,13 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 
 	resp, err := c.doRequest(ctx, http.MethodPost, campaignsPath, body, nil, nil)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if resp.ID == "" {
 		// A 2xx with no id is a malformed SUCCESS: the campaign may exist but its id is
 		// unreadable. Wrap as transportError so the caller classifies it as "may exist"
 		// (UNCONFIRMED) rather than a definite failure. Mirrors the Meta client.
-		return "", &transportError{Method: http.MethodPost, Path: campaignsPath, Err: fmt.Errorf("campaign creation returned no ID")}
+		return "", false, &transportError{Method: http.MethodPost, Path: campaignsPath, Err: fmt.Errorf("campaign creation returned no ID")}
 	}
 	// Validate the EXTRACTED id, not just the raw field: a create response like
 	// "urn:li:sponsoredCampaign:" passes the non-empty check above yet trailingID
@@ -2017,9 +2021,9 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 	// "may exist") for the same reason as the no-id case above.
 	campaignID := trailingID(resp.ID.String())
 	if campaignID == "" {
-		return "", &transportError{Method: http.MethodPost, Path: campaignsPath, Err: fmt.Errorf("campaign creation returned an ID %q with an empty trailing segment", resp.ID.String())}
+		return "", false, &transportError{Method: http.MethodPost, Path: campaignsPath, Err: fmt.Errorf("campaign creation returned an ID %q with an empty trailing segment", resp.ID.String())}
 	}
-	return campaignID, nil
+	return campaignID, false, nil
 }
 
 // createDarkPost creates an unpublished-to-feed sponsored post
@@ -2681,7 +2685,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
 
-	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget, bidding)
+	campaignID, campaignReused, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget, bidding)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here
@@ -2721,6 +2725,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// (including ACTIVE). Reporting "created ... (PAUSED)" would be false on the
 	// found path, so the step states only that the campaign is ensured to exist.
 	steps = append(steps, fmt.Sprintf("Campaign ensured: %s (ID: %s)", campaignName, campaignID))
+	if campaignReused {
+		// The campaign carries its own bidding (objectiveType, optimizationTargetType, costType,
+		// unitCost) and a reused one keeps what it had (LFXV2-2665).
+		steps = append(steps, fmt.Sprintf("Warning: bid NOT applied to reused campaign %s; its existing bidding is unchanged — verify its bidding in Campaign Manager", campaignID))
+	}
 
 	// Stored images are uploaded once each, after the campaign exists and before the first
 	// dark post (see uploadVariantImages for why that window). withImages records the minted
@@ -2820,7 +2829,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		creativeCount++
 	}
 
-	return withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps)), nil
+	result := withImages(c.buildResult(accountID, groupName, groupID, campaignName, campaignID, creativeCount, steps))
+	result.BidApplied = !campaignReused
+	return result, nil
 }
 
 // campaignManagerURL returns the Campaign Manager deep link. When no campaign was

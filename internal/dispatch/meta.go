@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"strings"
 	"time"
@@ -706,7 +707,15 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err != nil {
 		return nil, notCreated(err)
 	}
-	defer func() { plan.stamp(camp) }()
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -804,6 +813,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	// for a human/monitor to reconcile. Mirrors the reddit/twitter partial-ad handling.
 	// All requested variants are valid here (the client fails fast on a malformed
 	// variant), so len(cfg.Variants) is the requested count.
+	bidApplied = result.BidApplied
 	camp = campaignFromMeta(ctx, result, cfg)
 	if result.AdCount < len(cfg.Variants) {
 		camp.Status = campaignStatusCreatedDegraded
@@ -1510,8 +1520,21 @@ func metaBidPlan(cfg metaConfig) (bidPlan, error) {
 	if !meta.ManualBidSupported(cfg.Objective) {
 		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the traffic or leads objective; use automatic bidding for this objective")
 	}
-	if _, ok := exactScaled(plan.amount, 100); !ok {
+	bidCents, ok := exactScaled(plan.amount, 100)
+	if !ok {
 		return bidPlan{}, biddingInvalid(key, "bidAmount %s has more than two decimal places, which is not a whole minor unit of any ad account currency; it is refused rather than rounded", formatBid(plan.amount))
+	}
+	// Meta's Ad Set reference, daily_budget minimums under LOWEST_COST_WITH_BID_CAP: "Clicks/Actions:
+	// 5x the bid_amount for a Click or Action" — a LINK_CLICKS bid cap needs a DAILY budget of at
+	// least five times the bid, and the ad-set POST that would be refused comes after the campaign
+	// exists. Compared in hundredths, so 5 x 1.25 is exactly 6.25. The documented rule names the
+	// daily budget only, so a lifetime budget is not checked here (Meta decides).
+	if !cfg.LifetimeBudget && cfg.Budget > 0 && math.Round(cfg.Budget*100) < float64(metaBidCapBudgetMultiple*bidCents) {
+		return bidPlan{}, biddingInvalid(key, "a link-click bid cap needs a daily budget of at least %d times the bid (Meta's minimum); budget %s is below %d x %s", metaBidCapBudgetMultiple, formatBid(cfg.Budget), metaBidCapBudgetMultiple, formatBid(plan.amount))
 	}
 	return plan, nil
 }
+
+// metaBidCapBudgetMultiple is Meta's documented minimum daily budget for a click-billed bid cap,
+// as a multiple of bid_amount (meta.BidCapDailyBudgetMultiple, restated for the preflight).
+const metaBidCapBudgetMultiple = meta.BidCapDailyBudgetMultiple

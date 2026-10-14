@@ -339,7 +339,15 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err != nil {
 		return nil, notCreated(err)
 	}
-	defer func() { plan.stamp(camp) }()
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	// Reject an empty variant set BEFORE any upstream create. The client also refuses
 	// it (nil, err) after its own validation, but checking up front avoids the wasted
 	// input build + upstream round-trip and keeps the claim-release semantics obvious
@@ -441,6 +449,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		// failure after a successful group create — either way the claim must be retained.
 		return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), fmt.Errorf("linkedin campaign creation incomplete (a campaign group and/or campaign may exist): %w", cerr)
 	}
+	bidApplied = result.BidApplied
 	return campaignFromLinkedIn(ctx, result, len(cfg.Variants), cfg), nil
 }
 

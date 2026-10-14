@@ -233,7 +233,15 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err != nil {
 		return nil, notCreated(err)
 	}
-	defer func() { plan.stamp(camp) }()
+	// Recorded ONLY on a successful dispatch whose client confirms it created the entity that
+	// carries the bid (result.BidApplied). A reused entity keeps its existing bidding, and a
+	// partial may not have reached it, so both leave the strategy and bid NULL ("not recorded").
+	var bidApplied bool
+	defer func() {
+		if err == nil && bidApplied {
+			plan.stamp(camp)
+		}
+	}()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -363,6 +371,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// `created`, so we make them VISIBLE for reconciliation. We do NOT return an error:
 	// the campaign IS created, so failing the job would mislead and be unrecoverable by
 	// retry anyway (idempotency short-circuits a re-dispatch). Details are in Result/Steps.
+	bidApplied = result.BidApplied
 	camp = campaignFromTwitter(ctx, result, cfg)
 	if strings.TrimSpace(result.PromotedTweetWarning) != "" || strings.TrimSpace(result.PromotedTweetID) == "" || result.Reused {
 		camp.Status = campaignStatusCreatedDegraded
