@@ -454,3 +454,59 @@ func TestMigration000042_IsASeparateLinkedInIndex(t *testing.T) {
 		t.Error("000020 was widened to cover LinkedIn; LinkedIn's binding rule belongs in its own index (000042)")
 	}
 }
+
+// TestMigrations000043To000046_ArePerProviderBindingIndexes pins each provider's binding index the
+// way 000020/000042 are pinned: its own name and platform scope, CONCURRENTLY, one statement, no
+// IF NOT EXISTS, a CONCURRENTLY down — and the KEY decision: Meta global; Microsoft, Reddit and X
+// keyed on the ad account extracted from result exactly as each *CreationAccountID reads it.
+func TestMigrations000043To000046_ArePerProviderBindingIndexes(t *testing.T) {
+	stmt := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("migrations", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		var lines []string
+		for _, line := range strings.Split(string(b), "\n") {
+			if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "--") {
+				lines = append(lines, trimmed)
+			}
+		}
+		return strings.Join(lines, " ")
+	}
+	for _, tc := range []struct{ version, provider, platform, key string }{
+		{"000043", "meta", "meta-ads", "ON campaigns (platform, platform_campaign_id) WHERE"},
+		{"000044", "microsoft", "microsoft-ads", "(COALESCE(NULLIF(result ->> 'accountId', ''), NULLIF(substring(result ->> 'microsoftAdsUrl' from '[?&]aid=([^&#]+)'), '')))"},
+		{"000045", "reddit", "reddit-ads", "(NULLIF(result ->> 'accountId', ''))"},
+		{"000046", "twitter", "twitter-ads", "(NULLIF(result ->> 'AccountID', ''))"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			base := tc.version + "_campaigns_unique_" + tc.provider + "_campaign"
+			up := stmt(base + ".up.sql")
+			for _, want := range []string{
+				"CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_" + tc.provider + "_campaign_live",
+				tc.key, "status <> 'deleted'", "platform_campaign_id IS NOT NULL", "platform = '" + tc.platform + "'",
+			} {
+				if !strings.Contains(up, want) {
+					t.Errorf("%s up is missing %q: %q", base, want, up)
+				}
+			}
+			if strings.Contains(strings.ToUpper(up), "IF NOT EXISTS") {
+				t.Errorf("%s up uses IF NOT EXISTS (see 000020): %q", base, up)
+			}
+			if n := strings.Count(up, ";"); n != 1 {
+				t.Errorf("%s up has %d statements, want 1", base, n)
+			}
+			if down := stmt(base + ".down.sql"); down != "DROP INDEX CONCURRENTLY IF EXISTS uq_campaigns_"+tc.provider+"_campaign_live;" {
+				t.Errorf("%s down = %q", base, down)
+			}
+		})
+	}
+	for _, older := range []string{"000020_campaigns_unique_platform_campaign.up.sql", "000042_campaigns_unique_linkedin_campaign.up.sql"} {
+		s := stmt(older)
+		for _, p := range []string{"meta-ads", "microsoft-ads", "reddit-ads", "twitter-ads"} {
+			if strings.Contains(s, p) {
+				t.Errorf("%s was widened to cover %s; each provider keeps its own index", older, p)
+			}
+		}
+	}
+}

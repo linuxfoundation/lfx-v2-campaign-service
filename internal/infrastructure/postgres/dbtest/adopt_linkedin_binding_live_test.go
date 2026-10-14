@@ -145,15 +145,16 @@ func TestLiveMigration000042_IsLinkedInScopedAndGlobal(t *testing.T) {
 			t.Fatalf("err = %v, want 23505 on uq_campaigns_linkedin_campaign_live", err)
 		}
 	})
-	t.Run("meta is not constrained by the LinkedIn index", func(t *testing.T) {
+	t.Run("the same id on another platform is not constrained by the LinkedIn index", func(t *testing.T) {
 		id := liCampaignID()
 		projectA, projectB := dbtest.UniqueID(t, "projectA"), dbtest.UniqueID(t, "projectB")
 		briefA := insertBriefIn(ctx, t, pool, projectA, dbtest.UniqueID(t, "slug"))
 		briefB := insertBriefIn(ctx, t, pool, projectB, dbtest.UniqueID(t, "slug"))
-		for _, b := range [][2]string{{projectA, briefA}, {projectB, briefB}} {
-			if err := insertBindingOn(ctx, t, pool, model.ProviderMetaAds, b[0], b[1], &id, testCampaignStatus); err != nil {
-				t.Fatalf("meta binding in %s: %v — 000042 must not reach beyond linkedin-ads", b[0], err)
-			}
+		if err := insertBindingOn(ctx, t, pool, model.ProviderLinkedInAds, projectA, briefA, &id, testCampaignStatus); err != nil {
+			t.Fatalf("linkedin binding: %v", err)
+		}
+		if err := insertBindingOn(ctx, t, pool, model.ProviderMetaAds, projectB, briefB, &id, testCampaignStatus); err != nil {
+			t.Fatalf("meta binding of the same id string: %v — 000042 must not reach beyond linkedin-ads", err)
 		}
 	})
 }

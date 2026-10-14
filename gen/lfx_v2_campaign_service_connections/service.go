@@ -326,11 +326,13 @@ type Service interface {
 	// the same `project_id` predicate, so it cannot answer whether ANOTHER project
 	// holds a given id. **An unowned id is 200 with an empty `matches`, not 404.**
 	// **`matches` CAN hold more than one entry here, unlike Google:** Microsoft
-	// campaign ids are minted per ad account, so migration 000020's unique index
-	// deliberately covers Google Ads only, and a project whose connection was
-	// re-pointed between accounts can hold two live rows with the same id. A
-	// caller receiving more than one must refuse rather than choose. Not a list
-	// endpoint under rule 3: a keyed lookup for one supplied id.
+	// campaign ids are minted per ad account, so migration 000044's unique index
+	// allows one live row per (campaign id, ad account) rather than per id, and a
+	// project whose connection was re-pointed between accounts can hold one row
+	// per account for the same id — plus legacy rows that record no account, which
+	// the index does not constrain. A caller receiving more than one must refuse
+	// rather than choose. Not a list endpoint under rule 3: a keyed lookup for one
+	// supplied id.
 	ResolveMicrosoftAdsCampaign(context.Context, *ResolveMicrosoftAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Resolve one Meta campaign id to this service's own campaign and brief. The
 	// Meta twin of resolve-microsoft-ads-campaign: same payload shape, result and
@@ -338,12 +340,13 @@ type Service interface {
 	// no connection is resolved, and nothing is mutated. Scoped to the project's
 	// own campaigns by the same `project_id` predicate, so it cannot answer
 	// whether ANOTHER project holds a given id. **An unowned id is 200 with an
-	// empty `matches`, not 404.** **`matches` CAN hold more than one entry:**
-	// migration 000020's unique index covers Google Ads only, so a project whose
-	// connection was re-pointed between accounts can hold two live rows with the
-	// same id. A caller receiving more than one must refuse rather than choose. A
-	// malformed id is refused with 400 before any lookup. Not a list endpoint
-	// under rule 3: a keyed lookup for one supplied id.
+	// empty `matches`, not 404.** **`matches` holds at most one entry in a valid
+	// database:** campaign ids on this platform are globally unique, and migration
+	// 000043's unique index allows one live row per id across every project. The
+	// array shape is kept for parity with the other campaign-ref methods; a caller
+	// receiving more than one (an invalid database) must still refuse rather than
+	// choose. A malformed id is refused with 400 before any lookup. Not a list
+	// endpoint under rule 3: a keyed lookup for one supplied id.
 	ResolveMetaAdsCampaign(context.Context, *ResolveMetaAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Resolve one Reddit campaign id to this service's own campaign and brief. The
 	// Reddit twin of resolve-microsoft-ads-campaign: same payload shape, result
@@ -352,11 +355,13 @@ type Service interface {
 	// project's own campaigns by the same `project_id` predicate, so it cannot
 	// answer whether ANOTHER project holds a given id. **An unowned id is 200 with
 	// an empty `matches`, not 404.** **`matches` CAN hold more than one entry:**
-	// migration 000020's unique index covers Google Ads only, so a project whose
-	// connection was re-pointed between accounts can hold two live rows with the
-	// same id. A caller receiving more than one must refuse rather than choose. A
-	// malformed id is refused with 400 before any lookup. Not a list endpoint
-	// under rule 3: a keyed lookup for one supplied id.
+	// migration 000045's unique index allows one live row per (campaign id, ad
+	// account), so a project whose connection was re-pointed between accounts can
+	// hold one row per account for the same id — plus legacy rows that record no
+	// account, which the index does not constrain. A caller receiving more than
+	// one must refuse rather than choose. A malformed id is refused with 400
+	// before any lookup. Not a list endpoint under rule 3: a keyed lookup for one
+	// supplied id.
 	ResolveRedditAdsCampaign(context.Context, *ResolveRedditAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Resolve one X/Twitter campaign id to this service's own campaign and brief.
 	// The X/Twitter twin of resolve-microsoft-ads-campaign: same payload shape,
@@ -365,11 +370,13 @@ type Service interface {
 	// to the project's own campaigns by the same `project_id` predicate, so it
 	// cannot answer whether ANOTHER project holds a given id. **An unowned id is
 	// 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one
-	// entry:** migration 000020's unique index covers Google Ads only, so a
-	// project whose connection was re-pointed between accounts can hold two live
-	// rows with the same id. A caller receiving more than one must refuse rather
-	// than choose. A malformed id is refused with 400 before any lookup. Not a
-	// list endpoint under rule 3: a keyed lookup for one supplied id.
+	// entry:** migration 000046's unique index allows one live row per (campaign
+	// id, ad account), so a project whose connection was re-pointed between
+	// accounts can hold one row per account for the same id — plus legacy rows
+	// that record no account, which the index does not constrain. A caller
+	// receiving more than one must refuse rather than choose. A malformed id is
+	// refused with 400 before any lookup. Not a list endpoint under rule 3: a
+	// keyed lookup for one supplied id.
 	ResolveTwitterAdsCampaign(context.Context, *ResolveTwitterAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Resolve one LinkedIn campaign id to this service's own campaign and brief.
 	// The LinkedIn twin of resolve-microsoft-ads-campaign: same payload shape,
@@ -377,12 +384,13 @@ type Service interface {
 	// never contacted, no connection is resolved, and nothing is mutated. Scoped
 	// to the project's own campaigns by the same `project_id` predicate, so it
 	// cannot answer whether ANOTHER project holds a given id. **An unowned id is
-	// 200 with an empty `matches`, not 404.** **`matches` CAN hold more than one
-	// entry:** migration 000020's unique index covers Google Ads only, so a
-	// project whose connection was re-pointed between accounts can hold two live
-	// rows with the same id. A caller receiving more than one must refuse rather
-	// than choose. A malformed id is refused with 400 before any lookup. Not a
-	// list endpoint under rule 3: a keyed lookup for one supplied id.
+	// 200 with an empty `matches`, not 404.** **`matches` holds at most one entry
+	// in a valid database:** campaign ids on this platform are globally unique,
+	// and migration 000042's unique index allows one live row per id across every
+	// project. The array shape is kept for parity with the other campaign-ref
+	// methods; a caller receiving more than one (an invalid database) must still
+	// refuse rather than choose. A malformed id is refused with 400 before any
+	// lookup. Not a list endpoint under rule 3: a keyed lookup for one supplied id.
 	ResolveLinkedinAdsCampaign(context.Context, *ResolveLinkedinAdsCampaignPayload) (res *PlatformCampaignResolution, err error)
 	// Enumerate the Meta ad accounts accessible via the stored connection
 	// credential. Returns act_-prefixed account ids, ready to store as the
