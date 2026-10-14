@@ -69,7 +69,7 @@ func TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption(t *testing.T) {
 		t.Fatalf("claim: claimed=%v err=%v, want the claim won", claimed, err)
 	}
 	// The operator clears what looks like a stuck claim (StuckDispatchClaims → delete).
-	if err := repo.DeleteDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion); err != nil {
+	if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion); err != nil {
 		t.Fatalf("clear the pending claim: %v", err)
 	}
 	adopted, err := adoptInto(ctx, t, repo, project, briefID, p)
@@ -115,7 +115,7 @@ func TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim(t *testing.T) {
 	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, staleJob, nil); err != nil || !claimed {
 		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
 	}
-	if err := repo.DeleteDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion); err != nil {
+	if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion); err != nil {
 		t.Fatalf("clear the pending claim: %v", err)
 	}
 	claimed, newClaim, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, newJob, nil)
@@ -137,5 +137,56 @@ func TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim(t *testing.T) {
 	}
 	if after := readSlotRow(ctx, t, pool, newClaim.ID); after.platformCampaignID == nil || *after.platformCampaignID != ownUpstream {
 		t.Fatalf("owner's upsert did not finalize its claim in place: %+v", after)
+	}
+}
+
+// TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim pins PR #260's stale-cleanup thread: job
+// A's claim is cleared by an operator, job B claims the slot, and A's delayed release (its
+// pre-create cleanup, or the claim's read-back rollback) then runs. Released by slot
+// coordinates alone, it deleted B's pending row while B was creating upstream, so a third job
+// could claim and pay for a duplicate. Keyed on A's job id, it must delete nothing; B's own
+// release must still work, and a release naming no job is refused.
+func TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
+	briefID, project := insertApprovedBrief(ctx, t, pool)
+	p := model.ProviderMicrosoftAds
+	jobA, jobB := uuid.NewString(), uuid.NewString()
+
+	if claimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobA, nil); err != nil || !claimed {
+		t.Fatalf("A's claim: claimed=%v err=%v", claimed, err)
+	}
+	if err := repo.ClearDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion); err != nil {
+		t.Fatalf("operator clear of A's claim: %v", err)
+	}
+	claimed, bClaim, err := repo.ClaimCampaignDispatch(ctx, project, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobB, nil)
+	if err != nil || !claimed {
+		t.Fatalf("B's claim: claimed=%v err=%v", claimed, err)
+	}
+	before := readSlotRow(ctx, t, pool, bClaim.ID)
+
+	if err := repo.DeleteDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobA); err != nil {
+		t.Fatalf("A's stale release: %v", err)
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live rows after A's stale release = %d, want 1: A deleted B's in-flight claim", live)
+	}
+	if after := readSlotRow(ctx, t, pool, bClaim.ID); after.version != before.version || after.jobID == nil || *after.jobID != jobB {
+		t.Fatalf("B's claim changed under A's stale release: before=%+v after=%+v", before, after)
+	}
+
+	if err := repo.DeleteDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion, ""); err == nil {
+		t.Fatal("a release naming no job was accepted; it identifies no claim and must be refused")
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 1 {
+		t.Fatalf("live rows after the refused job-less release = %d, want 1", live)
+	}
+
+	if err := repo.DeleteDispatchClaim(ctx, briefID, p, model.VariantDefault, model.FirstSlotVersion, jobB); err != nil {
+		t.Fatalf("B's own release: %v", err)
+	}
+	if live := countLive(ctx, t, pool, briefID, p, model.VariantDefault); live != 0 {
+		t.Fatalf("live rows after B's own release = %d, want 0", live)
 	}
 }

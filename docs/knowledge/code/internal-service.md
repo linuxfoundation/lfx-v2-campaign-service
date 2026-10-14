@@ -156,7 +156,9 @@ row takes the slot, `UpsertCampaign` returns `domain.ErrDispatchClaimLost` witho
 `CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). Because
 the row that would have held the dispatch's `Result` blob is never written, `lostClaimResult`
 also copies the blob's identifying fields (`reconcileRef`: top-level string values whose key ends
-in `id`/`name`, plus the campaign's name and status; never Steps text or URLs) into the stored
+in `id`/`name`, plus the campaign's name and status; never Steps text or URLs; capped at 1024
+RUNES, far above every lane platform's name limit, and truncated with a `<key>Truncated` flag
+rather than dropped past it) into the stored
 platform result's `reconcile` map and the ERROR log. An id-less partial gets its own message
 saying no campaign id was captured
 (`TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail`). `reconcile` is in the

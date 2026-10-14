@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -467,7 +468,7 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	return true, pending, nil
 }
 
-func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error {
+func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string, slotVersion int, jobID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	slotVersion = model.NormalizeSlotVersion(slotVersion)
@@ -488,7 +489,11 @@ func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string
 		if key == legacySlotKey(briefID, platform) && model.NormalizeVariant(variant) != model.VariantDefault {
 			continue
 		}
-		if c, ok := r.existing[key]; ok && c.Status == "pending" && model.NormalizeSlotVersion(c.SlotVersion) == slotVersion {
+		// And only THIS job's claim, as the real DELETE keys on job_id: a stale release must
+		// not free a successor's claim. A row with no job id (seeded directly by a test) is
+		// treated as matching any release, since no test seeds a competing claimant that way.
+		if c, ok := r.existing[key]; ok && c.Status == "pending" && model.NormalizeSlotVersion(c.SlotVersion) == slotVersion &&
+			(c.JobID == nil || *c.JobID == jobID) {
 			delete(r.existing, key)
 		}
 	}
@@ -3794,5 +3799,41 @@ func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *test
 	}
 	if !found {
 		t.Fatal("no lost-claim ERROR log for this job")
+	}
+}
+
+// reconcileRef must never drop a legitimate identifier. LinkedIn (and X, Meta creatives) accept
+// names of 255 CHARACTERS; a 255-rune multibyte name is ~765 bytes, which a byte cap of 256
+// dropped — leaving nothing to find an id-less orphan by. A value past the rune cap is
+// truncated (to valid UTF-8) and flagged, never dropped.
+func TestReconcileRefKeepsLongMultibyteNamesAndFlagsTruncation(t *testing.T) {
+	name255 := strings.Repeat("日", 255) // 255 runes, 765 bytes
+	if utf8.RuneCountInString(name255) != 255 || len(name255) <= 256 {
+		t.Fatalf("fixture: %d runes / %d bytes, want 255 runes over 256 bytes", utf8.RuneCountInString(name255), len(name255))
+	}
+	huge := strings.Repeat("é", reconcileRefMaxRunes+10)
+	blob, _ := json.Marshal(map[string]any{
+		"campaignGroupName": name255,
+		"campaignGroupId":   "grp-1",
+		"campaignName":      huge,
+	})
+	ref := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: blob})
+
+	if ref["campaignGroupName"] != name255 {
+		t.Errorf("255-rune multibyte name was not kept verbatim (got %d runes)", utf8.RuneCountInString(ref["campaignGroupName"]))
+	}
+	if _, flagged := ref["campaignGroupNameTruncated"]; flagged {
+		t.Error("a name within the cap was flagged as truncated")
+	}
+	got := ref["campaignName"]
+	if utf8.RuneCountInString(got) != reconcileRefMaxRunes || !utf8.ValidString(got) {
+		t.Errorf("over-cap name: %d runes (valid UTF-8: %v), want truncated to %d valid runes",
+			utf8.RuneCountInString(got), utf8.ValidString(got), reconcileRefMaxRunes)
+	}
+	if ref["campaignNameTruncated"] != "true" {
+		t.Errorf("over-cap name was not flagged as truncated: %v", ref["campaignNameTruncated"])
+	}
+	if ref["campaignGroupId"] != "grp-1" {
+		t.Errorf("campaignGroupId = %q, want grp-1", ref["campaignGroupId"])
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -1830,7 +1831,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// DELETE fail and leak the pending claim exactly when we most need to free it.
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
 		defer cancel()
-		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant, slotVersion); derr != nil {
+		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant, slotVersion, jobID); derr != nil {
 			slog.ErrorContext(rctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
 		}
 	}
@@ -2002,8 +2003,9 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				//
 				// CreatedBy is set for the one case that does reach the INSERT arm: the
 				// claim row disappearing between that call and this one — an operator
-				// clearing what looked like a stuck claim (see StuckDispatchClaims), or a
-				// concurrent DeleteDispatchClaim. On the conflict arm the query leaves the
+				// clearing what looked like a stuck claim (see StuckDispatchClaims). Another
+				// job's DeleteDispatchClaim cannot do it: a release deletes only the releasing
+				// job's own claim. On the conflict arm the query leaves the
 				// column alone, so passing it costs nothing; omitting it would leave a
 				// campaign with no recorded author on the one path that creates a row
 				// without a live claim in front of it. (If ANOTHER row has taken the slot by
@@ -2150,9 +2152,16 @@ const (
 	lostClaimNoIDResultError = "this dispatch may have created upstream resources but no campaign id was captured, and its claim was cleared and the slot is now bound to another campaign; they are untracked, reconcile by the identifiers recorded in the stored job result and the service log"
 )
 
-// reconcileRefMaxLen bounds each value copied into platformResult.Reconcile. Names and ids are
-// short; anything longer is not an identifier and is dropped rather than truncated.
-const reconcileRefMaxLen = 256
+// reconcileRefMaxRunes bounds each value copied into platformResult.Reconcile, in CHARACTERS
+// (runes), because that is the unit every platform documents its name limits in — a byte cap
+// would drop a legitimate multibyte name well under the platform's limit. It sits far above the
+// largest name any lane platform accepts (Google Ads campaign 256, Microsoft Ads ad group 256,
+// LinkedIn campaign / group 255, X entity 255, Meta creative 255, Reddit names built from a
+// 120-rune event name) and matches the bound the Meta client already puts on a name read back
+// verbatim (maxAdSetNameBytes, 1024), so no real identifier reaches it. A value that somehow
+// does is TRUNCATED, never dropped, and flagged with a "<key>Truncated": "true" entry, because
+// a dropped value is exactly the failure — nothing left to find the orphan by.
+const reconcileRefMaxRunes = 1024
 
 // reconcileRef extracts the IDENTIFYING fields of a dispatch's result blob — what an operator
 // needs to find an untracked upstream campaign when the row that would have held the blob was
@@ -2164,14 +2173,19 @@ const reconcileRefMaxLen = 256
 // needed to find anything. So this keeps only top-level STRING values whose key names an id or a
 // name (campaignId, campaignGroupId, adGroupName, AccountID, AdSetName, ...) — the
 // reconcile-by-name payload the dispatchers document — plus the campaign's own name and status
-// from the model, which are this service's values. Anything that is not a short string is
-// dropped. nil when nothing identifying is present.
+// from the model, which are this service's values. Anything that is not a string is dropped;
+// an over-long string is truncated and flagged (see reconcileRefMaxRunes). nil when nothing
+// identifying is present.
 func reconcileRef(c *model.Campaign) map[string]string {
 	ref := map[string]string{}
 	keep := func(k, v string) {
 		v = strings.TrimSpace(v)
-		if v == "" || len(v) > reconcileRefMaxLen {
+		if v == "" {
 			return
+		}
+		if utf8.RuneCountInString(v) > reconcileRefMaxRunes {
+			v = string([]rune(v)[:reconcileRefMaxRunes])
+			ref[k+"Truncated"] = "true"
 		}
 		ref[k] = v
 	}

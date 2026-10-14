@@ -208,8 +208,8 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   under the lock.
 
   **The lock orders writers; it does not decide whose row the upsert may finalize.** A pending
-  claim can be cleared (an operator acting on `StuckDispatchClaims`, or a concurrent
-  `DeleteDispatchClaim`) while the provider call is in flight, and an adopt — or a later job's
+  claim can be cleared (an operator acting on `StuckDispatchClaims`, via `ClearDispatchClaim` or
+  by hand) while the provider call is in flight, and an adopt — or a later job's
   claim — can then take the slot. The stale dispatch's upsert used to `DO UPDATE` that row with
   its own upstream id, untracking the adopted campaign. `upsertCampaignQuery`'s conflict arm now
   carries `WHERE campaigns.job_id = EXCLUDED.job_id`: the claim INSERT stamps the dispatching
@@ -220,6 +220,14 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   rows back is `domain.ErrDispatchClaimLost` (error text names the upstream id, slot version and
   job); nothing is written. Pinned by `TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption` and
   `TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim`.
+
+  The same job id keys the RELEASE. `DeleteDispatchClaim(..., slotVersion, jobID)` deletes only a
+  `pending` row whose `job_id` is that job's, so the orchestrator's pre-create release and the
+  claim's read-back rollback are no-ops once the claim was cleared and a successor job holds the
+  slot (released by coordinates alone, they deleted the successor's in-flight claim and let a
+  third job pay for a duplicate). An empty job id is refused. The operator's job-less clear is a
+  separate method, `ClearDispatchClaim` (concrete repo only; no service path calls it). Pinned by
+  `TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim`.
 
   The comments inside migrations `000036` and `000037` still say the old index is dropped "a
   release later". That timeline is superseded by the staging below; the files are applied (shipped

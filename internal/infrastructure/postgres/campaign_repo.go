@@ -196,7 +196,8 @@ func isPlatformCampaignBindingViolation(err error) bool {
 // campaign, and the upsert then conflicts with it — and a 'pending' row cannot be deleted at
 // all, since CampaignStatusDeletable is a whitelist of settled statuses. The upsert's INSERT
 // arm is reached only when the row this statement just wrote is gone by the time the upsert
-// runs: an operator clearing an apparently-stuck claim, or a concurrent DeleteDispatchClaim.
+// runs: an operator clearing an apparently-stuck claim (ClearDispatchClaim, or by hand).
+// DeleteDispatchClaim cannot cause it from another job: it deletes only its own job's claim.
 // See orchestrator.dispatchPlatform. Both arms setting it is what keeps the column populated
 // on every path that can create the row.)
 //
@@ -261,7 +262,7 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 			// BECAUSE ctx was cancelled, and reusing it for the DELETE would fail
 			// too, leaking the just-committed placeholder.
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimRollbackTimeout)
-			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform, variant, slotVersion); derr != nil {
+			if derr := r.DeleteDispatchClaim(rbCtx, briefID, platform, variant, slotVersion, jobID); derr != nil {
 				cancel()
 				// Double failure: both the post-insert read AND the rollback delete
 				// failed, so a 'pending' placeholder is orphaned and will block every
@@ -372,16 +373,44 @@ func (r *CampaignRepo) StuckDispatchClaims(ctx context.Context, limit int) ([]*m
 	return out, nil
 }
 
-// DeleteDispatchClaim removes a still-'pending' claim row so a failed dispatch
-// doesn't permanently block the (brief, platform) pair. The status guard means
-// it can only ever delete a placeholder claim, never a created campaign.
+// DeleteDispatchClaim releases THIS job's still-'pending' claim row so a failed dispatch
+// doesn't permanently block the slot. The status guard means it can only ever delete a
+// placeholder claim, never a created campaign.
 //
 // slot_version is in the WHERE clause so releasing a failed claim for a second campaign can
 // never touch the first campaign's row on the same slot, even if that one is still pending.
-func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error {
+//
+// job_id is in it so a STALE release is a no-op. Both callers (dispatchPlatform's pre-create
+// release and the claim's read-back rollback) run after the claim committed, and the claim can
+// be cleared by an operator in between; a successor job may then claim the slot. Releasing by
+// the slot coordinates alone would delete the SUCCESSOR's pending row while it is creating
+// upstream, letting a third job claim and pay for a duplicate. The stored job_id is what the
+// claim INSERT stamped, so it identifies the claimant exactly as in upsertCampaignQuery's
+// conflict arm. An empty jobID is refused rather than matched: it identifies no claim, and the
+// operator's job-less clear is ClearDispatchClaim. Pinned by
+// TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim.
+func (r *CampaignRepo) DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int, jobID string) error {
+	if strings.TrimSpace(jobID) == "" {
+		return fmt.Errorf("delete dispatch claim: a job id is required to release a claim (use ClearDispatchClaim to clear one without it)")
+	}
+	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND slot_version=$4 AND status='pending' AND job_id=$5`
+	if _, err := r.db.Exec(ctx, q, briefID, string(platform), model.NormalizeVariant(variant), model.NormalizeSlotVersion(slotVersion), jobID); err != nil {
+		return fmt.Errorf("delete dispatch claim: %w", err)
+	}
+	return nil
+}
+
+// ClearDispatchClaim is the OPERATOR's clear: it deletes a slot version's still-'pending' claim
+// whichever job holds it, which is what acting on a StuckDispatchClaims report means (the owning
+// job is presumed dead, so there is no live claimant to name). It is the repository form of the
+// manual DELETE an operator would otherwise run, kept separate from DeleteDispatchClaim so no dispatch
+// path can release a claim it does not own. Only a 'pending' row is ever deleted; a dispatch
+// whose claim this clears and that later returns gets ErrDispatchClaimLost from UpsertCampaign
+// once another row holds the slot, and its own release is then a no-op.
+func (r *CampaignRepo) ClearDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error {
 	q := `DELETE FROM campaigns WHERE brief_id=$1 AND platform=$2 AND variant=$3 AND slot_version=$4 AND status='pending'`
 	if _, err := r.db.Exec(ctx, q, briefID, string(platform), model.NormalizeVariant(variant), model.NormalizeSlotVersion(slotVersion)); err != nil {
-		return fmt.Errorf("delete dispatch claim: %w", err)
+		return fmt.Errorf("clear dispatch claim: %w", err)
 	}
 	return nil
 }

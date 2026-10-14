@@ -194,7 +194,7 @@ func (stubCampaignRepo) GetCampaignByPlatform(context.Context, string, string, m
 func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, &model.Campaign{Status: "pending"}, nil
 }
-func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int) error {
+func (stubCampaignRepo) DeleteDispatchClaim(context.Context, string, model.Provider, string, int, string) error {
 	return nil
 }
 func (stubCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {

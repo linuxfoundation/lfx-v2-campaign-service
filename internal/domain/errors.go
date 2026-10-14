@@ -1248,7 +1248,7 @@ var (
 
 	// ErrDispatchClaimLost indicates a dispatch tried to record its upstream campaign but the
 	// pending claim it took is no longer the row on its slot version: the claim was cleared
-	// (an operator removing an apparently-stuck claim, or a concurrent DeleteDispatchClaim)
+	// (an operator removing an apparently-stuck claim — ClearDispatchClaim, or by hand)
 	// while the provider call was in flight, and ANOTHER row — an adoption, or a later
 	// dispatch's claim — took the slot before this write ran. UpsertCampaign then writes
 	// NOTHING rather than repointing that row at this dispatch's upstream id, which would

@@ -16,3 +16,11 @@ lost claim kept nothing that identified it, because its reconcile detail lives o
 and that row is never written. The lost-claim result now carries the blob's identifying fields
 (names and ids only, never Steps text or URLs) in the stored platform result's `reconcile` map
 and in the ERROR log, and an id-less partial gets a message saying no campaign id was captured.
+
+Second follow-up, same review: the claim RELEASE is keyed on the job id too.
+`DeleteDispatchClaim` now takes the claiming job's id and deletes only that job's pending row,
+so a stale pre-create release or read-back rollback can no longer delete a successor job's
+in-flight claim after an operator clear; the operator's job-less clear is the separate
+`ClearDispatchClaim`. And `reconcileRef` caps values in runes at 1024 (it dropped values over
+256 BYTES, which lost legitimate 255-character multibyte LinkedIn names), truncating with a
+`<key>Truncated` flag instead of dropping.
