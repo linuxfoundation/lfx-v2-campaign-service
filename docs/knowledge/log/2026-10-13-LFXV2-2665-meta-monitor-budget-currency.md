@@ -4,7 +4,7 @@
 campaign-level budgets, but `CreateCampaign` puts the budget on the ad set, so every campaign this
 service creates read `pacing_unknown` and could never raise an under/overspend item. When an
 admitted campaign has neither campaign-level budget, `fetchAccountAdSetBudgets` makes ONE
-account-level paged read (`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time`,
+account-level paged read (`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time`,
 20 × 500 cap, `identityjson` before decode) and sums the ad sets per campaign — only when every
 one is `ACTIVE`; any other status leaves the campaign unknown (see the pacing-review entry); mixed
 daily/lifetime, an explicit `null`, an active ad set with no budget, a page-cap hit or an

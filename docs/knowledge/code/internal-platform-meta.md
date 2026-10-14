@@ -770,7 +770,7 @@ gone. A currency outside the supported map leaves every budget 0 (pacing unknown
 `CreateCampaign` puts the budget on the AD SET, so a campaign this service created reports no
 campaign-level budget and used to be `PacingUnknown` forever. When any admitted, non-failed
 campaign has neither a positive `daily_budget` nor `lifetime_budget`, `fetchAccountAdSetBudgets`
-makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=500`
+makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time&limit=500`
 (`id` is the duplicate-row proof), bounded at `monitorAdSetMaxPages` (20) × 500, every body through
 `identityjson.Check` before decoding, and sums the ad sets per campaign when every one is
 `effective_status == ACTIVE`; any other status (paused, campaign-paused, archived, in review)
@@ -820,10 +820,14 @@ never paced. A campaign-list row reporting BOTH a positive `daily_budget` and `l
 the same verdict as the mix on ad sets — and is not sent to the ad-set fallback;
 `metaExpectedSpend` refuses a row with both budgets too. **Budget edits inside the window**:
 pacing applies today's budget to every day of the window, and neither read carries budget
-history, so both reads also request `updated_time`. `budgetEditCutoff` is the window's first day
-at 00:00 UTC less one day (Meta reads since/until in the account timezone, up to ±14h), and
-`editedSince` is true for an `updated_time` at or after it or one that is absent, null or not a
-whole Meta timestamp. A CBO campaign so edited keeps its budget unknown (no ad-set fallback); an
+history, so both reads also request `updated_time` and `created_time`. `budgetEditCutoff` is the
+window's first day at 00:00 UTC less one day (Meta reads since/until in the account timezone, up
+to ±14h), and `editedSince` is true for an `updated_time` that is absent, null or not a whole Meta
+timestamp, or that is at or after the cutoff — unless `created_time` is readable and
+`updated_time` is within `creationStampTolerance` (60s) of it. Meta stamps `updated_time` at
+creation, so without that exception every campaign or ad set CREATED inside the window looked
+edited and a campaign this service just created could never be paced; an absent or unreadable
+`created_time` keeps the conservative verdict. A CBO campaign so edited keeps its budget unknown (no ad-set fallback); an
 ACTIVE ad set so edited makes its campaign's ad-set total unknown. `updated_time` moves on any
 edit, not only a budget change, so this errs towards unknown. Meta's ad-account `/activities` edge
 (AdActivity, with budget-update event types carrying old and new values) could reconstruct the

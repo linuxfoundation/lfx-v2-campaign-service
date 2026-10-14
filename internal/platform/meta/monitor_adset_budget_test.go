@@ -156,7 +156,7 @@ func TestListAccountCampaigns_ABOBudget_SumsActiveAdSets(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want exactly ONE account-level ad-set read, got %v", got)
 	}
-	if !strings.HasPrefix(got[0], "/act_123/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=500") {
+	if !strings.HasPrefix(got[0], "/act_123/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time&limit=500") {
 		t.Errorf("ad-set read = %s, want the account-level edge with the budget fields", got[0])
 	}
 	if strings.Contains(got[0], "tok-secret-abc") {
@@ -782,6 +782,57 @@ func TestListAccountCampaigns_CampaignFlightFieldsFailClosed(t *testing.T) {
 			if got := adSetRequests(rec); len(got) != 0 {
 				t.Errorf("an unreadable campaign flight sent the read to the ad-set fallback: %v", got)
 			}
+		})
+	}
+}
+
+// updated_time is set when an object is CREATED, so a campaign or ad set created inside the
+// window and never touched looked "edited" and could never be paced — the main case this monitor
+// exists for: a campaign this service just created (PR #316 review). The read also takes
+// created_time: an object is edited in the window only when updated_time is at or after the
+// cutoff AND more than creationStampTolerance (60s) after created_time; an absent or unreadable
+// created_time keeps the conservative verdict. Same rule for a CBO campaign and for an ad set.
+func TestListAccountCampaigns_CreatedInWindowUntouchedIsPaced(t *testing.T) {
+	cases := []struct {
+		name, stamps string
+		wantPaced    bool
+	}{
+		{"created in the window, untouched", `"created_time":"2026-10-05T10:00:00+0000","updated_time":"2026-10-05T10:00:00+0000"`, true},
+		{"created in the window, stamped 45s apart", `"created_time":"2026-10-05T10:00:00+0000","updated_time":"2026-10-05T10:00:45+0000"`, true},
+		{"created in the window, same instant in another offset", `"created_time":"2026-10-05T03:00:00-0700","updated_time":"2026-10-05T10:00:00+0000"`, true},
+		{"created in the window, edited later", `"created_time":"2026-10-05T10:00:00+0000","updated_time":"2026-10-08T09:00:00+0000"`, false},
+		{"created in the window, edited 61s later", `"created_time":"2026-10-05T10:00:00+0000","updated_time":"2026-10-05T10:01:01+0000"`, false},
+		{"created before, edited inside", `"created_time":"2026-06-01T00:00:00+0000","updated_time":"2026-10-02T00:00:00+0000"`, false},
+		{"created before, untouched since", `"created_time":"2026-06-01T00:00:00+0000","updated_time":"2026-06-01T00:00:00+0000"`, true},
+		{"created_time missing", `"updated_time":"2026-10-05T10:00:00+0000"`, false},
+		{"created_time null", `"created_time":null,"updated_time":"2026-10-05T10:00:00+0000"`, false},
+		{"created_time malformed", `"created_time":"2026-10-05garbage","updated_time":"2026-10-05T10:00:00+0000"`, false},
+	}
+	for _, tc := range cases {
+		t.Run("CBO campaign: "+tc.name, func(t *testing.T) {
+			rows, _ := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, `"daily_budget":"5000",`+tc.stamps))},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+			})
+			want := 0.0
+			if tc.wantPaced {
+				want = 50
+			}
+			assertBudgets(t, rows["111"], want, 0)
+		})
+		t.Run("ad set: "+tc.name, func(t *testing.T) {
+			rows, _ := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, ""))},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+				adSets:    []string{monitorList(monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000",`+tc.stamps))},
+			})
+			want := 0.0
+			if tc.wantPaced {
+				want = 10
+			}
+			assertBudgets(t, rows["111"], want, 0)
 		})
 	}
 }

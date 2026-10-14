@@ -166,8 +166,9 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		// edited inside the window would raise a false under/overspend (PR #316 review). The
 		// read carries no budget history, only updated_time — which moves on ANY edit, so this is
 		// conservative — and a campaign updated inside the window (or whose updated_time is
-		// unreadable) keeps its budget unknown, never falling back to the ad sets either.
-		budgetEdited := !cutoffOK || editedSince(cm.UpdatedAt, editCutoff)
+		// unreadable) keeps its budget unknown, never falling back to the ad sets either. One
+		// CREATED inside the window and never edited is not "updated" (see editedSince).
+		budgetEdited := !cutoffOK || editedSince(cm.UpdatedAt, cm.CreatedAt, editCutoff)
 		// An unreadable flight (campaignFlightField) cannot place the plan in the window either.
 		if currencyKnown && !bothBudgets && !budgetEdited && !cm.FlightUnknown {
 			row.DailyBudget = minorToWhole(cm.DailyMinor, offset)
@@ -280,8 +281,10 @@ type metaCampaignListEntry struct {
 	LifetimeMinor *int64
 	StartDate     string
 	EndDate       string
-	// UpdatedAt is the campaign's updated_time; zero when absent, null or malformed.
+	// UpdatedAt / CreatedAt are the campaign's updated_time / created_time; zero when absent,
+	// null or malformed (see editedSince).
 	UpdatedAt time.Time
+	CreatedAt time.Time
 	// FlightUnknown marks a start_time/stop_time that was reported but is unreadable (see
 	// campaignFlightField): the campaign-level budget is then left unknown, never paced over a
 	// flight substituted from the window's edges.
@@ -310,7 +313,7 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 	after := ""
 	seen := make(map[string]struct{})
 	for page := 0; page < monitorMaxPages; page++ {
-		path := "/" + accountID + "/campaigns?fields=id,name,status,daily_budget,lifetime_budget,start_time,stop_time,updated_time&limit=" + strconv.Itoa(monitorPageSize)
+		path := "/" + accountID + "/campaigns?fields=id,name,status,daily_budget,lifetime_budget,start_time,stop_time,updated_time,created_time&limit=" + strconv.Itoa(monitorPageSize)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
@@ -339,6 +342,7 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				StartTime   json.RawMessage `json:"start_time"`
 				StopTime    json.RawMessage `json:"stop_time"`
 				UpdatedTime json.RawMessage `json:"updated_time"`
+				CreatedTime json.RawMessage `json:"created_time"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -385,6 +389,7 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				FlightUnknown: !startOK || !endOK,
 				FetchFailed:   unparseable,
 				UpdatedAt:     metaTimeField(d.UpdatedTime),
+				CreatedAt:     metaTimeField(d.CreatedTime),
 			})
 		}
 		if resp.Paging.Next == "" {
@@ -601,8 +606,8 @@ func campaignFlightField(raw json.RawMessage, isStop bool) (string, bool) {
 	return d, d != ""
 }
 
-// metaTimeField reads a raw Graph timestamp member (updated_time) as a whole Meta timestamp; the
-// zero time for an absent, null, non-string or malformed value.
+// metaTimeField reads a raw Graph timestamp member (updated_time, created_time) as a whole Meta
+// timestamp; the zero time for an absent, null, non-string or malformed value.
 func metaTimeField(raw json.RawMessage) time.Time {
 	var s string
 	if json.Unmarshal(bytes.TrimSpace(raw), &s) != nil {
@@ -622,10 +627,32 @@ func parseMetaTimestamp(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// editedSince reports whether an object's updated_time may fall inside the spend window: true
-// when it is unknown (zero) or not before cutoff. See budgetEditCutoff.
-func editedSince(updated, cutoff time.Time) bool {
-	return updated.IsZero() || !updated.Before(cutoff)
+// creationStampTolerance is how far apart Meta may stamp created_time and updated_time on an
+// object that has never been edited: both are set at creation, not necessarily to the second.
+const creationStampTolerance = 60 * time.Second
+
+// editedSince reports whether an object's budget may have been EDITED inside the spend window:
+//   - updated_time unknown (zero): true — fail closed;
+//   - updated_time before cutoff: false — nothing changed during the window;
+//   - otherwise true, unless created_time is known and updated_time is within
+//     creationStampTolerance of it: then the object was CREATED inside the window and never
+//     edited, and its budget has been the same since its first day (PR #316 review —
+//     updated_time is set at creation, so every campaign this service creates looked "edited"
+//     for its whole first window and could never be paced). An unknown created_time keeps the
+//     conservative verdict.
+//
+// See budgetEditCutoff.
+func editedSince(updated, created, cutoff time.Time) bool {
+	if updated.IsZero() {
+		return true
+	}
+	if updated.Before(cutoff) {
+		return false
+	}
+	if created.IsZero() {
+		return true
+	}
+	return updated.Sub(created) > creationStampTolerance
 }
 
 // budgetEditCutoff is the earliest instant an edit could still have changed the plan for some
@@ -747,11 +774,12 @@ type adSetBudgetWire struct {
 	StartTime       json.RawMessage `json:"start_time"`
 	EndTime         json.RawMessage `json:"end_time"`
 	UpdatedTime     json.RawMessage `json:"updated_time"`
+	CreatedTime     json.RawMessage `json:"created_time"`
 }
 
 // fetchAccountAdSetBudgets reads every ad set on the account with ONE account-level paged call,
 //
-//	GET /{accountID}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=500
+//	GET /{accountID}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time&limit=500
 //
 // and sums their budgets per campaign_id. Every ad set must be ACTIVE: a campaign with any ad set
 // in another effective_status (paused itself, under a paused campaign, archived, in review …) is
@@ -784,7 +812,7 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string,
 	for page := 0; page < monitorAdSetMaxPages; page++ {
 		// Built from the opaque cursor, never from Meta's absolute paging.next URL, which
 		// carries the access token as a query parameter.
-		path := "/" + accountID + "/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=" + strconv.Itoa(monitorAdSetPageSize)
+		path := "/" + accountID + "/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time&limit=" + strconv.Itoa(monitorAdSetPageSize)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
@@ -852,8 +880,9 @@ func (c *Client) fetchAccountAdSetBudgets(ctx context.Context, accountID string,
 			// Today's budget is applied to every day of the window, so an ad set edited inside
 			// it — or one whose updated_time is unreadable — makes its campaign unknown: the
 			// plan for the window's earlier days cannot be reconstructed from this read
-			// (PR #316 review). updated_time moves on any edit, so this is conservative.
-			if editedSince(metaTimeField(w.UpdatedTime), editCutoff) {
+			// (PR #316 review). updated_time moves on any edit, so this is conservative; an ad set
+			// created inside the window and never edited is not "updated" (see editedSince).
+			if editedSince(metaTimeField(w.UpdatedTime), metaTimeField(w.CreatedTime), editCutoff) {
 				t.unknown = true
 			}
 			daily, dailyOK := adSetBudgetField(w.DailyBudget)

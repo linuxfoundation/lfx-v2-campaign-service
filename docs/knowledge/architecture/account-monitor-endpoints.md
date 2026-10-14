@@ -207,7 +207,7 @@ A fifth and sixth, both pacing-correctness bugs inherited from the BFF and fixed
 every campaign this service creates had no budget, read `pacing_unknown`, and could never
 raise an under- or overspend item. When an admitted campaign has neither campaign-level
 budget, the read now makes ONE account-level paged call,
-`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time`,
+`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time`,
 and sums the ad sets' budgets per campaign when every one of them is `ACTIVE` (a CBO campaign
 keeps its own budget). Any ad set in another `effective_status` — paused, under a paused campaign,
 archived, in review — makes its campaign `pacing_unknown`: the campaign's Insights spend still

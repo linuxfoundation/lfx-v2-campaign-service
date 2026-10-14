@@ -81,7 +81,11 @@ the row is `pacing_unknown`, never a false alert.
   day before the window's first day (account-timezone margin) — or with an absent, null or
   malformed `updated_time` — leaves the campaign `pacing_unknown`. Conservative: `updated_time`
   moves on any edit. Meta's ad-account `/activities` edge (budget-update events with old/new
-  values) could reconstruct the per-day plan; noted, not built.
+  values) could reconstruct the per-day plan; noted, not built. Both reads also take
+  `created_time`: `updated_time` is stamped at creation, so an object created inside the window
+  and never edited looked edited and a newly created campaign could never be paced. An
+  `updated_time` within 60s of a readable `created_time` is not an edit; an absent or unreadable
+  `created_time` keeps the conservative verdict.
 - **A `null` campaign-level budget is unreadable.** The campaign-list budgets were decoded into
   strings, so `null` read as absent and the campaign fell back to its ad-set budgets. They are
   decoded raw now: null or non-string → `FetchFailed` (decode), no ad-set fallback.
