@@ -3695,3 +3695,104 @@ func TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID(t *t
 		})
 	}
 }
+
+// idLessPartialDispatcher returns the id-less partial shape (an ambiguous create / LinkedIn
+// group-only orphan): no upstream campaign id, its reconcile detail ONLY in Result, alongside an
+// error. Steps and the URL stand in for the blob's non-identifying content, which must not leave
+// the row it was meant for.
+type idLessPartialDispatcher struct{}
+
+const idLessPartialStepText = "platform said: quota exceeded for account 42"
+
+func (idLessPartialDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	blob, _ := json.Marshal(map[string]any{
+		"platform":          "linkedin",
+		"campaignGroupName": "grp-name-7",
+		"campaignGroupId":   "grp-id-7",
+		"campaignName":      "camp-name-7",
+		"campaignId":        "",
+		"accountId":         "acct-7",
+		"linkedInUrl":       "https://example.invalid/should-not-copy",
+		"steps":             []string{idLessPartialStepText},
+	})
+	return &model.Campaign{Status: model.CampaignStatusUnconfirmed, CampaignName: "camp-name-7", Result: blob},
+		errors.New("campaign create outcome unknown")
+}
+
+// An id-less partial whose claim is lost has NO campaign_id, so the identifiers in its Result
+// blob are the only way to find what it created — and the row that would have held the blob was
+// never written. The job result and the ERROR log must both carry those identifiers (and only
+// those: no Steps text, no URL), and the message must say no id was captured.
+func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&lostClaimCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: idLessPartialDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+
+	var stored []platformResult
+	if err := json.Unmarshal(j.Result, &stored); err != nil || len(stored) != 1 {
+		t.Fatalf("decode job result %s: %v", j.Result, err)
+	}
+	got := stored[0]
+	if got.Error != lostClaimNoIDResultError {
+		t.Errorf("error = %q, want the id-less lost-claim message", got.Error)
+	}
+	if got.CampaignID != "" {
+		t.Errorf("campaign_id = %q, want none (no upstream id was captured)", got.CampaignID)
+	}
+	want := map[string]string{
+		"campaignGroupId": "grp-id-7", "campaignGroupName": "grp-name-7",
+		"campaignName": "camp-name-7", "accountId": "acct-7", "status": model.CampaignStatusUnconfirmed,
+	}
+	for k, v := range want {
+		if got.Reconcile[k] != v {
+			t.Errorf("reconcile[%s] = %q, want %q (reconcile = %v)", k, got.Reconcile[k], v, got.Reconcile)
+		}
+	}
+	if strings.Contains(string(j.Result), idLessPartialStepText) || strings.Contains(string(j.Result), "should-not-copy") {
+		t.Errorf("job result %s carries non-identifying blob content (steps / URL)", j.Result)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	found := false
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "dispatch claim lost") {
+			continue
+		}
+		var gotJob, reconcile string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "job_id":
+				gotJob = a.Value.String()
+			case "reconcile":
+				reconcile = fmt.Sprint(a.Value.Any())
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		found = true
+		if !strings.Contains(reconcile, "grp-id-7") || !strings.Contains(reconcile, "camp-name-7") {
+			t.Errorf("lost-claim log reconcile = %q, want the group id and campaign name", reconcile)
+		}
+		if strings.Contains(reconcile, idLessPartialStepText) {
+			t.Errorf("lost-claim log reconcile = %q carries Steps text", reconcile)
+		}
+	}
+	if !found {
+		t.Fatal("no lost-claim ERROR log for this job")
+	}
+}

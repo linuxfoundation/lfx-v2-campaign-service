@@ -153,7 +153,14 @@ claimed row, and nothing is held once it commits. If the claim is cleared mid-fl
 row takes the slot, `UpsertCampaign` returns `domain.ErrDispatchClaimLost` without writing, and
 `dispatchPlatform` (success and retained-partial persists alike) fails the platform with a
 "claim was cleared ... untracked, reconciliation required" error that keeps the upstream id in
-`CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). A worker that loses the claim reuses the existing row instead of dispatching
+`CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). Because
+the row that would have held the dispatch's `Result` blob is never written, `lostClaimResult`
+also copies the blob's identifying fields (`reconcileRef`: top-level string values whose key ends
+in `id`/`name`, plus the campaign's name and status; never Steps text or URLs) into the stored
+platform result's `reconcile` map and the ERROR log. An id-less partial gets its own message
+saying no campaign id was captured
+(`TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail`). `reconcile` is in the
+stored job result only; GetJob's typed response does not carry it. A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
 orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on

@@ -1252,6 +1252,11 @@ type platformResult struct {
 	// campaign's own persisted Result blob (see hubspotURLFromResult) — nothing
 	// upstream of the campaign row carries it.
 	HubspotURL string `json:"hubspot_url,omitempty"`
+	// Reconcile is set only for domain.ErrDispatchClaimLost: the identifying fields of what the
+	// dispatch created (see reconcileRef), because the campaign row that would have held its
+	// result blob was never written. It lives in the stored job result for operators; GetJob's
+	// typed response does not carry it.
+	Reconcile map[string]string `json:"reconcile,omitempty"`
 }
 
 // hubspotURLFromResult reads the deep link a HubSpot dispatch stashed in the
@@ -2033,13 +2038,12 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				case errors.Is(perr, domain.ErrDispatchClaimLost):
 					// The claim this partial would have been recorded on is gone and another
 					// row holds the slot, left untouched. Whatever exists upstream is now
-					// tracked by nothing, so the job carries the id (when there is one) and
-					// names reconciliation rather than a plain creation failure.
-					logLostClaim(ctx, p, jobID, brief.ProjectID, slotVersion, campaign.PlatformCampaignID, perr)
+					// tracked by nothing, so the job carries the id (when there is one) and the
+					// identifying fields of Result — an id-less partial's ONLY handle, which the
+					// unwritten row would have held — and names reconciliation rather than a
+					// plain creation failure.
 					cancelPersist()
-					res.Error = lostClaimResultError
-					res.CampaignID = campaign.PlatformCampaignID
-					return res
+					return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, perr)
 				case perr != nil:
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
@@ -2100,10 +2104,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// it was cleared and another row (an adoption, or a later dispatch's claim) now
 			// holds the slot, which the repository left untouched. The paid campaign exists
 			// and nothing here tracks it, so the job keeps its id and says so.
-			logLostClaim(ctx, p, jobID, brief.ProjectID, slotVersion, campaign.PlatformCampaignID, uerr)
-			res.Error = lostClaimResultError
-			res.CampaignID = campaign.PlatformCampaignID
-			return res
+			return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, uerr)
 		}
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
@@ -2137,18 +2138,88 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	return res
 }
 
-// lostClaimResultError is the job result's message for domain.ErrDispatchClaimLost. It names
-// reconciliation, not a creation failure: the campaign was (or may have been) created upstream
-// and the platform result keeps its id, but the slot this dispatch claimed is now bound to a
-// different row, so nothing in this service tracks it.
-const lostClaimResultError = "created upstream campaign but this dispatch's claim was cleared and the slot is now bound to another campaign; the upstream campaign is untracked, reconciliation required"
+// lostClaimResultError and lostClaimNoIDResultError are the job result's messages for
+// domain.ErrDispatchClaimLost. Both name reconciliation, not a creation failure: the slot this
+// dispatch claimed is now bound to a different row, so nothing in this service tracks what it
+// created. They differ on whether an upstream id was captured, because an id-less partial (an
+// ambiguous create, a LinkedIn group-only orphan) can be found only by the identifiers carried in
+// platformResult.Reconcile, and the message must send the operator there rather than to a
+// campaign_id that is absent.
+const (
+	lostClaimResultError     = "created upstream campaign but this dispatch's claim was cleared and the slot is now bound to another campaign; the upstream campaign is untracked, reconciliation required"
+	lostClaimNoIDResultError = "this dispatch may have created upstream resources but no campaign id was captured, and its claim was cleared and the slot is now bound to another campaign; they are untracked, reconcile by the identifiers recorded in the stored job result and the service log"
+)
 
-// logLostClaim records a domain.ErrDispatchClaimLost outcome with the identifiers an operator
-// needs to find the untracked upstream campaign.
-func logLostClaim(ctx context.Context, p model.Provider, jobID, projectID string, slotVersion int, platformCampaignID string, err error) {
+// reconcileRefMaxLen bounds each value copied into platformResult.Reconcile. Names and ids are
+// short; anything longer is not an identifier and is dropped rather than truncated.
+const reconcileRefMaxLen = 256
+
+// reconcileRef extracts the IDENTIFYING fields of a dispatch's result blob — what an operator
+// needs to find an untracked upstream campaign when the row that would have held the blob was
+// never written (domain.ErrDispatchClaimLost).
+//
+// The blob itself is NOT copied. On a retained partial it is persisted onto the campaign row,
+// never into the job result or a log (the retry path logs only has_result), because it holds more
+// than identifiers: Steps can carry text the platform returned, and URLs and labels are not
+// needed to find anything. So this keeps only top-level STRING values whose key names an id or a
+// name (campaignId, campaignGroupId, adGroupName, AccountID, AdSetName, ...) — the
+// reconcile-by-name payload the dispatchers document — plus the campaign's own name and status
+// from the model, which are this service's values. Anything that is not a short string is
+// dropped. nil when nothing identifying is present.
+func reconcileRef(c *model.Campaign) map[string]string {
+	ref := map[string]string{}
+	keep := func(k, v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || len(v) > reconcileRefMaxLen {
+			return
+		}
+		ref[k] = v
+	}
+	if len(c.Result) > 0 {
+		var top map[string]json.RawMessage
+		if json.Unmarshal(c.Result, &top) == nil {
+			for k, raw := range top {
+				lk := strings.ToLower(k)
+				if !strings.HasSuffix(lk, "id") && !strings.HasSuffix(lk, "name") {
+					continue
+				}
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					keep(k, v)
+				}
+			}
+		}
+	}
+	if _, ok := ref["campaignName"]; !ok {
+		if _, ok := ref["CampaignName"]; !ok {
+			keep("campaignName", c.CampaignName)
+		}
+	}
+	keep("status", c.Status)
+	if len(ref) == 0 {
+		return nil
+	}
+	return ref
+}
+
+// lostClaimResult turns a domain.ErrDispatchClaimLost from either persist (the success upsert or
+// the retained-partial one) into the platform's result, and logs it at ERROR with everything an
+// operator needs to find what was created: the upstream id when there is one, and the
+// identifying fields of the result blob (reconcileRef) either way. The blob would otherwise be
+// lost with the row that was never written.
+func lostClaimResult(ctx context.Context, res platformResult, jobID, projectID string, slotVersion int, c *model.Campaign, err error) platformResult {
+	res.OK = false
+	res.CampaignID = c.PlatformCampaignID
+	res.Reconcile = reconcileRef(c)
+	res.Error = lostClaimResultError
+	if c.PlatformCampaignID == "" {
+		res.Error = lostClaimNoIDResultError
+	}
 	slog.ErrorContext(ctx, "dispatch claim lost before its result was recorded; upstream campaign untracked, reconciliation required",
-		"platform", p, "job_id", jobID, "project_id", projectID, "slot_version", slotVersion,
-		"platform_campaign_id", platformCampaignID, "error", err)
+		"platform", res.Platform, "job_id", jobID, "project_id", projectID, "slot_version", slotVersion,
+		"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0,
+		"reconcile", res.Reconcile, "error", err)
+	return res
 }
 
 // aggregateStatus folds per-platform outcomes into the job's status.

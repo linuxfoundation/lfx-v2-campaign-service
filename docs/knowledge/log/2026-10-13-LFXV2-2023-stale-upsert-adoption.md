@@ -10,3 +10,9 @@ id). Otherwise the upsert writes nothing and returns the new `domain.ErrDispatch
 upstream id in the job result. The provenance live test that upserted twice with no job id now
 carries one. See [internal/infrastructure/postgres](../code/internal-infrastructure-postgres.md)
 and [internal/service](../code/internal-service.md).
+
+Follow-up, same review: an id-less partial (ambiguous create, LinkedIn group-only orphan) with a
+lost claim kept nothing that identified it, because its reconcile detail lives only in `Result`
+and that row is never written. The lost-claim result now carries the blob's identifying fields
+(names and ids only, never Steps text or URLs) in the stored platform result's `reconcile` map
+and in the ERROR log, and an id-less partial gets a message saying no campaign id was captured.
