@@ -37,3 +37,9 @@ identifier collections partial results keep for reconciliation (Google's `creati
 when cut, so `reconcile` became a structured map. And the lost-claim ERROR log on the
 retained-partial path now carries the provider's error as `dispatch_error`, which returning
 early had left out; the job result's message stays generic.
+
+Merge with main's #328 (legacy-binding refusal): `UpsertCampaign` takes the per-slot lock, then
+`refuseLegacyBinding`'s (platform, upstream id) lock, matching `AdoptCampaign`'s slot → brief →
+binding order, so no writer holds the binding lock while waiting for a slot. The job-id guard
+still decides the conflict arm, so the legacy-row live test now seeds its row with a job id and
+re-writes it as that job.
