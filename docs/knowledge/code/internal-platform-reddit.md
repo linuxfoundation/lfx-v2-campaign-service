@@ -763,6 +763,8 @@ recorded slot, once (`TestReportBudgets_PreSendDialFailureReleasesTheSlot`,
 The ledger map (`byAccount`) is bounded: a ledger left empty by a release is deleted, and at most
 once per window `tryTake` runs `sweepLocked`, which prunes EVERY account and deletes the empty
 ledgers. Without it only the account taking a slot was pruned, so every ad account ever seen kept
-an entry and account churn grew the map without bound; now it holds only accounts read in the last
-two windows (`TestReportBudgets_InactiveLedgersAreDropped`: after the window an inactive account's
+an entry and account churn grew the map without bound. Cleanup is demand-driven: it runs on the
+next eligible `tryTake`, so while reporting traffic continues the map holds only accounts read in
+the last two windows; if report requests stop, expired ledgers stay until the next request sweeps
+them (`TestReportBudgets_InactiveLedgersAreDropped`: after the window an inactive account's
 ledger is gone, and releasing the last slot returns the map to 0).

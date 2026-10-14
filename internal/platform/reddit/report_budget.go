@@ -165,9 +165,12 @@ func (b *ReportBudgets) release(accountID string, insights bool, at time.Time) {
 // sweepLocked bounds the map: an account's ledger is otherwise pruned only when that account
 // takes a slot again, so an ad account that stops reading would keep its (expired) entry forever
 // and account churn would grow the map without bound. At most once per window it prunes EVERY
-// account and deletes the ledgers left empty, so the map never holds an account idle for more than
-// two windows: its size is bounded by the accounts actually read in that span, not by every
-// account ever seen. O(accounts) per sweep, at most one sweep per window. b.mu must be held.
+// account and deletes the ledgers left empty. Cleanup is demand-driven, not timed: it runs on
+// the next eligible `tryTake`, so while reporting traffic continues the map holds no account
+// idle for more than two windows, and its size is bounded by the accounts read in that span,
+// not by every account ever seen. If report requests stop altogether, expired ledgers stay until
+// the next request triggers a sweep. O(accounts) per sweep, at most one sweep per window. b.mu
+// must be held.
 func (b *ReportBudgets) sweepLocked(now time.Time) {
 	if now.Sub(b.lastSweep) < b.window {
 		return
