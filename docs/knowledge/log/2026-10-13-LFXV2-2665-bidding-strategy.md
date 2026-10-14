@@ -162,3 +162,12 @@ Other platforms checked for an equivalent rule:
   platform's bid plan, including Meta's and Reddit's objective rule and X's bid ≤ budget rule, so an
   invalid bidding is always the synchronous 400. The unrelated decode error still fails open as
   before. Reddit's asset checks still run only on a clean decode.
+
+**Stored snapshots stay replayable (PR #332 review).** `config_snapshot` marshals the decoded
+config. Without `omitempty` an omitted choice was stored as `"bidding":null`, and an automatic object
+as `"strategy":""` and `"bidAmount":null`. The validator now refuses exactly those shapes, so a
+stored snapshot was no longer a valid config. All five configs now tag `Bidding` with
+`json:"bidding,omitempty"`. `biddingConfig.MarshalJSON` writes the canonical object: `strategy` when
+set and `bidAmount` when set, so `{}` stays `{}`. A test round-trips the snapshot each platform's
+`campaignFrom*` produces, for omitted, `{}`, automatic and manual configs, through
+`checkBiddingShape` and `resolveBidding` to the same plan.

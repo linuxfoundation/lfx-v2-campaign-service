@@ -75,7 +75,7 @@ type microsoftConfig struct {
 	CpcBid float64 `json:"cpcBid"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted (and no cpcBid)
 	// means automatic: the campaign is created with the MaxClicks bid strategy.
-	Bidding *biddingConfig `json:"bidding"`
+	Bidding *biddingConfig `json:"bidding,omitempty"`
 	// GeoTargets are ISO 3166-1 alpha-2 country codes, the SAME vocabulary
 	// redditConfig/metaConfig/googleAdsConfig take (LFXV2-3279). Microsoft's location
 	// criteria take numeric LocationIds rather than ISO codes, so the client resolves each

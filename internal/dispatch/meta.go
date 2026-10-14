@@ -67,7 +67,7 @@ type metaConfig struct {
 	CurrencyOffset int64 `json:"currencyOffset"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (LOWEST_COST_WITHOUT_CAP, unchanged); manual creates a link-click bid cap — see metaBidPlan.
-	Bidding *biddingConfig `json:"bidding"`
+	Bidding *biddingConfig `json:"bidding,omitempty"`
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a

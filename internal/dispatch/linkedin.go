@@ -195,7 +195,7 @@ type linkedinConfig struct {
 	EmployerExclusions []string                          `json:"employerExclusions"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
 	// a WEBSITE_VISIT campaign bidding MAX_CLICK. Manual is WEBSITE_CONVERSION + a manual CPC.
-	Bidding *biddingConfig `json:"bidding"`
+	Bidding *biddingConfig `json:"bidding,omitempty"`
 }
 
 // linkedinBidPlan resolves linkedInConfig's bidding choice. The OBJECTIVE follows it (decision

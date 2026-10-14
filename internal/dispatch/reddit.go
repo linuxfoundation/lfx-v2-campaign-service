@@ -64,7 +64,7 @@ type redditConfig struct {
 	VideoGoal         string `json:"videoGoal"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
-	Bidding *biddingConfig `json:"bidding"`
+	Bidding *biddingConfig `json:"bidding,omitempty"`
 }
 
 // redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad

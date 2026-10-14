@@ -64,7 +64,7 @@ type twitterConfig struct {
 	ImageAssetID string `json:"imageAssetId"`
 	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
 	// (the line item bids AUTO, unchanged); manual creates a MAX bid charged per link click.
-	Bidding *biddingConfig `json:"bidding"`
+	Bidding *biddingConfig `json:"bidding,omitempty"`
 }
 
 // twitterBidPlan resolves twitterConfig's bidding choice. Every X campaign here is WEBSITE_CLICKS,

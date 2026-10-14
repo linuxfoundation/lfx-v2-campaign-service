@@ -100,6 +100,23 @@ func (b *biddingConfig) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON writes the CANONICAL bidding object (PR #332 review): only the fields that carry a
+// value — strategy when set, bidAmount when set — so a stored config_snapshot is a valid, replayable
+// config. The default struct encoding wrote `"strategy":""` and `"bidAmount":null` for an automatic
+// object, exactly the shapes checkBiddingShape now refuses. An automatic object with no strategy
+// key (`{}`) stays `{}`, which re-decodes to the same automatic plan. Value receiver, so a
+// biddingConfig is canonical whether it is marshalled directly or through the configs' pointer.
+func (b biddingConfig) MarshalJSON() ([]byte, error) {
+	out := make(map[string]any, 2)
+	if b.Strategy != "" {
+		out["strategy"] = b.Strategy
+	}
+	if b.BidAmount != nil {
+		out["bidAmount"] = *b.BidAmount
+	}
+	return json.Marshal(out)
+}
+
 // The strategy spellings the config accepts, exactly — no case folding, so the value persisted is
 // the value sent.
 const (

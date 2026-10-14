@@ -4440,3 +4440,6 @@ so the message is deterministic. Each lane `PreflightCreate` decodes its config 
 (encoding/json fills every field it can past a type error) and runs the bid plan on that, so an
 invalid bidding is the 400 even when an unrelated field fails the full decode; that decode error
 itself stays not-applicable (Reddit's asset checks still run only on a clean decode).
+SNAPSHOTS: every lane config tags `Bidding` `omitempty`, and `biddingConfig.MarshalJSON` writes only
+the fields that carry a value, so a stored `config_snapshot` re-decodes through the validator to the
+same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
