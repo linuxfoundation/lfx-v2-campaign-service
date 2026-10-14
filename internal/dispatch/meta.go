@@ -1492,8 +1492,13 @@ func metaAccountLabel(a meta.AdAccount) string {
 
 // PreflightCreate refuses, before the create job exists, a metaConfig whose bidding cannot be
 // created as asked (see metaBidPlan). It never calls Meta, so every other outcome is
-// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch.
+// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch — except a wrong-typed
+// `bidding`, refused here by checkBiddingShape.
 func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "metaConfig"); err != nil {
+		return err
+	}
 	var cfg metaConfig
 	if err := unmarshalPlatformConfig(config, "metaConfig", &cfg); err != nil {
 		return domain.ErrPreflightNotApplicable

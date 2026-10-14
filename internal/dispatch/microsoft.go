@@ -290,9 +290,14 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 
 // PreflightCreate refuses, before the create job exists, a microsoftConfig whose bidding cannot be
 // created as asked (see microsoftBidPlan). It never calls Microsoft, so every other outcome is
-// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch, which reports it as
+// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch (except a wrong-typed
+// `bidding`, refused here by checkBiddingShape), which reports it as
 // the job failure, as Reddit's pre-check does.
 func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
+		return err
+	}
 	var cfg microsoftConfig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return domain.ErrPreflightNotApplicable

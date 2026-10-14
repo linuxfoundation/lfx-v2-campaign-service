@@ -4,6 +4,8 @@
 package dispatch
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -151,4 +153,53 @@ func exactScaled(amount float64, scale int64) (int64, bool) {
 	}
 	n := int64(scaled)
 	return n, float64(n)/float64(scale) == amount
+}
+
+// checkBiddingShape type-checks ONLY the `bidding` object of one platform's config, for the
+// synchronous pre-check (PR #332 review). Each lane PreflightCreate decodes its whole config and
+// treats a decode failure as ErrPreflightNotApplicable — leaving it to Dispatch, which fails the job
+// after the 202 — and that is still right for every OTHER field, whose type errors were never
+// promised as a 400. But `bidding` IS promised as a synchronous 400, so a wrong-typed one (bidAmount
+// "1.25", strategy 7, bidding "manual") must not fall through to a failed job. This decodes the
+// envelope to raw JSON, finds key.bidding, and refuses a wrong JSON type with an actionable
+// ErrCreateConfigInvalid naming the field. Anything it cannot attribute to `bidding` — a malformed
+// envelope, a config that is not an object, no `bidding` at all — returns nil and is left to the
+// ordinary decode. JSON null is accepted wherever the field is optional, as encoding/json does.
+func checkBiddingShape(config json.RawMessage, key string) error {
+	if len(config) == 0 {
+		return nil
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(config, &envelope) != nil {
+		return nil
+	}
+	var platformCfg map[string]json.RawMessage
+	if json.Unmarshal(envelope[key], &platformCfg) != nil {
+		return nil
+	}
+	raw, ok := platformCfg["bidding"]
+	if !ok || isJSONNull(raw) {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return biddingInvalid(key, "bidding must be an object, {\"strategy\": \"automatic\" | \"manual\", \"bidAmount\": number}")
+	}
+	if v, ok := fields["strategy"]; ok && !isJSONNull(v) {
+		var str string
+		if json.Unmarshal(v, &str) != nil {
+			return biddingInvalid(key, "strategy must be a string, \"automatic\" or \"manual\"")
+		}
+	}
+	if v, ok := fields["bidAmount"]; ok && !isJSONNull(v) {
+		var n float64
+		if json.Unmarshal(v, &n) != nil {
+			return biddingInvalid(key, "bidAmount must be a number (for example 1.25), not a string or other JSON type")
+		}
+	}
+	return nil
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }

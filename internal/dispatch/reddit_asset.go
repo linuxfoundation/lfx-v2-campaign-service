@@ -87,8 +87,13 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 // asset the service cannot serve (the feature off, imageAssetId together with imageUrl or
 // postUrl, or a malformed id), or whose bidding cannot be created as asked (redditBidPlan). It
 // never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
-// pre-check is not given the brief); Dispatch checks it before any upstream call.
+// pre-check is not given the brief); Dispatch checks it before any upstream call. A config that does
+// not decode is left to Dispatch, except a wrong-typed `bidding` (checkBiddingShape).
 func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "redditConfig"); err != nil {
+		return err
+	}
 	var cfg redditConfig
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure

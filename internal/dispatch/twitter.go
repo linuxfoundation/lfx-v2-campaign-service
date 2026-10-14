@@ -76,8 +76,13 @@ func twitterBidPlan(cfg twitterConfig) (bidPlan, error) {
 
 // PreflightCreate refuses, before the create job exists, a twitterConfig whose bidding cannot be
 // created as asked. It never calls X, so every other outcome is ErrPreflightNotApplicable; a
-// config that does not decode is left to Dispatch.
+// config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here
+// by checkBiddingShape.
 func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "twitterConfig"); err != nil {
+		return err
+	}
 	var cfg twitterConfig
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return domain.ErrPreflightNotApplicable

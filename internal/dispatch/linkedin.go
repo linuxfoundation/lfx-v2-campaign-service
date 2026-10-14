@@ -227,8 +227,13 @@ func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
 
 // PreflightCreate refuses, before the create job exists, a linkedInConfig whose bidding cannot be
 // created as asked. It never calls LinkedIn, so every other outcome is ErrPreflightNotApplicable;
-// a config that does not decode is left to Dispatch.
+// a config that does not decode is left to Dispatch — except a wrong-typed `bidding`, refused here by
+// checkBiddingShape.
 func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	// A wrong-typed `bidding` is a synchronous 400 even though other type errors are not.
+	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
+		return err
+	}
 	var cfg linkedinConfig
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
 		return domain.ErrPreflightNotApplicable

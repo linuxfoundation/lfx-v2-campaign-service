@@ -4412,3 +4412,6 @@ drives a manual create and then `WriteBid` on the returned row.
 `TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400` (`bidding_create_e2e_test.go`)
 drives the real Meta and Microsoft dispatchers through `service.BriefService.CreateCampaigns`: a bad
 `bidding` is a synchronous 400 naming `<configKey>.bidding` and no job is created.
+`checkBiddingShape` runs first in every lane `PreflightCreate`. It type-checks `<configKey>.bidding`
+alone from the raw envelope, so a wrong-typed `bidAmount` or `strategy` is that 400 rather than a
+decode failure left to Dispatch. Other fields' type errors are still left to Dispatch, as before.

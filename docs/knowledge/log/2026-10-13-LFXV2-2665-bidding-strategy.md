@@ -86,3 +86,12 @@ named by strategy (`| AUTO` / `| MAX`), so a retry never crosses strategies.
 - Meta refuses a manual bid whose daily budget is under 5 × the bid. Source: the Ad Set reference,
   `LOWEST_COST_WITH_BID_CAP`: "Clicks/Actions: 5x the bid_amount for a Click or Action". A lifetime
   budget is not checked, because the rule names the daily budget.
+
+**A wrong-typed `bidding` is a synchronous 400 (PR #332 review).** Each lane `PreflightCreate` turns
+a config decode failure into "not applicable", which Dispatch then reports after the 202 as a failed
+job. So `bidAmount: "1.25"` or `strategy: 1` slipped past the promised 400. `checkBiddingShape`
+now decodes only `<configKey>.bidding` from the raw envelope, before the full decode, on all five
+lane platforms. It answers `400 invalid campaign config: <configKey>.bidding: bidAmount must be a
+number` (or `strategy must be a string`, or `bidding must be an object`). A type error in any other
+config field keeps its old answer for compatibility (not applicable, then a failed job), because
+only `bidding` was promised as a 400. JSON `null` still means absent.

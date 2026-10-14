@@ -152,7 +152,8 @@ func TestMicrosoft_PreflightCreate_Bidding(t *testing.T) {
 		{name: "manual", config: `{"microsoftConfig":{"bidding":{"strategy":"manual","bidAmount":1.5}}}`},
 		{name: "legacy cpcBid", config: `{"microsoftConfig":{"cpcBid":1.5}}`},
 		{name: "manual with the same cpcBid", config: `{"microsoftConfig":{"cpcBid":1.5,"bidding":{"strategy":"manual","bidAmount":1.5}}}`},
-		{name: "undecodable is left to dispatch", config: `{"microsoftConfig":{"bidding":"manual"}}`},
+		{name: "a non-object bidding is a 400", config: `{"microsoftConfig":{"bidding":"manual"}}`, want: "bidding must be an object"},
+		{name: "another field's type error is left to dispatch", config: `{"microsoftConfig":{"budget":"50"}}`},
 		{name: "automatic with cpcBid", config: `{"microsoftConfig":{"cpcBid":1.5,"bidding":{"strategy":"automatic"}}}`, want: "automatic (MaxClicks) strategy ignores"},
 		{name: "manual with a different cpcBid", config: `{"microsoftConfig":{"cpcBid":2,"bidding":{"strategy":"manual","bidAmount":1.5}}}`, want: "two different starting bids"},
 		// Below the 0.01 floor every positive amount has a third decimal, so precision refuses it first.
@@ -207,7 +208,7 @@ func TestTwitter_PreflightCreate_Bidding(t *testing.T) {
 func TestLinkedIn_PreflightCreate_Bidding(t *testing.T) {
 	runBiddingPreflight(t, &LinkedInDispatcher{}, model.ProviderLinkedInAds, []biddingPreflightCase{
 		{name: "manual whole cents", config: `{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":2.34}}}`},
-		{name: "undecodable is left to dispatch", config: `{"linkedInConfig":{"bidding":"manual"}}`},
+		{name: "a non-object bidding is a 400", config: `{"linkedInConfig":{"bidding":"manual"}}`, want: "bidding must be an object"},
 		{name: "no bidding is the automatic default", config: `{"linkedInConfig":{"budgetUsd":50}}`},
 		{name: "explicit automatic", config: `{"linkedInConfig":{"bidding":{"strategy":"automatic"}}}`},
 		{name: "manual sub-cent", config: `{"linkedInConfig":{"bidding":{"strategy":"manual","bidAmount":2.345}}}`, want: "not a whole number of cents"},
@@ -353,5 +354,39 @@ func TestMicrosoft_InvalidBiddingFailsBeforeAnyUpstreamCall(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("%d upstream requests for a refused config, want 0", requests)
+	}
+}
+
+// TestPreflightCreate_WrongTypedBiddingIsA400OnEveryLanePlatform (PR #332 review): a `bidding`
+// whose fields have the wrong JSON type must be the promised synchronous 400, not a decode failure
+// left to Dispatch (a 202 and a failed job). Every OTHER field's type error keeps its old answer,
+// ErrPreflightNotApplicable, and null bidding fields are accepted as absent.
+func TestPreflightCreate_WrongTypedBiddingIsA400OnEveryLanePlatform(t *testing.T) {
+	lanes := []struct {
+		key, budgetField string
+		platform         model.Provider
+		pre              service.CreatePreflighter
+	}{
+		{"microsoftConfig", "budget", model.ProviderMicrosoftAds, &MicrosoftDispatcher{}},
+		{"metaConfig", "budget", model.ProviderMetaAds, &MetaDispatcher{}},
+		{"redditConfig", "budgetUsd", model.ProviderRedditAds, &RedditDispatcher{}},
+		{"twitterConfig", "budgetAmount", model.ProviderTwitterAds, &TwitterDispatcher{}},
+		{"linkedInConfig", "budgetUsd", model.ProviderLinkedInAds, &LinkedInDispatcher{}},
+	}
+	for _, lane := range lanes {
+		t.Run(lane.key, func(t *testing.T) {
+			runBiddingPreflight(t, lane.pre, lane.platform, []biddingPreflightCase{
+				{name: "string bidAmount", config: `{"` + lane.key + `":{"bidding":{"strategy":"manual","bidAmount":"1.25"}}}`,
+					want: lane.key + ".bidding: bidAmount must be a number"},
+				{name: "numeric strategy", config: `{"` + lane.key + `":{"bidding":{"strategy":1,"bidAmount":1.25}}}`,
+					want: lane.key + ".bidding: strategy must be a string"},
+				{name: "array bidding", config: `{"` + lane.key + `":{"bidding":[]}}`,
+					want: lane.key + ".bidding: bidding must be an object"},
+				{name: "null bidding is absent", config: `{"` + lane.key + `":{"bidding":null}}`},
+				// The budget is a real float64 field of each config, so a string there makes the whole
+				// decode fail — and that, unlike bidding, keeps its pre-#332 answer.
+				{name: "a non-bidding type error is left to dispatch", config: `{"` + lane.key + `":{"` + lane.budgetField + `":"50","bidding":{"strategy":"manual","bidAmount":1}}}`},
+			})
+		})
 	}
 }

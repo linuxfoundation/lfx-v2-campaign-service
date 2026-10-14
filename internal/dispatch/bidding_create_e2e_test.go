@@ -91,3 +91,44 @@ func TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400(t *testing.T
 		})
 	}
 }
+
+// TestCreateCampaigns_WrongTypedBiddingIsSynchronous400OnEveryLanePlatform (PR #332 review): a
+// `bidAmount` sent as a string reaches the caller as the synchronous 400 through CreateCampaigns on
+// every lane platform — never a 202 and a failed job — and no job is created.
+func TestCreateCampaigns_WrongTypedBiddingIsSynchronous400OnEveryLanePlatform(t *testing.T) {
+	lanes := []struct{ platform, key string }{
+		{"microsoft-ads", "microsoftConfig"}, {"meta-ads", "metaConfig"}, {"reddit-ads", "redditConfig"},
+		{"twitter-ads", "twitterConfig"}, {"linkedin-ads", "linkedInConfig"},
+	}
+	for _, lane := range lanes {
+		t.Run(lane.platform, func(t *testing.T) {
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf", EventSlug: "kubecon", Status: model.BriefApproved,
+				DeliveryType: model.DeliveryPaidMarketing, Version: 1}
+			jobs := &e2eJobRepo{}
+			orch := service.NewOrchestrator(nil, jobs, map[model.Provider]service.PlatformDispatcher{
+				model.ProviderMicrosoftAds: &MicrosoftDispatcher{},
+				model.ProviderMetaAds:      &MetaDispatcher{},
+				model.ProviderRedditAds:    &RedditDispatcher{},
+				model.ProviderTwitterAds:   &TwitterDispatcher{},
+				model.ProviderLinkedInAds:  &LinkedInDispatcher{},
+			})
+			var campaigns struct{ domain.CampaignRepository }
+			s := service.NewBriefService(e2eBriefRepo{brief: brief}, campaigns, jobs, orch)
+			_, err := s.CreateCampaigns(context.Background(), &briefs.CreateCampaignsPayload{
+				ProjectID: "cncf", BriefID: "b1",
+				Input: &briefs.CampaignCreateInput{
+					Platforms: []string{lane.platform},
+					Config:    map[string]any{lane.key: map[string]any{"bidding": map[string]any{"strategy": "manual", "bidAmount": "1.25"}}},
+				},
+			})
+			want := "invalid campaign config: " + lane.key + ".bidding: bidAmount must be a number"
+			var bad *briefs.BadRequestError
+			if !errors.As(err, &bad) || bad.Code != "400" || !strings.HasPrefix(bad.Message, want) {
+				t.Fatalf("CreateCampaigns = %v, want a 400 starting %q", err, want)
+			}
+			if n := jobs.count(); n != 0 {
+				t.Fatalf("%d job creation attempts for a refused create, want 0", n)
+			}
+		})
+	}
+}
