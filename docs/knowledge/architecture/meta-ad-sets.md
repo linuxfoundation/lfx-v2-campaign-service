@@ -179,7 +179,7 @@ write lock):
 | PAUSED → ALREADY_IN_STATE (e.g. the campaign pause already paused it) | SET after the answer; a failed row write is 503/409 saying the ad set is already paused but the pause was not recorded |
 | PAUSED → **UNCONFIRMED** | **stays set** (settled before the 503 if its own write was unconfirmed) — unknown is treated as paused, so a later campaign resume does not re-activate an ad set the user may have paused; the usual 503 and 30 s lock cooldown. NOT guaranteed when that 503 says the record could not be confirmed, or the write lock was lost: clients re-read `deliberately_paused` rather than assume it |
 | PAUSED → REJECTED / NOT_SENT (definite) | withdrawn; if the withdrawal cannot be established the answer is a 503 saying the ad set may be shown deliberately paused while active (resume it here to clear), never "nothing was changed" |
-| ACTIVE → APPLIED or ALREADY_IN_STATE | CLEARED (the `ReplaceCampaign` compare-and-swap is the row check); a failed clear is 503/409 saying the ad set WAS resumed but a campaign resume will still leave it paused |
+| ACTIVE → APPLIED or ALREADY_IN_STATE | CLEARED (the `ReplaceCampaign` compare-and-swap is the row check); a failed clear is 503/409 saying the ad set WAS resumed (it is ACTIVE) and that, if `deliberately_paused` is still true, it must be resumed here again to clear the stale hold — until then a campaign resume is refused with 409 |
 | ACTIVE → **UNCONFIRMED** or any failure | **stays set** — the ad set may still be paused; keeping it held never spends unasked |
 
 **Ambiguous commits (PR #309).** `ReplaceCampaign` tells two COMMIT failures apart. If the
@@ -219,9 +219,21 @@ the trap `ReplaceCampaign`'s own connection reuse avoids. Each step is bounded b
 
    When the claim is lost while recording AFTER Meta's confirmed answer (the record of an
    ALREADY_IN_STATE pause, or the clear after a resume), the 503 states the confirmed status
-   outcome and reports only the record as unconfirmed, telling the caller to re-read
-   `deliberately_paused`. It is not the pre-write answer, which says the status is unconfirmed
-   and nothing was sent.
+   outcome and reports only the record as unconfirmed. It is not the pre-write answer, which
+   says the status is unconfirmed and nothing was sent.
+
+   Every answer where the record could not be brought in line with Meta's confirmed outcome
+   (`adSetRecordErr`: lost claim, unknown write, failed write, row changed) ends with advice
+   that depends on the OPERATION, because the flag means opposite things. After a pause, re-read
+   `deliberately_paused` (always a boolean in the read, so a missing record reads `false`) and,
+   if it is `false`, pause again, since a campaign resume would otherwise re-activate the ad set.
+   After a resume, `false` means the clear succeeded; only a flag STILL `true` needs another
+   resume of the ad set. The message says the ad set is ACTIVE and that a campaign resume is
+   refused with 409 while that stale hold stands, never that the ad set is still paused. Every
+   variant, including the row-changed 409, ends by telling the caller to re-read the CAMPAIGN for
+   a fresh ETag before retrying: the ad-set read returns none, and a record write may have bumped
+   the version, so the old If-Match would get a 412
+   (`TestAdSetRecordErr_AdviceIsOperationSpecific` pins the exact texts for every branch).
 
 Anything else is "unknown". The state that must never arise is a pause on record over an ad set
 that was never paused (`deliberately_paused` while it serves), so a pause whose record may have
