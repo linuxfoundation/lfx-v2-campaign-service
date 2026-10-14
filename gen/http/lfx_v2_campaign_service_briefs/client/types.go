@@ -509,14 +509,17 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
-	// How the campaign was CREATED to bid, as its dispatch config's
-	// `bidding.strategy` asked (LFXV2-2665): `automatic` (the default — the
-	// platform sets every bid) or `manual` (a manual max cost-per-click bid the
-	// update-campaign-bid endpoint can change). A record of the request, not an
-	// observation: an operator may switch the strategy in the ad platform
-	// afterwards. ABSENT when not recorded — a campaign created before this field
-	// existed, an adopted campaign, or a Google Ads or email campaign — never read
-	// as `automatic`.
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
 	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
 	// The manual max cost-per-click bid this service most recently set, in the AD
 	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
@@ -549,14 +552,17 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
-	// How the campaign was CREATED to bid, as its dispatch config's
-	// `bidding.strategy` asked (LFXV2-2665): `automatic` (the default — the
-	// platform sets every bid) or `manual` (a manual max cost-per-click bid the
-	// update-campaign-bid endpoint can change). A record of the request, not an
-	// observation: an operator may switch the strategy in the ad platform
-	// afterwards. ABSENT when not recorded — a campaign created before this field
-	// existed, an adopted campaign, or a Google Ads or email campaign — never read
-	// as `automatic`.
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
 	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
 	// The manual max cost-per-click bid this service most recently set, in the AD
 	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
@@ -705,14 +711,17 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
-	// How the campaign was CREATED to bid, as its dispatch config's
-	// `bidding.strategy` asked (LFXV2-2665): `automatic` (the default — the
-	// platform sets every bid) or `manual` (a manual max cost-per-click bid the
-	// update-campaign-bid endpoint can change). A record of the request, not an
-	// observation: an operator may switch the strategy in the ad platform
-	// afterwards. ABSENT when not recorded — a campaign created before this field
-	// existed, an adopted campaign, or a Google Ads or email campaign — never read
-	// as `automatic`.
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
 	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
 	// The manual max cost-per-click bid this service most recently set, in the AD
 	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
@@ -746,14 +755,17 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
-	// How the campaign was CREATED to bid, as its dispatch config's
-	// `bidding.strategy` asked (LFXV2-2665): `automatic` (the default — the
-	// platform sets every bid) or `manual` (a manual max cost-per-click bid the
-	// update-campaign-bid endpoint can change). A record of the request, not an
-	// observation: an operator may switch the strategy in the ad platform
-	// afterwards. ABSENT when not recorded — a campaign created before this field
-	// existed, an adopted campaign, or a Google Ads or email campaign — never read
-	// as `automatic`.
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
 	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
 	// The manual max cost-per-click bid this service most recently set, in the AD
 	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
@@ -787,14 +799,17 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
-	// How the campaign was CREATED to bid, as its dispatch config's
-	// `bidding.strategy` asked (LFXV2-2665): `automatic` (the default — the
-	// platform sets every bid) or `manual` (a manual max cost-per-click bid the
-	// update-campaign-bid endpoint can change). A record of the request, not an
-	// observation: an operator may switch the strategy in the ad platform
-	// afterwards. ABSENT when not recorded — a campaign created before this field
-	// existed, an adopted campaign, or a Google Ads or email campaign — never read
-	// as `automatic`.
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
 	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
 	// The manual max cost-per-click bid this service most recently set, in the AD
 	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
@@ -828,14 +843,17 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
-	// How the campaign was CREATED to bid, as its dispatch config's
-	// `bidding.strategy` asked (LFXV2-2665): `automatic` (the default — the
-	// platform sets every bid) or `manual` (a manual max cost-per-click bid the
-	// update-campaign-bid endpoint can change). A record of the request, not an
-	// observation: an operator may switch the strategy in the ad platform
-	// afterwards. ABSENT when not recorded — a campaign created before this field
-	// existed, an adopted campaign, or a Google Ads or email campaign — never read
-	// as `automatic`.
+	// How the campaign was CREATED to bid, as its dispatch config asked
+	// (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft
+	// Advertising create carrying the legacy `microsoftConfig.cpcBid` with no
+	// `bidding` object is recorded as `manual` (that bid is a manual starting
+	// bid), so this does not always echo an explicit `bidding.strategy`:
+	// `automatic` (the default — the platform sets every bid) or `manual` (a
+	// manual max cost-per-click bid the update-campaign-bid endpoint can change).
+	// A record of the request, not an observation: an operator may switch the
+	// strategy in the ad platform afterwards. ABSENT when not recorded — a
+	// campaign created before this field existed, an adopted campaign, or a Google
+	// Ads or email campaign — never read as `automatic`.
 	BiddingStrategy *string `form:"bidding_strategy,omitempty" json:"bidding_strategy,omitempty" xml:"bidding_strategy,omitempty"`
 	// The manual max cost-per-click bid this service most recently set, in the AD
 	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
