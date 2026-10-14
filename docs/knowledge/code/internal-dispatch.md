@@ -3350,6 +3350,11 @@ untouched by all of it — refusing to pause is refusing to stop spend.
 
 ### Microsoft, Meta, Reddit and X adopters (LFXV2-2665)
 
+(Binding: one upstream campaign binds one live brief, enforced by per-provider unique indexes —
+Meta global (000043); Microsoft, Reddit and X keyed on the ad account (000044-000046). A second
+adoption of the same campaign is `ErrPlatformCampaignAlreadyBound`, 409. See
+[internal/infrastructure/postgres](internal-infrastructure-postgres.md).)
+
 (LinkedIn joined them later in LFXV2-2665 — see
 [LinkedIn settings, bid and adoption](#linkedin-settings-bid-and-adoption-lfxv2-2665).)
 
