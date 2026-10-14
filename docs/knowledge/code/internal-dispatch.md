@@ -4273,3 +4273,13 @@ Preview's `UpperBound` is the gate list's size only when every branch is gated.
 probes, ranked by a second model call. Best effort — a failed search or ranking returns the
 candidates unranked, never fails the draft. `previewCustom` resolves the education topic property
 with `EventTypeProperties` BEFORE validation and discards any value the caller sent.
+
+### HubSpot hero failures are reported, not silent
+
+`uploadHeroImage` re-hosts the scraped hero in the portal file manager and stays best-effort: a failure leaves
+the draft without a hero section instead of failing the dispatch. It now also returns an operator-facing
+warning, built from `heroFailureReason`'s fixed vocabulary (format email cannot use, not an image, download
+failed, too large, refused by the network guard, missing files permission, otherwise generic) and never from
+the error text, which can carry upstream content. `Dispatch` stores the warnings in the campaign's Result blob
+(`warnings`), the orchestrator reads them back with `hubspotWarningsFromResult` next to `hubspotURLFromResult`,
+and `GetJob` returns them as `PlatformResult.warnings`. A campaign that asked for no hero reports none.

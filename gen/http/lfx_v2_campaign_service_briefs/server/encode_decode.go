@@ -6607,6 +6607,12 @@ func marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody
 		Error:      v.Error,
 		HubspotURL: v.HubspotURL,
 	}
+	if v.Warnings != nil {
+		res.Warnings = make([]string, len(v.Warnings))
+		for i, val := range v.Warnings {
+			res.Warnings[i] = val
+		}
+	}
 
 	return res
 }

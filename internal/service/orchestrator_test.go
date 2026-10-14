@@ -3295,6 +3295,37 @@ func TestOrchestrator_ProbeConnection_UnwiredIsAServiceDefect(t *testing.T) {
 // AppURL is tagged json:"-" and would not otherwise serialize) — because dispatchShapedResult
 // below is this test's own struct, not dispatch's. That side is pinned separately by
 // TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL in internal/dispatch/hubspot_test.go.
+// TestHubspotWarningsFromResult pins the read side of the warnings seam, the same way
+// TestHubspotURLFromResult does for the link: a HubSpot result blob carries the key, any other
+// platform's blob has none, and unreadable input yields nil rather than an error.
+func TestHubspotWarningsFromResult(t *testing.T) {
+	type dispatchShapedResult struct {
+		Warnings []string `json:"warnings"`
+	}
+	matching, err := json.Marshal(dispatchShapedResult{Warnings: []string{"hero missing"}})
+	if err != nil {
+		t.Fatalf("marshal dispatch-shaped result: %v", err)
+	}
+	cases := map[string]struct {
+		result json.RawMessage
+		want   []string
+	}{
+		"hubspot result carries the key":       {matching, []string{"hero missing"}},
+		"another platform's result has no key": {json.RawMessage(`{"adSetId":"42"}`), nil},
+		"empty result":                         {json.RawMessage(``), nil},
+		"malformed json":                       {json.RawMessage(`{not json`), nil},
+		"absent result (nil)":                  {nil, nil},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := hubspotWarningsFromResult(tc.result)
+			if len(got) != len(tc.want) || (len(got) == 1 && got[0] != tc.want[0]) {
+				t.Errorf("hubspotWarningsFromResult(%s) = %v, want %v", tc.result, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHubspotURLFromResult(t *testing.T) {
 	type dispatchShapedResult struct {
 		PortalID   string `json:"portalId"`
