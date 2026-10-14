@@ -1162,7 +1162,7 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 	Attribute("platform_campaign_id", String, "The id the platform assigned to this campaign.", func() { Example("24183781329") })
 	Attribute("name", String, "The campaign's platform-side name, unparsed.", func() { Example("KubeCon NA 2026 - Search") })
 	Attribute("status", String, "The platform's own status string, passed through verbatim (e.g. ENABLED/PAUSED on Google Ads, ACTIVE/PAUSED on LinkedIn/Meta/Reddit).", func() { Example("ENABLED") })
-	Attribute("spend", Float64, "Total cost in the account's currency over the requested window.", func() { Example(482.13) })
+	Attribute("spend", Float64, "Total cost in the account's currency over the requested window.", func() { Example(1890.0) })
 	Attribute("impressions", Int64, "Impressions over the window.", func() { Example(48200) })
 	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(3110) })
 	Attribute("ctr", Float64, "Clicks/Impressions * 100, 0 when Impressions is 0.", func() { Example(6.45) })
@@ -1170,14 +1170,17 @@ var AccountMonitorCampaign = Type("account-monitor-campaign", func() {
 	// platform/row could not measure conversions, not that it measured 0.
 	Attribute("conversions", Float64, "Conversions over the window. ABSENT when this platform/row could not measure conversions — not a measured 0.", func() { Example(12.5) })
 	Attribute("budget_day", Float64, "Daily budget in the account's currency, 0 when the campaign has none (e.g. a LinkedIn/Meta campaign funded by total_budget instead).", func() { Example(150) })
-	Attribute("total_budget", Float64, "Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.", func() { Example(5000) })
+	Attribute("total_budget", Float64, "Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.", func() { Example(0) })
 	Attribute("start_date", String, "The campaign's flight start date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.", func() { Example("2026-08-01") })
 	Attribute("end_date", String, "The campaign's flight end date, RFC 3339 date-only (YYYY-MM-DD). Empty when the platform did not report one.", func() { Example("2026-11-30") })
 	Attribute("pacing_unknown", Boolean, "True when pacing could not be computed at all: either the flight dates needed for pacing_pct were unavailable, or the campaign has no usable budget to pace against. A renderer MUST NOT treat pacing_pct as meaningful when this is true.", func() { Example(false) })
 	Attribute("is_search_channel", Boolean, "Google Ads only: true when the campaign's advertising_channel_type is SEARCH. Always false for LinkedIn/Meta/Reddit rows.", func() { Example(true) })
 	Attribute("fetch_failed", Boolean, "True when some part of this row's upstream data could not be trusted: either its per-campaign metrics fetch failed outright (numeric fields left at their zero value), or, for Google Ads, its budget field was present but unparseable alongside otherwise-good metrics. A renderer MUST check this before treating any of this row's fields, zero or not, as a fully trusted reading.", func() { Example(false) })
-	Attribute("pacing_pct", Float64, "spend / expected-spend * 100. Meaningless when pacing_unknown is true.", func() { Example(87) })
-	Attribute("pacing_label", String, "The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value \"normal\" rather than carrying no label at all, since the enum has no unknown member.", func() { Enum("normal", "underspending", "constrained", "overspending") })
+	Attribute("pacing_pct", Float64, "spend / expected-spend * 100. Meaningless when pacing_unknown is true.", func() { Example(42) })
+	Attribute("pacing_label", String, "The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value \"normal\" rather than carrying no label at all, since the enum has no unknown member.", func() {
+		Enum("normal", "underspending", "constrained", "overspending")
+		Example("underspending")
+	})
 	Attribute("campaign_url", String, "Google Ads only: direct link to the campaign in the Google Ads UI.", func() { Example("https://ads.google.com/aw/campaigns?campaignId=24183781329") })
 	Required("platform_campaign_id", "name", "status", "spend", "impressions", "clicks", "ctr",
 		"budget_day", "total_budget", "start_date", "end_date", "pacing_unknown",
@@ -1191,17 +1194,21 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 	Attribute("email_id", String, "monitor-hubspot-account only: the HubSpot marketing-email id the item is about — the key that joins a finding to its row in `emails` (an A/B variant shares its parent's campaign_id). Absent on every ad-platform monitor.", func() { Example("112233445566") })
 	Attribute("campaign_name", String, "The campaign's platform-side name, carried alongside campaign_id so a renderer never needs to re-join against the row list.", func() { Example("KubeCon NA 2026 - Search") })
 	Attribute("priority", String, "The rule engine's priority band for this item.", func() { Enum("HIGH", "MED", "LOW") })
-	Attribute("issue", String, "What the rule engine flagged.", func() { Example("Underspending: 42% of expected spend") })
-	Attribute("action", String, "The suggested remedy.", func() { Example("Increase daily budget or check for delivery limits") })
+	Attribute("issue", String, "What the rule engine flagged.", func() { Example("Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected") })
+	Attribute("action", String, "The suggested remedy.", func() {
+		Example("Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions")
+	})
 	Required("priority", "issue", "action")
 	// TYPE-LEVEL example, and it is an AD-monitor finding with no email_id: composed from the
 	// attribute examples alone, Goa would put the HubSpot-only email_id beside a Google campaign
 	// id and an underspend issue — a finding no monitor can produce. monitor-hubspot-account's
-	// action_items attribute carries its own example, with email_id.
+	// action_items attribute carries its own example, with email_id. The text is exactly what
+	// rules.EvaluateGoogleMonitor emits for the underspending row of AccountMonitor's campaigns
+	// example (42% of a $150/day budget over 30 days).
 	Example(map[string]any{
 		"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
-		"issue":  "Underspending: 42% of expected spend",
-		"action": "Increase daily budget or check for delivery limits",
+		"issue":  "Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected",
+		"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
 	})
 })
 
@@ -1209,7 +1216,7 @@ var AccountMonitorActionItem = Type("account-monitor-action-item", func() {
 // see model.AccountMonitorTotals. Always the sum of the campaigns array in the same response,
 // on every platform, so the aggregate and the list can never describe different populations.
 var AccountMonitorTotals = Type("account-monitor-totals", func() {
-	Attribute("spend", Float64, "Account-wide spend over the window.", func() { Example(1842.55) })
+	Attribute("spend", Float64, "Account-wide spend over the window.", func() { Example(6090.0) })
 	Attribute("impressions", Int64, "Account-wide impressions over the window.", func() { Example(184200) })
 	Attribute("clicks", Int64, "Account-wide clicks over the window.", func() { Example(11420) })
 	// Not required, for the same reason the per-campaign conversions attribute is not: absent
@@ -1249,12 +1256,15 @@ var AccountMonitor = Type("account-monitor", func() {
 	// totals.campaign_count example could then equal len(campaigns) in every response. The two
 	// rows sum to the totals example (spend, impressions, clicks, conversions), neither is
 	// fetch_failed (unmeasured_campaigns 0), and the underspending row is the one the
-	// action-item example names.
+	// action-item example names. Both are Google-shaped (campaign_url) and their pacing is what
+	// rules.EvaluateGoogleMonitor gives over the days example (30): expected spend is
+	// budget_day*days, so 1890/(150*30) = 42% (underspending, below 50) and 4200/(200*30) = 70%
+	// (normal, 50-90). TestPublishedAccountMonitorTotalsExamplesArePossible recomputes both.
 	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.", func() {
 		Example([]map[string]any{
 			{
 				"platform_campaign_id": "24183781329", "name": "KubeCon NA 2026 - Search", "status": "ENABLED",
-				"spend": 482.13, "impressions": 48200, "clicks": 3110, "ctr": 6.45, "conversions": 12.5,
+				"spend": 1890.0, "impressions": 48200, "clicks": 3110, "ctr": 6.45, "conversions": 12.5,
 				"budget_day": 150, "total_budget": 0, "start_date": "2026-08-01", "end_date": "2026-11-30",
 				"pacing_unknown": false, "is_search_channel": true, "fetch_failed": false,
 				"pacing_pct": 42, "pacing_label": "underspending",
@@ -1262,15 +1272,24 @@ var AccountMonitor = Type("account-monitor", func() {
 			},
 			{
 				"platform_campaign_id": "24183781330", "name": "KubeCon NA 2026 - Brand", "status": "ENABLED",
-				"spend": 1360.42, "impressions": 136000, "clicks": 8310, "ctr": 6.11, "conversions": 200.0,
-				"budget_day": 0, "total_budget": 5000, "start_date": "2026-08-01", "end_date": "2026-11-30",
+				"spend": 4200.0, "impressions": 136000, "clicks": 8310, "ctr": 6.11, "conversions": 200.0,
+				"budget_day": 200, "total_budget": 0, "start_date": "2026-08-01", "end_date": "2026-11-30",
 				"pacing_unknown": false, "is_search_channel": true, "fetch_failed": false,
-				"pacing_pct": 87, "pacing_label": "normal",
+				"pacing_pct": 70, "pacing_label": "normal",
 				"campaign_url": "https://ads.google.com/aw/campaigns?campaignId=24183781330",
 			},
 		})
 	})
-	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
+	// Explicit for the same reason as campaigns: composed, Goa repeats the one item example a
+	// random number of times, publishing duplicate findings. This is exactly the list
+	// rules.EvaluateGoogleMonitor produces for the campaigns example above.
+	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.", func() {
+		Example([]map[string]any{{
+			"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
+			"issue":  "Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected",
+			"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
+		}})
+	})
 	Attribute("totals", AccountMonitorTotals)
 	Attribute("metrics_as_of", String, "Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
 		Format(FormatDateTime)

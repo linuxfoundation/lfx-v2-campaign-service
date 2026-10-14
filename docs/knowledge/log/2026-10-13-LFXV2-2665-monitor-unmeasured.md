@@ -30,3 +30,16 @@ generated campaigns arrays of 2–4 rows (Goa picked a different array length pe
 `fetch_failed`, and together they sum to the totals example's spend, impressions, clicks and
 conversions. `campaign_count` is now `Example(2)`, and the same test also requires
 `campaign_count` to equal `len(campaigns)` wherever both appear.
+
+Follow-up (#319, example pacing): the service could not have produced the two-row example. Over
+`days: 30`, `rules.EvaluateGoogleMonitor` gives the first row 11% (482.13 / (150 × 30)), not 42%,
+and the second row, with `budget_day: 0`, `pacing_unknown=true` and `pacing_pct` 0, not 87/normal.
+The rows now spend 1890 of 150/day (42%, underspending) and 4200 of 200/day (70%, normal on the
+50/90/100 ladder), and the totals spend is their sum, 6090. The composed `action_items` repeated
+one finding two to four times, so `action_items` now has an explicit example: the single item the
+evaluator emits for these rows, in the evaluator's own wording, naming the underspending row. The
+`AccountMonitorCampaign` and action-item attribute examples were aligned to the same row.
+`TestPublishedAccountMonitorTotalsExamplesArePossible` now recomputes every example row with
+`EvaluateGoogleMonitor` (which labels through `StandardLadder`), requires `pacing_pct`,
+`pacing_label` and `pacing_unknown` to match, and requires `action_items` to equal the
+evaluator's findings. A row that is not Google-shaped fails the test instead of going unchecked.

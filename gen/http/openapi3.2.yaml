@@ -7595,15 +7595,10 @@ paths:
                             example:
                                 account_id: "8666746580"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -7620,11 +7615,11 @@ paths:
                                       pacing_pct: 42
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      spend: 1890
                                       start_date: "2026-08-01"
                                       status: ENABLED
                                       total_budget: 0
-                                    - budget_day: 0
+                                    - budget_day: 200
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                                       clicks: 8310
                                       conversions: 200
@@ -7635,13 +7630,13 @@ paths:
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Brand
                                       pacing_label: normal
-                                      pacing_pct: 87
+                                      pacing_pct: 70
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781330"
-                                      spend: 1360.42
+                                      spend: 4200
                                       start_date: "2026-08-01"
                                       status: ENABLED
-                                      total_budget: 5000
+                                      total_budget: 0
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
@@ -7652,7 +7647,7 @@ paths:
                                     clicks: 11420
                                     conversions: 212.5
                                     impressions: 184200
-                                    spend: 1842.55
+                                    spend: 6090
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
@@ -9622,15 +9617,10 @@ paths:
                             example:
                                 account_id: "8666746580"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -9647,11 +9637,11 @@ paths:
                                       pacing_pct: 42
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      spend: 1890
                                       start_date: "2026-08-01"
                                       status: ENABLED
                                       total_budget: 0
-                                    - budget_day: 0
+                                    - budget_day: 200
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                                       clicks: 8310
                                       conversions: 200
@@ -9662,13 +9652,13 @@ paths:
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Brand
                                       pacing_label: normal
-                                      pacing_pct: 87
+                                      pacing_pct: 70
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781330"
-                                      spend: 1360.42
+                                      spend: 4200
                                       start_date: "2026-08-01"
                                       status: ENABLED
-                                      total_budget: 5000
+                                      total_budget: 0
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
@@ -9679,7 +9669,7 @@ paths:
                                     clicks: 11420
                                     conversions: 212.5
                                     impressions: 184200
-                                    spend: 1842.55
+                                    spend: 6090
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
@@ -10536,15 +10526,10 @@ paths:
                             example:
                                 account_id: "8666746580"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -10561,11 +10546,11 @@ paths:
                                       pacing_pct: 42
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      spend: 1890
                                       start_date: "2026-08-01"
                                       status: ENABLED
                                       total_budget: 0
-                                    - budget_day: 0
+                                    - budget_day: 200
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                                       clicks: 8310
                                       conversions: 200
@@ -10576,13 +10561,13 @@ paths:
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Brand
                                       pacing_label: normal
-                                      pacing_pct: 87
+                                      pacing_pct: 70
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781330"
-                                      spend: 1360.42
+                                      spend: 4200
                                       start_date: "2026-08-01"
                                       status: ENABLED
-                                      total_budget: 5000
+                                      total_budget: 0
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
@@ -10593,7 +10578,7 @@ paths:
                                     clicks: 11420
                                     conversions: 212.5
                                     impressions: 184200
-                                    spend: 1842.55
+                                    spend: 6090
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
@@ -11445,25 +11430,10 @@ paths:
                             example:
                                 account_id: "8666746580"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -11480,11 +11450,11 @@ paths:
                                       pacing_pct: 42
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      spend: 1890
                                       start_date: "2026-08-01"
                                       status: ENABLED
                                       total_budget: 0
-                                    - budget_day: 0
+                                    - budget_day: 200
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                                       clicks: 8310
                                       conversions: 200
@@ -11495,13 +11465,13 @@ paths:
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Brand
                                       pacing_label: normal
-                                      pacing_pct: 87
+                                      pacing_pct: 70
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781330"
-                                      spend: 1360.42
+                                      spend: 4200
                                       start_date: "2026-08-01"
                                       status: ENABLED
-                                      total_budget: 5000
+                                      total_budget: 0
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
@@ -11512,7 +11482,7 @@ paths:
                                     clicks: 11420
                                     conversions: 212.5
                                     impressions: 184200
-                                    spend: 1842.55
+                                    spend: 6090
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
@@ -12365,25 +12335,10 @@ paths:
                             example:
                                 account_id: "8666746580"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -12400,11 +12355,11 @@ paths:
                                       pacing_pct: 42
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      spend: 1890
                                       start_date: "2026-08-01"
                                       status: ENABLED
                                       total_budget: 0
-                                    - budget_day: 0
+                                    - budget_day: 200
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                                       clicks: 8310
                                       conversions: 200
@@ -12415,13 +12370,13 @@ paths:
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Brand
                                       pacing_label: normal
-                                      pacing_pct: 87
+                                      pacing_pct: 70
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781330"
-                                      spend: 1360.42
+                                      spend: 4200
                                       start_date: "2026-08-01"
                                       status: ENABLED
-                                      total_budget: 5000
+                                      total_budget: 0
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
@@ -12432,7 +12387,7 @@ paths:
                                     clicks: 11420
                                     conversions: 212.5
                                     impressions: 184200
-                                    spend: 1842.55
+                                    spend: 6090
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
@@ -13290,15 +13245,10 @@ paths:
                             example:
                                 account_id: "8666746580"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -13315,11 +13265,11 @@ paths:
                                       pacing_pct: 42
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      spend: 1890
                                       start_date: "2026-08-01"
                                       status: ENABLED
                                       total_budget: 0
-                                    - budget_day: 0
+                                    - budget_day: 200
                                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                                       clicks: 8310
                                       conversions: 200
@@ -13330,13 +13280,13 @@ paths:
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Brand
                                       pacing_label: normal
-                                      pacing_pct: 87
+                                      pacing_pct: 70
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781330"
-                                      spend: 1360.42
+                                      spend: 4200
                                       start_date: "2026-08-01"
                                       status: ENABLED
-                                      total_budget: 5000
+                                      total_budget: 0
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
@@ -13347,7 +13297,7 @@ paths:
                                     clicks: 11420
                                     conversions: 212.5
                                     impressions: 184200
-                                    spend: 1842.55
+                                    spend: 6090
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
@@ -15622,15 +15572,10 @@ components:
                         $ref: '#/components/schemas/AccountMonitorActionItem'
                     description: The rule engine's findings across the account's campaigns.
                     example:
-                        - action: Increase daily budget or check for delivery limits
+                        - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                           campaign_id: "24183781329"
                           campaign_name: KubeCon NA 2026 - Search
-                          issue: 'Underspending: 42% of expected spend'
-                          priority: MED
-                        - action: Increase daily budget or check for delivery limits
-                          campaign_id: "24183781329"
-                          campaign_name: KubeCon NA 2026 - Search
-                          issue: 'Underspending: 42% of expected spend'
+                          issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                           priority: MED
                 campaigns:
                     type: array
@@ -15652,11 +15597,11 @@ components:
                           pacing_pct: 42
                           pacing_unknown: false
                           platform_campaign_id: "24183781329"
-                          spend: 482.13
+                          spend: 1890
                           start_date: "2026-08-01"
                           status: ENABLED
                           total_budget: 0
-                        - budget_day: 0
+                        - budget_day: 200
                           campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                           clicks: 8310
                           conversions: 200
@@ -15667,13 +15612,13 @@ components:
                           is_search_channel: true
                           name: KubeCon NA 2026 - Brand
                           pacing_label: normal
-                          pacing_pct: 87
+                          pacing_pct: 70
                           pacing_unknown: false
                           platform_campaign_id: "24183781330"
-                          spend: 1360.42
+                          spend: 4200
                           start_date: "2026-08-01"
                           status: ENABLED
-                          total_budget: 5000
+                          total_budget: 0
                 days:
                     type: integer
                     description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
@@ -15703,15 +15648,10 @@ components:
             example:
                 account_id: "8666746580"
                 action_items:
-                    - action: Increase daily budget or check for delivery limits
+                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                       campaign_id: "24183781329"
                       campaign_name: KubeCon NA 2026 - Search
-                      issue: 'Underspending: 42% of expected spend'
-                      priority: MED
-                    - action: Increase daily budget or check for delivery limits
-                      campaign_id: "24183781329"
-                      campaign_name: KubeCon NA 2026 - Search
-                      issue: 'Underspending: 42% of expected spend'
+                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                       priority: MED
                 campaigns:
                     - budget_day: 150
@@ -15728,11 +15668,11 @@ components:
                       pacing_pct: 42
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
-                      spend: 482.13
+                      spend: 1890
                       start_date: "2026-08-01"
                       status: ENABLED
                       total_budget: 0
-                    - budget_day: 0
+                    - budget_day: 200
                       campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
                       clicks: 8310
                       conversions: 200
@@ -15743,13 +15683,13 @@ components:
                       is_search_channel: true
                       name: KubeCon NA 2026 - Brand
                       pacing_label: normal
-                      pacing_pct: 87
+                      pacing_pct: 70
                       pacing_unknown: false
                       platform_campaign_id: "24183781330"
-                      spend: 1360.42
+                      spend: 4200
                       start_date: "2026-08-01"
                       status: ENABLED
-                      total_budget: 5000
+                      total_budget: 0
                 days: 30
                 metrics_as_of: "2026-10-05T14:30:00Z"
                 metrics_pending: false
@@ -15760,7 +15700,7 @@ components:
                     clicks: 11420
                     conversions: 212.5
                     impressions: 184200
-                    spend: 1842.55
+                    spend: 6090
                     unmeasured_campaigns: 0
             required:
                 - account_id
@@ -15774,7 +15714,7 @@ components:
                 action:
                     type: string
                     description: The suggested remedy.
-                    example: Increase daily budget or check for delivery limits
+                    example: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                 campaign_id:
                     type: string
                     description: 'The campaign this item is about: the platform campaign id on the ad-platform monitors; this service''s campaign UUID on monitor-hubspot-account (where email_id names the email). Empty for an account-wide item.'
@@ -15790,7 +15730,7 @@ components:
                 issue:
                     type: string
                     description: What the rule engine flagged.
-                    example: 'Underspending: 42% of expected spend'
+                    example: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                 priority:
                     type: string
                     description: The rule engine's priority band for this item.
@@ -15800,10 +15740,10 @@ components:
                         - MED
                         - LOW
             example:
-                action: Increase daily budget or check for delivery limits
+                action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                 campaign_id: "24183781329"
                 campaign_name: KubeCon NA 2026 - Search
-                issue: 'Underspending: 42% of expected spend'
+                issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                 priority: MED
             required:
                 - priority
@@ -15860,7 +15800,7 @@ components:
                 pacing_label:
                     type: string
                     description: The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value "normal" rather than carrying no label at all, since the enum has no unknown member.
-                    example: constrained
+                    example: underspending
                     enum:
                         - normal
                         - underspending
@@ -15869,7 +15809,7 @@ components:
                 pacing_pct:
                     type: number
                     description: spend / expected-spend * 100. Meaningless when pacing_unknown is true.
-                    example: 87
+                    example: 42
                     format: double
                 pacing_unknown:
                     type: boolean
@@ -15882,7 +15822,7 @@ components:
                 spend:
                     type: number
                     description: Total cost in the account's currency over the requested window.
-                    example: 482.13
+                    example: 1890
                     format: double
                 start_date:
                     type: string
@@ -15895,7 +15835,7 @@ components:
                 total_budget:
                     type: number
                     description: Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.
-                    example: 5000
+                    example: 0
                     format: double
             example:
                 budget_day: 150
@@ -15908,14 +15848,14 @@ components:
                 impressions: 48200
                 is_search_channel: true
                 name: KubeCon NA 2026 - Search
-                pacing_label: constrained
-                pacing_pct: 87
+                pacing_label: underspending
+                pacing_pct: 42
                 pacing_unknown: false
                 platform_campaign_id: "24183781329"
-                spend: 482.13
+                spend: 1890
                 start_date: "2026-08-01"
                 status: ENABLED
-                total_budget: 5000
+                total_budget: 0
             required:
                 - platform_campaign_id
                 - name
@@ -15985,7 +15925,7 @@ components:
                 spend:
                     type: number
                     description: Account-wide spend over the window.
-                    example: 1842.55
+                    example: 6090
                     format: double
                 unmeasured_campaigns:
                     type: integer
@@ -15998,7 +15938,7 @@ components:
                 clicks: 11420
                 conversions: 212.5
                 impressions: 184200
-                spend: 1842.55
+                spend: 6090
                 unmeasured_campaigns: 0
             required:
                 - spend
