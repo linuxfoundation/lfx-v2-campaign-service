@@ -754,7 +754,13 @@ joined by `campaign_id` afterwards. Every campaign-list page now goes through `g
 (`identityjson.Check` on the raw bytes before decoding), because `encoding/json` keeps the LAST
 of a duplicated key: a recent `updated_time` followed by an old one would slip past the edit
 guard. A refused or undecodable page is a `transportError` and fails the read, as the currency
-read's refusal does.
+read's refusal does. The page's `start_time`/`stop_time` are decoded RAW (`campaignFlightField`),
+keeping the cases `adSetWindow` keeps apart: absent is no bound; an empty `stop_time` is "no end";
+an empty `start_time`, an explicit `null`, a non-string, or a non-empty value that is not a whole
+Meta timestamp is unreadable and leaves the campaign-level budget unknown (`FlightUnknown`) — not
+`FetchFailed`, matching how the ad-set path treats an unreadable window (budget unknown, delivery
+kept). Decoded into strings, null and malformed read as a missing flight and a daily CBO budget
+was paced over the whole window.
 
 **Budgets: where the campaign keeps them, in the account currency (LFXV2-2665).** The read makes
 one `GET /{act}?fields=currency` (via `accountCurrency`, identity-checked) per request and converts

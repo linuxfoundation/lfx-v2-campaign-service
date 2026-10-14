@@ -730,3 +730,58 @@ func TestListAccountCampaigns_InsightsBeforeBudgetSnapshot(t *testing.T) {
 		t.Errorf("request order = %v, want insights, then the campaign list, then the ad sets", order)
 	}
 }
+
+// The campaign list's start_time/stop_time keep three cases apart, as adSetWindow does (PR #316
+// review): absent is no bound; an empty stop_time is Meta's "no end" (an empty start_time is
+// unreadable, as on the ad-set path); an explicit null, a non-string or a malformed timestamp is
+// unreadable and leaves the campaign-level budget UNKNOWN — not FetchFailed, since delivery was
+// read fine. Decoded into strings, null and malformed both read as a missing flight and a daily
+// CBO budget was paced over the whole window with confidence.
+func TestListAccountCampaigns_CampaignFlightFieldsFailClosed(t *testing.T) {
+	const validStart = `"2026-09-01T00:00:00-0700"`
+	const validStop = `"2026-11-30T23:59:59+0000"`
+	for _, tc := range []struct {
+		name, start, stop  string // raw JSON values; "" omits the member
+		wantDaily          float64
+		wantStart, wantEnd string
+	}{
+		{"both valid", validStart, validStop, 50, "2026-09-01", "2026-11-30"},
+		{"start absent", "", validStop, 50, "", "2026-11-30"},
+		{"stop absent", validStart, "", 50, "2026-09-01", ""},
+		{"stop empty is no end", validStart, `""`, 50, "2026-09-01", ""},
+		{"start empty is unreadable", `""`, validStop, 0, "", "2026-11-30"},
+		{"start null", `null`, validStop, 0, "", "2026-11-30"},
+		{"stop null", validStart, `null`, 0, "2026-09-01", ""},
+		{"start numeric", `1767225600`, validStop, 0, "", "2026-11-30"},
+		{"stop numeric", validStart, `1767225600`, 0, "2026-09-01", ""},
+		{"start malformed", `"2026-09-01garbage"`, validStop, 0, "", "2026-11-30"},
+		{"stop malformed", validStart, `"2026-11-30T99:00:00+0000"`, 0, "2026-09-01", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			members := `"id":"111","name":"A","status":"ACTIVE","daily_budget":"5000",` + settledUpdate
+			if tc.start != "" {
+				members += `,"start_time":` + tc.start
+			}
+			if tc.stop != "" {
+				members += `,"stop_time":` + tc.stop
+			}
+			rows, rec := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(`{`+members+`}`, monitorCampaign("222", StatusActive, `"daily_budget":"7000"`))},
+				insights:  []string{insightsFor("111", "222")},
+				currency:  usdAccount,
+			})
+			r := rows["111"]
+			assertBudgets(t, r, tc.wantDaily, 0)
+			if r.StartDate != tc.wantStart || r.EndDate != tc.wantEnd {
+				t.Errorf("flight = %q..%q, want %q..%q", r.StartDate, r.EndDate, tc.wantStart, tc.wantEnd)
+			}
+			if r.FetchFailed || r.Impressions != 1000 {
+				t.Errorf("row 111 = %+v, want delivery kept and not FetchFailed", r)
+			}
+			assertBudgets(t, rows["222"], 70, 0)
+			if got := adSetRequests(rec); len(got) != 0 {
+				t.Errorf("an unreadable campaign flight sent the read to the ad-set fallback: %v", got)
+			}
+		})
+	}
+}

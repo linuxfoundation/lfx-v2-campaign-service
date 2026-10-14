@@ -95,6 +95,12 @@ the row is `pacing_unknown`, never a false alert.
   `identityjson.Check` before decoding — a duplicated `updated_time` or budget used to decode as
   whichever came last — and a refused page fails the read as the currency read's does. The
   dispatcher account-scope tests now expect the Insights path as the first request.
+- **An unreadable campaign flight leaves the budget unknown.** The campaign list's
+  `start_time`/`stop_time` were decoded into strings, so `null` and a malformed timestamp read as
+  a missing flight and a daily CBO budget was paced over the whole window. They are decoded raw
+  now: absent is no bound, an empty `stop_time` is "no end", and an empty `start_time`, `null`, a
+  non-string or a malformed value leaves the campaign-level budget unknown (not `FetchFailed`),
+  as an unreadable ad-set window does.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against

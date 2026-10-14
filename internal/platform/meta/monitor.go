@@ -168,7 +168,8 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		// conservative — and a campaign updated inside the window (or whose updated_time is
 		// unreadable) keeps its budget unknown, never falling back to the ad sets either.
 		budgetEdited := !cutoffOK || editedSince(cm.UpdatedAt, editCutoff)
-		if currencyKnown && !bothBudgets && !budgetEdited {
+		// An unreadable flight (campaignFlightField) cannot place the plan in the window either.
+		if currencyKnown && !bothBudgets && !budgetEdited && !cm.FlightUnknown {
 			row.DailyBudget = minorToWhole(cm.DailyMinor, offset)
 			row.LifetimeBudget = minorToWhole(cm.LifetimeMinor, offset)
 		}
@@ -281,6 +282,10 @@ type metaCampaignListEntry struct {
 	EndDate       string
 	// UpdatedAt is the campaign's updated_time; zero when absent, null or malformed.
 	UpdatedAt time.Time
+	// FlightUnknown marks a start_time/stop_time that was reported but is unreadable (see
+	// campaignFlightField): the campaign-level budget is then left unknown, never paced over a
+	// flight substituted from the window's edges.
+	FlightUnknown bool
 	// FetchFailed marks a campaign whose daily_budget/lifetime_budget string was present but
 	// unparseable — the row's budget fields are left nil and MUST NOT be read as a measured
 	// zero (round-31+ review, same convention as AccountCampaignRow.FetchFailed).
@@ -328,9 +333,12 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				// read as "" and sent the campaign to the ad-set fallback (PR #316 review).
 				DailyBudget    json.RawMessage `json:"daily_budget"`
 				LifetimeBudget json.RawMessage `json:"lifetime_budget"`
-				StartTime      string          `json:"start_time"`
-				StopTime       string          `json:"stop_time"`
-				UpdatedTime    json.RawMessage `json:"updated_time"`
+				// The flight is RAW too (PR #316 review): decoded into strings, an explicit null
+				// and a malformed timestamp both read as "" — a missing flight — and a daily CBO
+				// budget was then paced over the whole window with confidence.
+				StartTime   json.RawMessage `json:"start_time"`
+				StopTime    json.RawMessage `json:"stop_time"`
+				UpdatedTime json.RawMessage `json:"updated_time"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -356,6 +364,8 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			if unparseable {
 				dailyMinor, lifetimeMinor = nil, nil
 			}
+			startDate, startOK := campaignFlightField(d.StartTime, false)
+			endDate, endOK := campaignFlightField(d.StopTime, true)
 			// A NEGATIVE budget parses but is not a budget, and it is not "no budget" either:
 			// read as non-positive it would send the campaign to the ad-set fallback, which
 			// could then pace it on amounts the campaign's own (unreadable) budget overrides.
@@ -370,8 +380,9 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				Status:        d.Status,
 				DailyMinor:    dailyMinor,
 				LifetimeMinor: lifetimeMinor,
-				StartDate:     dateOnly(d.StartTime),
-				EndDate:       dateOnly(d.StopTime),
+				StartDate:     startDate,
+				EndDate:       endDate,
+				FlightUnknown: !startOK || !endOK,
 				FetchFailed:   unparseable,
 				UpdatedAt:     metaTimeField(d.UpdatedTime),
 			})
@@ -562,6 +573,32 @@ func campaignBudgetField(raw json.RawMessage, bad *bool) string {
 		return ""
 	}
 	return s
+}
+
+// campaignFlightField reads a campaign-list start_time (isStop=false) or stop_time (isStop=true)
+// into date-only form, keeping three cases apart as adSetWindow does:
+//   - ABSENT: no bound ("", ok) — Graph omits an unset field;
+//   - an EMPTY string: no bound for stop_time (Meta's "no end", like an empty ad-set end_time),
+//     but unreadable for start_time, which the ad-set path also requires;
+//   - an explicit null, a non-string value, or a non-empty string that is not a whole Meta
+//     timestamp (dateOnly): unreadable (ok=false).
+//
+// An unreadable flight leaves the campaign's budget UNKNOWN, as an unreadable ad-set window does
+// — not FetchFailed: the delivery metrics were read fine; only the plan cannot be placed.
+func campaignFlightField(raw json.RawMessage, isStop bool) (string, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return "", true
+	}
+	var s string
+	if bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &s) != nil {
+		return "", false
+	}
+	if s == "" {
+		return "", isStop
+	}
+	d := dateOnly(s)
+	return d, d != ""
 }
 
 // metaTimeField reads a raw Graph timestamp member (updated_time) as a whole Meta timestamp; the
