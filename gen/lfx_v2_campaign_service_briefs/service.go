@@ -516,8 +516,10 @@ type Service interface {
 	// is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume
 	// does not clear it. The record is NOT guaranteed after every 503: when the
 	// 503 says the record could not be confirmed, or that the write lock was lost,
-	// re-read list-meta-ad-sets and do not assume `deliberately_paused` — pause
-	// the ad set again if it is not shown. list-meta-ad-sets reports it as
+	// re-read list-meta-ad-sets and do not assume `deliberately_paused` — after a
+	// pause, pause the ad set again if it is false; after a resume, resume it
+	// again if it is still true — and re-read the campaign for a fresh ETag before
+	// retrying (the ad-set read returns none). list-meta-ad-sets reports it as
 	// `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED
 	// campaign, which records no ad set — records nothing, since the campaign
 	// cascade never re-activates it. When the record is written the campaign row's
