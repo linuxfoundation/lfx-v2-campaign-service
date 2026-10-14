@@ -168,3 +168,29 @@ func TestCreateCampaign_ReusedLineItemDoesNotApplyTheBid(t *testing.T) {
 		t.Fatalf("steps %v lack the bid-not-applied warning", res.Steps)
 	}
 }
+
+// TestCreateCampaign_BidAboveTheDailyBudgetIsRefusedBeforeAnyPost (PR #332 review): X does not
+// accept a line item bid above its campaign's budget, so BudgetUsd 1 with MaxBid 2 is refused before
+// the campaign POST — not by the line-item POST after the paid campaign exists. A bid equal to the
+// budget is accepted.
+func TestCreateCampaign_BidAboveTheDailyBudgetIsRefusedBeforeAnyPost(t *testing.T) {
+	c, _, posts := twitterBiddingClient(t)
+	in := twitterBiddingInput(2)
+	in.BudgetUsd = 1
+	res, err := c.CreateCampaign(context.Background(), in)
+	if !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "exceeds the campaign's daily budget") {
+		t.Fatalf("err = %v, want the bid-above-budget refusal", err)
+	}
+	if res != nil || posts() != 0 {
+		t.Fatalf("result=%+v posts=%d, want nil and 0 (nothing created)", res, posts())
+	}
+
+	c2, li, _ := twitterBiddingClient(t)
+	in.BudgetUsd = 2
+	if _, err := c2.CreateCampaign(context.Background(), in); err != nil {
+		t.Fatalf("a bid equal to the budget must be accepted: %v", err)
+	}
+	if li().Get("bid_amount_local_micro") != "2000000" {
+		t.Fatalf("line item bid = %q, want 2000000", li().Get("bid_amount_local_micro"))
+	}
+}

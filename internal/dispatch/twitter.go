@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -71,7 +72,20 @@ type twitterConfig struct {
 // the bid lever accepts. X sets bids in micro-units, so the generic whole-micro rule is its
 // precision rule; X publishes no fixed bid floor this service could check ahead of it.
 func twitterBidPlan(cfg twitterConfig) (bidPlan, error) {
-	return resolveBidding("twitterConfig", cfg.Bidding)
+	const key = "twitterConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	// X documents that a line item's bid "should not exceed daily_budget_amount_local_micro ... of
+	// the parent campaign"; the create path sends budgetAmount as that daily budget. Compared in
+	// micro-units, as the client does, so the refusal is the synchronous 400 rather than a failed
+	// line-item POST after the campaign exists (PR #332 review). A budget that is absent or not
+	// positive is left to the client's own budget validation.
+	if budget := math.Round(cfg.BudgetAmount * microsPerMajorUnit); budget > 0 && math.Round(plan.amount*microsPerMajorUnit) > budget {
+		return bidPlan{}, biddingInvalid(key, "bidAmount %s exceeds the daily budget %s; X does not accept a line item bid above its campaign's budget", formatBid(plan.amount), formatBid(cfg.BudgetAmount))
+	}
+	return plan, nil
 }
 
 // PreflightCreate refuses, before the create job exists, a twitterConfig whose bidding cannot be

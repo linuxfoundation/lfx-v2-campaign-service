@@ -126,3 +126,23 @@ manual-created campaigns are immediately eligible, and that eligibility follows 
 current strategy. An automatic campaign an operator switches to a manual per-click bid becomes
 eligible; the reverse becomes ineligible. Comments that still said an explicit null defaults to
 automatic now say only an absent field defaults.
+
+**X bid vs. budget is checked before the campaign POST (PR #332 review).** X documents that a line
+item's `bid_amount_local_micro` "should not exceed daily_budget_amount_local_micro or
+total_budget_amount_local_micro of the parent campaign" (Campaign Management reference), and the
+bid lever already treats that refusal as an amount error. The create path checked bid and budget
+separately, so `budgetAmount: 1` with bid 2 created the paid campaign before the line-item POST
+refused it, leaving an orphan. The client's up-front block now compares the encoded bid with the
+encoded daily budget in micro-units before any request, and `twitterBidPlan` makes the same check
+synchronously (400) when the budget is in the config. A bid equal to the budget is accepted.
+
+Other platforms checked for an equivalent rule:
+- **Reddit:** no documented bid ≤ budget rule (the v3 reference can't be fetched, and secondary
+  sources only speculate), so no check was added.
+- **LinkedIn:** the docs say `unitCost` "should be set to a non-negative value appropriate to the
+  `dailyBudget`". That is guidance, not a validation, so no check was added.
+- **Microsoft:** the "Budget and Bid Strategies" guide says ad group and keyword bids "are validated
+  independently of the campaign budget", so no check was added. The bid lever's error text for code
+  1516, which wrongly said a bid may not exceed the daily budget, now names the currency's maximum
+  bid.
+- **Meta:** already enforces its documented daily budget ≥ 5 × bid rule in the client.

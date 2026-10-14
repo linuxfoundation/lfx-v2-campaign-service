@@ -203,6 +203,11 @@ func TestTwitter_PreflightCreate_Bidding(t *testing.T) {
 		{name: "manual", config: `{"twitterConfig":{"bidding":{"strategy":"manual","bidAmount":2.5}}}`},
 		{name: "manual without amount", config: `{"twitterConfig":{"bidding":{"strategy":"manual"}}}`, want: "twitterConfig.bidding: strategy \"manual\" requires bidAmount"},
 		{name: "unknown strategy", config: `{"twitterConfig":{"bidding":{"strategy":"max"}}}`, want: "must be \"automatic\" or \"manual\""},
+		// X: a line item bid may not exceed its campaign's budget (PR #332 review).
+		{name: "bid above the daily budget", config: `{"twitterConfig":{"budgetAmount":1,"bidding":{"strategy":"manual","bidAmount":2}}}`, want: "bidAmount 2 exceeds the daily budget 1"},
+		{name: "bid equal to the daily budget", config: `{"twitterConfig":{"budgetAmount":2,"bidding":{"strategy":"manual","bidAmount":2}}}`},
+		{name: "a micro over the budget", config: `{"twitterConfig":{"budgetAmount":2,"bidding":{"strategy":"manual","bidAmount":2.000001}}}`, want: "exceeds the daily budget"},
+		{name: "no budget is the client's to judge", config: `{"twitterConfig":{"bidding":{"strategy":"manual","bidAmount":2}}}`},
 	})
 }
 

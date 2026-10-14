@@ -1391,3 +1391,7 @@ line item keeps whatever bidding it had.
 `CampaignResult.BidApplied` is false when the line item was reused by name (with a "bid NOT applied
 to reused line item" warning step). The line item's name ends in its strategy — `| AUTO` or `| MAX`
 — so a retry of one strategy never finds the other's line item.
+
+The create path also refuses a manual bid above the campaign's daily budget before any request
+(compared in micro-units), per X's rule that a line item's bid "should not exceed
+daily_budget_amount_local_micro … of the parent campaign" (PR #332 review).
