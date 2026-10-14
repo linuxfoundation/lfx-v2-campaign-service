@@ -4284,6 +4284,33 @@ with the same number must neither suppress an attributable row nor escape the un
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
 
+## Reddit audience read (`reddit_audience.go`, LFXV2-2665)
+
+`RedditDispatcher` implements `service.RedditAudienceReader` (`AudienceEnabled`,
+`ReadRedditAudienceInsights`). Order: `redditAudienceEnabled()` — `REDDIT_METRICS_ENABLED` must be
+exactly `"true"`, else `ErrKeywordInsightsUnsupported` (400) before any credential read, because the
+read runs on the metrics read's unexercised reporting contract; then `reddit.ValidateMetricsWindow`
+(`ErrMetricsWindowUnsupported`, 400); then `resolveRedditClientWithCreds(…, d.creds.resolveOwned)`
+— the project's OWN connection only, unlike the Meta/X audience reads' `resolveExisting`: no own
+connection is `ErrNotFound` (404) even when the LF system row exists; inactive / undecodable /
+incomplete / no account is `ErrConnectionNotUsable` (400); `reddit.ValidateAccountID` on the bound
+account; then `redditScopeForAccount`: every stored id must pass `reddit.ValidateCampaignID`
+(`ErrAudienceScopeInvalid`, 409) and ANY entry whose `redditCreationAccountID` differs refuses the
+whole read (`ErrCampaignAccountMismatch`, 409). Only then the cached client's
+`GetAudienceInsights`; its scope sentinels are re-tagged with the domain ones and every upstream
+failure is returned unclassified (503). Tests: `reddit_audience_test.go` (mapping on the bound
+account, every refusal with zero upstream calls including the LF-system-only case, flag values,
+partial mismatch, matching/unknown provenance, 403 unclassified without the account id).
+
+The Reddit audience read refuses a scope entry with NO recorded creation account
+(`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`, 409) rather than letting
+it through as the X/Meta reads do; a scope holding BOTH a foreign-account and an unrecorded entry
+returns `ErrCampaignProvenanceMixed` joined with both sentinels, so neither fault hides the other
+(`TestReddit_ReadRedditAudienceInsights_ForeignAndUnknownReportsBoth`). It runs its upstream call through `d.audience`, a
+`redditReportGuard` (`reddit_report_guard.go`): single flight for identical reads (account, window,
+UTC day, sorted scope) with leader-context re-lead, and a 60 s cache of successes. Tests:
+`reddit_report_guard_test.go`, and the provenance/budget cases in `reddit_audience_test.go`.
+
 ## LinkedIn settings, bid and adoption (LFXV2-2665)
 
 `linkedin_settings.go`, `linkedin_bid.go` and `linkedin_adopt.go` give `LinkedInDispatcher` the

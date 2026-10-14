@@ -81,6 +81,23 @@ func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projec
 		slog.WarnContext(ctx, "keyword insights window unsupported by platform",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.BadRequestError{Code: "400", Message: "this reporting window is not supported"}
+	case errors.Is(err, domain.ErrCampaignProvenanceMixed):
+		// Checked BEFORE the provenance-unknown and mismatch arms it is always joined with: the
+		// scope has BOTH faults — rows created under another account AND rows recording none — so
+		// the message names both remedies; either arm alone would hide the other half. Raised by
+		// the Reddit audience read. Fixed text; the counts stay in the log.
+		slog.WarnContext(ctx, "insights blocked: campaigns in scope belong to a different ad account and others do not record one",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns were created under a different ad account than its current connection, and others do not record which ad account they were created under — re-dispatch the unrecorded campaigns onto the connected account, and re-dispatch or reconcile the others onto it (or reconnect the account that owns them), to read this data"}
+	case errors.Is(err, domain.ErrCampaignProvenanceUnknown):
+		// Checked BEFORE the mismatch arm it is always joined with: the remedy differs. A row that
+		// records no creating account cannot be reconciled by reconnecting — there is nothing
+		// recorded to reconnect to — only re-dispatched. Raised by the Reddit audience read, which
+		// refuses such rows outright (Reddit ids are unique only within an account). Fixed text;
+		// the counts stay in the log.
+		slog.WarnContext(ctx, "insights blocked: a campaign in scope does not record which ad account it was created under",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns do not record which ad account they were created under, so they cannot be read safely — re-dispatch those campaigns onto the connected account to read this data"}
 	case errors.Is(err, ErrCampaignAccountMismatch):
 		// Raised when the scope filter refuses ANY campaign, not only when it refuses every
 		// one — googleAdsScopeForCustomer fails closed on a PARTIAL mismatch too, rather than
