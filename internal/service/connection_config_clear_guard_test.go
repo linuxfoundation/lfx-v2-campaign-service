@@ -290,3 +290,86 @@ func TestUpdateLinkedinAds_HasNoOmissionGuard(t *testing.T) {
 		t.Errorf("repo.Get called %d time(s) for LinkedIn, which has no optional config key", repo.gets)
 	}
 }
+
+// TestClearGuardProviders_CoverEveryConfigKey is the drift guard for the table above. For every
+// opted-in provider, its Required keys plus its guarded keys must be exactly
+// Provider.ConfigKeys(). A new optional key added to providerConfigKeys (and so to
+// ProviderConfig) fails here until it is added to the table, and the table's per-key subtests
+// then fail until the adapter passes it in optionalConfig. The only providers outside the table
+// are LinkedIn (its one key is Required) and Google Ads (not opted in yet).
+func TestClearGuardProviders_CoverEveryConfigKey(t *testing.T) {
+	covered := map[model.Provider]bool{}
+	for _, p := range clearGuardProviders() {
+		covered[p.provider] = true
+		want := map[string]bool{}
+		for _, k := range p.provider.ConfigKeys() {
+			want[k] = true
+		}
+		got := map[string]bool{}
+		for k := range p.required {
+			got[k] = true
+		}
+		for k := range p.guarded {
+			if got[k] {
+				t.Errorf("%s: %s is listed as both required and guarded", p.provider, k)
+			}
+			got[k] = true
+		}
+		for k := range want {
+			if !got[k] {
+				t.Errorf("%s: config key %s is neither required nor guarded in the table; if it is optional, "+
+					"add it to the adapter's optionalConfig and to clearGuardProviders", p.provider, k)
+			}
+		}
+		for k := range got {
+			if !want[k] {
+				t.Errorf("%s: the table lists %s, which is not one of the provider's config keys", p.provider, k)
+			}
+		}
+	}
+	excluded := map[model.Provider]bool{model.ProviderLinkedInAds: true, model.ProviderGoogleAds: true}
+	for _, p := range model.AllProviders() {
+		if covered[p] == excluded[p] {
+			t.Errorf("%s: covered=%v, excluded=%v; every provider must be in exactly one of the guard table "+
+				"or the named exclusions (LinkedIn, Google Ads)", p, covered[p], excluded[p])
+		}
+	}
+}
+
+// TestUpdateConnection_ConcurrentWriteAfterTheGuardReadIs412 pins the race argument in
+// updateConnGuarded: the guard reads a row with nothing stored, so omitting the key passes;
+// a concurrent writer then sets the key and bumps the version before the write. The write is
+// conditioned on the If-Match version, so it must fail with 412 and leave the new key in place.
+func TestUpdateConnection_ConcurrentWriteAfterTheGuardReadIs412(t *testing.T) {
+	var p clearGuardProvider
+	for _, c := range clearGuardProviders() {
+		if c.provider == model.ProviderRedditAds {
+			p = c
+		}
+	}
+	repo := newFakeRepo()
+	repo.checkVersion = true
+	seedClearGuardRow(repo, p, map[string]string{})
+	k := repoKey("cncf", p.provider)
+	concurrent := &model.Connection{
+		ProjectID: "cncf", Provider: p.provider, Status: model.StatusActive, AccountID: p.accountID,
+		Version: 4, EncryptedCredentials: []byte("ciphertext"),
+		ProviderConfig: map[string]string{"conversion_pixel_id": "a2_set_concurrently"},
+	}
+	repo.afterGet = func(r *fakeRepo) { r.store[k] = concurrent }
+	s := newTestService(t, repo)
+
+	err := p.update(s, map[string]*string{}, "3")
+	if _, ok := err.(*conn.PreconditionFailedError); !ok {
+		t.Fatalf("expected *conn.PreconditionFailedError once the row moved after the guard's read, got %T (%v)", err, err)
+	}
+	if repo.gets != 1 {
+		t.Errorf("repo.Get called %d time(s), want 1: the guard must have read the row", repo.gets)
+	}
+	if repo.store[k] != concurrent {
+		t.Error("the stored row was replaced; the stale write must not land")
+	}
+	if got := repo.store[k].ProviderConfig["conversion_pixel_id"]; got != "a2_set_concurrently" {
+		t.Errorf("stored pixel = %q, want the concurrently set value kept", got)
+	}
+}

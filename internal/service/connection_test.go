@@ -55,6 +55,12 @@ type fakeRepo struct {
 	// does not forbid. A fake that only ever reports absence as ErrNotFound cannot exercise
 	// a caller's nil-row handling, so a missing guard reads as covered.
 	nilNilGet bool
+	// afterGet, when set, runs after Get returns, standing in for a concurrent writer that
+	// moves the row between the handler's read and its write.
+	afterGet func(r *fakeRepo)
+	// checkVersion makes Update refuse a stale expectedVersion with ErrPreconditionFailed,
+	// as the real repository's version-conditioned UPDATE does.
+	checkVersion bool
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{store: map[string]*model.Connection{}} }
@@ -73,7 +79,13 @@ func (r *fakeRepo) Get(_ context.Context, projectID string, p model.Provider) (*
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	return c, nil
+	// A copy, so a concurrent write applied by afterGet does not change the row the caller
+	// already read — as with a real database read.
+	snapshot := *c
+	if r.afterGet != nil {
+		r.afterGet(r)
+	}
+	return &snapshot, nil
 }
 
 func (r *fakeRepo) Create(_ context.Context, c *model.Connection) (*model.Connection, error) {
@@ -103,6 +115,9 @@ func (r *fakeRepo) Update(_ context.Context, c *model.Connection, expectedVersio
 	existing, ok := r.store[k]
 	if !ok {
 		return nil, domain.ErrNotFound
+	}
+	if r.checkVersion && existing.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
 	}
 	c.ID = existing.ID
 	c.Status = model.StatusActive

@@ -459,8 +459,8 @@ func (s *ConnectionService) updateConnGuarded(ctx context.Context, c *model.Conn
 	// Defaulting to "" on failure would be the reverse of fail-closed: an unreadable row would
 	// make every incoming id look newly set and turn a transient database fault into a 400
 	// blaming the caller's body. mapErr renders a genuinely absent row as the 404 the update
-	// would have produced anyway. For the forced-system guard the version conflict is still the
-	// repository's to decide; the omission guard below shares this read and checks the version itself.
+	// would have produced anyway. The omission guard shares this read, and the version is checked
+	// below before either guard runs.
 	if forced || len(omitted) > 0 {
 		current, gerr := repo.Get(ctx, c.ProjectID, c.Provider)
 		// `current == nil` is checked ALONGSIDE the error, not instead of it.
@@ -481,21 +481,21 @@ func (s *ConnectionService) updateConnGuarded(ctx context.Context, c *model.Conn
 		if current == nil {
 			return nil, mapErr(domain.ErrNotFound)
 		}
+		// Both guards must judge the row the write is conditioned on, so the version is
+		// checked before either of them. A read that already shows a different version is the
+		// 412 the write would get, answered now rather than as a 400 about a row the caller
+		// never saw. repo.Update only writes when the row is still at the If-Match version, so
+		// this also closes the race: a writer that moves the row after this read bumps the
+		// version and the write below then fails with 412 instead of clearing a key.
+		if current.Version != version {
+			return nil, mapErr(domain.ErrPreconditionFailed)
+		}
 		if forced {
 			if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID, current.AccountID); err != nil {
 				return nil, err
 			}
 		}
 		if len(omitted) > 0 {
-			// The guard must judge the row the write is conditioned on. repo.Update only
-			// writes when the row is still at the If-Match version, so checking against that
-			// same version closes the race: a writer that sets a key after this read bumps
-			// the version and this update then fails with 412 instead of clearing the key.
-			// A read that already shows a different version is the 412 the write would get,
-			// answered now rather than after judging a row the caller never saw.
-			if current.Version != version {
-				return nil, mapErr(domain.ErrPreconditionFailed)
-			}
 			if err := rejectOmittedConfigClear(omitted, current.ProviderConfig); err != nil {
 				return nil, err
 			}

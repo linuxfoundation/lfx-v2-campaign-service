@@ -750,3 +750,29 @@ func TestForceSystem_NilCurrentRowDoesNotPanic(t *testing.T) {
 			"ErrNotFound expresses, and the update would have 404'd on it anyway", err, err)
 	}
 }
+
+// TestForceSystem_StaleIfMatchIs412BeforeTheAccountGuard: with the flag on, a changed account_id
+// AND a stale If-Match, the answer is 412, not the guard's 400. The version is checked before
+// either guard, so a caller holding a stale ETag is told to re-read rather than being refused
+// over a row it never saw.
+func TestForceSystem_StaleIfMatchIs412BeforeTheAccountGuard(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderGoogleAds, Version: 5, AccountID: "1111111111",
+	}
+	s := newTestService(t, repo)
+	ifMatch := "4"
+
+	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+		IfMatch:   &ifMatch,
+	})
+	if _, ok := err.(*conn.PreconditionFailedError); !ok {
+		t.Fatalf("expected *conn.PreconditionFailedError (412) for a stale If-Match, got %T (%v)", err, err)
+	}
+	if repo.updateCalls != 0 {
+		t.Errorf("repo.Update called %d time(s); a stale update must not write", repo.updateCalls)
+	}
+}

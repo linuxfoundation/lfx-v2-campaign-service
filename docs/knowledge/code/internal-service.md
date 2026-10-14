@@ -975,9 +975,11 @@ chosen: AFTER the precondition parse, so a caller who omitted `If-Match` still g
 paying for a read; BEFORE the write, because a rejected update must not reach the database. A read
 FAILURE is returned as-is rather than defaulting the current value to `""` — that default would be
 the reverse of fail-closed, making every resubmission look newly set and reporting a transient
-database fault as a 400 about the caller's body.
+database fault as a 400 about the caller's body. Once the row is read, a version that differs from
+`If-Match` is answered 412 before the guard runs (issue #300), so a stale ETag never earns a 400.
 
-The read is gated on **`forcedSystemGuardApplies`**, the guard's own scope predicate
+The read is gated on **`forcedSystemGuardApplies`** (or, since issue #300, on the payload omitting
+a guarded config key), the guard's own scope predicate
 (`IsPaidAds() && forcedSystemAdsAccount()`), extracted into a named function precisely so the gate
 and the guard cannot be one expression written twice. The gate matters because the flag is
 default-off: without it every connection update on every deployment would pay a round-trip for a
@@ -2199,8 +2201,9 @@ SENDS and refuses only clearing by omission. Each adapter passes its optional ke
 `optionalConfig` (`map[string]*string`, the payload pointers as decoded: nil means omitted or JSON
 null). When any is nil, the handler reads the current row and:
 
-- answers **412** if the row is not at the `If-Match` version, so the guard never judges a row the
-  caller did not see. `repo.Update` is itself conditioned on that version, so a writer that moves
+- answers **412** if the row is not at the `If-Match` version, so neither guard judges a row the
+  caller did not see. This check comes before both the force-system guard and the omission guard,
+  so a stale `If-Match` is 412 whichever guard would otherwise have answered 400. `repo.Update` is itself conditioned on that version, so a writer that moves
   the row after the read makes the write fail with 412: the guard adds no race window and needs no
   extra lock;
 - answers **400** naming every omitted key that has a non-empty stored value (`config.<key>`,
@@ -2209,6 +2212,10 @@ null). When any is nil, the handler reads the current row and:
 An omitted key with nothing stored passes, since `""` over `""` changes nothing. A body that sends
 every optional key performs no read, so a full body keeps the single-statement path. The read is
 shared with the force-system guard when that applies.
+
+`TestClearGuardProviders_CoverEveryConfigKey` requires every opted-in provider's Required plus
+guarded keys to equal `Provider.ConfigKeys()`, with LinkedIn and Google Ads the only providers
+outside the table, so a new optional key cannot be added without being classified.
 
 Guarded keys, verified against the Required lists in `design/connection.go`:
 
