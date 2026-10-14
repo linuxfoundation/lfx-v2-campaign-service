@@ -11759,11 +11759,12 @@ func marshalLfxv2campaignserviceconnectionsAccountMonitorActionItemToAccountMoni
 // type *lfxv2campaignserviceconnections.AccountMonitorTotals.
 func marshalLfxv2campaignserviceconnectionsAccountMonitorTotalsToAccountMonitorTotalsResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorTotals) *AccountMonitorTotalsResponseBody {
 	res := &AccountMonitorTotalsResponseBody{
-		Spend:         v.Spend,
-		Impressions:   v.Impressions,
-		Clicks:        v.Clicks,
-		Conversions:   v.Conversions,
-		CampaignCount: v.CampaignCount,
+		Spend:               v.Spend,
+		Impressions:         v.Impressions,
+		Clicks:              v.Clicks,
+		Conversions:         v.Conversions,
+		CampaignCount:       v.CampaignCount,
+		UnmeasuredCampaigns: v.UnmeasuredCampaigns,
 	}
 
 	return res

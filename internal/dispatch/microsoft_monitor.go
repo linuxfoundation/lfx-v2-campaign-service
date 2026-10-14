@@ -111,6 +111,9 @@ func (d *MicrosoftDispatcher) ListAccountCampaigns(ctx context.Context, projectI
 			FetchFailed:        c.BudgetUnparseable,
 			IsSearchChannel:    microsoftIsSearchCampaign(c.CampaignType),
 		}
+		if c.BudgetUnparseable {
+			row.FailureClass = model.MonitorFailureDecode
+		}
 		out = append(out, row)
 	}
 	return out, nil

@@ -909,6 +909,7 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
 			FetchFailed:        r.FetchFailed,
+			FailureClass:       r.FailureClass,
 		})
 	}
 	return out, nil

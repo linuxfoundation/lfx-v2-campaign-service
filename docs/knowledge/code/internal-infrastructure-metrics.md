@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/infrastructure/metrics"
-description: "Prometheus registry and instruments served at the unauthenticated /metrics endpoint: dispatch outcomes, job transitions, upstream platform latency and DB pool health, with every label bounded and the latency histogram bucketed to the service's own call budgets."
+description: "Prometheus registry and instruments served at the unauthenticated /metrics endpoint: dispatch outcomes, job transitions, upstream platform latency, account-monitor unmeasured rows by failure class and DB pool health, with every label bounded and the latency histogram bucketed to the service's own call budgets."
 resource: "internal/infrastructure/metrics"
 ---
 
@@ -58,6 +58,18 @@ the damage of a future one that does not.
 No metric name, label or help string carries a credential, DSN or token, and the
 outcome labels are derived from an error's PRESENCE only — never its value, which
 can embed account ids and response fragments.
+
+## Account-monitor unmeasured rows
+
+`campaign_monitor_unmeasured_rows_total{platform,class}` counts account-monitor rows returned
+`fetch_failed`, added once per class per monitor request (never per row) by the service's
+`reportUnmeasuredRows` through `DispatchMetrics.RecordMonitorUnmeasuredRows`. It is a separate
+counter rather than a `row_failed` outcome on `campaign_upstream_calls_total`, because that
+instrument also feeds the latency histogram and a row has no latency of its own. `class` is a
+closed set mirroring `model.MonitorFailureClass` (`auth`, `throttle`, `upstream_5xx`, `decode`,
+`no_report`, `other`, `unknown`); `unknown` is what the service records for a client class outside
+the set (classification drift), and anything else reaching the label collapses to it too. A
+non-positive count records nothing. Listed in README.md's service-metrics table.
 
 ## Histogram buckets come from the call budgets
 

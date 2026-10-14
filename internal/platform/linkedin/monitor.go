@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
 // AccountCampaignRow is one campaign read live from an ad account for the account-monitor
@@ -41,6 +43,10 @@ type AccountCampaignRow struct {
 	// LinkedIn omits campaigns with no activity in the window, and the zero-value fields left
 	// in place are the honest "no delivery" reading (see ListAccountCampaigns).
 	FetchFailed bool
+	// FailureClass is why FetchFailed is set. Every LinkedIn row failure is a value LinkedIn
+	// returned that would not parse (a budget amount or costInUsd) — the analytics read is one
+	// account-level call that fails the whole read rather than one row — so it is always decode.
+	FailureClass model.MonitorFailureClass
 }
 
 // monitorPageSize is the finder page size for the account-scoped campaign list, the
@@ -103,6 +109,9 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			if row.Impressions > 0 {
 				row.Ctr = float64(row.Clicks) / float64(row.Impressions) * 100
 			}
+		}
+		if row.FetchFailed {
+			row.FailureClass = model.MonitorFailureDecode
 		}
 		out = append(out, row)
 	}
