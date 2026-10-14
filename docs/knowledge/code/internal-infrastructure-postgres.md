@@ -1826,8 +1826,63 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   failed to record it". Live coverage: `adopt_linkedin_binding_live_test.go` (two concurrent
   adoptions into two projects' briefs → exactly one success and one AlreadyBound; a dispatch
   onto a bound id → AlreadyBound, freed by soft delete; the raw index refuses LinkedIn across
-  projects and leaves Meta alone). Meta, Reddit, X and Microsoft adoption still have no binding
-  index; each needs its own per-provider decision (Microsoft's ids are account-scoped).
+  projects and leaves other platforms alone).
+- **`uq_campaigns_meta_campaign_live`, `uq_campaigns_microsoft_campaign_live`,
+  `uq_campaigns_reddit_campaign_live`, `uq_campaigns_twitter_campaign_live`** (migrations
+  000043-000046, LFXV2-2665) — the same binding guard for the remaining adoptable providers, one
+  SEPARATE index each, decided per provider:
+  - **Meta (000043): GLOBAL** `(platform, platform_campaign_id)`. A campaign is a Graph API node,
+    "an individual object with a unique ID" (https://developers.facebook.com/docs/graph-api/overview),
+    read as `GET /{id}` with no account.
+  - **Microsoft (000044): per AD ACCOUNT.** Ids are account-scoped (LFXV2-3056; every Campaign
+    Management call carries `CustomerAccountId`). Third key: `COALESCE(NULLIF(result->>'accountId',''),
+    NULLIF(substring(result->>'microsoftAdsUrl' from '[?&]aid=([^&#]+)'),''))` — exactly
+    `microsoftCreationAccountID`'s reading, legacy `aid=` fallback included.
+  - **Reddit (000045) and X (000046): per AD ACCOUNT**, because neither documents its ids as global
+    (every campaign path is account-scoped). An account key is exact either way: global ids always
+    carry one account, so duplicates are still refused, and per-account ids cannot false-reject.
+    Keys: `NULLIF(result->>'accountId','')` (Reddit) and `NULLIF(result->>'AccountID','')` (X — its
+    result struct is marshalled untagged).
+  The expression keys made `requiredIndexes` compare keys via `pg_get_indexdef(index, n, true)`
+  (a bare column name, or an expression key's deparsed text) instead of `pg_attribute`, which
+  silently dropped expression keys; `createSQL` parenthesises an expression key. The check
+  no longer compares the live deparse against TEXT captured on one PostgreSQL version:
+  `serverDeparsedRequiredIndexes` builds each expected definition on an empty TEMP copy of its
+  table (`LIKE`, in one always-rolled-back transaction, a savepoint per probe) and compares the
+  server's deparse of BOTH sides, so a major upgrade that re-renders an expression or predicate
+  cannot fail boot while a genuinely different definition still does
+  (`TestLiveRequiredIndexCheckComparesTheServersOwnDeparse`). The probe is BEST-EFFORT: if any
+  infrastructure step fails (begin, temp-table creation, savepoint, rollback-to, reading the probe
+  — e.g. a role without TEMPORARY, a read-only default, a hot standby) it logs one WARN naming the
+  step and error class and the remaining entries compare as stored text, so the check is never
+  stricter than before; a stored definition the server cannot parse falls back the same way
+  (`TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun`, via the test-only `probeFault`
+  hook).
+  The probe runs on its OWN connection (`probeRequiredIndexDeparse`) under `probeBudget` (3s),
+  with `SET LOCAL statement_timeout`/`lock_timeout`, BEFORE the required checks' own deadline
+  starts, so it can never spend that deadline (`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`).
+  Its WARNs never carry the raw error (`probeErrAttrs`: step, `%T`, SQLSTATE, a fixed
+  `probeRedactedDiagnostic`), because pgx and server error text repeats DSN identifiers and roles. CI pins `postgres:16-alpine`
+  (`.github/workflows/lfx-v2-campaign-service-build.yaml`); the deployed database is external
+  (the chart only receives its connection settings), so its version is not pinned by this repo.
+  **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so the
+  index alone would let a second binding of their upstream campaign through. `refuseLegacyBinding`
+  closes that on BOTH write paths — `AdoptCampaign` and `UpsertCampaign` (dispatch: X reuses a
+  campaign by an event+project name, so a second brief's dispatch can resolve to it): inside the
+  writer's transaction, under a `pg_advisory_xact_lock` on (platform, upstream id), it refuses
+  (AlreadyBound) an id a live account-less row of that platform holds, excluding the writer's own
+  slot so a retried persist of the legacy row itself is not refused. It never blocks a different
+  upstream id. Lock order: both writers take the per-slot lock FIRST and this binding lock after
+  it (`AdoptCampaign`: slot → brief `FOR UPDATE` → binding; `UpsertCampaign`: slot → binding,
+  touching the brief only through the INSERT arm's FK check after both), so no transaction holds
+  the binding lock while waiting for a slot. All six index names are in `platformCampaignBindingIndexes`, which
+  `isPlatformCampaignBindingViolation` reads for both adoption and `UpsertCampaign` (dispatch).
+  Live coverage: `adopt_binding_providers_live_test.go` (concurrent adoption: one success + one
+  AlreadyBound per provider; different accounts both bind on the account-keyed three; dispatch
+  duplicates; legacy rows). **Deploy risk:** existing duplicate live bindings make the
+  CONCURRENTLY build fail and leave the version DIRTY — soft-delete one duplicate, `DROP INDEX
+  CONCURRENTLY` the INVALID index, `migrate … force <N-1>`, then restart (each migration's comment
+  spells it out).
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.
