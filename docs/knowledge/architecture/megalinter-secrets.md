@@ -54,6 +54,9 @@ False positives are suppressed **per line**, with a
 - `internal/platform/twitter/client_test.go` (x2) — URLs with embedded userinfo,
   asserting they are stripped from UTM output and rejected by validation
 - `internal/infrastructure/config/config_test.go` — intentional fake DSN
+- `internal/infrastructure/postgres/required_index_probe_redaction_test.go` — intentional
+  fake DSN carrying a user, password, host and database, asserting the deparse probe's WARN
+  withholds all four
 
 Prefer line directives over path exclusions here. Unlike the `*_test.go`
 allowlist in `.gitleaks.toml`, a secretlint path exclusion would silence
