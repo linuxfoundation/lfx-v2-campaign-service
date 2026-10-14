@@ -26,9 +26,10 @@ import (
 //
 //   - reportBudgetTotal (45) of Reddit's 60 for ALL report attempts. The 15 left over are headroom
 //     for what this ledger cannot see: Reddit Ads Manager and other tools on the same account.
-//   - reportBudgetInsights (24) of those 45 for the project-scoped insight reads (the audience read;
-//     marked with withInsightsReports). So an insight read can never take more than 24 of the 45,
-//     and the metrics read and account monitor always keep at least 21.
+//   - reportBudgetInsights (24) of those 45 for the project-scoped insight reads (the audience and
+//     keyword performance reads, which share readBreakdownReports; marked with
+//     withInsightsReports). So an insight read can never take more than 24 of the 45, and the
+//     metrics read and account monitor always keep at least 21.
 //
 // An attempt that finds no slot waits for the oldest one to expire — but only if that happens
 // before its context's deadline. If it cannot, it fails at once with ErrReportBudgetExhausted rather
@@ -77,6 +78,9 @@ type ReportBudgets struct {
 	now             func() time.Time
 	// sleep waits d or until ctx ends. Swapped in tests.
 	sleep func(ctx context.Context, d time.Duration) error
+	// onReserve, when set, is called after each slot is taken. Tests only: it lets a test prove a
+	// slot was reserved and then released, not merely that the ledger ended empty.
+	onReserve func(accountID string, insights bool)
 
 	mu        sync.Mutex
 	byAccount map[string]*accountReportLedger
@@ -131,6 +135,9 @@ func (b *ReportBudgets) reserve(ctx context.Context, accountID string, insights 
 		}
 		at, wait, ok := b.tryTake(accountID, insights)
 		if ok {
+			if b.onReserve != nil {
+				b.onReserve(accountID, insights)
+			}
 			var once sync.Once
 			return func() { once.Do(func() { b.release(accountID, insights, at) }) }, nil
 		}

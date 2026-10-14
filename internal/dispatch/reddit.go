@@ -133,6 +133,8 @@ type RedditDispatcher struct {
 	// one (reddit_report_guard.go), so refreshes do not each spend the ad account's reporting
 	// budget.
 	audience *redditReportGuard[reddit.AudienceInsights]
+	// keywords is the same guard for the keyword performance read.
+	keywords *redditReportGuard[reddit.KeywordPerformance]
 	// assets and assetURLs back redditConfig.imageAssetId (reddit_asset.go): the store that
 	// proves the asset belongs to the brief, and the signer that mints the URL Reddit fetches.
 	// A nil assetURLs is the feature OFF.
@@ -142,7 +144,8 @@ type RedditDispatcher struct {
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
-	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts, audience: newRedditReportGuard[reddit.AudienceInsights]()}
+	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts,
+		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance]()}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.

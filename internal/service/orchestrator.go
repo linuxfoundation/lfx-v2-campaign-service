@@ -2942,6 +2942,17 @@ type RedditAudienceReader interface {
 	ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error)
 }
 
+// RedditKeywordReader is an OPTIONAL dispatcher capability: Reddit's KEYWORD report breakdown for
+// the campaigns a project OWNS. RedditAudienceReader's contract for a second breakdown read —
+// type-asserted, so every other platform is ErrKeywordInsightsUnsupported → 400; KeywordsEnabled
+// asked BEFORE the scope lookup; scope never empty from the orchestrator, and any provenance
+// mismatch refuses the whole read. Separate from KeywordInsightsReader because Reddit has no
+// criterion handles, so its row shape differs.
+type RedditKeywordReader interface {
+	KeywordsEnabled() error
+	ReadRedditKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditKeywordPerformance, error)
+}
+
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
 // existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
 // clean ErrKeywordActionsUnsupported → 400.
@@ -3187,6 +3198,46 @@ func (o *Orchestrator) ReadRedditAudienceInsights(ctx context.Context, projectID
 				ai.Buckets = []model.RedditAudienceBucket{}
 			}
 		})
+}
+
+// ReadRedditKeywordPerformance reads Reddit keyword performance across the project's OWN campaigns:
+// capability check, gate, then ReadKeywordPerformance's sequence — the scope from this service's
+// rows, an EMPTY scope answered empty WITHOUT contacting Reddit, the read under metricsCallTimeout
+// recorded as read_keywords, and a nil result or nil slice refused or normalised.
+func (o *Orchestrator) ReadRedditKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.RedditKeywordPerformance, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(RedditKeywordReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	if err := reader.KeywordsEnabled(); err != nil {
+		return nil, err
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if len(scope) == 0 {
+		return &model.RedditKeywordPerformance{Window: window, Rows: []model.RedditKeywordRow{}}, nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kp, rerr := reader.ReadRedditKeywordPerformance(callCtx, projectID, platform, window, scope)
+	o.recordUpstream(ctx, platform, opReadKeywords, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if kp == nil {
+		return nil, fmt.Errorf("%s keyword reader returned a nil result with no error", platform)
+	}
+	if kp.Rows == nil {
+		kp.Rows = []model.RedditKeywordRow{}
+	}
+	return kp, nil
 }
 
 // readScopedAudience is the scope-then-read sequence every audience read shares, after its

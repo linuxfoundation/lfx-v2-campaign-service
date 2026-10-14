@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run), the project-scoped audience read (GENDER, COUNTRY and COMMUNITY report breakdowns, same gate), and ad-account discovery (businesses, then each business's ad accounts)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run), the project-scoped audience and keyword performance reads (GENDER, COUNTRY, COMMUNITY and KEYWORD report breakdowns through one shared reader, same gate), and ad-account discovery (businesses, then each business's ad accounts)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -717,10 +717,10 @@ status rather than as absent.
 it POSTs the verified reports operation on the client's bound account with
 `filter: campaign:id==<id>`, `breakdowns: [GENDER|COUNTRY|COMMUNITY]` and
 `fields: [CAMPAIGN_ID, IMPRESSIONS, CLICKS, SPEND, <DIM>]`, walking pagination with
-`walkPagesCapped` (10 pages, `errAudiencePageCap`), at most `audienceReportConcurrency` (3) in
+`walkPagesCapped` (10 pages, `errBreakdownPageCap`), at most `reportBreakdownConcurrency` (3) in
 flight, failing fast. Refused before any request: an unmapped window (`dateRangeForWindow`), an
-unaddressable bound account, an empty or invalid scope (`ErrAudienceScopeInvalid`) and more than
-`MaxAudienceCampaigns` (8) distinct campaigns (`ErrAudienceScopeTooLarge`). Each page's RAW body
+unaddressable bound account, an empty or invalid scope (`ErrReportScopeInvalid`) and more than
+`MaxReportCampaigns` (8) distinct campaigns (`ErrReportScopeTooLarge`). Each page's RAW body
 (`apiResponse.raw`) goes through `identityjson.Check` before decoding; rows embed `reportRow`, so
 `reportRow.validate` refuses a missing or explicit-null counter, a foreign or missing campaign id,
 a negative counter and clicks without impressions. The breakdown value is kept raw: absent → error,
@@ -733,6 +733,24 @@ then impressions descending, then value (unattributed last). AGE is not requeste
 eighteen fail-closed bodies with no upstream text or account id in the error, upstream 403
 redaction, page cap, pre-request refusals, concurrency bound).
 
+Since the keyword performance read, the request, refusal and decoding steps above live in
+`report_breakdown.go` (`prepareBreakdownRead`, `readBreakdownReports`, `readBreakdownReport`,
+`breakdownValue`, `breakdownDecodeError`), parameterised by `reportBreakdown` (breakdown enum, row
+key, value check); `audience.go` keeps only its three breakdowns, its charset and the cross-campaign
+sum.
+
+## Keyword performance read (`keyword_performance.go`, LFXV2-2665)
+
+`Client.GetKeywordPerformance(ctx, window, campaignIDs)` serves `get-reddit-ads-keywords` (see
+[Reddit Keyword Performance](../architecture/keyword-performance-reddit.md)): the shared reader with
+the single `KEYWORD` breakdown — one report per campaign — then one `KeywordRow` per (campaign,
+keyword), ranked by impressions, campaign id, text (unattributed last), capped at `MaxKeywordRows`
+(50) with `Truncated`. `keywordTextErr` keeps text verbatim but refuses blank, over-200-character
+(runes, as the removal's Goa `MaxLength(200)` counts), invalid-UTF-8, control-character, Unicode
+`Cf` (zero-width, bidi), `Zl`/`Zp` (U+2028/U+2029) and `<`/`>` values. The breakdown value's row key
+is matched case-insensitively (`rowKeyFold`), like the counters `encoding/json` decodes from the
+same row. Tests: `keyword_performance_test.go`.
+
 ### Reporting budget (`report_budget.go`, PR #306)
 
 `requestWithThrottleRetryCounted` calls `acquireReportSlot` on EVERY attempt — after the token
@@ -742,7 +760,7 @@ slot, and a wait for a slot does not eat the attempt's timeout. `acquire` also c
 before every take (the first, and again after each wait). When the
 path is the reports operation (`reportPathRE`, `/ad_accounts/{id}/reports`), the attempt takes a
 slot from the account's ledger in the process-wide `defaultReportBudgets` (sliding 60 s; 45 in all,
-24 for attempts whose context carries `withInsightsReports` — the audience read). So each page and
+24 for attempts whose context carries `withInsightsReports` — the audience and keyword reads, set once in `readBreakdownReports`). So each page and
 each 429 retry of the audience read, the campaign metrics read and the account monitor is counted.
 A slot that will not free before the context's deadline fails at once with
 `ErrReportBudgetExhausted`, nothing sent. `WithReportBudgets` / `NewReportBudgets` let tests use a

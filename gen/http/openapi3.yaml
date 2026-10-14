@@ -15580,6 +15580,130 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/reddit-ads/keywords:
+        get:
+            tags:
+                - lfx-v2-campaign-service-connections
+            summary: get-reddit-ads-keywords lfx-v2-campaign-service-connections
+            description: 'Read Reddit Ads keyword performance — the Reddit Ads API v3 report breakdown KEYWORD — for this project''s own campaigns, live from POST /ad_accounts/{id}/reports on the connected ad account: one row per (campaign, keyword) with impressions, clicks, cost_micros and ctr, ranked by impressions and capped at 50 (`truncated`). Reddit reports the keyword TEXT only — no keyword id, match type or status — so the rows are READ-ONLY; act on a keyword through get-keyword-targeting / remove-keyword-targeting. Same trust boundary, limits and failure behaviour as get-reddit-ads-audience: the project''s OWN connection only and its bound ad account only, one report per campaign filtered to it (campaign:id==<id>) with every row checked against it, at most 8 campaigns (more is 409), nothing persisted, 503 with no partial rows on any untrustworthy response. A project with no Reddit campaigns of its own receives empty `rows` and Reddit is not contacted. Disabled (400 not supported) unless REDDIT_METRICS_ENABLED is "true".'
+            operationId: lfx-v2-campaign-service-connections#get-reddit-ads-keywords
+            parameters:
+                - name: window
+                  in: query
+                  description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.
+                    example: this_month
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+                  example: this_month
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RedditAdsKeywords'
+                            example:
+                                row_count: 1
+                                rows:
+                                    - campaign_id: t3_abc123
+                                      clicks: 311
+                                      cost_micros: 1284000
+                                      ctr: 0.06452282157676349
+                                      impressions: 4820
+                                      text: service mesh
+                                truncated: false
+                                window: last_30_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/twitter-ads/audience:
         get:
             tags:
@@ -22708,6 +22832,101 @@ components:
                 - client_id
                 - client_secret
                 - refresh_token
+        RedditAdsKeyword:
+            type: object
+            properties:
+                campaign_id:
+                    type: string
+                    description: The Reddit campaign this keyword served under (Reddit's id; resolve it to this service's campaign with reddit-ads/campaign-ref)
+                    example: t3_abc123
+                clicks:
+                    type: integer
+                    description: Clicks over the window
+                    example: 311
+                    format: int64
+                cost_micros:
+                    type: integer
+                    description: Spend over the window (Reddit's SPEND, already micro-units) in the ad account's own currency. This service performs no FX conversion and does not read the currency.
+                    example: 1284000
+                    format: int64
+                ctr:
+                    type: number
+                    description: Clicks/Impressions as a fraction, 0 when Impressions is 0
+                    example: 0.0645
+                    format: double
+                impressions:
+                    type: integer
+                    description: Impressions over the window
+                    example: 4820
+                    format: int64
+                text:
+                    type: string
+                    description: 'Reddit''s KEYWORD report value, verbatim ("The keyword for the ad."). ABSENT when Reddit reported an explicit null — delivery it attributed to no keyword, such as community or interest targeting. Not an identifier: Reddit reports no keyword id, so this row cannot address a keyword action; it has not been verified to equal the ad group''s targeting entry byte for byte.'
+                    example: service mesh
+                    maxLength: 200
+            example:
+                campaign_id: t3_abc123
+                clicks: 311
+                cost_micros: 1284000
+                ctr: 0.06452282157676349
+                impressions: 4820
+                text: service mesh
+            required:
+                - campaign_id
+                - impressions
+                - clicks
+                - cost_micros
+                - ctr
+        RedditAdsKeywords:
+            type: object
+            properties:
+                row_count:
+                    type: integer
+                    description: How many rows are in `rows`.
+                    example: 1
+                    format: int64
+                rows:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/RedditAdsKeyword'
+                    description: One row per (campaign, keyword) across the campaigns this project owns, ordered by impressions descending, then campaign_id, then text (a text-less row last among equals), and capped at 50 — see `truncated`.
+                    example:
+                        - campaign_id: t3_abc123
+                          clicks: 311
+                          cost_micros: 1284000
+                          ctr: 0.06452282157676349
+                          impressions: 4820
+                          text: service mesh
+                truncated:
+                    type: boolean
+                    description: True when this project's campaigns have more (campaign, keyword) rows than were returned. The rows are the TOP ones by impressions — do not total them as the project's whole spend.
+                    example: false
+                window:
+                    type: string
+                    description: The reporting window these counters cover, as UTC days (the Reddit campaign metrics read's range for the same window)
+                    example: last_30_days
+                    enum:
+                        - today
+                        - last_7_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+            example:
+                row_count: 1
+                rows:
+                    - campaign_id: t3_abc123
+                      clicks: 311
+                      cost_micros: 1284000
+                      ctr: 0.06452282157676349
+                      impressions: 4820
+                      text: service mesh
+                truncated: false
+                window: last_30_days
+            required:
+                - window
+                - rows
+                - row_count
+                - truncated
         RemoveKeywordTargetingRequestBody:
             type: object
             properties:

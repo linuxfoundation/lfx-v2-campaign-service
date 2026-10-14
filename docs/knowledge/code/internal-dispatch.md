@@ -4302,6 +4302,16 @@ failure is returned unclassified (503). Tests: `reddit_audience_test.go` (mappin
 account, every refusal with zero upstream calls including the LF-system-only case, flag values,
 partial mismatch, matching/unknown provenance, 403 unclassified without the account id).
 
+## Reddit keyword performance read (LFXV2-2665)
+
+`RedditDispatcher` also implements `service.RedditKeywordReader` (`KeywordsEnabled`,
+`ReadRedditKeywordPerformance`). Both Reddit reads now share `redditReportsEnabled` (the gate) and
+`redditReportClient` (the read's enable func FIRST, then window, `resolveOwned`, bound account,
+`redditScopeForAccount`; it returns the TRIMMED bound account id, which keys each read's guard) in
+`reddit_audience.go`; `redditReportSentinels` picks each read's 409 sentinels (audience:
+`ErrAudienceScope*`; keywords: `ErrKeywordReportScope*`) and `classifyRedditReportError` re-tags
+the client's `ErrReportScope*`. Tests: `reddit_keywords_test.go`.
+
 The Reddit audience read refuses a scope entry with NO recorded creation account
 (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`, 409) rather than letting
 it through as the X/Meta reads do; a scope holding BOTH a foreign-account and an unrecorded entry
@@ -4310,6 +4320,10 @@ returns `ErrCampaignProvenanceMixed` joined with both sentinels, so neither faul
 `redditReportGuard` (`reddit_report_guard.go`): single flight for identical reads (account, window,
 UTC day, sorted scope) with leader-context re-lead, and a 60 s cache of successes. Tests:
 `reddit_report_guard_test.go`, and the provenance/budget cases in `reddit_audience_test.go`.
+
+Since the keyword read, the strict-provenance `redditScopeForAccount` is the shared prelude's, so
+both Reddit reads refuse an unrecorded creation account; each read has its own guard
+(`d.audience`, `d.keywords`).
 
 ## LinkedIn settings, bid and adoption (LFXV2-2665)
 
