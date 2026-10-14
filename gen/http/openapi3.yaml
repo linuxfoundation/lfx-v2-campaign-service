@@ -7590,19 +7590,14 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AccountMonitor'
+                                $ref: '#/components/schemas/GoogleAdsAccountMonitorResponseBody'
                             example:
                                 account_id: "8666746580"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                                       campaign_id: "24183781329"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                                       priority: MED
                                 campaigns:
                                     - budget_day: 150
@@ -7610,66 +7605,45 @@ paths:
                                       clicks: 3110
                                       conversions: 12.5
                                       ctr: 6.45
-                                      end_date: "2026-11-30"
+                                      end_date: ""
                                       fetch_failed: false
                                       impressions: 48200
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      pacing_label: underspending
+                                      pacing_pct: 42
                                       pacing_unknown: false
                                       platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
+                                      spend: 1890
+                                      start_date: ""
                                       status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
+                                      total_budget: 0
+                                    - budget_day: 200
+                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
+                                      clicks: 8310
+                                      conversions: 200
+                                      ctr: 6.11
+                                      end_date: ""
                                       fetch_failed: false
-                                      impressions: 48200
+                                      impressions: 136000
                                       is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      name: KubeCon NA 2026 - Brand
+                                      pacing_label: normal
+                                      pacing_pct: 70
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
+                                      platform_campaign_id: "24183781330"
+                                      spend: 4200
+                                      start_date: ""
                                       status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
+                                      total_budget: 0
                                 days: 30
-                                metrics_as_of: "2026-10-05T14:30:00Z"
-                                metrics_pending: false
-                                metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-09-06"
                                 totals:
-                                    campaign_count: 14
+                                    campaign_count: 2
                                     clicks: 11420
                                     conversions: 212.5
                                     impressions: 184200
-                                    spend: 1842.55
+                                    spend: 6090
+                                    unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -9634,86 +9608,58 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AccountMonitor'
+                                $ref: '#/components/schemas/LinkedinAdsAccountMonitorResponseBody'
                             example:
-                                account_id: "8666746580"
+                                account_id: "512345678"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                    - action: Check targeting breadth, bid strategy, or budget floor
+                                      campaign_id: "612345001"
+                                      campaign_name: KubeCon NA 2026 - Sponsored Content
+                                      issue: Underspending — pacing below 50%
+                                      priority: HIGH
                                 campaigns:
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
+                                    - budget_day: 100
+                                      clicks: 390
+                                      conversions: 9
+                                      ctr: 0.75
                                       end_date: "2026-11-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 52000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - Sponsored Content
+                                      pacing_label: underspending
+                                      pacing_pct: 45
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      platform_campaign_id: "612345001"
+                                      spend: 1305
                                       start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
+                                      status: ACTIVE
+                                      total_budget: 0
+                                    - budget_day: 0
+                                      clicks: 520
+                                      conversions: 31
+                                      ctr: 0.85
                                       end_date: "2026-11-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 61000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - Lead Gen
+                                      pacing_label: normal
+                                      pacing_pct: 80
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      platform_campaign_id: "612345002"
+                                      spend: 2320
                                       start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
+                                      status: ACTIVE
+                                      total_budget: 12100
                                 days: 30
-                                metrics_as_of: "2026-10-05T14:30:00Z"
-                                metrics_pending: false
-                                metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-09-06"
                                 totals:
-                                    campaign_count: 14
-                                    clicks: 11420
-                                    conversions: 212.5
-                                    impressions: 184200
-                                    spend: 1842.55
+                                    campaign_count: 2
+                                    clicks: 910
+                                    conversions: 40
+                                    impressions: 113000
+                                    spend: 3625
+                                    unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -10565,86 +10511,55 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AccountMonitor'
+                                $ref: '#/components/schemas/MetaAdsAccountMonitorResponseBody'
                             example:
-                                account_id: "8666746580"
+                                account_id: act_8666746580
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                    - action: Broaden audience targeting or increase bid cap to improve delivery
+                                      campaign_id: "120210000000000001"
+                                      campaign_name: KubeCon NA 2026 - Prospecting
+                                      issue: 'Underspending: 40% of budget used ($960.00 of $2400.00)'
                                       priority: MED
                                 campaigns:
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
+                                    - budget_day: 80
+                                      clicks: 1320
+                                      ctr: 1.5
                                       end_date: "2026-11-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 88000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - Prospecting
+                                      pacing_label: underspending
+                                      pacing_pct: 40
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      platform_campaign_id: "120210000000000001"
+                                      spend: 960
                                       start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
+                                      status: ACTIVE
+                                      total_budget: 0
+                                    - budget_day: 0
+                                      clicks: 2400
+                                      ctr: 1.6
+                                      end_date: "2026-10-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 150000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - Retargeting
+                                      pacing_label: normal
+                                      pacing_pct: 80
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
+                                      platform_campaign_id: "120210000000000002"
+                                      spend: 2800
+                                      start_date: "2026-09-01"
+                                      status: ACTIVE
+                                      total_budget: 5900
                                 days: 30
-                                metrics_as_of: "2026-10-05T14:30:00Z"
-                                metrics_pending: false
-                                metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-09-06"
                                 totals:
-                                    campaign_count: 14
-                                    clicks: 11420
-                                    conversions: 212.5
-                                    impressions: 184200
-                                    spend: 1842.55
+                                    campaign_count: 2
+                                    clicks: 3720
+                                    impressions: 238000
+                                    spend: 3760
+                                    unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -11491,78 +11406,62 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AccountMonitor'
+                                $ref: '#/components/schemas/MicrosoftAdsAccountMonitorResponseBody'
                             example:
-                                account_id: "8666746580"
+                                account_id: "187654321"
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
+                                    - action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
+                                      campaign_id: "516000001"
                                       campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                      issue: Only spending 40% of $60.00/day budget — $720.00 spent vs $1800.00 expected
                                       priority: MED
                                 campaigns:
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
+                                    - budget_day: 60
+                                      clicks: 840
+                                      conversions: 6
+                                      ctr: 4
+                                      end_date: ""
                                       fetch_failed: false
-                                      impressions: 48200
+                                      impressions: 21000
                                       is_search_channel: true
                                       name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      pacing_label: underspending
+                                      pacing_pct: 40
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
+                                      platform_campaign_id: "516000001"
+                                      spend: 720
+                                      start_date: ""
+                                      status: Active
+                                      total_budget: 0
+                                    - budget_day: 40
+                                      clicks: 1300
+                                      conversions: 22
+                                      ctr: 5
+                                      end_date: ""
                                       fetch_failed: false
-                                      impressions: 48200
+                                      impressions: 26000
                                       is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      name: KubeCon NA 2026 - Brand
+                                      pacing_label: normal
+                                      pacing_pct: 83
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
+                                      platform_campaign_id: "516000002"
+                                      spend: 1000
+                                      start_date: ""
+                                      status: Active
+                                      total_budget: 0
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
                                 metrics_window_start: "2026-09-06"
                                 totals:
-                                    campaign_count: 14
-                                    clicks: 11420
-                                    conversions: 212.5
-                                    impressions: 184200
-                                    spend: 1842.55
+                                    campaign_count: 2
+                                    clicks: 2140
+                                    conversions: 28
+                                    impressions: 47000
+                                    spend: 1720
+                                    unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -12410,114 +12309,55 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AccountMonitor'
+                                $ref: '#/components/schemas/RedditAdsAccountMonitorResponseBody'
                             example:
-                                account_id: "8666746580"
+                                account_id: t2_gv9wtbfa
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
+                                    - action: Broaden targeting (add subreddits/interests), increase bid, or expand geographic targeting
+                                      campaign_id: "2045000000000000001"
+                                      campaign_name: KubeCon NA 2026 - r/kubernetes
+                                      issue: Underspending at 40% of budget — $600.00 spent
+                                      priority: HIGH
                                 campaigns:
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
+                                    - budget_day: 50
+                                      clicks: 448
+                                      ctr: 0.7
                                       end_date: "2026-11-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 64000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - r/kubernetes
+                                      pacing_label: underspending
+                                      pacing_pct: 40
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      platform_campaign_id: "2045000000000000001"
+                                      spend: 600
                                       start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
+                                      status: ACTIVE
+                                      total_budget: 0
+                                    - budget_day: 0
+                                      clicks: 1680
+                                      ctr: 0.8
+                                      end_date: "2026-10-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 210000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - r/devops
+                                      pacing_label: normal
+                                      pacing_pct: 80
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
-                                      fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
-                                      pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
+                                      platform_campaign_id: "2045000000000000002"
+                                      spend: 2800
+                                      start_date: "2026-09-01"
+                                      status: ACTIVE
+                                      total_budget: 5900
                                 days: 30
-                                metrics_as_of: "2026-10-05T14:30:00Z"
-                                metrics_pending: false
-                                metrics_window_end: "2026-10-05"
-                                metrics_window_start: "2026-09-06"
                                 totals:
-                                    campaign_count: 14
-                                    clicks: 11420
-                                    conversions: 212.5
-                                    impressions: 184200
-                                    spend: 1842.55
+                                    campaign_count: 2
+                                    clicks: 2128
+                                    impressions: 274000
+                                    spend: 3400
+                                    unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -13370,68 +13210,59 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AccountMonitor'
+                                $ref: '#/components/schemas/TwitterAdsAccountMonitorResponseBody'
                             example:
-                                account_id: "8666746580"
+                                account_id: 18ce54d4x5t
                                 action_items:
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
-                                      priority: MED
-                                    - action: Increase daily budget or check for delivery limits
-                                      campaign_id: "24183781329"
-                                      campaign_name: KubeCon NA 2026 - Search
-                                      issue: 'Underspending: 42% of expected spend'
+                                    - action: Broaden targeting (keywords, follower look-alikes, locations) or raise the bid so the line items win more auctions
+                                      campaign_id: hd8ns
+                                      campaign_name: KubeCon NA 2026 - Promoted Posts
+                                      issue: Underspending at 40% of budget — 600.00 in account currency spent in the window
                                       priority: MED
                                 campaigns:
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
+                                    - budget_day: 50
+                                      clicks: 490
+                                      ctr: 0.7
                                       end_date: "2026-11-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 70000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - Promoted Posts
+                                      pacing_label: underspending
+                                      pacing_pct: 40
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
+                                      platform_campaign_id: hd8ns
+                                      spend: 600
                                       start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
-                                    - budget_day: 150
-                                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                                      clicks: 3110
-                                      conversions: 12.5
-                                      ctr: 6.45
-                                      end_date: "2026-11-30"
+                                      status: ACTIVE
+                                      total_budget: 0
+                                    - budget_day: 0
+                                      clicks: 1260
+                                      ctr: 0.7
+                                      end_date: "2026-10-30"
                                       fetch_failed: false
-                                      impressions: 48200
-                                      is_search_channel: true
-                                      name: KubeCon NA 2026 - Search
-                                      pacing_label: constrained
-                                      pacing_pct: 87
+                                      impressions: 180000
+                                      is_search_channel: false
+                                      name: KubeCon NA 2026 - Followers
+                                      pacing_label: normal
+                                      pacing_pct: 80
                                       pacing_unknown: false
-                                      platform_campaign_id: "24183781329"
-                                      spend: 482.13
-                                      start_date: "2026-08-01"
-                                      status: ENABLED
-                                      total_budget: 5000
+                                      platform_campaign_id: hd8nt
+                                      spend: 2360
+                                      start_date: "2026-09-01"
+                                      status: ACTIVE
+                                      total_budget: 5900
                                 days: 30
                                 metrics_as_of: "2026-10-05T14:30:00Z"
                                 metrics_pending: false
                                 metrics_window_end: "2026-10-05"
                                 metrics_window_start: "2026-09-06"
                                 totals:
-                                    campaign_count: 14
-                                    clicks: 11420
-                                    conversions: 212.5
-                                    impressions: 184200
-                                    spend: 1842.55
+                                    campaign_count: 2
+                                    clicks: 1750
+                                    impressions: 250000
+                                    spend: 2960
+                                    unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -15951,207 +15782,13 @@ components:
                 label: Praesentium ut et sit expedita.
             required:
                 - id
-        AccountMonitor:
-            type: object
-            properties:
-                account_id:
-                    type: string
-                    description: The account this read covers, echoed back from the request.
-                    example: "8666746580"
-                action_items:
-                    type: array
-                    items:
-                        $ref: '#/components/schemas/AccountMonitorActionItem'
-                    description: The rule engine's findings across the account's campaigns.
-                    example:
-                        - action: Increase daily budget or check for delivery limits
-                          campaign_id: "24183781329"
-                          campaign_name: KubeCon NA 2026 - Search
-                          issue: 'Underspending: 42% of expected spend'
-                          priority: MED
-                        - action: Increase daily budget or check for delivery limits
-                          campaign_id: "24183781329"
-                          campaign_name: KubeCon NA 2026 - Search
-                          issue: 'Underspending: 42% of expected spend'
-                          priority: MED
-                campaigns:
-                    type: array
-                    items:
-                        $ref: '#/components/schemas/AccountMonitorCampaign'
-                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
-                    example:
-                        - budget_day: 150
-                          campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                          clicks: 3110
-                          conversions: 12.5
-                          ctr: 6.45
-                          end_date: "2026-11-30"
-                          fetch_failed: false
-                          impressions: 48200
-                          is_search_channel: true
-                          name: KubeCon NA 2026 - Search
-                          pacing_label: constrained
-                          pacing_pct: 87
-                          pacing_unknown: false
-                          platform_campaign_id: "24183781329"
-                          spend: 482.13
-                          start_date: "2026-08-01"
-                          status: ENABLED
-                          total_budget: 5000
-                        - budget_day: 150
-                          campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                          clicks: 3110
-                          conversions: 12.5
-                          ctr: 6.45
-                          end_date: "2026-11-30"
-                          fetch_failed: false
-                          impressions: 48200
-                          is_search_channel: true
-                          name: KubeCon NA 2026 - Search
-                          pacing_label: constrained
-                          pacing_pct: 87
-                          pacing_unknown: false
-                          platform_campaign_id: "24183781329"
-                          spend: 482.13
-                          start_date: "2026-08-01"
-                          status: ENABLED
-                          total_budget: 5000
-                        - budget_day: 150
-                          campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                          clicks: 3110
-                          conversions: 12.5
-                          ctr: 6.45
-                          end_date: "2026-11-30"
-                          fetch_failed: false
-                          impressions: 48200
-                          is_search_channel: true
-                          name: KubeCon NA 2026 - Search
-                          pacing_label: constrained
-                          pacing_pct: 87
-                          pacing_unknown: false
-                          platform_campaign_id: "24183781329"
-                          spend: 482.13
-                          start_date: "2026-08-01"
-                          status: ENABLED
-                          total_budget: 5000
-                days:
-                    type: integer
-                    description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
-                    example: 30
-                    format: int64
-                metrics_as_of:
-                    type: string
-                    description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
-                    example: "2026-10-05T14:30:00Z"
-                    format: date-time
-                metrics_pending:
-                    type: boolean
-                    description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
-                    example: false
-                metrics_window_end:
-                    type: string
-                    description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
-                    example: "2026-10-05"
-                    format: date
-                metrics_window_start:
-                    type: string
-                    description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
-                    example: "2026-09-06"
-                    format: date
-                totals:
-                    $ref: '#/components/schemas/AccountMonitorTotals'
-            example:
-                account_id: "8666746580"
-                action_items:
-                    - action: Increase daily budget or check for delivery limits
-                      campaign_id: "24183781329"
-                      campaign_name: KubeCon NA 2026 - Search
-                      issue: 'Underspending: 42% of expected spend'
-                      priority: MED
-                    - action: Increase daily budget or check for delivery limits
-                      campaign_id: "24183781329"
-                      campaign_name: KubeCon NA 2026 - Search
-                      issue: 'Underspending: 42% of expected spend'
-                      priority: MED
-                campaigns:
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
-                days: 30
-                metrics_as_of: "2026-10-05T14:30:00Z"
-                metrics_pending: false
-                metrics_window_end: "2026-10-05"
-                metrics_window_start: "2026-09-06"
-                totals:
-                    campaign_count: 14
-                    clicks: 11420
-                    conversions: 212.5
-                    impressions: 184200
-                    spend: 1842.55
-            required:
-                - account_id
-                - days
-                - campaigns
-                - action_items
-                - totals
         AccountMonitorActionItem:
             type: object
             properties:
                 action:
                     type: string
                     description: The suggested remedy.
-                    example: Increase daily budget or check for delivery limits
+                    example: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                 campaign_id:
                     type: string
                     description: 'The campaign this item is about: the platform campaign id on the ad-platform monitors; this service''s campaign UUID on monitor-hubspot-account (where email_id names the email). Empty for an account-wide item.'
@@ -16167,7 +15804,7 @@ components:
                 issue:
                     type: string
                     description: What the rule engine flagged.
-                    example: 'Underspending: 42% of expected spend'
+                    example: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                 priority:
                     type: string
                     description: The rule engine's priority band for this item.
@@ -16177,10 +15814,10 @@ components:
                         - MED
                         - LOW
             example:
-                action: Increase daily budget or check for delivery limits
+                action: Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions
                 campaign_id: "24183781329"
                 campaign_name: KubeCon NA 2026 - Search
-                issue: 'Underspending: 42% of expected spend'
+                issue: Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected
                 priority: MED
             required:
                 - priority
@@ -16237,7 +15874,7 @@ components:
                 pacing_label:
                     type: string
                     description: The pacing classification derived from pacing_pct. Meaningless when pacing_unknown is true — a fetch-failed row keeps the placeholder value "normal" rather than carrying no label at all, since the enum has no unknown member.
-                    example: constrained
+                    example: underspending
                     enum:
                         - normal
                         - underspending
@@ -16246,7 +15883,7 @@ components:
                 pacing_pct:
                     type: number
                     description: spend / expected-spend * 100. Meaningless when pacing_unknown is true.
-                    example: 87
+                    example: 42
                     format: double
                 pacing_unknown:
                     type: boolean
@@ -16259,7 +15896,7 @@ components:
                 spend:
                     type: number
                     description: Total cost in the account's currency over the requested window.
-                    example: 482.13
+                    example: 1890
                     format: double
                 start_date:
                     type: string
@@ -16272,27 +15909,8 @@ components:
                 total_budget:
                     type: number
                     description: Lifetime/total budget in the account's currency, 0 when the campaign is funded by budget_day instead.
-                    example: 5000
+                    example: 0
                     format: double
-            example:
-                budget_day: 150
-                campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                clicks: 3110
-                conversions: 12.5
-                ctr: 6.45
-                end_date: "2026-11-30"
-                fetch_failed: false
-                impressions: 48200
-                is_search_channel: true
-                name: KubeCon NA 2026 - Search
-                pacing_label: constrained
-                pacing_pct: 87
-                pacing_unknown: false
-                platform_campaign_id: "24183781329"
-                spend: 482.13
-                start_date: "2026-08-01"
-                status: ENABLED
-                total_budget: 5000
             required:
                 - platform_campaign_id
                 - name
@@ -16342,7 +15960,7 @@ components:
                 campaign_count:
                     type: integer
                     description: 'How many campaigns the totals reflect: the length of the campaigns array these totals sum.'
-                    example: 14
+                    example: 2
                     format: int64
                 clicks:
                     type: integer
@@ -16362,19 +15980,27 @@ components:
                 spend:
                     type: number
                     description: Account-wide spend over the window.
-                    example: 1842.55
+                    example: 6090
                     format: double
+                unmeasured_campaigns:
+                    type: integer
+                    description: 'How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns'' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.'
+                    example: 0
+                    format: int64
+                    minimum: 0
             example:
-                campaign_count: 14
+                campaign_count: 2
                 clicks: 11420
                 conversions: 212.5
                 impressions: 184200
-                spend: 1842.55
+                spend: 6090
+                unmeasured_campaigns: 0
             required:
                 - spend
                 - impressions
                 - clicks
                 - campaign_count
+                - unmeasured_campaigns
         AddNegativeKeywordsRequestBody:
             type: object
             properties:
@@ -19637,6 +19263,54 @@ components:
                       size: 876045623713169027
             required:
                 - lists
+        GoogleAdsAccountMonitor:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: The account this read covers, echoed back from the request.
+                    example: "8666746580"
+                action_items:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorActionItem'
+                    description: The rule engine's findings across the account's campaigns.
+                campaigns:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorCampaign'
+                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                days:
+                    type: integer
+                    description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                    example: 30
+                    format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                metrics_window_end:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                    format: date
+                metrics_window_start:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                    format: date
+                totals:
+                    $ref: '#/components/schemas/AccountMonitorTotals'
+            description: The Google Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Google Ads's own shape.
+            required:
+                - account_id
+                - days
+                - campaigns
+                - action_items
+                - totals
+        GoogleAdsAccountMonitorResponseBody:
+            $ref: '#/components/schemas/GoogleAdsAccountMonitor'
         GoogleAdsAudience:
             type: object
             properties:
@@ -21023,6 +20697,54 @@ components:
                 - applied_count
         LfxV2CampaignServiceBriefsuploadCreativeAssetResponseBody:
             $ref: '#/components/schemas/CreativeAsset'
+        LinkedinAdsAccountMonitor:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: The account this read covers, echoed back from the request.
+                    example: "512345678"
+                action_items:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorActionItem'
+                    description: The rule engine's findings across the account's campaigns.
+                campaigns:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorCampaign'
+                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                days:
+                    type: integer
+                    description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                    example: 30
+                    format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                metrics_window_end:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                    format: date
+                metrics_window_start:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                    format: date
+                totals:
+                    $ref: '#/components/schemas/AccountMonitorTotals'
+            description: The LinkedIn Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in LinkedIn Ads's own shape.
+            required:
+                - account_id
+                - days
+                - campaigns
+                - action_items
+                - totals
+        LinkedinAdsAccountMonitorResponseBody:
+            $ref: '#/components/schemas/LinkedinAdsAccountMonitor'
         LinkedinAdsAudience:
             type: object
             properties:
@@ -21651,6 +21373,54 @@ components:
                 - read_at
                 - ad_sets
                 - ad_set_count
+        MetaAdsAccountMonitor:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: The account this read covers, echoed back from the request.
+                    example: act_8666746580
+                action_items:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorActionItem'
+                    description: The rule engine's findings across the account's campaigns.
+                campaigns:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorCampaign'
+                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                days:
+                    type: integer
+                    description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                    example: 30
+                    format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                metrics_window_end:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                    format: date
+                metrics_window_start:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                    format: date
+                totals:
+                    $ref: '#/components/schemas/AccountMonitorTotals'
+            description: The Meta Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Meta Ads's own shape.
+            required:
+                - account_id
+                - days
+                - campaigns
+                - action_items
+                - totals
+        MetaAdsAccountMonitorResponseBody:
+            $ref: '#/components/schemas/MetaAdsAccountMonitor'
         MetaAdsAudience:
             type: object
             properties:
@@ -21889,6 +21659,58 @@ components:
             required:
                 - access_token
                 - app_secret
+        MicrosoftAdsAccountMonitor:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: The account this read covers, echoed back from the request.
+                    example: "187654321"
+                action_items:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorActionItem'
+                    description: The rule engine's findings across the account's campaigns.
+                campaigns:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorCampaign'
+                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                days:
+                    type: integer
+                    description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                    example: 30
+                    format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    example: "2026-10-05T14:30:00Z"
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                    example: false
+                metrics_window_end:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                    example: "2026-10-05"
+                    format: date
+                metrics_window_start:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                    example: "2026-09-06"
+                    format: date
+                totals:
+                    $ref: '#/components/schemas/AccountMonitorTotals'
+            description: The Microsoft Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Microsoft Ads's own shape.
+            required:
+                - account_id
+                - days
+                - campaigns
+                - action_items
+                - totals
+        MicrosoftAdsAccountMonitorResponseBody:
+            $ref: '#/components/schemas/MicrosoftAdsAccountMonitor'
         MicrosoftAdsAudience:
             type: object
             properties:
@@ -22585,6 +22407,54 @@ components:
                     - Rerum tempora est.
             required:
                 - list_ids
+        RedditAdsAccountMonitor:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: The account this read covers, echoed back from the request.
+                    example: t2_gv9wtbfa
+                action_items:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorActionItem'
+                    description: The rule engine's findings across the account's campaigns.
+                campaigns:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorCampaign'
+                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                days:
+                    type: integer
+                    description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                    example: 30
+                    format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                metrics_window_end:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                    format: date
+                metrics_window_start:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                    format: date
+                totals:
+                    $ref: '#/components/schemas/AccountMonitorTotals'
+            description: The Reddit Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in Reddit Ads's own shape.
+            required:
+                - account_id
+                - days
+                - campaigns
+                - action_items
+                - totals
+        RedditAdsAccountMonitorResponseBody:
+            $ref: '#/components/schemas/RedditAdsAccountMonitor'
         RedditAdsAudience:
             type: object
             properties:
@@ -23220,6 +23090,58 @@ components:
                 status: PAUSED
             required:
                 - status
+        TwitterAdsAccountMonitor:
+            type: object
+            properties:
+                account_id:
+                    type: string
+                    description: The account this read covers, echoed back from the request.
+                    example: 18ce54d4x5t
+                action_items:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorActionItem'
+                    description: The rule engine's findings across the account's campaigns.
+                campaigns:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AccountMonitorCampaign'
+                    description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+                days:
+                    type: integer
+                    description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
+                    example: 30
+                    format: int64
+                metrics_as_of:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
+                    example: "2026-10-05T14:30:00Z"
+                    format: date-time
+                metrics_pending:
+                    type: boolean
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
+                    example: false
+                metrics_window_end:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
+                    example: "2026-10-05"
+                    format: date
+                metrics_window_start:
+                    type: string
+                    description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
+                    example: "2026-09-06"
+                    format: date
+                totals:
+                    $ref: '#/components/schemas/AccountMonitorTotals'
+            description: The X Ads account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in X Ads's own shape.
+            required:
+                - account_id
+                - days
+                - campaigns
+                - action_items
+                - totals
+        TwitterAdsAccountMonitorResponseBody:
+            $ref: '#/components/schemas/TwitterAdsAccountMonitor'
         TwitterAdsAudience:
             type: object
             properties:

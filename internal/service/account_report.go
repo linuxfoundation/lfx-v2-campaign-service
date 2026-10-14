@@ -325,6 +325,11 @@ func mergeAccountReport(campaigns []model.AccountCampaignMetrics, snap *model.Ac
 	if snap.Ready == nil {
 		for _, c := range campaigns {
 			c.FetchFailed = true
+			// A class the dispatcher already set (an unreadable budget or flight) is kept: it is
+			// a fault worth a warning, where a missing report is only the expected first read.
+			if c.FailureClass == "" {
+				c.FailureClass = model.MonitorFailureNoReport
+			}
 			out.Rows = append(out.Rows, c)
 		}
 		return out

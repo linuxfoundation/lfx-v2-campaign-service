@@ -1016,6 +1016,11 @@ func (e *transportError) Error() string {
 }
 func (e *transportError) Unwrap() error { return e.Err }
 
+// errUndecodable2xxResponse marks a 2xx response whose body was read but is not valid JSON for
+// the envelope. It is always wrapped in a transportError (see requestWithThrottleRetryCounted);
+// its text is the prefix that error has always carried.
+var errUndecodable2xxResponse = errors.New("decode 2xx response")
+
 // createOutcomeAmbiguous reports whether a failed mutating request MAY have been
 // applied by Reddit despite the error — i.e. the request plausibly reached the
 // server and its outcome is unknowable. It is the single source of truth shared
@@ -1405,7 +1410,10 @@ func (c *Client) requestWithThrottleRetryCounted(ctx context.Context, method, pa
 		var out apiResponse
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw, &out); err != nil {
-				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("decode 2xx response: %w", err)}
+				// errUndecodable2xxResponse inside the transportError: still ambiguous for every
+				// mutating caller, while a reader (the account monitor's monitorFailureClass) can
+				// tell "Reddit answered with something unparseable" from a failed round trip.
+				return nil, &transportError{Method: method, Path: path, Err: fmt.Errorf("%w: %w", errUndecodable2xxResponse, err)}
 			}
 		}
 		out.raw = raw
