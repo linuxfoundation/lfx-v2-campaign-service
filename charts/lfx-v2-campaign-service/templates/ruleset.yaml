@@ -233,6 +233,8 @@ spec:
           - path: /projects/:projectId/meta-ads/campaign-ref
           - path: /projects/:projectId/reddit-ads/campaign-ref
           - path: /projects/:projectId/twitter-ads/campaign-ref
+          # LinkedIn twin (LFXV2-2665), same read and permission.
+          - path: /projects/:projectId/linkedin-ads/campaign-ref
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

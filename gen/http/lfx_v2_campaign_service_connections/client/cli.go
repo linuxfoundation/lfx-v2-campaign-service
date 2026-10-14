@@ -2118,6 +2118,46 @@ func BuildResolveTwitterAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolv
 	return v, nil
 }
 
+// BuildResolveLinkedinAdsCampaignPayload builds the payload for the
+// lfx-v2-campaign-service-connections resolve-linkedin-ads-campaign endpoint
+// from CLI flags.
+func BuildResolveLinkedinAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignProjectID *string, lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignPlatformCampaignID *string, lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignBearerToken *string) (*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignProjectID
+	}
+	var platformCampaignID string
+	{
+		if lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignPlatformCampaignID == nil {
+			return nil, fmt.Errorf("missing required flag --platform-campaign-id")
+		}
+		platformCampaignID = *lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignPlatformCampaignID
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,18}$"))
+		if utf8.RuneCountInString(platformCampaignID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 19, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildListMetaAdsAccountsPayload builds the payload for the
 // lfx-v2-campaign-service-connections list-meta-ads-accounts endpoint from CLI
 // flags.

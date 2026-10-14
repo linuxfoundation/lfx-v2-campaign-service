@@ -65,33 +65,37 @@ type Service interface {
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
 	// project's connection, and nothing is created upstream. Supported platforms:
-	// google-ads, microsoft-ads, meta-ads, reddit-ads and twitter-ads; every other
-	// platform answers 400. The read is one get-campaign-by-id under the project's
-	// OWN connection (never the shared LF system account), plus, on Reddit and X
-	// only, one read of that connection's ad account after a campaign 404, and the
-	// campaign must belong to that connection's ad account. Returns 404 only when
-	// the platform PROVES it holds no such campaign (a deleted, removed or
-	// archived campaign counts as absent), 503 when the campaign could not be
-	// verified (the platform was unreachable or throttled, answered with something
-	// untrustworthy, or gave a not-found that could equally be an access, auth or
-	// account problem - its existence is unknown), 409 when this brief already has
-	// a live campaign on that platform / that campaign is already bound to another
-	// brief (in any project, since several foundations share one upstream ad
-	// account) / the platform reports the campaign under a different ad account
-	// than the project's connection / the campaign is of a type that platform's
-	// slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost
-	// approval during the read / the project has no ad-platform connection of its
-	// own, and 400 when the platform has no adoption capability wired or
-	// platform_campaign_id is malformed for that platform (checked before any
-	// connection work). An adopted campaign records only the campaign itself (id,
-	// name, account), never its children. The metrics read and the settings
-	// readback (on the platforms that support them), delete and pause work on it;
-	// activation is refused on every platform because adoption does not verify the
-	// targeting the activate guard requires; the bid lever is refused on
-	// Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line
-	// item the row does not record); the budget lever is refused on Meta (its
-	// budget lives on the ad set) and works on Microsoft, Reddit and X, where the
-	// budget is the campaign's own.
+	// google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and
+	// linkedin-ads; every other platform answers 400. The read is one
+	// get-campaign-by-id under the project's OWN connection (never the shared LF
+	// system account), plus, on Reddit, X and LinkedIn only, one read of that
+	// connection's ad account after a campaign 404, and the campaign must belong
+	// to that connection's ad account. Returns 404 only when the platform PROVES
+	// it holds no such campaign (a deleted, removed or archived campaign counts as
+	// absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when
+	// the campaign could not be verified (the platform was unreachable or
+	// throttled, answered with something untrustworthy, or gave a not-found that
+	// could equally be an access, auth or account problem - its existence is
+	// unknown), 409 when this brief already has a live campaign on that platform /
+	// that campaign is already bound to another brief (in any project, since
+	// several foundations share one upstream ad account) / the platform reports
+	// the campaign under a different ad account than the project's connection /
+	// the campaign is of a type that platform's slot cannot hold (Microsoft adopts
+	// Search campaigns only) / the brief lost approval during the read / the
+	// project has no ad-platform connection of its own, and 400 when the platform
+	// has no adoption capability wired or platform_campaign_id is malformed for
+	// that platform (checked before any connection work). An adopted campaign
+	// records only the campaign itself (id, name, account), never its children.
+	// The metrics read and the settings readback (on the platforms that support
+	// them), delete and pause work on it; activation is refused on every platform
+	// because adoption does not verify the targeting the activate guard requires;
+	// the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on
+	// an ad group, ad set or line item the row does not record) and on LinkedIn
+	// (its bid is the campaign's own unitCost, but adoption verifies identity, not
+	// the bidding setup); the budget lever is refused on Meta (its budget lives on
+	// the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget
+	// is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the
+	// campaign alone, never its creatives.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
 	GetCampaign(context.Context, *GetCampaignPayload) (res *Campaign, err error)
@@ -115,14 +119,14 @@ type Service interface {
 	// describe a campaign's configuration. A setting that could not be read on
 	// either side is reported ABSENT with an `unknown` verdict, never defaulted to
 	// zero and never counted as a match. Support is per-platform: Google Ads,
-	// Microsoft Advertising, Meta, Reddit and X (Twitter) Ads are wired, and a
-	// campaign on any other platform returns 400. The field set is per-platform
-	// too — each platform reports only the settings it can answer honestly,
-	// normalised to the units its create path wrote (Microsoft carries no flight
-	// dates, so reports none) — and on every platform the provenance rules are the
-	// same: a campaign that does not record the account it was created under, or
-	// that belongs to a different account than the connection now resolves to, is
-	// refused 409 before anything is read.
+	// Microsoft Advertising, Meta, Reddit, X (Twitter) Ads and LinkedIn are wired,
+	// and a campaign on any other platform returns 400. The field set is
+	// per-platform too — each platform reports only the settings it can answer
+	// honestly, normalised to the units its create path wrote (Microsoft carries
+	// no flight dates, so reports none) — and on every platform the provenance
+	// rules are the same: a campaign that does not record the account it was
+	// created under, or that belongs to a different account than the connection
+	// now resolves to, is refused 409 before anything is read.
 	GetCampaignSettings(context.Context, *GetCampaignSettingsPayload) (res *CampaignSettingsReadback, err error)
 	// Read live performance metrics for EVERY campaign on a brief in one request,
 	// by calling each campaign's platform directly. A pure read — never persisted.
@@ -245,20 +249,25 @@ type Service interface {
 	// units) of the ONE ad set this service created. X: the bid_amount_local_micro
 	// of the ONE line item this service created. A campaign whose row records none
 	// (an adopted campaign, or one whose creation never reached it) is refused
-	// (409): the service will not choose which of several to re-bid. REFUSED (409)
-	// WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only
-	// does something under a bid strategy that reads it — Microsoft's EnhancedCpc
-	// or ManualCpc; Reddit's MANUAL_BIDDING with bid_type CPC; Meta's
-	// LOWEST_COST_WITH_BID_CAP with billing_event AND optimization_goal both
-	// LINK_CLICKS (a Meta bid cap is per optimization event and, billed on
-	// impressions, per 1,000 impressions — so only that pairing is a max cost per
-	// click); X's MAX with pay_by LINK_CLICK. Under an automated or target
-	// strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
+	// (409): the service will not choose which of several to re-bid. LinkedIn: the
+	// campaign's own unitCost (a decimal amount, written in USD at whole cents — a
+	// sub-cent amount is refused 400 rather than rounded); an ADOPTED LinkedIn
+	// campaign is refused (409). REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS
+	// NOT A COST PER CLICK. A manual bid only does something under a bid strategy
+	// that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's
+	// MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with
+	// billing_event AND optimization_goal both LINK_CLICKS (a Meta bid cap is per
+	// optimization event and, billed on impressions, per 1,000 impressions — so
+	// only that pairing is a max cost per click); X's MAX with pay_by LINK_CLICK;
+	// LinkedIn's costType CPC with optimizationTargetType NONE or
+	// ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or
+	// target strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
 	// MaxConversionValue, TargetImpressionShare, a portfolio strategy the read
 	// cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta
 	// LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO,
-	// TARGET) the platform would ignore it or, worse, the write would be read as a
-	// request to switch strategy — and this endpoint NEVER switches strategy,
+	// TARGET; LinkedIn MAX_*, TARGET_COST_PER_*, CAP_COST_AND_*, or any CPM/CPV
+	// campaign) the platform would ignore it or, worse, the write would be read as
+	// a request to switch strategy — and this endpoint NEVER switches strategy,
 	// billing or charge unit. An unreported strategy is refused the same way
 	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
 	// first and then the ad group's: with Campaign Budget Optimization on (as on
@@ -268,24 +277,29 @@ type Service interface {
 	// campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign
 	// AUTO, so those three legs apply only after an operator has moved the Reddit
 	// campaign and ad group, the Meta ad set or the X line item to a manual
-	// per-click bid in the platform's own UI. The amount is in the AD ACCOUNT's
-	// own currency, not USD, and this service neither knows nor converts it.
-	// Microsoft Advertising, Reddit, Meta and X today: a campaign on any other
-	// platform is refused with 400. **409** when the change is refused BEFORE the
-	// platform is written, so nothing has changed: the campaign is unprovisioned;
-	// it belongs to a different ad account than the project's connection now
-	// resolves to, or does not record which ad account it was created under; its
-	// bid strategy is automated, a target, or unreported; or the bid could not be
-	// addressed (no recorded ad group, ad set or line item, one reporting another
-	// campaign or deleted, or one bidding in a unit other than `bid_type`). None
-	// is retryable. **400** for a request fault: a non-positive, non-finite or
-	// out-of-range bid, an unknown bid type, a platform with no bid-write
-	// capability wired, or a bid the campaign's platform refuses on its own
-	// minimum or maximum — the response names what it was. **503** when the
-	// platform could not be reached or did not confirm — including a throttled
-	// Meta or X write, which is never retried in-call; the row is unchanged.
-	// Setting the same bid twice converges, but verify the bid in the ad platform
-	// before retrying.
+	// per-click bid in the platform's own UI. A LinkedIn campaign this service
+	// creates sends no optimizationTargetType, which LinkedIn documents as
+	// defaulting to NONE (manual), so it is expected to pass — but the guard
+	// decides on what LinkedIn REPORTS, never on that expectation. On every
+	// adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not
+	// USD, and this service neither knows nor converts it; the LinkedIn adapter
+	// writes USD and refuses (409) a campaign whose bid is in any other or an
+	// unreported currency. Microsoft Advertising, Reddit, Meta, X and LinkedIn
+	// today: a campaign on any other platform is refused with 400. **409** when
+	// the change is refused BEFORE the platform is written, so nothing has
+	// changed: the campaign is unprovisioned; it belongs to a different ad account
+	// than the project's connection now resolves to, or does not record which ad
+	// account it was created under; its bid strategy is automated, a target, or
+	// unreported; or the bid could not be addressed (no recorded ad group, ad set
+	// or line item, one reporting another campaign or deleted, or one bidding in a
+	// unit other than `bid_type`). None is retryable. **400** for a request fault:
+	// a non-positive, non-finite or out-of-range bid, an unknown bid type, a
+	// platform with no bid-write capability wired, or a bid the campaign's
+	// platform refuses on its own minimum or maximum — the response names what it
+	// was. **503** when the platform could not be reached or did not confirm —
+	// including a throttled Meta, X or LinkedIn write, which is never retried
+	// in-call; the row is unchanged. Setting the same bid twice converges, but
+	// verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
@@ -922,8 +936,17 @@ type CampaignSettingsField struct {
 	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
 	// forward past UTC midnight (because the requested day had already begun at
 	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
-	// must render an unrecognised field name rather than dropping it.
+	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
+	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
+	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
+	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
+	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
+	// currency is not reported, never a bare number) and `objective_type` are
+	// upstream-only; a campaign reporting both a daily and a total budget, neither
+	// (as under a campaign group's shared budget), or a non-USD amount reads both
+	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
+	// consumer must render an unrecognised field name rather than dropping it.
 	Field string
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.

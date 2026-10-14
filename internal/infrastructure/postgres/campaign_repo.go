@@ -98,9 +98,21 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // violation.
 const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
 
-// platformCampaignUniqueIndex is 000020's index: one live row per upstream campaign id. Its
-// violation is what ErrPlatformCampaignAlreadyBound means.
+// platformCampaignUniqueIndex is 000020's index: one live row per upstream Google Ads campaign
+// id. Its violation is what ErrPlatformCampaignAlreadyBound means.
 const platformCampaignUniqueIndex = "uq_campaigns_platform_campaign_live"
+
+// linkedInCampaignUniqueIndex is 000042's index: one live row per LinkedIn campaign id (LinkedIn
+// ids are globally unique). Its violation means ErrPlatformCampaignAlreadyBound too.
+const linkedInCampaignUniqueIndex = "uq_campaigns_linkedin_campaign_live"
+
+// isPlatformCampaignBindingViolation reports whether err violates one of the per-provider
+// "one upstream campaign, one live row" indexes (000020 for Google Ads, 000042 for LinkedIn).
+// Each provider keeps its OWN index — see 000042 for why they are not one widened predicate —
+// and every one of them means the same thing to a caller.
+func isPlatformCampaignBindingViolation(err error) bool {
+	return isUniqueViolationOn(err, platformCampaignUniqueIndex) || isUniqueViolationOn(err, linkedInCampaignUniqueIndex)
+}
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
@@ -725,6 +737,14 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
+		// A dispatch whose platform resolved to an upstream campaign ANOTHER live row already
+		// binds (LinkedIn's create path reuses a same-name campaign in its group) violates a
+		// per-provider binding index. Named, so the orchestrator reports "already bound" rather
+		// than an anonymous persist failure; the caller still retains the claim.
+		if isPlatformCampaignBindingViolation(err) {
+			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s is already bound to another brief",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+		}
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
 	if eerr := enqueueCampaignIndex(ctx, tx, upserted, indexPayload); eerr != nil {
@@ -853,11 +873,11 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
 			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
 		}
-		if isUniqueViolationOn(err, platformCampaignUniqueIndex) {
-			// The other brief is deliberately not named, and neither is its project. The
-			// index is global (000020), so the conflicting row may belong to a project this
-			// caller cannot see — Google Ads is one shared upstream account across every
-			// foundation. Naming it would turn a 409 into a cross-project disclosure of
+		if isPlatformCampaignBindingViolation(err) {
+			// The other brief is deliberately not named, and neither is its project. Both
+			// binding indexes are global (000020 for Google Ads — one shared upstream account
+			// across every foundation; 000042 for LinkedIn — globally unique campaign ids), so
+			// the conflicting row may belong to a project this caller cannot see. Naming it would turn a 409 into a cross-project disclosure of
 			// which briefs exist elsewhere. The caller already knows the campaign id they
 			// asked for, which is the part they can act on.
 			return nil, fmt.Errorf("%w: %s campaign %s is already bound to a brief",

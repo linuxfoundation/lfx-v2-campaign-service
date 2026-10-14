@@ -384,6 +384,19 @@ var requiredIndexes = []requiredIndex{{
 	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
 		"(platform = 'google-ads'::text))",
 }, {
+	// at most one live campaign per LinkedIn campaign id (migration 000042) — LinkedIn's own
+	// binding guard, separate from 000020's because its reason differs: LinkedIn campaign ids
+	// are GLOBALLY unique (urn:li:sponsoredCampaign:{id} carries no account), so the global key
+	// is exact. Built without IF NOT EXISTS for 000020's reason, so this entry is again the
+	// boot-time half of the argument.
+	name:   "uq_campaigns_linkedin_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id"},
+	// Deparsed, the same shape as 000020's entry.
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'linkedin-ads'::text))",
+}, {
 	// at most one LIVE brief per (project, event slug, delivery type, stage). 000003 does not
 	// add this index alongside a constraint — it DROPs campaign_briefs_project_id_event_slug_key
 	// and replaces it, so from 000003 onward the index is the only thing there is. Absent, two

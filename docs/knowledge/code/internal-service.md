@@ -2064,11 +2064,13 @@ days here, UTC days there), so the two reads' totals are not directly comparable
 `twitter_audience_wire_example_test.go` (`TestPublishedTwitterAudienceExamplesArePossible`) walks
 every generated OpenAPI document and fails on an X audience example no response could contain.
 
-## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
+## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X, LinkedIn)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
-`ResolveRedditAdsCampaign` and `ResolveTwitterAdsCampaign` (`GET .../{platform}/campaign-ref`)
-map one platform campaign id to this service's own campaign + brief. All five are one helper,
+`ResolveRedditAdsCampaign`, `ResolveTwitterAdsCampaign` and `ResolveLinkedinAdsCampaign`
+(`GET .../{platform}/campaign-ref`; LinkedIn's id rule is `linkedin.ValidateCampaignID`, a positive
+int64 with no leading zero — stricter than the decoder's Pattern, which cannot state the range) map one platform campaign id to this service's own campaign + brief.
+All six are one helper,
 `resolvePlatformCampaignRef(ctx, projectID, platform, id, validateID)` in
 `connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any
 lookup), then the backend check (503 when not wired), then the project-scoped DB read (500 on a

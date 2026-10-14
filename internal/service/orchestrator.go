@@ -2080,6 +2080,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
 		// and the orphaned upstream id; keep the id in the result.
+		if errors.Is(uerr, domain.ErrPlatformCampaignAlreadyBound) {
+			// A GENUINE duplicate, not an unknown outcome: the platform resolved this dispatch
+			// to an upstream campaign another live brief already binds (LinkedIn reuses a
+			// same-name campaign in its group). The claim stays held — a retry would resolve
+			// to the same campaign again — and the job names the conflict instead of claiming
+			// a creation it cannot vouch for.
+			slog.ErrorContext(ctx, "dispatch resolved to an upstream campaign already bound to another brief — pending claim retained",
+				"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID)
+			res.Error = "the upstream campaign this dispatch resolved to is already bound to another brief; rename the campaign or unbind the other brief, then clear the pending claim"
+			res.CampaignID = campaign.PlatformCampaignID
+			return res
+		}
 		slog.ErrorContext(ctx, "persist campaign failed after upstream create — pending claim retained",
 			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr)
 		res.Error = "created upstream campaign but failed to record it; see logs"

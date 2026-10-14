@@ -3836,8 +3836,17 @@ type CampaignSettingsFieldResponseBody struct {
 	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
 	// forward past UTC midnight (because the requested day had already begun at
 	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
-	// must render an unrecognised field name rather than dropping it.
+	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
+	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
+	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
+	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
+	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
+	// currency is not reported, never a bare number) and `objective_type` are
+	// upstream-only; a campaign reporting both a daily and a total budget, neither
+	// (as under a campaign group's shared budget), or a non-USD amount reads both
+	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
+	// consumer must render an unrecognised field name rather than dropping it.
 	Field string `form:"field" json:"field" xml:"field"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
