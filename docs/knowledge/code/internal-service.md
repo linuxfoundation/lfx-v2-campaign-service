@@ -2087,8 +2087,11 @@ read's window subset and message (`resolveRedditAudienceWindow`), then
 before the scope lookup, empty scope → 200 empty without a read, `metricsCallTimeout`,
 `read_keywords`, nil result refused and nil rows normalised. Errors go through
 `classifyInsightsErrorFor` with `redditAdsKeywordInsights`; the existing
-`ErrKeywordReportScope*` arms give the 409s. Rows are `campaign_id`, optional `text`, counters and
-`ctr`, plus `row_count` and `truncated`. Tests: `reddit_keywords_test.go`.
+`ErrKeywordReportScope*` arms give the scope 409s, and the provenance arms the audience read uses
+give its provenance 409s — `ErrCampaignProvenanceMixed` first (both remedies), then
+`ErrCampaignProvenanceUnknown`, then `ErrCampaignAccountMismatch`. Rows are `campaign_id`, optional `text`, counters and
+`ctr`, plus `row_count` and `truncated`. Tests: `reddit_keywords_test.go` (including
+`TestGetRedditAdsKeywords_MixedProvenanceNamesBothRemedies`).
 
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X, LinkedIn)
 

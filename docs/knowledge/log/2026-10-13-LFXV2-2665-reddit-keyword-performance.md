@@ -20,9 +20,14 @@ Reddit Ads API v3 `KEYWORD` report breakdown, top 50 by impressions with `trunca
 - Chart route regex, RuleSet entry and parity rows for `reddit-ads/keywords`; API catalog row; the
   keyword-targeting concept now points at this read instead of saying there are no per-keyword
   metrics.
-- Built on the PR #306 fixes: the read refuses rows with no recorded creation account, spends
-  every request attempt from the ad account's reporting budget (sharing the audience read's
-  insight allowance), and has its own single-flight guard with a 60 s success cache.
+- Built on PR #306 as merged to main: the read refuses rows with no recorded creation account,
+  and a scope with both a foreign and an unrecorded row is `ErrCampaignProvenanceMixed` (409
+  naming both remedies, via the shared insights classifier); every request attempt takes a slot in
+  the ad account's reporting budget (sharing the audience read's insight allowance) right before
+  the send, after the token refresh, and a pre-send dial failure releases it; the chart's
+  unconditional single-replica guard covers it; and it has its own single-flight guard with a 60 s
+  success cache. Tests: the keyword read's Mixed-provenance cases in `reddit_keywords_test.go`
+  (dispatch and service) and `TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts`.
 - Verified only against Reddit's published schema, not a live account.
 - `kubernetes/httproute.md`, `kubernetes/ruleset.md` and `kubernetes/deployment.md` list
   `reddit-ads/keywords` and say `REDDIT_METRICS_ENABLED` gates the keyword read too.

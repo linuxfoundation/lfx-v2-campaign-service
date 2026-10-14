@@ -27,8 +27,9 @@ import (
 //   - reportBudgetTotal (45) of Reddit's 60 for ALL report attempts. The 15 left over are headroom
 //     for what this ledger cannot see: Reddit Ads Manager and other tools on the same account.
 //   - reportBudgetInsights (24) of those 45 for the project-scoped insight reads (the audience and
-//     keyword performance reads, which share readBreakdownReports; marked with withInsightsReports). So an insight read can never take more than 24 of the 45,
-//     and the metrics read and account monitor always keep at least 21.
+//     keyword performance reads, which share readBreakdownReports; marked with
+//     withInsightsReports). So an insight read can never take more than 24 of the 45, and the
+//     metrics read and account monitor always keep at least 21.
 //
 // An attempt that finds no slot waits for the oldest one to expire — but only if that happens
 // before its context's deadline. If it cannot, it fails at once with ErrReportBudgetExhausted rather

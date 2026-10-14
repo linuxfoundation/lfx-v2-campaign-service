@@ -39,9 +39,17 @@ From Reddit's published Ads API v3 OpenAPI document (read as described in
   every request attempt — each page, each 429 retry — takes a slot in the ad account's per-process
   reporting budget (`report_budget.go`), and this read's attempts count against the same 24-slot
   insight allowance as the audience read (both go through `readBreakdownReports`, which marks its
-  context `withInsightsReports`). No slot before the deadline: the read fails whole (503).
-- **Strict provenance**, as the audience read: a campaign that records no creating account is
-  refused (409, re-dispatch) before Reddit is contacted.
+  context `withInsightsReports`). The slot is taken in the client's shared send path
+  (`requestWithThrottleRetryCounted`): after the token refresh and the request build, immediately
+  before the send, so an attempt that is never sent (cancelled context, failed refresh) spends
+  none, and a pre-send dial failure (DNS, connection refused) hands its slot back. No slot before
+  the deadline: the read fails whole (503). The ledger is per process, so the chart refuses more
+  than one replica outright (`templates/deployment.yaml`, unconditionally, because the ungated
+  account monitor spends the same budget).
+- **Strict provenance**, as the audience read (the same `redditScopeForAccount`): a campaign that
+  records no creating account is refused (409, re-dispatch), one created under another account is
+  refused (409, reconcile), and a scope with BOTH is `ErrCampaignProvenanceMixed` joined with both
+  sentinels — a 409 naming both remedies — all before Reddit is contacted.
 - **Identical concurrent reads share one upstream read** (`d.keywords`, a `redditReportGuard`), and a
   success is reused for 60 s within the same UTC day.
 - **Rows per (campaign, keyword), not summed.** Reddit's only keyword action is removing a keyword
@@ -58,7 +66,7 @@ From Reddit's published Ads API v3 OpenAPI document (read as described in
 
 [Keyword Targeting on Reddit and X](keyword-targeting-reddit-x.md) is where a Reddit keyword is
 read and removed (`get-keyword-targeting` / `remove-keyword-targeting`, by exact text, on one
-campaign). A row here can point an operator at a keyword to look at there; it is not itself a
+campaign) and where a negative keyword is added (`add-negative-keywords`). A row here can point an operator at a keyword to look at there; it is not itself a
 handle, and the report's text has not been verified, against a live account, to equal the
 targeting entry byte for byte.
 

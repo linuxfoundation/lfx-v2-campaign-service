@@ -148,6 +148,27 @@ func TestGetRedditAdsKeywords_ErrorMapping(t *testing.T) {
 	}
 }
 
+// The Mixed provenance arm applies to the keyword read as to the audience read: a scope with both
+// faults is a 409 naming both remedies, not either single-fault text, and never the wrapped detail.
+func TestGetRedditAdsKeywords_MixedProvenanceNamesBothRemedies(t *testing.T) {
+	err := fmt.Errorf("1 foreign and 1 unrecorded CANARY: %w",
+		errors.Join(domain.ErrCampaignProvenanceMixed, domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	_, got := redditKeywordService(t, &redditKeywordDispatcher{err: err}, "t3_c").
+		GetRedditAdsKeywords(context.Background(), &conn.GetRedditAdsKeywordsPayload{ProjectID: "cncf"})
+	ce, ok := got.(*conn.ConflictError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want a 409", got, got)
+	}
+	for _, want := range []string{"different ad account", "do not record which ad account", "re-dispatch the unrecorded campaigns", "reconcile"} {
+		if !strings.Contains(ce.Message, want) {
+			t.Errorf("message %q does not contain %q", ce.Message, want)
+		}
+	}
+	if strings.Contains(ce.Message, "CANARY") {
+		t.Errorf("message echoes the wrapped detail: %q", ce.Message)
+	}
+}
+
 func TestGetRedditAdsKeywords_DisabledIs400EvenWithEmptyScope(t *testing.T) {
 	for name, scope := range map[string][]string{"empty scope": nil, "with campaigns": {"t3_c"}} {
 		t.Run(name, func(t *testing.T) {

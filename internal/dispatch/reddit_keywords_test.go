@@ -125,6 +125,33 @@ func TestReddit_ReadRedditKeywordPerformance_UnknownProvenanceRefused(t *testing
 	}
 }
 
+// A scope with BOTH a foreign-account campaign and one recording no account reports both faults
+// on the keyword read too (ErrCampaignProvenanceMixed joined with both sentinels), in either order,
+// before Reddit is contacted.
+func TestReddit_ReadRedditKeywordPerformance_ForeignAndUnknownReportsBoth(t *testing.T) {
+	foreign := model.ProjectCampaignScope{PlatformCampaignID: "t3_f", Result: json.RawMessage(`{"accountId":"t2_other"}`)}
+	unknown := model.ProjectCampaignScope{PlatformCampaignID: "t3_old"}
+	for name, scope := range map[string][]model.ProjectCampaignScope{
+		"foreign first": append(redditScope("t3_c"), foreign, unknown),
+		"unknown first": {unknown, foreign},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(constants.EnvRedditMetricsEnabled, "true")
+			s := newRedditAudienceServer(t)
+			_, err := s.dispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}).
+				ReadRedditKeywordPerformance(context.Background(), "proj", model.ProviderRedditAds, model.MetricsWindowLast30Days, scope)
+			for _, want := range []error{domain.ErrCampaignProvenanceMixed, domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch} {
+				if !errors.Is(err, want) {
+					t.Errorf("error = %v, want it to match %v", err, want)
+				}
+			}
+			if n := len(s.requests()); n != 0 {
+				t.Errorf("Reddit was contacted %d time(s)", n)
+			}
+		})
+	}
+}
+
 // The keyword read spends from the same insight allowance as the audience read: on a shared ledger
 // with room for the audience read's 3 attempts and nothing more, the keyword read is refused whole.
 func TestReddit_ReadRedditKeywordPerformance_SharesTheInsightBudget(t *testing.T) {
