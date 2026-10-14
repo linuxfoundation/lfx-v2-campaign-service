@@ -23,3 +23,10 @@ that all read `fetch_failed: false`. The example is now 0, and
 `TestPublishedAccountMonitorTotalsExamplesArePossible` checks each response example's totals
 against the campaigns array beside them — `unmeasured_campaigns` must equal the number of
 `fetch_failed=true` rows — rather than only bounding it by `campaign_count`.
+
+Follow-up (#319, `campaign_count` example): `campaign_count` carried `Example(14)` beside
+generated campaigns arrays of 2–4 rows (Goa picked a different array length per method). The
+`campaigns` attribute of `AccountMonitor` now has an explicit two-row example: neither row is
+`fetch_failed`, and together they sum to the totals example's spend, impressions, clicks and
+conversions. `campaign_count` is now `Example(2)`, and the same test also requires
+`campaign_count` to equal `len(campaigns)` wherever both appear.

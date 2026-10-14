@@ -1216,14 +1216,14 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 	// is the honest answer when no row in the sum measured conversions, and a 0 there would be
 	// the aggregate restating a measurement none of the rows made.
 	Attribute("conversions", Float64, "Account-wide conversions over the window, summed over the campaigns that reported a conversion measurement. ABSENT when none of them did — not a measured 0.", func() { Example(212.5) })
-	Attribute("campaign_count", Int, "How many campaigns the totals reflect: the length of the campaigns array these totals sum.", func() { Example(14) })
+	Attribute("campaign_count", Int, "How many campaigns the totals reflect: the length of the campaigns array these totals sum.", func() { Example(2) })
 	// Required and never omitted: 0 is a statement ("every row was read"), not an absence. A
 	// count rather than a boolean so a renderer can say how much of the account is missing.
 	Attribute("unmeasured_campaigns", Int, "How many of the campaign_count campaigns have fetch_failed=true. The totals include those rows at what they carry — zero for a row whose metrics could not be read — so a non-zero value means the totals may UNDERSTATE the account, by up to this many campaigns' delivery. An upper bound rather than an exact count of rows missing from the sum: fetch_failed also marks a row whose budget or flight alone was unreadable while its metrics were read and summed. pacing_unknown=true alone does not count a row (every fetch_failed row also has it, but most pacing_unknown rows were read in full). 0 means every campaign in the sum was fully read.", func() {
 		Minimum(0)
-		// 0, not a non-zero count: Goa composes every account-monitor response example from
-		// attribute examples, and the campaign rows beside these totals all carry fetch_failed's
-		// example (false), so any other value here would publish a count no row backs.
+		// 0, not a non-zero count: every campaign row in the AccountMonitor campaigns example
+		// beside these totals has fetch_failed=false, so any other value here would publish a
+		// count no row backs.
 		Example(0)
 	})
 	Required("spend", "impressions", "clicks", "campaign_count", "unmeasured_campaigns")
@@ -1244,7 +1244,32 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 var AccountMonitor = Type("account-monitor", func() {
 	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
 	Attribute("days", Int, "The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X's 90-day cap by an hour.", func() { Example(30) })
-	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.")
+	// An explicit example, not one composed from AccountMonitorCampaign's attribute examples:
+	// Goa would otherwise pick a different array length per method, and no single
+	// totals.campaign_count example could then equal len(campaigns) in every response. The two
+	// rows sum to the totals example (spend, impressions, clicks, conversions), neither is
+	// fetch_failed (unmeasured_campaigns 0), and the underspending row is the one the
+	// action-item example names.
+	Attribute("campaigns", ArrayOf(AccountMonitorCampaign), "Every campaign visible on the account, with the rule engine's per-row pacing output attached.", func() {
+		Example([]map[string]any{
+			{
+				"platform_campaign_id": "24183781329", "name": "KubeCon NA 2026 - Search", "status": "ENABLED",
+				"spend": 482.13, "impressions": 48200, "clicks": 3110, "ctr": 6.45, "conversions": 12.5,
+				"budget_day": 150, "total_budget": 0, "start_date": "2026-08-01", "end_date": "2026-11-30",
+				"pacing_unknown": false, "is_search_channel": true, "fetch_failed": false,
+				"pacing_pct": 42, "pacing_label": "underspending",
+				"campaign_url": "https://ads.google.com/aw/campaigns?campaignId=24183781329",
+			},
+			{
+				"platform_campaign_id": "24183781330", "name": "KubeCon NA 2026 - Brand", "status": "ENABLED",
+				"spend": 1360.42, "impressions": 136000, "clicks": 8310, "ctr": 6.11, "conversions": 200.0,
+				"budget_day": 0, "total_budget": 5000, "start_date": "2026-08-01", "end_date": "2026-11-30",
+				"pacing_unknown": false, "is_search_channel": true, "fetch_failed": false,
+				"pacing_pct": 87, "pacing_label": "normal",
+				"campaign_url": "https://ads.google.com/aw/campaigns?campaignId=24183781330",
+			},
+		})
+	})
 	Attribute("action_items", ArrayOf(AccountMonitorActionItem), "The rule engine's findings across the account's campaigns.")
 	Attribute("totals", AccountMonitorTotals)
 	Attribute("metrics_as_of", String, "Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {

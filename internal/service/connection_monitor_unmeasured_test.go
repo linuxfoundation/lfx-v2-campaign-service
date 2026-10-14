@@ -279,9 +279,9 @@ func TestMonitorMicrosoftAdsAccount_DispatcherDecodeClassIsWarned(t *testing.T) 
 // Every published ad-monitor totals example is a response the service could produce:
 // unmeasured_campaigns is present, non-negative, and no more than campaign_count — the rows it
 // counts are a subset of the rows campaign_count counts. Where the totals sit beside the campaigns
-// array they sum (every account-monitor response example), unmeasured_campaigns must also equal
-// the number of rows in THAT array with fetch_failed=true: a bound alone let the examples publish
-// a non-zero count beside campaign rows that all read fetch_failed=false.
+// array they sum (every account-monitor response example), campaign_count must also equal that
+// array's length and unmeasured_campaigns the number of its rows with fetch_failed=true: bounds
+// alone let the examples publish counts that no row beside them backs.
 func TestPublishedAccountMonitorTotalsExamplesArePossible(t *testing.T) {
 	for _, spec := range hubspotMonitorSpecs {
 		t.Run(spec, func(t *testing.T) {
@@ -324,9 +324,14 @@ func TestPublishedAccountMonitorTotalsExamplesArePossible(t *testing.T) {
 }
 
 // checkUnmeasuredAgainstCampaigns pins one response example's totals to the campaigns array it
-// sits beside: unmeasured_campaigns counts exactly the rows that say fetch_failed=true.
+// sits beside: campaign_count is the array's length, and unmeasured_campaigns counts exactly the
+// rows that say fetch_failed=true.
 func checkUnmeasuredAgainstCampaigns(t *testing.T, path string, totals map[string]any, rows []any) {
 	t.Helper()
+	if cc, ok := totals["campaign_count"].(float64); !ok || cc != float64(len(rows)) {
+		t.Errorf("%s: totals.campaign_count = %v, but the campaigns array beside it has %d rows",
+			path, totals["campaign_count"], len(rows))
+	}
 	failed := 0
 	for _, r := range rows {
 		if row, ok := r.(map[string]any); ok && row["fetch_failed"] == true {

@@ -10734,47 +10734,29 @@ definitions:
                       impressions: 48200
                       is_search_channel: true
                       name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
-                      pacing_pct: 87
+                      pacing_label: underspending
+                      pacing_pct: 42
                       pacing_unknown: false
                       platform_campaign_id: "24183781329"
                       spend: 482.13
                       start_date: "2026-08-01"
                       status: ENABLED
-                      total_budget: 5000
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
+                      total_budget: 0
+                    - budget_day: 0
+                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
+                      clicks: 8310
+                      conversions: 200
+                      ctr: 6.11
                       end_date: "2026-11-30"
                       fetch_failed: false
-                      impressions: 48200
+                      impressions: 136000
                       is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
+                      name: KubeCon NA 2026 - Brand
+                      pacing_label: normal
                       pacing_pct: 87
                       pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
-                      start_date: "2026-08-01"
-                      status: ENABLED
-                      total_budget: 5000
-                    - budget_day: 150
-                      campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                      clicks: 3110
-                      conversions: 12.5
-                      ctr: 6.45
-                      end_date: "2026-11-30"
-                      fetch_failed: false
-                      impressions: 48200
-                      is_search_channel: true
-                      name: KubeCon NA 2026 - Search
-                      pacing_label: constrained
-                      pacing_pct: 87
-                      pacing_unknown: false
-                      platform_campaign_id: "24183781329"
-                      spend: 482.13
+                      platform_campaign_id: "24183781330"
+                      spend: 1360.42
                       start_date: "2026-08-01"
                       status: ENABLED
                       total_budget: 5000
@@ -10828,47 +10810,29 @@ definitions:
                   impressions: 48200
                   is_search_channel: true
                   name: KubeCon NA 2026 - Search
-                  pacing_label: constrained
-                  pacing_pct: 87
+                  pacing_label: underspending
+                  pacing_pct: 42
                   pacing_unknown: false
                   platform_campaign_id: "24183781329"
                   spend: 482.13
                   start_date: "2026-08-01"
                   status: ENABLED
-                  total_budget: 5000
-                - budget_day: 150
-                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                  clicks: 3110
-                  conversions: 12.5
-                  ctr: 6.45
+                  total_budget: 0
+                - budget_day: 0
+                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781330
+                  clicks: 8310
+                  conversions: 200
+                  ctr: 6.11
                   end_date: "2026-11-30"
                   fetch_failed: false
-                  impressions: 48200
+                  impressions: 136000
                   is_search_channel: true
-                  name: KubeCon NA 2026 - Search
-                  pacing_label: constrained
+                  name: KubeCon NA 2026 - Brand
+                  pacing_label: normal
                   pacing_pct: 87
                   pacing_unknown: false
-                  platform_campaign_id: "24183781329"
-                  spend: 482.13
-                  start_date: "2026-08-01"
-                  status: ENABLED
-                  total_budget: 5000
-                - budget_day: 150
-                  campaign_url: https://ads.google.com/aw/campaigns?campaignId=24183781329
-                  clicks: 3110
-                  conversions: 12.5
-                  ctr: 6.45
-                  end_date: "2026-11-30"
-                  fetch_failed: false
-                  impressions: 48200
-                  is_search_channel: true
-                  name: KubeCon NA 2026 - Search
-                  pacing_label: constrained
-                  pacing_pct: 87
-                  pacing_unknown: false
-                  platform_campaign_id: "24183781329"
-                  spend: 482.13
+                  platform_campaign_id: "24183781330"
+                  spend: 1360.42
                   start_date: "2026-08-01"
                   status: ENABLED
                   total_budget: 5000
@@ -10878,7 +10842,7 @@ definitions:
             metrics_window_end: "2026-10-05"
             metrics_window_start: "2026-09-06"
             totals:
-                campaign_count: 14
+                campaign_count: 2
                 clicks: 11420
                 conversions: 212.5
                 impressions: 184200
@@ -11091,7 +11055,7 @@ definitions:
             campaign_count:
                 type: integer
                 description: 'How many campaigns the totals reflect: the length of the campaigns array these totals sum.'
-                example: 14
+                example: 2
                 format: int64
             clicks:
                 type: integer
@@ -11120,7 +11084,7 @@ definitions:
                 format: int64
                 minimum: 0
         example:
-            campaign_count: 14
+            campaign_count: 2
             clicks: 11420
             conversions: 212.5
             impressions: 184200
