@@ -5,6 +5,7 @@ package meta
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -671,5 +672,61 @@ func TestListAccountCampaigns_NullCampaignBudgetIsUnreadable(t *testing.T) {
 				t.Errorf("a null campaign budget sent the campaign to the ad-set fallback: %v", got)
 			}
 		})
+	}
+}
+
+// The campaign-list body passes identityjson before it is decoded (PR #316 review):
+// encoding/json keeps the LAST of a duplicated key, so a recent updated_time followed by an old
+// one decoded as the old one and slipped past the budget-edit guard, and two budgets decoded as
+// whichever came last. A refused body fails the read exactly as the currency read's refusal does.
+func TestListAccountCampaigns_CampaignListDuplicateKeyIsRefused(t *testing.T) {
+	for _, tc := range []struct{ name, row string }{
+		{"duplicate updated_time", `{"id":"111","name":"A","status":"ACTIVE","daily_budget":"5000","updated_time":"2026-10-10T00:00:00+0000","updated_time":"2025-01-01T00:00:00+0000"}`},
+		{"duplicate daily_budget", `{"id":"111","name":"A","status":"ACTIVE","daily_budget":"500000","daily_budget":"5000",` + settledUpdate + `}`},
+		{"duplicate data key", ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := monitorList(tc.row)
+			if tc.row == "" {
+				body = `{"data":[],"data":[` + monitorCampaign("111", StatusActive, `"daily_budget":"5000"`) + `],"paging":{}}`
+			}
+			srv, _ := monitorServer(t, monitorFixture{
+				campaigns: []string{body},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+			})
+			_, err := newMonitorClient(srv).ListAccountCampaigns(context.Background(), "act_123", 30)
+			var te *transportError
+			if err == nil || !errors.As(err, &te) {
+				t.Fatalf("err = %v, want the campaign list refused as a transportError (like the currency read)", err)
+			}
+		})
+	}
+}
+
+// Insights is read BEFORE the campaign list (PR #316 review): the campaign list is the budget
+// and updated_time snapshot and must be the later one, so a CBO budget edited between the two
+// calls shows in that read's updated_time. Read first, it showed in neither. The ad-set read,
+// when needed, comes last.
+func TestListAccountCampaigns_InsightsBeforeBudgetSnapshot(t *testing.T) {
+	_, rec := listMonitorRows(t, monitorFixture{
+		campaigns: []string{monitorList(monitorCampaign("111", StatusActive, `"daily_budget":"5000"`), monitorCampaign("222", StatusActive, ""))},
+		insights:  []string{insightsFor("111", "222")},
+		currency:  usdAccount,
+		adSets:    []string{monitorList(monitorAdSetRow("9001", "222", "ACTIVE", `"daily_budget":"1000"`))},
+	})
+	var order []string
+	for _, u := range rec.all() {
+		switch {
+		case strings.Contains(u, "/insights"):
+			order = append(order, "insights")
+		case strings.Contains(u, "/campaigns"):
+			order = append(order, "campaigns")
+		case strings.Contains(u, "/adsets"):
+			order = append(order, "adsets")
+		}
+	}
+	if strings.Join(order, ",") != "insights,campaigns,adsets" {
+		t.Errorf("request order = %v, want insights, then the campaign list, then the ad sets", order)
 	}
 }

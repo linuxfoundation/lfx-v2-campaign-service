@@ -745,6 +745,17 @@ client's injected clock, rather than the BFF's hardcoded `date_preset=last_30d`.
 departures, the credential-scoping (`resolveOwned`, no system-account fallback), and
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
 
+**Read order and the campaign list (PR #316 review).** `ListAccountCampaigns` reads Insights
+FIRST, then the campaign list, then the account currency, then (only if needed) the ad sets. The
+campaign list is the budget and `updated_time` snapshot and must be the LATER read: taken before
+Insights, a CBO budget edited between the two calls showed neither in the budget nor in
+`updated_time`. Nothing needs the ids first — the Insights read is account-level and unfiltered,
+joined by `campaign_id` afterwards. Every campaign-list page now goes through `getChecked`
+(`identityjson.Check` on the raw bytes before decoding), because `encoding/json` keeps the LAST
+of a duplicated key: a recent `updated_time` followed by an old one would slip past the edit
+guard. A refused or undecodable page is a `transportError` and fails the read, as the currency
+read's refusal does.
+
 **Budgets: where the campaign keeps them, in the account currency (LFXV2-2665).** The read makes
 one `GET /{act}?fields=currency` (via `accountCurrency`, identity-checked) per request and converts
 every minor-unit budget with that currency's own offset (`minorToWhole`); the BFF-ported

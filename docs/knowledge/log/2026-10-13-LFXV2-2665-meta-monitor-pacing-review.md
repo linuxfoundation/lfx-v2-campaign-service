@@ -88,6 +88,13 @@ the row is `pacing_unknown`, never a false alert.
 - **Catalog: the HubSpot account-monitor row restored.** A merge resolution had dropped main's
   `GET .../connection-hubspot/account-monitor?days=` row from `docs/api-catalog.md`; it is back
   verbatim. A row-by-row diff against `origin/main` found no other lost or reverted row.
+- **The budget snapshot is the later read, and identity-checked.** `ListAccountCampaigns` read
+  the campaign list (budgets + `updated_time`) before Insights, so a CBO budget edited between the
+  two calls was invisible; Insights is now read first (it is account-level and needs no campaign
+  ids), then the campaign list, currency and ad sets. Every campaign-list page passes
+  `identityjson.Check` before decoding — a duplicated `updated_time` or budget used to decode as
+  whichever came last — and a refused page fails the read as the currency read's does. The
+  dispatcher account-scope tests now expect the Insights path as the first request.
 - **`bidToMinorUnits` overflow guard restored.** A scaled bid past the int64 range is refused
   exactly as `budgetToMinorUnits` refuses it, instead of converting to an implementation-defined
   (possibly negative) minor-unit bid. (First a float comparison against

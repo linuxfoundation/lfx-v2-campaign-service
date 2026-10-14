@@ -3227,7 +3227,7 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		stored    *string // nil keeps the fixture's act_777
 		requested string
 		wantErr   error  // set on the arms that must be refused
-		wantPath  string // set on the permitted arms: the upstream path fragment reached
+		wantPath  string // set on the permitted arms: the FIRST upstream path reached (the Insights read since PR #316 put it before the campaign list)
 	}{
 		{
 			name:      "a different account is refused as a request mismatch",
@@ -3243,13 +3243,13 @@ func TestMeta_ListAccountCampaignMetrics_AccountScope(t *testing.T) {
 		{
 			name:      "the connection's own account reaches upstream as that account",
 			requested: "act_777",
-			wantPath:  "/act_777/campaigns",
+			wantPath:  "/act_777/insights",
 		},
 		{
 			name:      "whitespace around the STORED account does not make a matching request a mismatch",
 			stored:    strPtr("  act_777  "),
 			requested: "act_777",
-			wantPath:  "/act_777/campaigns",
+			wantPath:  "/act_777/insights",
 		},
 	}
 
@@ -3394,8 +3394,8 @@ func TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority(t *testing.T) 
 		wantPath  string // permitted: the upstream path that must be reached
 		wantErr   error  // refused: the sentinel
 	}{
-		{name: "tlf reads its own account", projectID: "tlf", requested: tlfAccount, wantPath: "/" + tlfAccount + "/campaigns"},
-		{name: "lf-events reads its own account", projectID: "lf-events", requested: eventsAccount, wantPath: "/" + eventsAccount + "/campaigns"},
+		{name: "tlf reads its own account", projectID: "tlf", requested: tlfAccount, wantPath: "/" + tlfAccount + "/insights"},
+		{name: "lf-events reads its own account", projectID: "lf-events", requested: eventsAccount, wantPath: "/" + eventsAccount + "/insights"},
 		{name: "tlf is refused lf-events' account", projectID: "tlf", requested: eventsAccount, wantErr: domain.ErrAccountNotManagedByConnection},
 		{name: "lf-events is refused tlf's account", projectID: "lf-events", requested: tlfAccount, wantErr: domain.ErrAccountNotManagedByConnection},
 		// Meta ids come in two equivalent forms and this service treats them as one
@@ -3404,7 +3404,7 @@ func TestMeta_ListAccountCampaignMetrics_ProjectRowIsTheAuthority(t *testing.T) 
 		// must be permitted, not refused. Raw equality refused it; found by Cursor Bugbot
 		// on PR #242. The reverse pair (act_ row, bare-digit request) is not testable
 		// here: ValidateAccountID rejects the request before the guard runs.
-		{name: "a legacy bare-digit row matches the canonical act_ request", projectID: "legacy", requested: "act_777", wantPath: "/act_777/campaigns"},
+		{name: "a legacy bare-digit row matches the canonical act_ request", projectID: "legacy", requested: "act_777", wantPath: "/act_777/insights"},
 	}
 
 	for _, tc := range cases {

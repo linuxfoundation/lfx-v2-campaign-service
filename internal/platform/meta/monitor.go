@@ -114,6 +114,17 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
 
+	// Insights FIRST, then the budgets (PR #316 review). The campaign list is the budget and
+	// updated_time snapshot, and it must be the LATER one: read before Insights, a CBO budget
+	// edited between the two calls showed neither in the budget (old snapshot) nor in
+	// updated_time, and was paced as unedited. Read after, any edit up to the moment the budget
+	// is taken shows in that same read's updated_time — as the ad-set fallback, read last,
+	// already did. Nothing needs the campaign ids first: the Insights read is account-level
+	// (level=campaign, unfiltered), and rows are joined by campaign_id afterwards.
+	insightsByID, failedInsightIDs, window, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
+	if err != nil {
+		return nil, err
+	}
 	campaigns, err := c.fetchAccountCampaignList(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -127,10 +138,6 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		return nil, fmt.Errorf("list account campaigns: %w", err)
 	}
 	offset, currencyKnown := currencyOffsetFor(currency)
-	insightsByID, failedInsightIDs, window, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
-	if err != nil {
-		return nil, err
-	}
 
 	editCutoff, cutoffOK := budgetEditCutoff(window.since)
 	rows := make([]AccountCampaignRow, 0, len(campaigns))
@@ -302,6 +309,15 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
+		// Every page passes identityjson.Check as raw bytes BEFORE it is decoded, like the
+		// currency and ad-set reads (PR #316 review): encoding/json keeps the LAST of a
+		// duplicated key, so a recent updated_time followed by an old one — or two budgets —
+		// would decode to whichever came last and slip past the edit guard. A refused body is
+		// mapped as the currency read maps one (getChecked): a transportError, failing the read.
+		raw, err := c.getChecked(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("list account campaigns: %w", err)
+		}
 		var resp struct {
 			Data *[]struct {
 				ID     string `json:"id"`
@@ -323,8 +339,8 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				Next string `json:"next"`
 			} `json:"paging"`
 		}
-		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-			return nil, fmt.Errorf("list account campaigns: %w", err)
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			return nil, fmt.Errorf("list account campaigns: %w", &transportError{Method: http.MethodGet, Path: path, Err: errors.New("the response is not a campaign list of the expected shape")})
 		}
 		if resp.Data == nil {
 			return nil, &transportError{
