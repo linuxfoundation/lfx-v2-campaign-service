@@ -972,6 +972,23 @@ type GetMicrosoftAdsAudienceResponseBody struct {
 	DataIncomplete bool `form:"data_incomplete" json:"data_incomplete" xml:"data_incomplete"`
 }
 
+// GetRedditAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body.
+type GetRedditAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as UTC days (the Reddit campaign
+	// metrics read's range for the same window)
+	Window string `form:"window" json:"window" xml:"window"`
+	// Every bucket across the three breakdowns, discriminated by `dimension`.
+	// Ordered by dimension (gender, country, community), then impressions
+	// descending, then value (a value-less bucket last among equals).
+	Buckets []*RedditAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -4738,6 +4755,79 @@ type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetRedditAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetRedditAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetRedditAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetRedditAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetRedditAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetRedditAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetRedditAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetRedditAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetRedditAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -6225,6 +6315,30 @@ type MicrosoftAdsAudienceBucketResponseBody struct {
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
 }
 
+// RedditAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type RedditAdsAudienceBucketResponseBody struct {
+	// Which Reddit report breakdown this bucket belongs to: gender (GENDER),
+	// country (COUNTRY) or community (COMMUNITY, the subreddit)
+	Dimension string `form:"dimension" json:"dimension" xml:"dimension"`
+	// Reddit's breakdown value, verbatim (a gender, a country code or a subreddit
+	// name). ABSENT when Reddit reported an explicit null for this dimension:
+	// traffic Reddit did not attribute to any value, kept so the dimension's
+	// buckets still total its traffic. A value outside a conservative charset
+	// fails the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window (Reddit's SPEND) in micro-units of the ad account's
+	// own currency. This service performs no FX conversion and does not read the
+	// currency.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
 // CampaignRefResponseBody is used to define fields on response body types.
 type CampaignRefResponseBody struct {
 	// This service's campaign id, as the mutation routes take it.
@@ -7258,6 +7372,29 @@ func NewGetMicrosoftAdsAudienceResponseBody(res *lfxv2campaignserviceconnections
 		}
 	} else {
 		body.Buckets = []*MicrosoftAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceResponseBody builds the HTTP response body from the
+// result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.RedditAdsAudience) *GetRedditAdsAudienceResponseBody {
+	body := &GetRedditAdsAudienceResponseBody{
+		Window:      res.Window,
+		BucketCount: res.BucketCount,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*RedditAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsRedditAdsAudienceBucketToRedditAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*RedditAdsAudienceBucketResponseBody{}
 	}
 	return body
 }
@@ -11396,6 +11533,84 @@ func NewGetMicrosoftAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewGetRedditAdsAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetRedditAdsAudienceBadRequestResponseBody {
+	body := &GetRedditAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetRedditAdsAudienceConflictResponseBody {
+	body := &GetRedditAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-reddit-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetRedditAdsAudienceServiceUnavailableResponseBody {
+	body := &GetRedditAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-reddit-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetRedditAdsAudienceInternalServerErrorResponseBody {
+	body := &GetRedditAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetRedditAdsAudienceNotFoundResponseBody {
+	body := &GetRedditAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetRedditAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetRedditAdsAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetRedditAdsAudienceUnauthorizedResponseBody {
+	body := &GetRedditAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewResolveGoogleAdsCampaignBadRequestResponseBody builds the HTTP response
 // body from the result of the "resolve-google-ads-campaign" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -13337,6 +13552,17 @@ func NewGetMicrosoftAdsKeywordsPayload(projectID string, window *string, bearerT
 // endpoint payload.
 func NewGetMicrosoftAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload {
 	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetRedditAdsAudiencePayload builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-audience endpoint payload.
+func NewGetRedditAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload{}
 	v.ProjectID = projectID
 	v.Window = window
 	v.BearerToken = bearerToken
