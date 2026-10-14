@@ -31,7 +31,13 @@ a unique one.
 deploying, check with e.g. `SELECT platform, platform_campaign_id, count(*) FROM campaigns WHERE
 status <> 'deleted' AND platform_campaign_id IS NOT NULL AND platform IN ('meta-ads',
 'microsoft-ads','reddit-ads','twitter-ads') GROUP BY 1,2 HAVING count(*) > 1` (refine by account
-for the account-keyed three); soft-delete one row of each duplicate, drop any INVALID index, re-run.
+for the account-keyed three). If a build does fail, Migrate leaves that version DIRTY and every
+later boot refuses with `ErrDirty`; recover in order: (1) soft-delete one row of each duplicate;
+(2) `DROP INDEX CONCURRENTLY` the INVALID index; (3) force the version back to its predecessor —
+42, 43, 44 or 45 for 000043-000046 — with the golang-migrate CLI against the same database:
+`migrate -path internal/infrastructure/postgres/migrations -database "$DATABASE_URL" force <N-1>`
+(one version back replays only that single-statement migration); (4) restart the service so its
+boot Migrate applies the version again.
 
 Follow-up (thread on #318): the campaign-ref methods' published `matches` cardinality is now per
 provider — `localCampaignRefMethod` takes the sentence per call. Meta and LinkedIn say at most
@@ -54,3 +60,11 @@ rollback-to, reading the probe — a role without TEMPORARY, a read-only default
 logs one WARN with the step and error class and falls back to the stored-text comparison for the
 remaining entries, so it adds no new way for boot to fail; a genuinely different definition is
 still refused either way.
+
+#328 review round: the recovery steps above now include the force-back step (in the log and all
+four migration comments); the optional deparse probe runs on its OWN connection under its own 3s
+budget with `SET LOCAL statement_timeout`/`lock_timeout`, BEFORE the required checks' 10s deadline
+starts, so a slow server or a held lock degrades it to the text comparison instead of failing boot
+(`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`). The OpenAPI specs (and their kodata
+copies) already carried the per-provider cardinality text from 9c2a81b8e; `make apigen` produces
+no diff.

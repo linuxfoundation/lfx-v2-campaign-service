@@ -225,6 +225,11 @@ const invalidIndexQuery = `SELECT c.relname
 // starts against a schema whose lease index is invalid must refuse rather than quietly
 // accept the duplicate builds the index was added to prevent.
 func checkNoInvalidIndexes(dsn string) error {
+	// The OPTIONAL deparse probe runs FIRST, on its OWN connection under its OWN short budget,
+	// so however slow it is (a slow server, a held lock) it cannot spend the REQUIRED checks'
+	// deadline below, which only starts once the probe has returned. See probeRequiredIndexDeparse.
+	expected := probeRequiredIndexDeparse(dsn)
+
 	// Migrate takes no context (golang-migrate's Up() does not either). This is a
 	// single catalog read against a database the migration just finished using, so a
 	// short independent deadline is enough and keeps a hung read from wedging boot.
@@ -272,7 +277,7 @@ func checkNoInvalidIndexes(dsn string) error {
 	// constraint. A performance index going missing is slow, not wrong, and does not
 	// belong. The live test TestMigrateRefusesADroppedRequiredIndex fails if an entry
 	// names an index no migration creates, so a stale name cannot sit here unnoticed.
-	missing, wrong, err := checkRequiredIndexes(ctx, conn)
+	missing, wrong, err := checkRequiredIndexes(ctx, conn, expected)
 	if err != nil {
 		return err
 	}
@@ -783,8 +788,10 @@ const requiredIndexQuery = `SELECT
 // again and skips, leaving the operator where they started. An index that exists but is
 // INVALID counts as absent: it enforces nothing, which is the same fact to a caller
 // deciding whether the invariant holds, and its recovery is the drop-then-create above.
-func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong []string, err error) {
-	expected := serverDeparsedRequiredIndexes(ctx, conn)
+//
+// expected is each index's definition as the server deparses it (probeRequiredIndexDeparse); an
+// entry absent from it — or a nil map — compares against the stored text.
+func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn, expected map[string]deparsedIndex) (missing, wrong []string, err error) {
 	for _, want := range requiredIndexes {
 		var unique, live, rightTable bool
 		var predicate string
@@ -806,7 +813,10 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong
 		}
 		// Compared against THIS server's deparse of the expected definition, not against the
 		// stored text: see serverDeparsedRequiredIndexes.
-		exp := expected[want.name]
+		exp, ok := expected[want.name]
+		if !ok {
+			exp = deparsedIndex{keys: want.keys, predicate: want.predicate}
+		}
 		if !slices.Equal(keys, exp.keys) {
 			defects = append(defects, fmt.Sprintf("keys %v, want %v", keys, exp.keys))
 		}
@@ -911,15 +921,46 @@ const probeIndexQuery = `SELECT
 		), '{}')
 	FROM pg_index i WHERE i.indexrelid = $1::regclass`
 
+// probeBudget bounds the WHOLE optional deparse probe — connect, transaction and every probe
+// statement. Short on purpose: the probe only improves the comparison, and spending longer on it
+// than the required checks' own budget (invalidIndexCheckTimeout) would make an optional step the
+// likeliest cause of a failed boot.
+const probeBudget = 3 * time.Second
+
+// probeStatementTimeout / probeLockTimeout bound each probe statement inside its transaction
+// (SET LOCAL), so one statement waiting on a lock — CREATE TEMP TABLE ... (LIKE campaigns) takes
+// a share lock on the source — gives up quickly instead of consuming the budget.
+const (
+	probeStatementTimeout = "1500ms"
+	probeLockTimeout      = "500ms"
+)
+
+// probeRequiredIndexDeparse runs serverDeparsedRequiredIndexes on a DEDICATED connection under
+// probeBudget. Every failure — connect included — degrades to the stored-text comparison (a nil
+// map) with one WARN; it never returns an error, so it can only improve the boot check.
+func probeRequiredIndexDeparse(dsn string) map[string]deparsedIndex {
+	ctx, cancel := context.WithTimeout(context.Background(), probeBudget)
+	defer cancel()
+	var conn *pgxv5.Conn
+	if err := probeStep(ctx, "connect", func() (err error) { conn, err = pgxv5.Connect(ctx, dsn); return err }); err != nil {
+		slog.WarnContext(ctx, "required-index check: the deparse probe could not connect; comparing definitions as stored text",
+			"step", "connect", "error_class", fmt.Sprintf("%T", err), "error", err)
+		return nil
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	return serverDeparsedRequiredIndexes(ctx, conn)
+}
+
 // probeFault, when set (tests only), is consulted before each probe-infrastructure step and
 // makes that step fail with the returned error — standing in for a production role without the
 // TEMPORARY privilege, a read-only default, or a hot standby.
-var probeFault func(step string) error
+var probeFault func(ctx context.Context, step string) error
 
-// probeStep runs one probe-infrastructure step, honouring probeFault.
-func probeStep(step string, run func() error) error {
+// probeStep runs one probe-infrastructure step, honouring probeFault. ctx is the probe's own
+// budget, handed to the hook so a test can stand in for a step that blocks until it runs out.
+func probeStep(ctx context.Context, step string, run func() error) error {
 	if probeFault != nil {
-		if err := probeFault(step); err != nil {
+		if err := probeFault(ctx, step); err != nil {
 			return err
 		}
 	}
@@ -955,17 +996,33 @@ func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) map[st
 	}
 
 	var tx pgxv5.Tx
-	if err := probeStep("begin", func() (err error) { tx, err = conn.Begin(ctx); return err }); err != nil {
+	if err := probeStep(ctx, "begin", func() (err error) { tx, err = conn.Begin(ctx); return err }); err != nil {
 		return fallBack("begin", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	// Rollback on a context of its own: the probe's may already be spent, and an open
+	// transaction holding temp objects must not outlive it.
+	defer func() {
+		rctx, rcancel := context.WithTimeout(context.Background(), time.Second)
+		defer rcancel()
+		_ = tx.Rollback(rctx)
+	}()
+
+	if err := probeStep(ctx, "set timeouts", func() error {
+		if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '"+probeStatementTimeout+"'"); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '"+probeLockTimeout+"'")
+		return err
+	}); err != nil {
+		return fallBack("set timeouts", err)
+	}
 
 	probed := map[string]string{}
 	for n, r := range requiredIndexes {
 		tmp, ok := probed[r.table]
 		if !ok {
 			tmp = "required_index_probe_" + r.table
-			if err := probeStep("create temp table", func() error {
+			if err := probeStep(ctx, "create temp table", func() error {
 				_, err := tx.Exec(ctx, fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s)", tmp, r.table))
 				return err
 			}); err != nil {
@@ -978,7 +1035,7 @@ func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) map[st
 		ddl = strings.Replace(ddl, "CREATE UNIQUE INDEX", "CREATE INDEX", 1)
 		// A savepoint per probe, so a definition this server cannot parse falls back to the
 		// stored text for that entry alone instead of aborting the whole transaction.
-		if err := probeStep("savepoint", func() error {
+		if err := probeStep(ctx, "savepoint", func() error {
 			_, err := tx.Exec(ctx, "SAVEPOINT required_index_probe")
 			return err
 		}); err != nil {
@@ -986,7 +1043,7 @@ func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) map[st
 		}
 		if _, err := tx.Exec(ctx, ddl); err != nil {
 			// About the DEFINITION, not the infrastructure: this entry keeps its stored text.
-			if rerr := probeStep("rollback to savepoint", func() error {
+			if rerr := probeStep(ctx, "rollback to savepoint", func() error {
 				_, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT required_index_probe")
 				return err
 			}); rerr != nil {
@@ -995,7 +1052,7 @@ func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) map[st
 			continue
 		}
 		var d deparsedIndex
-		if err := probeStep("read probe", func() error {
+		if err := probeStep(ctx, "read probe", func() error {
 			return tx.QueryRow(ctx, probeIndexQuery, "pg_temp."+probe).Scan(&d.predicate, &d.keys)
 		}); err != nil {
 			return fallBack("read probe", err)

@@ -6,9 +6,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLiveRequiredIndexCheckComparesTheServersOwnDeparse pins that the boot check does not depend
@@ -26,7 +28,7 @@ func TestLiveRequiredIndexCheckComparesTheServersOwnDeparse(t *testing.T) {
 	defer c.Release()
 	conn := c.Conn()
 
-	missing, wrong, err := checkRequiredIndexes(ctx, conn)
+	missing, wrong, err := checkRequiredIndexes(ctx, conn, serverDeparsedRequiredIndexes(ctx, conn))
 	if err != nil || len(missing) != 0 || len(wrong) != 0 {
 		t.Fatalf("migrated schema: missing %v, wrong %v, err %v", missing, wrong, err)
 	}
@@ -44,13 +46,13 @@ func TestLiveRequiredIndexCheckComparesTheServersOwnDeparse(t *testing.T) {
 	requiredIndexes[i].keys = []string{"platform", "platform_campaign_id",
 		`COALESCE(NULLIF(result ->> 'accountId', ''), NULLIF(substring(result ->> 'microsoftAdsUrl' from '[?&]aid=([^&#]+)'), ''))`}
 	requiredIndexes[i].predicate = "status <> 'deleted' AND platform_campaign_id IS NOT NULL AND platform = 'microsoft-ads'"
-	if _, wrong, err := checkRequiredIndexes(ctx, conn); err != nil || len(wrong) != 0 {
+	if _, wrong, err := checkRequiredIndexes(ctx, conn, serverDeparsedRequiredIndexes(ctx, conn)); err != nil || len(wrong) != 0 {
 		t.Fatalf("a differently-SPELLED but identical definition was refused (wrong %v, err %v) — a Postgres upgrade changing the deparse would fail boot", wrong, err)
 	}
 
 	// A genuinely different definition: the account read from another key.
 	requiredIndexes[i].keys = []string{"platform", "platform_campaign_id", `NULLIF(result ->> 'AccountID', '')`}
-	_, wrong, err = checkRequiredIndexes(ctx, conn)
+	_, wrong, err = checkRequiredIndexes(ctx, conn, serverDeparsedRequiredIndexes(ctx, conn))
 	if err != nil || len(wrong) != 1 || !strings.Contains(wrong[0], name) {
 		t.Fatalf("a different definition was not refused: wrong %v, err %v", wrong, err)
 	}
@@ -79,7 +81,7 @@ func TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun(t *testing.T) {
 	for _, step := range []string{"begin", "create temp table", "savepoint", "read probe"} {
 		t.Run(step, func(t *testing.T) {
 			calls := 0
-			probeFault = func(s string) error {
+			probeFault = func(_ context.Context, s string) error {
 				if s == step {
 					calls++
 					return errors.New("permission denied to create temporary tables in database (simulated)")
@@ -89,7 +91,7 @@ func TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun(t *testing.T) {
 			defer func() { probeFault = nil }()
 
 			requiredIndexes[i] = saved
-			missing, wrong, err := checkRequiredIndexes(ctx, conn)
+			missing, wrong, err := checkRequiredIndexes(ctx, conn, serverDeparsedRequiredIndexes(ctx, conn))
 			if err != nil || len(missing) != 0 || len(wrong) != 0 {
 				t.Fatalf("correct schema with the probe failing at %q: missing %v, wrong %v, err %v — the probe made boot STRICTER", step, missing, wrong, err)
 			}
@@ -98,10 +100,37 @@ func TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun(t *testing.T) {
 			}
 
 			requiredIndexes[i].keys = []string{"platform", "platform_campaign_id", `NULLIF(result ->> 'AccountID'::text, ''::text)`}
-			_, wrong, err = checkRequiredIndexes(ctx, conn)
+			_, wrong, err = checkRequiredIndexes(ctx, conn, serverDeparsedRequiredIndexes(ctx, conn))
 			if err != nil || len(wrong) != 1 || !strings.Contains(wrong[0], name) {
 				t.Fatalf("a different definition with the probe failing at %q was not refused: wrong %v, err %v", step, wrong, err)
 			}
 		})
+	}
+}
+
+// TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline: the optional deparse probe runs on its OWN
+// connection under its OWN short budget (probeBudget) before the required checks' deadline starts.
+// Here every probe step blocks until that budget is gone — a held lock or a slow server — and the
+// boot check must still pass on a correct schema, within roughly the probe budget plus the real
+// checks, rather than failing because the probe ate the required checks' time.
+func TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline(t *testing.T) {
+	creativeAssetTestPool(t) // migrates, and skips/fails exactly as the other live tests do
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	t.Cleanup(func() { probeFault = nil })
+	blocked := 0
+	probeFault = func(ctx context.Context, step string) error {
+		blocked++
+		<-ctx.Done() // a step that never completes inside the probe's budget
+		return ctx.Err()
+	}
+	start := time.Now()
+	if err := checkNoInvalidIndexes(dsn); err != nil {
+		t.Fatalf("boot check with a probe that blocks until its budget is spent: %v — the optional probe consumed the required checks' deadline", err)
+	}
+	if blocked == 0 {
+		t.Fatal("the probe hook was never reached")
+	}
+	if elapsed := time.Since(start); elapsed > probeBudget+invalidIndexCheckTimeout {
+		t.Fatalf("boot check took %v; the probe was not bounded by its own budget", elapsed)
 	}
 }

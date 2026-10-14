@@ -29,9 +29,19 @@
 --
 -- CONCURRENTLY, one statement per file, no transaction, and NO `IF NOT EXISTS` — 000020's
 -- reasons: a retry over an INVALID leftover must fail with 42P07, not record this version clean
--- over an index that enforces nothing. DEPLOY RISK: if live rows already bind one upstream
--- campaign twice, the build fails and the deploy stops; resolve the duplicate binding (soft-delete
--- one row), drop the INVALID index, and re-run.
+-- over an index that enforces nothing.
+--
+-- DEPLOY RISK: if live rows already bind one upstream campaign twice, the build fails, Migrate
+-- leaves version 46 recorded DIRTY, and every later boot refuses with ErrDirty. Recovery, in order:
+--   1. fix the duplicate binding (soft-delete one of the rows: UPDATE campaigns SET
+--      status = 'deleted' WHERE id = '<row id>');
+--   2. DROP INDEX CONCURRENTLY uq_campaigns_twitter_campaign_live;  -- the INVALID leftover
+--   3. force the version back to its predecessor with the golang-migrate CLI against the same
+--      database (default schema_migrations table):
+--        migrate -path internal/infrastructure/postgres/migrations -database "$DATABASE_URL" force 45
+--      (forcing back ONE version replays only this single-statement migration — see
+--      docs/knowledge/code/internal-infrastructure-postgres.md on why longer forces are unsafe);
+--   4. re-run: restart the service, whose boot Migrate applies 46 again.
 CREATE UNIQUE INDEX CONCURRENTLY uq_campaigns_twitter_campaign_live
     ON campaigns (platform, platform_campaign_id, (NULLIF(result ->> 'AccountID', '')))
     WHERE status <> 'deleted' AND platform_campaign_id IS NOT NULL AND platform = 'twitter-ads';

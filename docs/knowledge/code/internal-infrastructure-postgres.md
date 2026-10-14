@@ -1782,7 +1782,10 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   step and error class and the remaining entries compare as stored text, so the check is never
   stricter than before; a stored definition the server cannot parse falls back the same way
   (`TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun`, via the test-only `probeFault`
-  hook). CI pins `postgres:16-alpine`
+  hook).
+  The probe runs on its OWN connection (`probeRequiredIndexDeparse`) under `probeBudget` (3s),
+  with `SET LOCAL statement_timeout`/`lock_timeout`, BEFORE the required checks' own deadline
+  starts, so it can never spend that deadline (`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`). CI pins `postgres:16-alpine`
   (`.github/workflows/lfx-v2-campaign-service-build.yaml`); the deployed database is external
   (the chart only receives its connection settings), so its version is not pinned by this repo.
   **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so they
@@ -1793,7 +1796,9 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   Live coverage: `adopt_binding_providers_live_test.go` (concurrent adoption: one success + one
   AlreadyBound per provider; different accounts both bind on the account-keyed three; dispatch
   duplicates; legacy rows). **Deploy risk:** existing duplicate live bindings make the
-  CONCURRENTLY build fail and stop the deploy — resolve, drop the INVALID index, re-run.
+  CONCURRENTLY build fail and leave the version DIRTY — soft-delete one duplicate, `DROP INDEX
+  CONCURRENTLY` the INVALID index, `migrate … force <N-1>`, then restart (each migration's comment
+  spells it out).
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.
