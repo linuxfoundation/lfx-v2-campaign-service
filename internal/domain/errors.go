@@ -92,6 +92,19 @@ var (
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
 
+	// ErrWriteOutcomeUnknown marks a write whose COMMIT acknowledgement was LOST — a broken
+	// connection, an I/O error, or the context ending while the answer was awaited — so
+	// PostgreSQL may have committed and the caller must reconcile before acting on either answer.
+	// A PgError whose SQLSTATE itself leaves the outcome open carries it too: 08007
+	// transaction_resolution_unknown, 40003 statement_completion_unknown, the rest of the
+	// connection-exception class 08, and 57P01/57P02 (the server shutting down around the
+	// COMMIT). It is NOT every COMMIT error: any other error the server answered the COMMIT with
+	// (a *pgconn.PgError such as a deferred constraint or trigger raising, or
+	// pgx.ErrTxCommitRollback) is a confirmed rollback and carries no sentinel (see the postgres
+	// repository's classifyCommitErr). Every error before the commit is a definite rollback and
+	// never carries it either.
+	ErrWriteOutcomeUnknown = errors.New("the write's commit failed, so whether it landed is unknown")
+
 	// ErrToggleUnsupported indicates the campaign's platform has no status-toggle
 	// capability wired (no dispatcher, or the dispatcher is not a StatusToggler).
 	// The platform is never contacted. Maps to 400. Lives here (not in the service
@@ -210,8 +223,8 @@ var (
 	// (no dispatcher, or the dispatcher is not a BidWriter). The platform is never contacted.
 	// Maps to 400, and lives here for the same reason as ErrBudgetWriteUnsupported.
 	//
-	// Microsoft Advertising, Reddit, Meta and X implement the capability today (LFXV2-2665);
-	// Google Ads and LinkedIn still answer 400. As with budgets, the service layer holds NO
+	// Microsoft Advertising, Reddit, Meta, X and LinkedIn implement the capability today
+	// (LFXV2-2665); Google Ads still answers 400. As with budgets, the service layer holds NO
 	// allowlist: what a platform supports is decided solely by whether its dispatcher is a
 	// BidWriter.
 	ErrBidUnsupported = errors.New("bid writes are not supported for this platform")
@@ -224,6 +237,15 @@ var (
 	// Maps to 409: each is a property of how the campaign is set up, so no retry improves it.
 	// An outcome the platform did not confirm is never this sentinel.
 	ErrBidUnwritable = errors.New("the campaign's bid could not be written as a manual bid")
+
+	// ErrBidAdoptedCampaign is the NARROWER reason a bid write was refused because the campaign
+	// was ADOPTED (bound from the ad platform, not created here), so this service never set up
+	// the bidding it would be writing into. An adapter returns it ALONGSIDE ErrBidUnwritable, so
+	// every existing ErrBidUnwritable caller keeps matching; the bid handler checks it FIRST so
+	// the 409 names adoption rather than ErrBidUnwritable's strategy/child-entity text, which
+	// does not describe this case (LinkedIn bids on the campaign itself — there is no ad group,
+	// ad set or line item to be missing). Nothing was sent; maps to 409.
+	ErrBidAdoptedCampaign = errors.New("the campaign was adopted, so its bid is managed in the ad platform")
 
 	// ErrBidAmountRejected indicates the requested BID was refused and the platform was NOT
 	// changed: by the adapter's own bounds before the mutate, or by the platform's DEFINITE
@@ -351,6 +373,13 @@ var (
 	// The message is fixed, static text: it is what reaches the caller, so it must never embed a
 	// source email id, a portal id or anything HubSpot returned.
 	ErrABTestUnsupportedSendType = errors.New("A/B testing is not available for emails sent based on recipients' time zones")
+
+	// ErrCreateConfigInvalid is returned by a create-time pre-check that refused the request on
+	// the config ALONE — no platform was asked. It surfaces synchronously as a 400 carrying the
+	// error's message, so a dispatcher must wrap it only with fixed, caller-safe text (never
+	// anything a platform returned, never a secret). The first user is the Reddit stored-asset
+	// check (LFXV2-2665): imageAssetId with the feature off, or alongside imageUrl/postUrl.
+	ErrCreateConfigInvalid = errors.New("invalid campaign config")
 
 	// ErrPreflightNotApplicable is returned by a CreatePreflighter that looked at the request and
 	// had nothing to check, so it made NO platform call. It is neither a refusal nor a failure:
@@ -506,6 +535,12 @@ var (
 	// unsupported match type, or the same keyword twice. A permanent input fault → 400.
 	ErrNegativeKeywordInvalid = errors.New("the negative keyword batch is not valid")
 
+	// ErrNegativeKeywordLimit indicates a negative-keyword add that the platform's own cap on the
+	// target would refuse given what it already holds (LFXV2-2665: Reddit's 2,000 excluded
+	// keywords per ad group). Decided from a READ before any write, so nothing was changed; a
+	// state fault, not a malformed request, so mapped to 409.
+	ErrNegativeKeywordLimit = errors.New("the negative keywords would exceed the platform's limit")
+
 	// ErrKeywordTargetingUnsupported indicates the platform has no keyword-TARGETING read or
 	// removal wired (LFXV2-2665: Reddit and X only), or that the capability is switched off for
 	// this deployment. The platform is never contacted; mapped to 400.
@@ -562,6 +597,13 @@ var (
 	// set's targeting, so it will not switch its delivery on. Pausing any of the campaign's ad
 	// sets stays allowed. Decided before any write; mapped to 409.
 	ErrMetaAdSetNotRecorded = errors.New("only the ad set this service created for the campaign can be activated here")
+
+	// ErrMetaHeldAdSetActive refuses a Meta campaign ACTIVATE whose recorded ad set the row holds
+	// as deliberately paused while Meta reports that ad set ACTIVE (its pause was never applied, or
+	// it was re-activated elsewhere). Activating the campaign then would let the "deliberately
+	// paused" ad set serve, so nothing is written; mapped to 409. The operator pauses the ad set,
+	// or clears the record by resuming it, through toggle-meta-ad-set-status first.
+	ErrMetaHeldAdSetActive = errors.New("the campaign's deliberately paused ad set is ACTIVE on Meta")
 
 	// ErrStoredPlatformIDInvalid indicates the campaign row's stored platform campaign id is not a
 	// valid id for its platform, so nothing under it can be addressed. Decided locally — the

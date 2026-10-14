@@ -31,6 +31,10 @@ type MetaAdSet struct {
 	// Recorded marks the ad set this service created for the campaign (the row's recorded ad set
 	// id). An adopted row records none, so no ad set is marked.
 	Recorded bool
+	// DeliberatelyPaused marks the recorded ad set when the campaign row holds a deliberate pause
+	// of it made through toggle-meta-ad-set-status (model.MetaAdSetHeldPaused): a campaign ACTIVATE
+	// leaves it PAUSED until it is resumed through that lever. The row's record, not Meta's.
+	DeliberatelyPaused bool
 }
 
 // MetaAdSets is the ad-set read for one campaign.

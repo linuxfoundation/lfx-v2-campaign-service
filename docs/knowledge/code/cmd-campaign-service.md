@@ -112,14 +112,24 @@ A **format** error ends the sanitized message: Goa appends a format validator's 
 the quoted value unquoted (FormatUUID's `uuid: <value>: <cause>`), so nothing after a format part is
 trusted — the part is rewritten and anything that followed it becomes one generic sentence.
 
-The nil formatter brings back goa v3.25.3's upstream race in `goahttp.ErrorEncoder`: it assigns
-the default formatter inside the closure it returns, on each non-named error, so concurrent error
-responses on one endpoint write that captured variable unsynchronized. The value is always the same,
-so no response is wrong, but `-race` reports it if a test drives concurrent errors through one
-endpoint. It is an **accepted known upstream issue** (documented at the wiring in `server.go`), not
-avoidable while the formatter must stay nil. Goa fixed it in **v3.30.0** (the nil check moved out
-of the closure); the remedy is a goa bump to v3.30.0 or later with `gen/` regenerated, tracked as a
-follow-up. `main` carried the same race before this change; see `upload_admission_wiring_test.go`.
+The nil formatter is race-free on the pinned goa (**v3.34.0**). Before goa v3.29,
+`goahttp.ErrorEncoder` assigned the default formatter inside the closure it returns, on each
+non-named error, so concurrent error responses on one endpoint wrote that captured variable
+unsynchronized (always the same value, but a race `-race` reported). Goa moved the nil check out of
+the closure, so the default is resolved once per generated handler. The race was recorded as
+accepted at v3.25.3 and removed by the goa bump; `error_encoder_race_test.go`
+(`TestErrorEncoder_ConcurrentNonNamedErrors_NoRace`) drives concurrent non-named errors (UUID-format
+400s) through one endpoint of the real mux and fails under `-race` on an affected goa — verified to
+report the race on v3.25.3 — so goa must not be pinned below v3.29.
+
+Since goa v3.31 two message shapes the sanitizer reads changed. `invalid_length` no longer formats
+the value (`length of <field> must be at least|at most <n> but got <len>`); the part is still
+rewritten whole, so the rejected input's length is not disclosed either. And a required field
+missing from a nested object is reported under that object's design-derived path
+(`"refresh_token" is missing from body.credentials`, `... from body.keywords[*]`) instead of
+`body`; such a part is kept verbatim — the context must be a request location or a `body.` path,
+anything else fails closed. Nested pattern/length/enum parts likewise name the full path
+(`body.config.account_id`).
 
 ## Mounting the audience-builder service (LFXV2-2770)
 

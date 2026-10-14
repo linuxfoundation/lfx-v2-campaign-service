@@ -230,7 +230,7 @@ func TestMeta_ReadMetaAdSets_UnsupportedWindowIsRefusedFirst(t *testing.T) {
 
 func TestMeta_ToggleMetaAdSetStatus_AppliesWithExactlyOneWrite(t *testing.T) {
 	d, api := adSetDispatcher(t, adSetToggleRoutes(adSetStateActive))
-	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused)
+	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused, nil)
 	if err != nil || res.Outcome != model.MetaAdSetApplied || res.PreviousStatus != "ACTIVE" {
 		t.Fatalf("got %+v, %v", res, err)
 	}
@@ -242,7 +242,7 @@ func TestMeta_ToggleMetaAdSetStatus_AppliesWithExactlyOneWrite(t *testing.T) {
 
 func TestMeta_ToggleMetaAdSetStatus_AlreadyInStateSendsNoWrite(t *testing.T) {
 	d, api := adSetDispatcher(t, adSetToggleRoutes(adSetStatePaused))
-	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused)
+	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused, nil)
 	if err != nil || res.Outcome != model.MetaAdSetAlreadyInState || res.PreviousStatus != "PAUSED" {
 		t.Fatalf("got %+v, %v", res, err)
 	}
@@ -284,7 +284,7 @@ func TestMeta_ToggleMetaAdSetStatus_RefusalsSendNoRequestAtAll(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d, api := adSetDispatcher(t, adSetToggleRoutes(adSetStatePaused))
-			res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, tc.row(t), tc.adSet, tc.status)
+			res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, tc.row(t), tc.adSet, tc.status, nil)
 			if res != nil {
 				t.Fatalf("a refusal returned %+v", res)
 			}
@@ -299,7 +299,7 @@ func TestMeta_ToggleMetaAdSetStatus_RefusalsSendNoRequestAtAll(t *testing.T) {
 // PAUSE is always allowed, adopted or not.
 func TestMeta_ToggleMetaAdSetStatus_AdoptedRowCanPause(t *testing.T) {
 	d, api := adSetDispatcher(t, adSetToggleRoutes(adSetStateActive))
-	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adoptedAdSetRow(t), "888", model.MetaAdSetStatusPaused)
+	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adoptedAdSetRow(t), "888", model.MetaAdSetStatusPaused, nil)
 	if err != nil || res.Outcome != model.MetaAdSetApplied || api.count(http.MethodPost) != 1 {
 		t.Fatalf("got %+v, %v, %d writes", res, err, api.count(http.MethodPost))
 	}
@@ -318,7 +318,7 @@ func TestMeta_ToggleMetaAdSetStatus_OwnershipRefusedBeforeTheWrite(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d, api := adSetDispatcher(t, adSetToggleRoutes(tc.state))
-			_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusActive)
+			_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusActive, nil)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -340,7 +340,7 @@ func TestMeta_ToggleMetaAdSetStatus_PreWriteReadFailureIsDefinite(t *testing.T) 
 		r := adSetToggleRoutes("")
 		r["GET /888"] = rep
 		d, api := adSetDispatcher(t, r)
-		_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused)
+		_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused, nil)
 		var u interface{ Unconfirmed() bool }
 		if err == nil || errors.As(err, &u) || errors.Is(err, domain.ErrPlatformCampaignAbsent) {
 			t.Fatalf("%d: err = %v, want a definite failure", rep.status, err)
@@ -367,7 +367,7 @@ func TestMeta_ToggleMetaAdSetStatus_WriteClassification(t *testing.T) {
 			r := adSetToggleRoutes(adSetStateActive)
 			r["POST /888"] = tc.write
 			d, api := adSetDispatcher(t, r)
-			res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused)
+			res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused, nil)
 			if res != nil || err == nil {
 				t.Fatalf("got %+v, %v; a failed write is never a result", res, err)
 			}
@@ -396,7 +396,7 @@ func (r refusePOST) RoundTrip(req *http.Request) (*http.Response, error) {
 func TestMeta_ToggleMetaAdSetStatus_PreSendFailureIsNotSent(t *testing.T) {
 	d, api := adSetDispatcher(t, adSetToggleRoutes(adSetStateActive),
 		meta.WithHTTPClient(&http.Client{Transport: refusePOST{next: http.DefaultTransport}}))
-	_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused)
+	_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "888", model.MetaAdSetStatusPaused, nil)
 	var u interface{ Unconfirmed() bool }
 	if err == nil || errors.As(err, &u) {
 		t.Fatalf("err = %v, want a definite not-sent failure", err)
@@ -415,7 +415,7 @@ func TestMeta_AdSets_InvalidStoredIDIsItsOwnRefusal(t *testing.T) {
 	row := adSetRow()
 	row.PlatformCampaignID = "0555"
 	_, rerr := d.ReadMetaAdSets(context.Background(), "proj", model.ProviderMetaAds, row, model.MetricsWindowLast30Days)
-	_, terr := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, row, "888", model.MetaAdSetStatusPaused)
+	_, terr := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, row, "888", model.MetaAdSetStatusPaused, nil)
 	for _, err := range []error{rerr, terr} {
 		if !errors.Is(err, domain.ErrStoredPlatformIDInvalid) || errors.Is(err, domain.ErrCampaignUpstreamIdentityMismatch) {
 			t.Fatalf("err = %v, want ErrStoredPlatformIDInvalid alone", err)
@@ -434,12 +434,12 @@ func TestMeta_ToggleMetaAdSetStatus_ActivateOnlyTheRecordedAdSet(t *testing.T) {
 		"POST /889": {status: 200, body: `{"success":true}`},
 	}
 	d, api := adSetDispatcher(t, routes)
-	_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "889", model.MetaAdSetStatusActive)
+	_, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "889", model.MetaAdSetStatusActive, nil)
 	if !errors.Is(err, domain.ErrMetaAdSetNotRecorded) || len(api.requests()) != 0 {
 		t.Fatalf("err = %v, requests = %d; want ErrMetaAdSetNotRecorded with zero requests", err, len(api.requests()))
 	}
 	routes["GET /889"] = settingsRoute{status: 200, body: `{"id":"889","campaign_id":"555","account_id":"777","status":"ACTIVE"}`}
-	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "889", model.MetaAdSetStatusPaused)
+	res, err := d.ToggleMetaAdSetStatus(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), "889", model.MetaAdSetStatusPaused, nil)
 	if err != nil || res.Outcome != model.MetaAdSetApplied || api.count(http.MethodPost) != 1 {
 		t.Fatalf("pause of a non-recorded ad set: %+v, %v", res, err)
 	}

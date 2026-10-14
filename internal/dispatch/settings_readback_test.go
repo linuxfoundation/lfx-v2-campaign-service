@@ -29,6 +29,7 @@ var (
 	_ service.SettingsReader = (*MetaDispatcher)(nil)
 	_ service.SettingsReader = (*RedditDispatcher)(nil)
 	_ service.SettingsReader = (*TwitterDispatcher)(nil)
+	_ service.SettingsReader = (*LinkedInDispatcher)(nil)
 )
 
 // settingsClock pins every readback's ReadAt.
@@ -282,6 +283,7 @@ func TestOrchestrator_ReadCampaignSettings_MicrosoftMetaRedditXAreWired(t *testi
 		model.ProviderMetaAds:      NewMetaDispatcher(conn, identityEncryptor{}),
 		model.ProviderRedditAds:    NewRedditDispatcher(conn, identityEncryptor{}),
 		model.ProviderTwitterAds:   NewTwitterDispatcher(conn, identityEncryptor{}),
+		model.ProviderLinkedInAds:  NewLinkedInDispatcher(conn, identityEncryptor{}),
 	}
 	o := service.NewOrchestrator(nil, nil, dispatchers)
 	for platform := range dispatchers {

@@ -94,10 +94,12 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
-	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to REMOVING keywords from a
-	// Reddit ad group's targeting (remove-keyword-targeting, LFXV2-2665). Only the exact value
-	// "true" enables it; unset or any other value fails closed and the endpoint answers 400 "not
-	// supported", the shape the metrics gates above use. The keyword-targeting READ is not gated.
+	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to BOTH Reddit ad-group targeting
+	// writes (LFXV2-2665): REMOVING keywords (remove-keyword-targeting) and ADDING negative keywords
+	// to excluded_keywords (add-negative-keywords) — the same whole-targeting PATCH, so one switch.
+	// Only the exact value "true" enables them; unset or any other value fails closed and both
+	// endpoints answer 400 "not supported", the shape the metrics gates above use. The
+	// keyword-targeting READ is not gated.
 	//
 	// Reddit has no per-keyword write: the ad group's targeting object is replaced as a whole on
 	// PATCH (per secondary references to the v3 OpenAPI document, which could not be fetched from
@@ -140,6 +142,20 @@ const (
 	EnvAIProxyURL = "AI_PROXY_URL"
 	EnvAIAPIKey   = "AI_API_KEY"
 	EnvAIModel    = "AI_MODEL"
+
+	// Signed creative-asset URLs (LFXV2-2665): how a Reddit dispatch hands Reddit a stored
+	// creative asset, which Reddit only accepts as a public URL it fetches. Optional as a
+	// PAIR: with the key or the base URL unset the feature is OFF — the serving route answers
+	// 404 and a Reddit dispatch that references a stored asset is refused before any upstream
+	// call. A value that is SET but unusable (key under 32 bytes or not base64, base URL not
+	// https or not a bare origin, TTL outside 1m..60m) fails startup. See
+	// docs/knowledge/architecture/signed-creative-asset-urls.md.
+	// The key is a SECRET (standard base64, >= 32 bytes) sourced from the chart's Secret.
+	EnvCreativeAssetURLSigningKey = "CREATIVE_ASSET_URL_SIGNING_KEY"
+	// The public https origin Reddit can reach this service at (the gateway host).
+	EnvCreativeAssetPublicBaseURL = "CREATIVE_ASSET_PUBLIC_BASE_URL"
+	// How long a minted URL is valid; a Go duration, default 10m, hard max 60m.
+	EnvCreativeAssetURLTTL = "CREATIVE_ASSET_URL_TTL"
 
 	// Snowflake (read-only) settings, used ONLY to resolve an event's past editions when
 	// building an audience. All are OPTIONAL: with none set, audience building still works

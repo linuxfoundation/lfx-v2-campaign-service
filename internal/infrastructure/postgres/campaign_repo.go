@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -155,9 +157,21 @@ func lockCampaignSlot(ctx context.Context, tx pgx.Tx, briefID string, platform m
 	return nil
 }
 
-// platformCampaignUniqueIndex is 000020's index: one live row per upstream campaign id. Its
-// violation is what ErrPlatformCampaignAlreadyBound means.
+// platformCampaignUniqueIndex is 000020's index: one live row per upstream Google Ads campaign
+// id. Its violation is what ErrPlatformCampaignAlreadyBound means.
 const platformCampaignUniqueIndex = "uq_campaigns_platform_campaign_live"
+
+// linkedInCampaignUniqueIndex is 000042's index: one live row per LinkedIn campaign id (LinkedIn
+// ids are globally unique). Its violation means ErrPlatformCampaignAlreadyBound too.
+const linkedInCampaignUniqueIndex = "uq_campaigns_linkedin_campaign_live"
+
+// isPlatformCampaignBindingViolation reports whether err violates one of the per-provider
+// "one upstream campaign, one live row" indexes (000020 for Google Ads, 000042 for LinkedIn).
+// Each provider keeps its OWN index — see 000042 for why they are not one widened predicate —
+// and every one of them means the same thing to a caller.
+func isPlatformCampaignBindingViolation(err error) bool {
+	return isUniqueViolationOn(err, platformCampaignUniqueIndex) || isUniqueViolationOn(err, linkedInCampaignUniqueIndex)
+}
 
 // ClaimCampaignDispatch atomically claims the right to dispatch one slot version of
 // (brief, platform, variant) by inserting a placeholder 'pending' campaign row. The
@@ -825,6 +839,14 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
+		// A dispatch whose platform resolved to an upstream campaign ANOTHER live row already
+		// binds (LinkedIn's create path reuses a same-name campaign in its group) violates a
+		// per-provider binding index. Named, so the orchestrator reports "already bound" rather
+		// than an anonymous persist failure; the caller still retains the claim.
+		if isPlatformCampaignBindingViolation(err) {
+			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s is already bound to another brief",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+		}
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
 	if eerr := enqueueCampaignIndex(ctx, tx, upserted, indexPayload); eerr != nil {
@@ -981,11 +1003,11 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
 			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
 		}
-		if isUniqueViolationOn(err, platformCampaignUniqueIndex) {
-			// The other brief is deliberately not named, and neither is its project. The
-			// index is global (000020), so the conflicting row may belong to a project this
-			// caller cannot see — Google Ads is one shared upstream account across every
-			// foundation. Naming it would turn a 409 into a cross-project disclosure of
+		if isPlatformCampaignBindingViolation(err) {
+			// The other brief is deliberately not named, and neither is its project. Both
+			// binding indexes are global (000020 for Google Ads — one shared upstream account
+			// across every foundation; 000042 for LinkedIn — globally unique campaign ids), so
+			// the conflicting row may belong to a project this caller cannot see. Naming it would turn a 409 into a cross-project disclosure of
 			// which briefs exist elsewhere. The caller already knows the campaign id they
 			// asked for, which is the part they can act on.
 			return nil, fmt.Errorf("%w: %s campaign %s is already bound to a brief",
@@ -1114,9 +1136,55 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: %w", eerr)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return nil, fmt.Errorf("replace campaign: commit: %w", cerr)
+		return nil, classifyCommitErr("replace campaign", cerr)
 	}
 	return updated, nil
+}
+
+// classifyCommitErr tells the two kinds of COMMIT failure apart.
+//
+//   - The SERVER answered the COMMIT with an error that settles the transaction (a
+//     *pgconn.PgError — e.g. a deferred constraint or trigger raising — or
+//     pgx.ErrTxCommitRollback, the server reporting the transaction rolled back): the rollback is
+//     CONFIRMED and the error carries no sentinel.
+//   - Anything else means the acknowledgement was LOST and the server may have committed: a broken
+//     connection, an I/O error, the context ending while the answer was awaited — and the
+//     PgErrors whose SQLSTATE itself says the outcome is not known (commitOutcomeUnknownState).
+//     Only these carry domain.ErrWriteOutcomeUnknown — the hazard the audience repo's
+//     reconcileAmbiguousAudienceCommit handles for its own writes.
+func classifyCommitErr(op string, cerr error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(cerr, &pgErr) && commitOutcomeUnknownState(pgErr.Code) {
+		return fmt.Errorf("%s: commit (SQLSTATE %s, outcome unknown): %w: %w", op, pgErr.Code, domain.ErrWriteOutcomeUnknown, cerr)
+	}
+	if pgErr != nil || errors.Is(cerr, pgx.ErrTxCommitRollback) {
+		return fmt.Errorf("%s: commit rolled back by the server: %w", op, cerr)
+	}
+	return fmt.Errorf("%s: commit: %w: %w", op, domain.ErrWriteOutcomeUnknown, cerr)
+}
+
+// commitOutcomeUnknownState reports whether a SQLSTATE answered to a COMMIT leaves the
+// transaction's fate unknown, rather than confirming a rollback:
+//
+//   - 08007 transaction_resolution_unknown and 40003 statement_completion_unknown say so
+//     outright.
+//   - The rest of class 08 (connection_exception: 08000, 08003 connection_does_not_exist, 08006
+//     connection_failure, 08P01 protocol_violation, …) describes the CONNECTION, not the
+//     transaction: whatever reported it, it does not establish that the COMMIT was not
+//     processed, so the whole class is treated as unknown.
+//   - 57P01 admin_shutdown and 57P02 crash_shutdown: the server was going down around the COMMIT,
+//     and whether its commit record reached disk before it did is not something the client can
+//     establish.
+//
+// Erring towards "unknown" is the safe side: it costs a reconciliation, never a wrong answer.
+func commitOutcomeUnknownState(code string) bool {
+	switch {
+	case code == "40003", strings.HasPrefix(code, "08"):
+		return true
+	case code == "57P01", code == "57P02":
+		return true
+	}
+	return false
 }
 
 // VerifyClaimedVersion checks that a row still matches the version claimed under

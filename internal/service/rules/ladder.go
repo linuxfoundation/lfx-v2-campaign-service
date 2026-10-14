@@ -6,16 +6,15 @@ package rules
 // PacingLadder is a set of pacing bands, as percentages of prorated (expected-by-now) spend, and
 // Label below is the ONE implementation of placing a percentage on a ladder.
 //
-// There are two ladders in this service, BriefViewLadder and AccountMonitorLadder, and they used
-// to be two separate switches — labelFor in pacing.go and pacingLabelFor in monitor_shared.go —
-// that agreed on boundary inclusivity only because each had been written carefully. They now
-// differ in their NUMBERS only. Do not write another switch: add a ladder value.
+// There is ONE ladder in this service, StandardLadder (50/90/100), placed by Label for both read
+// paths: the single-campaign brief view (ComputePacing, Evaluate) and every account monitor
+// (pacingLabelFor). Product decision D2 (2026-10-13) settled it — the brief view used to run its
+// own 50/100/130 ladder. Do not write another switch, and do not add a second ladder without a
+// product decision to back it.
 //
 // Every boundary is half-open UPWARD — a value sitting exactly on a threshold lands in the
-// healthier band. That makes exactly-on-plan mean on plan on the brief view: 100% is a campaign
-// spending precisely what the flight expects by now, and labelling it constrained would raise a
-// budget item against the only campaign that needs none (an earlier labelFor did, with
-// `pct <= Constrained` for constrained). The bands:
+// healthier band: exactly 50 is normal, exactly 90 is normal, exactly 100 is constrained. The
+// bands:
 //
 //	pct <  Underspending                     → underspending
 //	Underspending <= pct <= Constrained      → normal
@@ -23,9 +22,8 @@ package rules
 //	Overspending  <  pct                     → overspending
 //
 // Field names are the brief view's original Thresholds names, kept so Thresholds can stay an
-// alias of this type. On the account-monitor ladder the same three fields are what
-// monitor_shared.go used to call monitorPacingUnderspendingBelow, monitorPacingHealthyTo and
-// monitorPacingOverspendingAbove.
+// alias of this type. On StandardLadder they are fed by monitorPacingUnderspendingBelow,
+// monitorPacingHealthyTo and monitorPacingOverspendingAbove below.
 //
 // The ladder places a NUMBER. Whether a campaign has a percentage worth placing — budget, flight,
 // rounding — stays each caller's own question, and differs between callers on purpose: Google,
@@ -44,35 +42,19 @@ type PacingLadder struct {
 	Overspending float64
 }
 
-// BriefViewLadder is the single-campaign brief view's ladder (ComputePacing, Evaluate):
-// 50/100/130, so exactly on plan (100) is normal.
+// StandardLadder is the service's one pacing ladder: 50/90/100, so the healthy band tops out
+// BELOW plan — a campaign at 95% of its prorated budget is constrained, and exactly on plan (100)
+// is constrained, not overspending.
 //
-// Values match `CAMPAIGN_PACING_THRESHOLDS` in lfx-self-serve's shared constants.
-//
-// D2 IS OPEN: which of this ladder and AccountMonitorLadder is correct is an open product
-// decision (Monitor & Optimize brief, D2), not settled here. Switching a caller from one ladder
-// to the other moves operator-facing alert bands — do it only as that decision, on its own
-// ticket, never as a side effect of a refactor.
-//
-// A function, not a var, so no code can reassign the bands at run time: every call returns a fresh
-// value built from literals.
-func BriefViewLadder() PacingLadder {
-	return PacingLadder{Underspending: 50, Constrained: 100, Overspending: 130}
-}
-
-// AccountMonitorLadder is the account-scoped /account-monitor ladder, shared by every
-// EvaluateXMonitor (pacingLabelFor): 50/90/100, so the healthy band tops out BELOW plan — a
-// campaign at 95% of its prorated budget is constrained, and exactly on plan (100) is
-// constrained, not overspending.
-//
-// D2 IS OPEN: which of this ladder and BriefViewLadder is correct is an open product decision
-// (Monitor & Optimize brief, D2), not settled here. Switching a caller from one ladder to the
-// other moves operator-facing alert bands — do it only as that decision, on its own ticket,
-// never as a side effect of a refactor.
+// Used by the single-campaign brief view (DefaultThresholds → ComputePacing → Evaluate) and by
+// every EvaluateXMonitor (pacingLabelFor). Product decision D2 (Monitor & Optimize brief,
+// 2026-10-13): 50/90/100 everywhere. Before it the brief view ran 50/100/130 (BriefViewLadder,
+// matching lfx-self-serve's CAMPAIGN_PACING_THRESHOLDS); that ladder was removed, not kept as an
+// option. Changing these numbers moves operator-facing alert bands on both read paths at once.
 //
 // A function, not a var, so no code can reassign the bands at run time and move every platform's
 // alerts — or let them drift from the constants monitor_linkedin.go prints into action text.
-func AccountMonitorLadder() PacingLadder {
+func StandardLadder() PacingLadder {
 	return PacingLadder{
 		Underspending: monitorPacingUnderspendingBelow,
 		Constrained:   monitorPacingHealthyTo,
@@ -80,7 +62,7 @@ func AccountMonitorLadder() PacingLadder {
 	}
 }
 
-// AccountMonitorLadder's boundaries as untyped integer constants, because monitor_linkedin.go
+// StandardLadder's boundaries as untyped integer constants, because monitor_linkedin.go
 // prints two of them into its action-item text with %d ("pacing below 50%"). They are the
 // ladder's only source, so the text cannot drift from the bands. Named for the boundary each one
 // IS, not for the band it happens to gate.
@@ -101,8 +83,8 @@ const (
 //
 // NaN — which compares false against everything — falls through every case to overspending.
 // That is the brief view's historical behaviour, unreachable there because ComputePacing refuses
-// a non-finite percentage first. The account-monitor ladder historically placed NaN in normal
-// instead, and pacingLabelFor keeps that with its own guard rather than this method changing.
+// a non-finite percentage first. The account monitors historically placed NaN in normal instead,
+// and pacingLabelFor keeps that with its own guard rather than this method changing.
 func (l PacingLadder) Label(pct float64) PacingLabel {
 	switch {
 	case pct < l.Underspending:

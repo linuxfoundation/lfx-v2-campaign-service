@@ -226,6 +226,11 @@ type LinkedInDispatcher struct {
 	// rely on, verified against this client rather than inherited from them.
 	clients *clientCache
 	opts    []linkedin.Option
+	// creatives and assets resolve variants[].imageAssetId (linkedin_creative.go). Bound by
+	// registerDispatchers; nil in direct-construction tests, where an asset-backed variant
+	// fails pre-create and the reserver reserves nothing.
+	creatives creativeAssetReader
+	assets    *AssetReserver
 }
 
 // NewLinkedInDispatcher builds the adapter from the connection repo + encryptor.
@@ -297,6 +302,13 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err != nil {
 		return nil, notCreated(err)
 	}
+	// Stored variant images are resolved and validated BEFORE anything is created; the
+	// reservation is held until the upload inside CreateCampaign is done.
+	images, releaseImages, err := d.resolveLinkedInImages(ctx, brief, &cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer releaseImages()
 
 	// Build the runtime config from the connection (account/org) plus any richer
 	// bits the caller supplied in config (targeting profiles / exclusions the
@@ -348,6 +360,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		TargetingProfile: cfg.TargetingProfile,
 		Variants:         cfg.Variants,
 		AdAccountID:      adAccountID,
+		Images:           images,
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)
@@ -436,6 +449,10 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	if err != nil {
 		return err
 	}
+	// An ADOPTED row is un-paused in Campaign Manager, as on every platform (linkedin_adopt.go).
+	if liStatus == linkedin.StatusActive && linkedInAdopted(campaign) {
+		return errLinkedInAdoptedActivate(campaign)
+	}
 	res, creds, err := d.resolveLinkedInCredentials(ctx, projectID, platform, d.creds.existingResolver(linkedInCreationAccountID(campaign)))
 	if err != nil {
 		return err
@@ -460,7 +477,15 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 	// activating only the campaign would not serve (a DRAFT creative never serves, and the
 	// creative's effective status is gated by the campaign). The client discovers the
 	// creatives (LinkedIn persists only a count) and lifts each DRAFT→ACTIVE (or holds PAUSED).
-	if uerr := client.UpdateCampaignAndCreativesStatus(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
+	//
+	// An ADOPTED row (only ever PAUSE here — ACTIVATE was refused above) addresses the campaign
+	// ALONE, as the siblings do: its creatives are not this service's, and pausing them too would
+	// leave each to be re-activated by hand when the campaign is un-paused in Campaign Manager.
+	update := client.UpdateCampaignAndCreativesStatus
+	if linkedInAdopted(campaign) {
+		update = client.UpdateCampaignStatus
+	}
+	if uerr := update(ctx, campaign.PlatformCampaignID, liStatus); uerr != nil {
 		// An activate refused up front because the campaign has no servable creatives is a
 		// local/state error (the platform mutation never ran), so classify it as
 		// ErrCampaignNotProvisioned → 409, not the default 503. Mirrors reddit/meta.
@@ -711,9 +736,8 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 // several ad accounts across foundations (tlf and lf-events are two of them), so a project
 // naming another project's account is a real, reachable request and this is what refuses
 // it. The other ad platforms share one account today, where the same check is defensive —
-// see requireMetaManagedAccount. Do not take per-platform tenancy from
-// docs/architecture.md: both its "Account Tenancy" and "Current Platform Accounts" tables
-// still show the shared platforms as per-foundation, and both are stale.
+// see requireMetaManagedAccount. Per-platform tenancy is documented in docs/architecture.md
+// ("Account Tenancy" and "Current Platform Accounts"), which is the authority for it.
 //
 // The empty case is kept DISTINCT from the mismatch rather than folded into it. An empty
 // stored account means the operator has not finished setting the connection up, whose

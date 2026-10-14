@@ -113,7 +113,7 @@ func TestEvaluate_PacingItems(t *testing.T) {
 	// A healthy campaign raises nothing.
 	healthy := Input{
 		CampaignID: "c1", Status: "created", BillsPerDelivery: true, DeliveryExpected: true, Impressions: 5000, Clicks: 100, CTRPct: 2,
-		Spend: 100, Pacing: Pacing{Pct: 95, Label: PacingNormal, Computable: true},
+		Spend: 100, Pacing: Pacing{Pct: 85, Label: PacingNormal, Computable: true},
 	}
 	if got := Evaluate(healthy); len(got) != 0 {
 		t.Errorf("a campaign on plan with healthy CTR raised %v", rulesFired(got))

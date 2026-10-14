@@ -81,6 +81,14 @@ type microsoftConfig struct {
 	// EVERYWHERE once enabled. A code that cannot be resolved fails the create BEFORE
 	// anything is created, rather than silently producing that untargeted campaign.
 	GeoTargets []string `json:"geoTargets"`
+	// ImageAssetID is an OPTIONAL creative asset id (from upload-creative-asset on THIS
+	// brief) attached to the campaign as a campaign-level Image ad extension (LFXV2-2665).
+	// Resolved, sized and validated against Microsoft's image limits BEFORE anything is
+	// created; see resolveMicrosoftImage.
+	ImageAssetID string `json:"imageAssetId"`
+	// ImageAltText is the extension's AlternativeText (at most 35 characters). Optional;
+	// defaults to the event name cut to 35 characters. Only meaningful with ImageAssetID.
+	ImageAltText string `json:"imageAltText"`
 }
 
 // MicrosoftDispatcher creates Microsoft Advertising (Bing) campaigns for the orchestrator.
@@ -128,6 +136,12 @@ type MicrosoftDispatcher struct {
 	// settingsNow is the settings readback's ReadAt clock; nil means the wall clock. A field only so
 	// tests can pin it.
 	settingsNow func() time.Time
+	// creatives resolves microsoftConfig.imageAssetId to image bytes at dispatch, and assets
+	// bounds the bytes concurrent dispatches hold — the SAME read-only port and process-wide
+	// budget the Meta dispatcher uses. Both bound by registerDispatchers; nil in the
+	// direct-construction tests, where an image-less dispatch never reads them.
+	creatives creativeAssetReader
+	assets    *AssetReserver
 }
 
 // NewMicrosoftDispatcher builds the adapter from the connection repo + encryptor.
@@ -162,6 +176,19 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		return nil, notCreated(err)
 	}
 	bf, err := decodeBriefFields(brief)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+
+	// The campaign image, when one is requested, is resolved and validated against
+	// Microsoft's limits HERE — before any upstream call — so an unusable or foreign asset
+	// fails the job with nothing created rather than leaving an image-less campaign behind.
+	// The reservation it takes is held to the end of the dispatch, because the bytes are
+	// uploaded after the campaign is created; the defer sits above the error check for the
+	// reason Meta's does (resolveMicrosoftImage unwinds its own reservation on failure, so
+	// release is never nil and never double-released).
+	img, releaseImage, err := d.resolveMicrosoftImage(ctx, brief, &cfg, bf.EventName)
+	defer releaseImage()
 	if err != nil {
 		return nil, notCreated(err)
 	}
@@ -228,7 +255,15 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// change.
 		return campaignFromMicrosoft(ctx, result, cfg), fmt.Errorf("microsoft campaign creation UNCONFIRMED (a partial campaign may exist — verify before retrying): %w", cerr)
 	}
-	return campaignFromMicrosoft(ctx, result, cfg), nil
+	// The image extension is attached only to a CONFIRMED campaign, and its failure degrades
+	// the campaign rather than failing the job: the campaign exists, so an error here would
+	// retain the claim for a reconcile that cannot re-run this step (see attachMicrosoftImage).
+	degraded := d.attachMicrosoftImage(ctx, client, result, img)
+	camp = campaignFromMicrosoft(ctx, result, cfg)
+	if degraded {
+		camp.Status = campaignStatusCreatedDegraded
+	}
+	return camp, nil
 }
 
 // microsoftKeywords maps the wire-shaped keyword config to the platform client's Keyword
@@ -280,6 +315,9 @@ func microsoftKeywords(in []microsoftKeywordConfig) []microsoft.Keyword {
 func microsoftSnapshotConfig(cfg microsoftConfig) microsoftConfig {
 	snapshot := cfg
 	snapshot.TimeZone = sanitizeSnapshotText(cfg.TimeZone)
+	// ImageAltText is caller free text like TimeZone. ImageAssetID needs no reduction: by the
+	// time a snapshot is written resolveMicrosoftImage has replaced it with the canonical uuid.
+	snapshot.ImageAltText = sanitizeSnapshotText(cfg.ImageAltText)
 	if cfg.Keywords != nil {
 		snapshot.Keywords = make([]microsoftKeywordConfig, len(cfg.Keywords))
 		copy(snapshot.Keywords, cfg.Keywords)

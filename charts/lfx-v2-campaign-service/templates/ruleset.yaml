@@ -37,6 +37,36 @@ spec:
             values:
               aud: {{ .Values.app.audience }}
 
+    # Signed creative-asset URLs (LFXV2-2665). EXPLICITLY ANONYMOUS, by design: Reddit Ads
+    # takes a promoted-post image only as a public URL it fetches, and Reddit's fetcher carries
+    # no LFX credential. The authorization is the HMAC signature in the query string, verified
+    # by the service, which answers every rejection with one bare 404 (see
+    # docs/knowledge/architecture/signed-creative-asset-urls.md).
+    #
+    # Scoped as tightly as Heimdall allows: GET/HEAD only, and exactly the three-segment
+    # route the service mounts — no wildcard, so nothing else under /_campaigns/ is opened.
+    # Every other /_campaigns/** path still falls to the deny_all placeholder rule below;
+    # Heimdall prefers this rule's named-capture route over that rule's free wildcard.
+    # Only anonymous_authenticator runs (no oidc), so a caller's bearer token is never even
+    # evaluated here, and allow_all is safe because the route serves nothing without a valid
+    # signature. create_jwt mirrors the openapi rule so the upstream sees the same header
+    # shape; the route itself has no JWT security and ignores it.
+    - id: "rule:lfx:lfx-v2-campaign-service:signed-creative-asset:get"
+      allow_encoded_slashes: 'off'
+      match:
+        methods:
+          - GET
+          - HEAD
+        routes:
+          - path: /_campaigns/creative-assets/:projectId/:briefId/:assetId
+      execute:
+        - authenticator: anonymous_authenticator
+        - authorizer: allow_all
+        - finalizer: create_jwt
+          config:
+            values:
+              aud: {{ .Values.app.audience }}
+
     # Project-nested campaign API. Per the approved architecture (D2), the service
     # introduces no new FGA object types — every endpoint is nested under
     # /projects/{projectId}/… and gated on the `campaign_manager` relation of that
@@ -49,8 +79,8 @@ spec:
     # Every project-nested campaign path routed through the heimdall middleware in
     # httproute.yaml is gated on the project `campaign_manager` relation. This is a
     # SINGLE rule covering every routed family — connections, briefs, campaigns
-    # (under a brief), jobs, per-provider metrics, google-ads keywords/audience,
-    # meta-ads and twitter-ads audience, and hubspot UTM — because they share the exact same
+    # (under a brief), jobs, google-ads keywords/audience,
+    # meta-ads, twitter-ads and linkedin-ads audience, and hubspot UTM — because they share the exact same
     # authorization (D2:
     # campaign_manager on project:{projectId}, reads AND writes). Keeping them in one
     # rule preserves the chart↔route parity invariant (every heimdall-routed path has
@@ -169,13 +199,10 @@ spec:
           - path: /projects/:projectId/briefs/**
           - path: /projects/:projectId/jobs
           - path: /projects/:projectId/jobs/**
-          # Per-provider metrics (providers per the api-catalog: google/linkedin/
-          # meta/reddit/twitter — microsoft-ads is not yet a metrics provider).
-          - path: /projects/:projectId/google-ads/metrics
-          - path: /projects/:projectId/linkedin-ads/metrics
-          - path: /projects/:projectId/meta-ads/metrics
-          - path: /projects/:projectId/reddit-ads/metrics
-          - path: /projects/:projectId/twitter-ads/metrics
+          # No per-provider /{provider}/metrics entries: no design/ method serves that path
+          # (metrics are per campaign and per brief, covered by /briefs/** above), so the
+          # five former entries were removed here and from the HTTPRoute regex together
+          # (2026-10-13); parity_test.go pins them as rejected on both sides.
           # Google-Ads-only reads.
           - path: /projects/:projectId/google-ads/keywords
           - path: /projects/:projectId/google-ads/audience
@@ -198,11 +225,16 @@ spec:
           # X audience read (LFXV2-2665): the X sibling of meta-ads/audience, a campaign_manager
           # read scoped to the project's own campaigns on the shared account.
           - path: /projects/:projectId/twitter-ads/audience
+          # LinkedIn audience read (LFXV2-2665): the LinkedIn sibling of meta-ads/audience, a
+          # campaign_manager read scoped to the project's own campaigns on its own connection.
+          - path: /projects/:projectId/linkedin-ads/audience
           # Meta, Reddit and X twins of the two campaign-ref lookups above (LFXV2-2665): the
           # same project-scoped read of this service's own tables, campaign_manager likewise.
           - path: /projects/:projectId/meta-ads/campaign-ref
           - path: /projects/:projectId/reddit-ads/campaign-ref
           - path: /projects/:projectId/twitter-ads/campaign-ref
+          # LinkedIn twin (LFXV2-2665), same read and permission.
+          - path: /projects/:projectId/linkedin-ads/campaign-ref
           # HubSpot UTM (portal-wide; projectId gates permission AND selects the
           # connection, hence which portal is visible). ** covers
           # /hubspot/utm and any deeper path; the bare /hubspot is kept explicitly.

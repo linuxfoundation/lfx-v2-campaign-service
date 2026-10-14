@@ -1563,6 +1563,13 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// have been caught earlier if the dispatcher wiring was complete; it indicates
 			// the toggle capability is not wired yet for this provider.
 			return nil, &briefs.BadRequestError{Code: "400", Message: "status toggle is not supported for this campaign's platform"}
+		case errors.Is(terr, domain.ErrMetaHeldAdSetActive):
+			// Decided by a pure read before any write: nothing changed. The record says the ad
+			// set is deliberately paused, Meta says it is ACTIVE; activating would let it serve.
+			slog.WarnContext(ctx, "campaign activate refused: its deliberately paused Meta ad set is ACTIVE on Meta",
+				"project_id", p.ProjectID, "brief_id", p.BriefID, "campaign_id", p.CampaignID,
+				"platform", existing.Platform, "error", terr)
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's ad set is recorded as deliberately paused, but Meta reports it ACTIVE, so resuming the campaign would let it serve; nothing was changed — pause the ad set (or resume it to clear the record) through the ad-set status endpoint, then resume the campaign"}
 		case errors.Is(terr, ErrCampaignNotProvisioned):
 			// The campaign is not fully provisioned for this toggle — either it has no upstream
 			// platform id yet (still creating / ambiguous create), or it lacks the child entities
@@ -2182,6 +2189,10 @@ func mapBriefErr(err error) error {
 			Reason:  conflictReason("ab_test_unsupported_send_type"),
 			Message: domain.ErrABTestUnsupportedSendType.Error() + "; choose a source email that is not set to send by time zone, or turn the A/B test off",
 		}
+	case errors.Is(err, domain.ErrCreateConfigInvalid):
+		// A create pre-check refused the config before any platform was asked. Its message is
+		// fixed, caller-safe text by the sentinel's contract, and it is the actionable part.
+		return &briefs.BadRequestError{Code: "400", Message: err.Error()}
 	case errors.Is(err, domain.ErrConflict):
 		return &briefs.ConflictError{Code: "409", Message: "the resource already exists"}
 	case errors.Is(err, domain.ErrPreconditionFailed):
