@@ -478,6 +478,38 @@ type TwitterAudienceInsights struct {
 	Buckets         []TwitterAudienceBucket
 }
 
+// Reddit audience breakdown dimensions (the Reddit audience read's own vocabulary; see
+// RedditAudienceBucket). Each names one Reddit Ads API v3 report breakdown: GENDER, COUNTRY,
+// COMMUNITY.
+const (
+	RedditAudienceDimensionGender    = "gender"
+	RedditAudienceDimensionCountry   = "country"
+	RedditAudienceDimensionCommunity = "community"
+)
+
+// RedditAudienceBucket is one Reddit report breakdown value's counters, summed across the calling
+// project's own campaigns. Value is Reddit's breakdown value verbatim, or "" when Reddit reported an
+// explicit null for the dimension (unattributed traffic, published with no `value`). No Conversions
+// field: the Reddit metrics reads request none.
+type RedditAudienceBucket struct {
+	Dimension   string
+	Value       string
+	Impressions int64
+	Clicks      int64
+	// CostMicros is Reddit's SPEND (already microcurrency) in the ad account's own currency,
+	// which this read does not report; no FX.
+	CostMicros int64
+	Ctr        float64
+}
+
+// RedditAudienceInsights is the Reddit audience read over the CALLING PROJECT'S OWN CAMPAIGNS —
+// not the connected ad account. Each dimension independently covers the same traffic, so
+// counters total within a dimension, never across them.
+type RedditAudienceInsights struct {
+	Window  MetricsWindow
+	Buckets []RedditAudienceBucket
+}
+
 // KeywordAction is one requested keyword mutation on a live campaign.
 type KeywordAction struct {
 	AdGroupID   string

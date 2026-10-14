@@ -54,19 +54,26 @@ type Service interface {
 	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
 	// 360x640 to 2430x4320 (vertical) pixels.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
-	// Create campaigns across the selected platforms (async -> job). One request
-	// shape is refused synchronously, before any job exists: an email campaign
-	// that asks for an A/B test (hubspotConfig.abTestEnabled) from a source email
-	// set to send based on recipients' time zones, which HubSpot does not allow
-	// together. It returns 409 with reason=ab_test_unsupported_send_type; the
-	// remedy is to pick a different source email or turn the A/B test off. An
-	// invalid per-platform `bidding` object (see the config attribute) is also
-	// refused synchronously, with 400 "invalid campaign config:
-	// <configKey>.bidding: ...". Bidding defaults changed in LFXV2-2665: a
-	// Microsoft campaign created without bidding is MaxClicks (it was EnhancedCpc)
-	// and a LinkedIn one WEBSITE_VISIT/MAX_CLICK; the bid lever applies only to
-	// campaigns created with strategy manual. Every other dispatch failure still
-	// arrives later, as the job's own result.
+	// Create campaigns across the selected platforms (async -> job). Besides the
+	// request-shape 400s (an unknown or duplicate platform, new_version on a
+	// platform that does not support it, and the like), two dispatch-time rules
+	// are refused synchronously, before any job exists. (1) An email campaign that
+	// asks for an A/B test (hubspotConfig.abTestEnabled) from a source email set
+	// to send based on recipients' time zones, which HubSpot does not allow
+	// together: 409 with reason=ab_test_unsupported_send_type; the remedy is to
+	// pick a different source email or turn the A/B test off. (2) A Reddit config
+	// that names a stored creative asset it cannot use, decided from the config
+	// alone: redditConfig.imageAssetId together with imageUrl or postUrl, an
+	// imageAssetId that is not a UUID, or imageAssetId while signed creative-asset
+	// URLs are not configured ('stored creative assets are not enabled for Reddit;
+	// supply imageUrl'): 400 with that message. An invalid per-platform `bidding`
+	// object (see the config attribute) is also refused synchronously, with 400
+	// "invalid campaign config: <configKey>.bidding: ...". Bidding defaults
+	// changed in LFXV2-2665: a Microsoft campaign created without bidding is
+	// MaxClicks (it was EnhancedCpc) and a LinkedIn one WEBSITE_VISIT/MAX_CLICK;
+	// the bid lever applies only to campaigns created with strategy manual. Every
+	// other dispatch failure, including an imageAssetId that does not exist for
+	// this brief, still arrives later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
@@ -520,8 +527,10 @@ type Service interface {
 	// is withdrawn if Meta definitely refused the pause; an UNCONFIRMED resume
 	// does not clear it. The record is NOT guaranteed after every 503: when the
 	// 503 says the record could not be confirmed, or that the write lock was lost,
-	// re-read list-meta-ad-sets and do not assume `deliberately_paused` — pause
-	// the ad set again if it is not shown. list-meta-ad-sets reports it as
+	// re-read list-meta-ad-sets and do not assume `deliberately_paused` — after a
+	// pause, pause the ad set again if it is false; after a resume, resume it
+	// again if it is still true — and re-read the campaign for a fresh ETag before
+	// retrying (the ad-set read returns none). list-meta-ad-sets reports it as
 	// `deliberately_paused`. Pausing any other ad set — and anything on an ADOPTED
 	// campaign, which records no ad set — records nothing, since the campaign
 	// cascade never re-activates it. When the record is written the campaign row's

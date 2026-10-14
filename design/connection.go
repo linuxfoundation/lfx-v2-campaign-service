@@ -1486,7 +1486,11 @@ func microsoftKeywordsWindowEnum() {
 // and HTTP shape as resolve-microsoft-ads-campaign — only the id rule, its example and the
 // prose differ. The Google and Microsoft methods are left as written so their contract is
 // byte-identical; the service mirrors each id rule (internal/service/connection_keywords.go).
-func localCampaignRefMethod(method, platformName, slug, idPattern string, idMaxLen int, idDesc, idExample string) {
+//
+// cardinality is the platform's own `matches` sentence: it depends on that platform's binding
+// index (000042/000043 global; 000044-000046 per ad account), so it is passed per call rather
+// than stated once for all.
+func localCampaignRefMethod(method, platformName, slug, idPattern string, idMaxLen int, idDesc, idExample, cardinality string) {
 	Method(method, func() {
 		Description("Resolve one " + platformName + " campaign id to this service's own campaign and brief. " +
 			"The " + platformName + " twin of resolve-microsoft-ads-campaign: same payload shape, result and errors. " +
@@ -1494,9 +1498,7 @@ func localCampaignRefMethod(method, platformName, slug, idPattern string, idMaxL
 			"resolved, and nothing is mutated. Scoped to the project's own campaigns by the same " +
 			"`project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. " +
 			"**An unowned id is 200 with an empty `matches`, not 404.** " +
-			"**`matches` CAN hold more than one entry:** migration 000020's unique index covers Google Ads " +
-			"only, so a project whose connection was re-pointed between accounts can hold two live rows " +
-			"with the same id. A caller receiving more than one must refuse rather than choose. " +
+			cardinality +
 			"A malformed id is refused with 400 before any lookup. " +
 			"Not a list endpoint under rule 3: a keyed lookup for one supplied id.")
 		Payload(func() {
@@ -1826,6 +1828,54 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 	})
 
+	Method("get-reddit-ads-audience", func() {
+		Description("Read Reddit Ads audience insights — gender, country and community (subreddit), the " +
+			"Reddit Ads API v3 report breakdowns GENDER, COUNTRY and COMMUNITY — for this project's own " +
+			"campaigns, live from POST /ad_accounts/{id}/reports on the connected ad account. Reddit offers " +
+			"no AGE breakdown, so there is no age dimension. Read from the project's OWN connection only " +
+			"(never the LF system account) and its bound ad account only, and scoped to the campaigns this " +
+			"service holds for the project: one report per campaign per breakdown, each filtered to that " +
+			"campaign (campaign:id==<id>) with every returned row checked against it. A campaign that does not record " +
+			"which ad account it was created under is 409 (re-dispatch it). At most 8 campaigns (more is 409). Every " +
+			"report request — each page and each 429 retry — first takes a slot in the ad account's per-process " +
+			"reporting budget (45 per 60 seconds of Reddit's documented 60, at most 24 of them for this read, shared " +
+			"with the Reddit metrics read and account monitor); a read that cannot get its slots before its deadline " +
+			"is 503 with nothing partial. Identical concurrent reads share one upstream read, and a successful read " +
+			"is reused for 60 seconds within the same UTC day. " +
+			"A pure read-through; nothing is persisted. A project with no Reddit campaigns of its own receives " +
+			"an empty `buckets` array and Reddit is not contacted. All three breakdowns must load or the " +
+			"request fails (503): each covers the same traffic independently, and one presented without the " +
+			"others is a partial picture. Spend is in the account's own currency; no FX conversion is " +
+			"performed. There is no conversions counter. Disabled (400 not supported) unless " +
+			"REDDIT_METRICS_ENABLED is \"true\", like the Reddit metrics reads that share the reporting " +
+			"contract.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			Attribute("window", String, "Reporting window; defaults to last_30_days when omitted. yesterday and last_14_days are not available on Reddit.", redditAudienceWindowEnum)
+			Required("project_id")
+		})
+		Result(RedditAdsAudience)
+		Error("NotFound", NotFoundError, "Resource not found")
+		// authErrors() rather than a hand-listed BadRequest: it also declares Unauthorized,
+		// which every bearerToken() method must carry or a refused token encodes as a 500.
+		authErrors()
+		Error("Conflict", ConflictError, "Conflict")
+		Error("InternalServerError", InternalServerError, "Internal server error")
+		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
+		HTTP(func() {
+			GET("/projects/{project_id}/reddit-ads/audience")
+			Header("bearer_token:Authorization")
+			connectionAuthErrorResponses()
+			Param("window")
+			Response(StatusOK)
+			Response("NotFound", StatusNotFound)
+			Response("Conflict", StatusConflict)
+			Response("InternalServerError", StatusInternalServerError)
+			Response("ServiceUnavailable", StatusServiceUnavailable)
+		})
+	})
+
 	Method("resolve-google-ads-campaign", func() {
 		Description("Resolve one Google Ads campaign id to this service's own campaign and brief. " +
 			"A caller holding a keyword row has the PLATFORM's numeric campaign id; every mutation " +
@@ -1901,9 +1951,11 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"`project_id` predicate, so it cannot answer whether ANOTHER project holds a given id. " +
 			"**An unowned id is 200 with an empty `matches`, not 404.** " +
 			"**`matches` CAN hold more than one entry here, unlike Google:** Microsoft campaign ids are " +
-			"minted per ad account, so migration 000020's unique index deliberately covers Google Ads " +
-			"only, and a project whose connection was re-pointed between accounts can hold two live rows " +
-			"with the same id. A caller receiving more than one must refuse rather than choose. " +
+			"minted per ad account, so migration 000044's unique index allows one live row per (campaign " +
+			"id, ad account) rather than per id, and a project whose connection was re-pointed between " +
+			"accounts can hold one row per account for the same id — plus legacy rows that record no " +
+			"account, which the index does not constrain. A caller receiving more than one must refuse " +
+			"rather than choose. " +
 			"Not a list endpoint under rule 3: a keyed lookup for one supplied id.")
 		Payload(func() {
 			bearerToken()
@@ -1944,22 +1996,40 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 	localCampaignRefMethod("resolve-meta-ads-campaign", "Meta", "meta-ads",
 		`^[1-9][0-9]{0,31}$`, 32,
 		"The Meta campaign id to resolve. Digits only, no leading zero, at most 32 digits.",
-		"120210000000000001")
+		"120210000000000001",
+		"**`matches` holds at most one entry in a valid database:** campaign ids on this platform are "+
+			"globally unique, and migration 000043's unique index allows one live row per id across every "+
+			"project. The array shape is kept for parity with the other campaign-ref methods; a caller "+
+			"receiving more than one (an invalid database) must still refuse rather than choose. ")
 	localCampaignRefMethod("resolve-reddit-ads-campaign", "Reddit", "reddit-ads",
 		`^[A-Za-z0-9_]+$`, 64,
 		"The Reddit campaign id to resolve. Letters, digits and underscores, at most 64 characters.",
-		"1234567890123456789")
+		"1234567890123456789",
+		"**`matches` CAN hold more than one entry:** migration 000045's unique index allows one live "+
+			"row per (campaign id, ad account), so a project whose connection was re-pointed between "+
+			"accounts can hold one row per account for the same id — plus legacy rows that record no "+
+			"account, which the index does not constrain. A caller receiving more than one must refuse "+
+			"rather than choose. ")
 	localCampaignRefMethod("resolve-twitter-ads-campaign", "X/Twitter", "twitter-ads",
 		`^[A-Za-z0-9]+$`, 64,
 		"The X/Twitter campaign id to resolve. Letters and digits, at most 64 characters.",
-		"8wxyz")
+		"8wxyz",
+		"**`matches` CAN hold more than one entry:** migration 000046's unique index allows one live "+
+			"row per (campaign id, ad account), so a project whose connection was re-pointed between "+
+			"accounts can hold one row per account for the same id — plus legacy rows that record no "+
+			"account, which the index does not constrain. A caller receiving more than one must refuse "+
+			"rather than choose. ")
 	// LinkedIn joined the twins in LFXV2-2665. A LinkedIn campaign id is a `long`: the Pattern is
 	// its shape, and linkedin.ValidateCampaignID (applied by the service) adds the int64 range a
 	// regexp cannot state — internal/apivalidation pins that the decoder is necessary, not sufficient.
 	localCampaignRefMethod("resolve-linkedin-ads-campaign", "LinkedIn", "linkedin-ads",
 		`^[1-9][0-9]{0,18}$`, 19,
 		"The LinkedIn campaign id to resolve: a positive 64-bit integer (a LinkedIn `long`) — digits only, no leading zero, at most 9223372036854775807. The Pattern states only the shape; an id past the int64 range is refused 400 by the service before any lookup.",
-		"868353296")
+		"868353296",
+		"**`matches` holds at most one entry in a valid database:** campaign ids on this platform are "+
+			"globally unique, and migration 000042's unique index allows one live row per id across every "+
+			"project. The array shape is kept for parity with the other campaign-ref methods; a caller "+
+			"receiving more than one (an invalid database) must still refuse rather than choose. ")
 
 	Method("list-meta-ads-accounts", func() {
 		Description("Enumerate the Meta ad accounts accessible via the stored connection credential. " +

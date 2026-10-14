@@ -2064,6 +2064,21 @@ days here, UTC days there), so the two reads' totals are not directly comparable
 `twitter_audience_wire_example_test.go` (`TestPublishedTwitterAudienceExamplesArePossible`) walks
 every generated OpenAPI document and fails on an X audience example no response could contain.
 
+## Reddit audience read (`connection_reddit_audience.go`, LFXV2-2665)
+
+`GetRedditAdsAudience` (`GET .../reddit-ads/audience`) is the Reddit sibling: system scope refused
+(404); `resolveRedditAudienceWindow` accepts `today`, `last_7_days`, `last_30_days` (default),
+`this_month`, `last_month` — the Reddit report client's mapped windows — and answers anything else
+with the fixed 400 `redditAudienceWindowMessage` (derived from the map; the design enum declares
+the same subset); then `Orchestrator.ReadRedditAudienceInsights`, which type-asserts
+`RedditAudienceReader`, asks its `AudienceEnabled()` BEFORE the scope lookup (so
+`REDDIT_METRICS_ENABLED` off is 400 even with no Reddit campaigns), and runs the shared
+`readScopedAudience`. Errors go through `classifyInsightsErrorFor` with the
+`redditAdsAudienceInsights` descriptor. Two arms were added there, ahead of the mismatch arm: `domain.ErrCampaignProvenanceMixed` first → 409 naming BOTH remedies (re-dispatch the unrecorded campaigns, re-dispatch/reconcile or reconnect for the foreign ones; the Reddit read joins it with both other sentinels when a scope has both faults, `TestGetRedditAdsAudience_MixedProvenanceNamesBothRemedies`), then `domain.ErrCampaignProvenanceUnknown` → 409 with the re-dispatch remedy (the Reddit read joins it with the mismatch sentinel for rows that record no creation account). Buckets are `dimension`
+(`gender` | `country` | `community`) + optional `value` (absent for Reddit's explicit null); no
+`account_currency`. Tests: `reddit_audience_test.go`, including
+`TestPublishedRedditAudienceExamplesArePossible` over every generated OpenAPI document.
+
 ## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X, LinkedIn)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
@@ -2075,7 +2090,12 @@ All six are one helper,
 `connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any
 lookup), then the backend check (503 when not wired), then the project-scoped DB read (500 on a
 storage fault; 200 with an empty `matches` for an unowned id; every live match returned, never
-one picked). The platform and the id rule are fixed by the method, never by the request. Google
+one picked). How many can match is the platform's binding index, and each method's published
+description says so separately (`localCampaignRefMethod` takes the sentence per call): at most
+one in a valid database on Google Ads, LinkedIn and Meta (global indexes 000020/000042/000043);
+more than one on Microsoft, Reddit and X, whose indexes (000044-000046) allow one live row per
+(id, ad account), so a re-pointed connection leaves one row per account for the same id, plus
+legacy rows that record no account. The platform and the id rule are fixed by the method, never by the request. Google
 and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta, Reddit and X
 (LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
 `platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
