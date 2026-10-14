@@ -22,9 +22,11 @@ import (
 //
 // Reddit Ads API v3 takes a promoted-post image only as a public media_url it fetches and
 // re-hosts while the post is created (createPromotedPost). To use an image stored through
-// upload-creative-asset, the dispatch mints a short-lived HMAC-signed URL at which this service
-// serves that one asset (internal/assetsign, internal/service/signed_asset.go) and passes it as
-// the ImageURL the existing author-a-post path already consumes. Everything downstream — the
+// upload-creative-asset, this service serves that one asset at a short-lived HMAC-signed URL
+// (internal/assetsign, internal/service/signed_asset.go). The dispatch only CHECKS the asset; it
+// hands the client an ImageURLSource (lateAssetURL) that mints the URL immediately before the
+// promoted-post request, so nothing earlier in CreateCampaign can spend its lifetime. The URL then
+// takes the author-a-post path imageUrl takes. Everything downstream — the
 // failed/UNCONFIRMED/degraded classification and claim retention — is the path imageUrl has
 // always taken, untouched. The URL is never returned to an API client, never persisted (the
 // config snapshot is built from cfg, which keeps imageAssetId and never the minted URL), and
@@ -97,31 +99,49 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 	return domain.ErrPreflightNotApplicable
 }
 
-// resolveRedditAssetURL turns a referenced stored asset into the signed URL Reddit will fetch.
-// Every failure is pre-create: the caller wraps it in notCreated so the claim is released and no
-// Reddit call is made.
-func (d *RedditDispatcher) resolveRedditAssetURL(ctx context.Context, brief *model.CampaignBrief, assetID string) (string, error) {
+// checkRedditAsset proves, before any Reddit call, everything about a referenced stored asset
+// that minting its URL later depends on: the store is bound, the asset exists FOR THIS BRIEF
+// under an active brief and has bytes, and the ids can be carried in a signed URL. Every
+// failure is pre-create: the caller wraps it in notCreated so the claim is released.
+func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.CampaignBrief, assetID string) error {
 	if d.assets == nil {
-		return "", fmt.Errorf("reddit config references creative asset %s but the creative-asset store is not configured", assetID)
+		return fmt.Errorf("reddit config references creative asset %s but the creative-asset store is not configured", assetID)
 	}
 	size, err := d.assets.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return "", fmt.Errorf("reddit config references creative asset %s, which does not exist for this brief", assetID)
+			return fmt.Errorf("reddit config references creative asset %s, which does not exist for this brief", assetID)
 		}
-		return "", fmt.Errorf("reddit: size creative asset %s: %w", assetID, err)
+		return fmt.Errorf("reddit: size creative asset %s: %w", assetID, err)
 	}
 	if size <= 0 {
-		return "", fmt.Errorf("reddit config references creative asset %s, which has no stored image bytes", assetID)
+		return fmt.Errorf("reddit config references creative asset %s, which has no stored image bytes", assetID)
 	}
-	signed, exp, err := d.assetURLs.Mint(brief.ProjectID, brief.ID, assetID)
-	if err != nil {
-		return "", fmt.Errorf("reddit: cannot mint a signed URL for creative asset %s: %w", assetID, err)
+	if err := assetsign.ValidateIDs(brief.ProjectID, brief.ID, assetID); err != nil {
+		return fmt.Errorf("reddit: creative asset %s cannot be served at a signed URL: %w", assetID, err)
 	}
-	// The URL is a bearer credential for the image until exp: log the id and expiry only.
-	slog.InfoContext(ctx, "minted signed creative-asset URL for a Reddit promoted post",
-		"asset_id", assetID, "brief_id", brief.ID, "exp", exp.Unix())
-	return signed, nil
+	return nil
+}
+
+// lateAssetURL returns the reddit.CampaignInput.ImageURLSource that mints the signed URL. The
+// client calls it immediately before the promoted-post request that hands the URL to Reddit —
+// NOT here in Dispatch — because everything CreateCampaign does first (account verification,
+// a Retry-After wait of up to a minute) would otherwise spend the URL's lifetime before Reddit
+// fetches it. The post request itself may still refresh the token after minting, which adds
+// at most one more request timeout; assetsign.MinTTL covers it. The minted URL is also written to *minted so the caller
+// can scrub it from anything that comes back.
+func (d *RedditDispatcher) lateAssetURL(brief *model.CampaignBrief, assetID string, minted *string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		signed, exp, err := d.assetURLs.Mint(brief.ProjectID, brief.ID, assetID)
+		if err != nil {
+			return "", fmt.Errorf("reddit: cannot mint a signed URL for creative asset %s: %w", assetID, err)
+		}
+		*minted = signed
+		// The URL is a bearer credential for the image until exp: log the id and expiry only.
+		slog.InfoContext(ctx, "minted signed creative-asset URL for a Reddit promoted post",
+			"asset_id", assetID, "brief_id", brief.ID, "exp", exp.Unix())
+		return signed, nil
+	}
 }
 
 // scrubSignedURL removes the signature from any text that might carry it back out — an

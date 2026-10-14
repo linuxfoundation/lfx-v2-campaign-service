@@ -448,6 +448,19 @@ type CampaignInput struct {
 	// URL is the only way to author a post. Ignored when PostURL is set (an
 	// explicit, already-existing post always wins).
 	ImageURL string
+	// ImageURLSource, when set (and PostURL and ImageURL are empty), also selects the
+	// author-a-post path, but the image URL is obtained LATE: CreateCampaign calls it
+	// immediately before the post-authoring request that hands the URL to Reddit, after
+	// account verification and any throttle wait (the cached token is normally already valid
+	// by then). That request can still refresh the token after this returns — e.g. when a 401
+	// during account verification invalidated the cached one — which adds at most one more
+	// request timeout; assetsign.MinTTL covers it. It exists for URLs that EXPIRE — a
+	// short-lived signed URL for a stored creative asset (LFXV2-2665) — which minted any
+	// earlier could lapse during a Retry-After wait before Reddit fetches it. The
+	// returned URL gets the same validateImageURL check as ImageURL. An error from it is
+	// returned as (nil, err): nothing has been created at that point. It must not be logged
+	// or persisted by the client: the URL may be a bearer credential.
+	ImageURLSource func(ctx context.Context) (string, error)
 	// CallToAction is the button label on an AUTHORED post (see ImageURL). It must
 	// be one of Reddit's accepted CTA labels (case-insensitive, e.g. "Learn More",
 	// "Sign Up", "Buy Tickets"); empty defaults to defaultRedditCTA. Ignored when a
@@ -1653,8 +1666,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// rather than after paid resources exist. An explicit PostURL always wins:
 	// ImageURL/CallToAction are ignored when PostURL is set.
 	//
-	// authorImageURL == "" downstream means "do not author a post".
+	// authorPost == false downstream means "do not author a post". authorImageURL is the
+	// static ImageURL; with an ImageURLSource it stays empty until Step 1.5 obtains it.
 	var (
+		authorPost     bool
 		authorImageURL string
 		postHeadline   string
 		postCTA        string
@@ -1663,12 +1678,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// outcome is a DEGRADED success, not a clean one.
 		postWarning string
 	)
-	if validatedPostID == "" && strings.TrimSpace(in.ImageURL) != "" {
-		imageURL := strings.TrimSpace(in.ImageURL)
-		if err := validateImageURL(imageURL); err != nil {
-			return nil, err
+	if validatedPostID == "" && (strings.TrimSpace(in.ImageURL) != "" || in.ImageURLSource != nil) {
+		if in.ImageURLSource != nil && strings.TrimSpace(in.ImageURL) != "" {
+			return nil, fmt.Errorf("supply ImageURL or ImageURLSource, not both")
 		}
-		authorImageURL = imageURL
+		if in.ImageURLSource == nil {
+			imageURL := strings.TrimSpace(in.ImageURL)
+			if err := validateImageURL(imageURL); err != nil {
+				return nil, err
+			}
+			authorImageURL = imageURL
+		}
+		authorPost = true
 
 		// Resolve the CTA (case-insensitive) to Reddit's exact title-case label.
 		// Empty defaults to defaultRedditCTA; an unknown value is rejected up front
@@ -1851,7 +1872,25 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, fmt.Errorf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
 	}
 
-	if authorImageURL != "" {
+	if authorPost {
+		// A late image URL is obtained HERE, immediately before the request that hands it to
+		// Reddit, so nothing above (account verification, a Retry-After wait) can spend its
+		// lifetime; the cached token is normally already valid by now. createPromotedPost can
+		// still refresh the token after this returns (requestNoThrottleRetry refreshes per
+		// attempt, e.g. after a 401 above invalidated the cached token), which adds at most one
+		// more request timeout — assetsign.MinTTL covers it. Nothing has been created yet, so
+		// a failure is (nil, err).
+		if in.ImageURLSource != nil {
+			lateURL, lerr := in.ImageURLSource(ctx)
+			if lerr != nil {
+				return nil, fmt.Errorf("obtain the promoted-post image URL: %w", lerr)
+			}
+			lateURL = strings.TrimSpace(lateURL)
+			if err := validateImageURL(lateURL); err != nil {
+				return nil, err
+			}
+			authorImageURL = lateURL
+		}
 		postID, err := c.createPromotedPost(ctx, accountID, in, postHeadline, postCTA, authorImageURL)
 		if err != nil {
 			// A CALLER CANCELLATION is the only fatal authoring failure, and it is split by
