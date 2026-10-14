@@ -1267,9 +1267,11 @@ var (
 	// NOTHING rather than repointing that row at this dispatch's upstream id, which would
 	// silently untrack the campaign the other row binds.
 	//
-	// The paid campaign this dispatch created DOES exist upstream and this service no longer
-	// tracks it, so this is never a plain failure: the caller must report it as needing
-	// reconciliation and keep the upstream id where an operator can find it.
+	// Upstream resources from this dispatch may exist — they certainly do when an upstream id was
+	// captured, and possibly do for an id-less ambiguous partial — and this service no longer
+	// tracks them, so this is never a plain failure: the caller must report it as needing
+	// reconciliation and keep whatever identifiers it has (the upstream id, or the reconcile
+	// handles of an id-less partial) where an operator can find them.
 	ErrDispatchClaimLost = errors.New("the dispatch's claim on this campaign slot was lost before its result could be recorded")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
