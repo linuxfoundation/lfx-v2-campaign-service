@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, explicit create-time bidding (automatic MAX_CONVERSION or manual CPC/NONE/unitCost) where the create once sent no optimizationTargetType, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -883,3 +883,23 @@ bounded wait for AVAILABLE (`WithImagePolling`). The upload PUT carries the bear
 is sent only to https `linkedin.com` hosts. The minted URNs go to `CampaignResult.ImageURNs`.
 An image failure returns the partial result with zero creatives. See
 [LinkedIn Creative Image Assets](../architecture/linkedin-creative-assets.md).
+
+## Create-time bidding (`CampaignInput.ManualCPCBid`, `campaignBidding`, LFXV2-2665)
+
+**Bug fixed**: the create body used to send `costType` `CPC` with NO `optimizationTargetType`,
+which LinkedIn defaults to `NONE` — manual bidding — with `unitCost` defaulting to 0, under which
+"the campaign does not deliver". `campaignBidding` now always sends the bidding fields explicitly,
+merged into the campaign body by `createSponsoredCampaign`:
+
+- AUTOMATIC (`ManualCPCBid` 0): `optimizationTargetType` `MAX_CONVERSION`, `costType` `CPM`, no
+  `unitCost` — the objective table maps the Website conversions objective (`WEBSITE_CONVERSION`,
+  every campaign here) to autobidding that optimizes for conversions, and every AUTO row of the
+  page pairs `MAX_*` with `CPM`. LinkedIn: "Campaigns optimizing for MAX_CONVERSION must have a
+  conversion associated with it to be activated" — this service associates none.
+- MANUAL: `costType` `CPC`, `optimizationTargetType` `NONE`, `unitCost` `{amount, currencyCode
+  USD}` at whole cents through `ValidateBidAmount` (refused, never rounded) — exactly what
+  `CampaignSettings.ManualCPC` accepts.
+
+The bid is resolved before the first POST (a refusal creates nothing, not even the group). Source:
+"Create and Manage Campaigns", Optimization of Campaigns (li-lms-2026-09), consulted 2026-10-13.
+Neither shape is verified against a live account.

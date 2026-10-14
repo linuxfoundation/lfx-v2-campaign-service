@@ -82,9 +82,9 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 }
 
 // PreflightCreate refuses, before the create job exists, a Reddit config that names a stored
-// asset the service cannot serve: the feature off, imageAssetId together with imageUrl or
-// postUrl, or a malformed id. It never calls Reddit, so every other outcome is
-// ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
+// asset the service cannot serve (the feature off, imageAssetId together with imageUrl or
+// postUrl, or a malformed id), or whose bidding cannot be created as asked (redditBidPlan). It
+// never calls Reddit, so every other outcome is ErrPreflightNotApplicable. Whether the asset belongs to the brief cannot be checked here (the
 // pre-check is not given the brief); Dispatch checks it before any upstream call.
 func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
 	var cfg redditConfig
@@ -92,6 +92,9 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 		return domain.ErrPreflightNotApplicable // Dispatch reports a malformed config as the job failure
 	}
 	if _, err := d.checkRedditAssetChoice(cfg); err != nil {
+		return err
+	}
+	if _, err := redditBidPlan(cfg); err != nil {
 		return err
 	}
 	return domain.ErrPreflightNotApplicable

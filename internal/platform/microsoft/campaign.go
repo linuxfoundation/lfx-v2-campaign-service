@@ -158,6 +158,12 @@ type CampaignInput struct {
 	// field rather than inventing a default that could not be currency-correct across every
 	// account. A non-zero value must be within [minCpcBid, maxCpcBid].
 	CpcBid float64
+	// BiddingScheme is the CAMPAIGN's bid strategy (LFXV2-2665): BidSchemeMaxClicks for automatic
+	// bidding, BidSchemeEnhancedCpc for a manual ad-group CpcBid, or "" to send none (Microsoft's
+	// default for a Search campaign, EnhancedCpc). See msBiddingScheme for why a manual bid is
+	// EnhancedCpc and not ManualCpc. MaxClicks with a CpcBid is refused before anything is sent:
+	// under it "you don't need to set ad group or keyword bids", so the bid would be ignored.
+	BiddingScheme string
 	// GeoTargets are ISO 3166-1 alpha-2 country codes the campaign should serve in
 	// (LFXV2-3279), attached as CAMPAIGN-level location criteria. Optional at this layer: an
 	// empty list creates the campaign with NO location criteria, which is what this client
@@ -259,8 +265,59 @@ type msCampaign struct {
 	DailyBudget  float64 `json:"DailyBudget"`
 	Status       string  `json:"Status"`
 	TimeZone     string  `json:"TimeZone"`
+	// BiddingScheme is omitted when nil, leaving Microsoft's Search default (EnhancedCpc) — the
+	// exact body this client sent before LFXV2-2665.
+	BiddingScheme *msBiddingScheme `json:"BiddingScheme,omitempty"`
 	// Languages and other targeting are intentionally omitted for the PAUSED shell;
 	// they are set in a later slice.
+}
+
+// msBiddingScheme is the campaign's BiddingScheme as the REST JSON names it: a polymorphic object
+// discriminated by Type. Only Type is sent — MaxClicks' MaxCpc ceiling is optional ("Add:
+// Optional") and EnhancedCpc carries no element of its own.
+//
+// WHY MANUAL IS EnhancedCpc, NOT ManualCpc. Microsoft's ManualCpcBiddingScheme reference: "you can
+// only use manual CPC for audience display and video campaigns, and for lodging campaigns ... If
+// you attempt to set manual CPC for any other campaign type, the request will be ignored without
+// error and the bid strategy will be set to enhanced CPC." This client creates SEARCH campaigns, so
+// ManualCpc would be a silent no-op; EnhancedCpc is the strategy Microsoft actually applies, and
+// under it "you set your ad group and keyword bids" — the ad-group CpcBid the bid lever writes, and
+// one of the two schemes that lever accepts (CampaignBidStrategy.UsesAdGroupBid).
+//   - https://learn.microsoft.com/en-us/advertising/campaign-management-service/manualcpcbiddingscheme
+//   - https://learn.microsoft.com/en-us/advertising/campaign-management-service/enhancedcpcbiddingscheme
+//
+// AUTOMATIC IS MaxClicks: "you don't need to set ad group or keyword bids. Microsoft Advertising
+// automatically sets your bids in real time to get as many clicks as possible within your budget."
+// It needs no conversion tracking, unlike MaxConversions, which this service's campaigns cannot
+// assume. https://learn.microsoft.com/en-us/advertising/campaign-management-service/maxclicksbiddingscheme
+type msBiddingScheme struct {
+	Type string `json:"Type"`
+}
+
+// BidSchemeMaxClicks is the automatic campaign bid strategy the create path sends.
+const BidSchemeMaxClicks = "MaxClicks"
+
+// validateBiddingScheme checks the requested campaign scheme against the ad-group bid, before
+// anything is sent. "" keeps the pre-LFXV2-2665 body (no scheme, Microsoft's EnhancedCpc default).
+func validateBiddingScheme(scheme string, cpcBidSet bool) (*msBiddingScheme, error) {
+	switch scheme {
+	case "":
+		return nil, nil
+	case BidSchemeEnhancedCpc:
+		if !cpcBidSet {
+			// A manual campaign with no bid would take Microsoft's account-currency minimum — a
+			// number nobody chose. The dispatcher always supplies one; refuse a caller that does not.
+			return nil, fmt.Errorf("microsoft-ads: the EnhancedCpc (manual) bid strategy needs an ad group CpcBid")
+		}
+		return &msBiddingScheme{Type: BidSchemeEnhancedCpc}, nil
+	case BidSchemeMaxClicks:
+		if cpcBidSet {
+			return nil, fmt.Errorf("microsoft-ads: an ad group CpcBid cannot be combined with the MaxClicks (automatic) bid strategy, which ignores it")
+		}
+		return &msBiddingScheme{Type: BidSchemeMaxClicks}, nil
+	default:
+		return nil, fmt.Errorf("microsoft-ads: unsupported campaign bid strategy %q", scheme)
+	}
 }
 
 // createCampaignsRequest is the POST /Campaigns body. The v13 AddCampaigns operation
@@ -510,6 +567,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, fmt.Errorf("microsoft-ads campaign bid invalid: %w", err)
 	}
+	biddingScheme, err := validateBiddingScheme(in.BiddingScheme, cpcBidSet)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft-ads campaign bid strategy invalid: %w", err)
+	}
 	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
 	// below, before the first mutating call. Splitting the two is deliberate: this half needs
 	// no network, so an unsupported code fails with nothing sent at all.
@@ -599,12 +660,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		req := createCampaignsRequest{
 			AccountId: json.Number(c.account.AccountID),
 			Campaigns: []msCampaign{{
-				Name:         campaignName,
-				CampaignType: campaignTypeSearch,
-				BudgetType:   budgetTypeDailyStandard,
-				DailyBudget:  in.Budget,
-				Status:       campaignStatusPaused,
-				TimeZone:     timeZone,
+				Name:          campaignName,
+				CampaignType:  campaignTypeSearch,
+				BudgetType:    budgetTypeDailyStandard,
+				DailyBudget:   in.Budget,
+				Status:        campaignStatusPaused,
+				TimeZone:      timeZone,
+				BiddingScheme: biddingScheme,
 			}},
 		}
 		respBody, err := c.doRequest(ctx, http.MethodPost, "Campaigns", req, false)
@@ -651,6 +713,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 			}
 		} else {
 			steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, Search, %.2f/day daily budget in account currency)", campaignID, in.Budget))
+			if biddingScheme != nil {
+				steps = append(steps, fmt.Sprintf("Campaign bid strategy: %s", biddingScheme.Type))
+			}
 		}
 	}
 

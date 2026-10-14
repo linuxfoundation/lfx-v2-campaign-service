@@ -1354,3 +1354,16 @@ uploaded, and a failed read refuses rather than uploads), `Media` (AddMedia, nev
 is not mistaken for an ambiguous mutation. `CampaignResult.ImageMediaID`/`ImageAdExtensionID`
 are set by the dispatcher, never by `CreateCampaign`. See
 [Microsoft Creative Image Assets](../architecture/microsoft-creative-assets.md).
+
+## Create-time campaign bid strategy (`CampaignInput.BiddingScheme`, LFXV2-2665)
+
+`BiddingScheme` sets the CAMPAIGN's `BiddingScheme` (`msBiddingScheme`, `{"Type": ...}`) on the
+create. `MaxClicks` is AUTOMATIC ("you don't need to set ad group or keyword bids") and must come
+with no ad-group `CpcBid`; `EnhancedCpc` is MANUAL and must come with one — the ad group's `CpcBid`
+is the bid, and `EnhancedCpc` is one of the two schemes `CampaignBidStrategy.UsesAdGroupBid`
+accepts. MANUAL is not `ManualCpc` because Microsoft documents that ManualCpc on any campaign type
+but audience display/video and lodging "will be ignored without error and the bid strategy will be
+set to enhanced CPC" (ManualCpcBiddingScheme reference). `""` sends no scheme (the pre-LFXV2-2665
+body; Microsoft's Search default is EnhancedCpc). `validateBiddingScheme` refuses MaxClicks with a
+bid, EnhancedCpc without one, or any other value before any request. A campaign reused by name
+keeps its existing scheme.

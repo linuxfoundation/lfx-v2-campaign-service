@@ -67,10 +67,15 @@ type microsoftConfig struct {
 	// the campaign is created but can NEVER SERVE, and ToggleStatus refuses to activate it —
 	// so a caller that wants a servable campaign must supply at least one.
 	Keywords []microsoftKeywordConfig `json:"keywords"`
-	// CpcBid is an OPTIONAL ad-group max cost-per-click in whole units of the account currency
-	// (no micros, no FX). Omitted/zero means unset, and Microsoft then applies the
-	// account-currency minimum — a documented, serve-capable floor, so omitting it is safe.
+	// CpcBid is the LEGACY spelling of a manual starting bid: an ad-group max cost-per-click in
+	// whole units of the account currency (no micros, no FX). Since LFXV2-2665 the bidding choice
+	// is Bidding's; a cpcBid sent WITHOUT bidding still means what it always did — the ad group
+	// bids cpcBid under EnhancedCpc — and is recorded as manual bidding. See microsoftBidPlan for
+	// how the two fields combine.
 	CpcBid float64 `json:"cpcBid"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted (and no cpcBid)
+	// means automatic: the campaign is created with the MaxClicks bid strategy.
+	Bidding *biddingConfig `json:"bidding"`
 	// GeoTargets are ISO 3166-1 alpha-2 country codes, the SAME vocabulary
 	// redditConfig/metaConfig/googleAdsConfig take (LFXV2-3279). Microsoft's location
 	// criteria take numeric LocationIds rather than ISO codes, so the client resolves each
@@ -175,6 +180,13 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated BEFORE any upstream call (PreflightCreate has normally
+	// refused a bad one already, as a 400). Recorded on every row this dispatch returns.
+	plan, err := microsoftBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer func() { plan.stamp(camp) }()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -204,7 +216,8 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		TimeZone:        cfg.TimeZone,
 		RegistrationURL: bf.RegistrationURL,
 		Keywords:        microsoftKeywords(cfg.Keywords),
-		CpcBid:          cfg.CpcBid,
+		CpcBid:          plan.amount,
+		BiddingScheme:   microsoftBiddingScheme(plan),
 		GeoTargets:      cfg.GeoTargets,
 		// NameSuffix = the brief id gives deterministic, at-most-once-retry names: Microsoft
 		// enforces case-insensitive campaign-name uniqueness, so a retry composes the SAME name
@@ -264,6 +277,80 @@ func (d *MicrosoftDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		camp.Status = campaignStatusCreatedDegraded
 	}
 	return camp, nil
+}
+
+// PreflightCreate refuses, before the create job exists, a microsoftConfig whose bidding cannot be
+// created as asked (see microsoftBidPlan). It never calls Microsoft, so every other outcome is
+// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch, which reports it as
+// the job failure, as Reddit's pre-check does.
+func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	var cfg microsoftConfig
+	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
+		return domain.ErrPreflightNotApplicable
+	}
+	if _, err := microsoftBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
+}
+
+// microsoftBidPlan resolves microsoftConfig's bidding choice.
+//
+//   - bidding omitted, no cpcBid: AUTOMATIC — the campaign gets the MaxClicks strategy and its
+//     ad group no bid.
+//   - bidding omitted, cpcBid set: MANUAL at cpcBid. This is the legacy field keeping the
+//     meaning it had before LFXV2-2665 (an EnhancedCpc campaign whose ad group bids cpcBid), now
+//     recorded as manual so the row and the bid lever agree with what was created.
+//   - bidding manual: bidAmount is the ad-group CpcBid. A cpcBid alongside it must be the same
+//     amount — two different starting bids are refused rather than one silently winning.
+//   - bidding automatic with any cpcBid: refused, since MaxClicks ignores the ad group bid.
+//
+// A manual amount must also be within the bounds the bid lever applies on Microsoft
+// (microsoft.ValidateMaxCPCBid), so a campaign this path creates can always be re-bid there.
+func microsoftBidPlan(cfg microsoftConfig) (bidPlan, error) {
+	const key = "microsoftConfig"
+	if cfg.Bidding == nil && cfg.CpcBid != 0 {
+		amount := cfg.CpcBid
+		return microsoftManualPlan(key, &biddingConfig{Strategy: biddingStrategyManual, BidAmount: &amount}, "cpcBid")
+	}
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil {
+		return bidPlan{}, err
+	}
+	if !plan.manual() {
+		if cfg.CpcBid != 0 {
+			return bidPlan{}, biddingInvalid(key, "cpcBid sets a manual ad group bid, which the automatic (MaxClicks) strategy ignores; remove cpcBid, or choose strategy \"manual\" with bidAmount")
+		}
+		return plan, nil
+	}
+	if cfg.CpcBid != 0 && cfg.CpcBid != plan.amount {
+		return bidPlan{}, biddingInvalid(key, "cpcBid %s and bidAmount %s name two different starting bids; send bidAmount only", formatBid(cfg.CpcBid), formatBid(plan.amount))
+	}
+	return microsoftManualPlan(key, cfg.Bidding, "bidding.bidAmount")
+}
+
+// microsoftManualPlan validates a manual starting bid against the generic rules and Microsoft's.
+func microsoftManualPlan(key string, b *biddingConfig, field string) (bidPlan, error) {
+	plan, err := resolveBidding(key, b)
+	if err != nil {
+		return bidPlan{}, err
+	}
+	if verr := microsoft.ValidateMaxCPCBid(plan.amount); verr != nil {
+		reason, ok := microsoft.BidAmountReason(verr)
+		if !ok {
+			reason = "the bid is not accepted by Microsoft Advertising"
+		}
+		return bidPlan{}, biddingInvalid(key, "%s: %s", field, reason)
+	}
+	return plan, nil
+}
+
+// microsoftBiddingScheme maps a plan to the campaign BiddingScheme the client sends.
+func microsoftBiddingScheme(plan bidPlan) string {
+	if plan.manual() {
+		return microsoft.BidSchemeEnhancedCpc
+	}
+	return microsoft.BidSchemeMaxClicks
 }
 
 // microsoftKeywords maps the wire-shaped keyword config to the platform client's Keyword

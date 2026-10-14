@@ -4346,3 +4346,26 @@ malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefec
 (503). Tests: `linkedin_audience_test.go` (every pivot mapped, LF fallback refused with zero upstream
 calls, foreign/legacy-URL/mixed provenance 409 with zero calls, unknown provenance proceeds, window
 and scope faults beat an inactive connection, 401 → expired, 5xx unclassified without its body).
+
+## Create-time bidding (`bidding.go`, LFXV2-2665)
+
+Every lane config (`microsoftConfig`, `metaConfig`, `redditConfig`, `twitterConfig`,
+`linkedInConfig`) carries an optional `bidding` object (`biddingConfig`: `strategy`
+`automatic`|`manual`, `bidAmount`). `resolveBidding` applies the shared rules — omitted =
+automatic; `automatic` with any `bidAmount` refused; `manual` needs a finite `bidAmount` > 0, at
+most 1,000,000 and a whole number of micro-units (`exactScaled`, a round-trip test that never
+rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.ValidateMaxCPCBid`
+(0.01–1,000) plus the legacy `cpcBid` (alone = manual at that amount; with `bidding` it must agree,
+and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
+decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount`
+(whole cents); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`<configKey>.bidding: <reason>`.
+
+The rules run twice: in each lane dispatcher's `PreflightCreate` (a `service.CreatePreflighter`, so
+the create path answers a synchronous 400 before any job; it returns `ErrPreflightNotApplicable`
+otherwise and never calls a platform), and again in `Dispatch` before any upstream call
+(`notCreated`, claim released). `Dispatch` passes the plan to the client (Microsoft
+`BiddingScheme` + `CpcBid`, Meta `BidCap`, Reddit `ManualCPCBid`, X `MaxBid`, LinkedIn
+`ManualCPCBid`) and `defer plan.stamp(camp)` records `BiddingStrategy` and, for manual, the starting
+bid in `MaxCPCBid` on every returned row (partials included). `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
+drives a manual create and then `WriteBid` on the returned row.

@@ -62,6 +62,27 @@ type redditConfig struct {
 	CallToAction      string `json:"callToAction"`
 	ConversionPixelID string `json:"conversionPixelId"`
 	VideoGoal         string `json:"videoGoal"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
+	// (BIDLESS, unchanged); manual creates a MANUAL_BIDDING CPC campaign — see redditBidPlan.
+	Bidding *biddingConfig `json:"bidding"`
+}
+
+// redditBidPlan resolves redditConfig's bidding choice. Manual bidding creates campaign and ad
+// group as MANUAL_BIDDING with bid_type CPC and the ad group's bid_value — the shape the bid lever
+// accepts — so it needs the traffic objective, the one Reddit objective here that bids CPC
+// (reddit.ManualCPCBidSupported; the default objective, conversions, bids CPM). Reddit sets bids in
+// micro-units, so the generic whole-micro rule is its precision rule too. Reddit publishes no
+// fixed minimum or maximum bid this service could check ahead of it; its refusal fails the job.
+func redditBidPlan(cfg redditConfig) (bidPlan, error) {
+	const key = "redditConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	if !reddit.ManualCPCBidSupported(cfg.Objective) {
+		return bidPlan{}, biddingInvalid(key, "manual bidding sets a cost-per-click bid, which needs objective \"traffic\" (the other objectives bid per thousand impressions); use automatic bidding for this objective")
+	}
+	return plan, nil
 }
 
 // briefFields is the subset of a brief's JSON blobs the adapters read. The brief
@@ -150,6 +171,13 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	if err := unmarshalPlatformConfig(config, "redditConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call (PreflightCreate normally refused a
+	// bad one already, as a 400). Recorded on every row this dispatch returns.
+	plan, err := redditBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer func() { plan.stamp(camp) }()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -210,6 +238,7 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 		CallToAction:      cfg.CallToAction,
 		ConversionPixelID: cfg.ConversionPixelID,
 		VideoGoal:         cfg.VideoGoal,
+		ManualCPCBid:      plan.amount,
 	}
 
 	// The reddit client's contract: (nil, err) ONLY when NOTHING was (or may have

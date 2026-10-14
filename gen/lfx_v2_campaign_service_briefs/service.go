@@ -272,34 +272,36 @@ type Service interface {
 	// rather than assumed manual. On Reddit the CAMPAIGN's strategy is checked
 	// first and then the ad group's: with Campaign Budget Optimization on (as on
 	// every campaign this service creates) the ad group's strategy must match the
-	// campaign's, so both must be MANUAL_BIDDING. NOTE: every Reddit campaign this
-	// service creates is BIDLESS on both the campaign and its ad group, every Meta
-	// campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, and every X campaign
-	// AUTO, so those three legs apply only after an operator has moved the Reddit
-	// campaign and ad group, the Meta ad set or the X line item to a manual
-	// per-click bid in the platform's own UI. A LinkedIn campaign this service
-	// creates sends no optimizationTargetType, which LinkedIn documents as
-	// defaulting to NONE (manual), so it is expected to pass — but the guard
-	// decides on what LinkedIn REPORTS, never on that expectation. On every
-	// adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not
-	// USD, and this service neither knows nor converts it; the LinkedIn adapter
-	// writes USD and refuses (409) a campaign whose bid is in any other or an
-	// unreported currency. Microsoft Advertising, Reddit, Meta, X and LinkedIn
-	// today: a campaign on any other platform is refused with 400. **409** when
-	// the change is refused BEFORE the platform is written, so nothing has
-	// changed: the campaign is unprovisioned; it belongs to a different ad account
-	// than the project's connection now resolves to, or does not record which ad
-	// account it was created under; its bid strategy is automated, a target, or
-	// unreported; or the bid could not be addressed (no recorded ad group, ad set
-	// or line item, one reporting another campaign or deleted, or one bidding in a
-	// unit other than `bid_type`). None is retryable. **400** for a request fault:
-	// a non-positive, non-finite or out-of-range bid, an unknown bid type, a
-	// platform with no bid-write capability wired, or a bid the campaign's
-	// platform refuses on its own minimum or maximum — the response names what it
-	// was. **503** when the platform could not be reached or did not confirm —
-	// including a throttled Meta, X or LinkedIn write, which is never retried
-	// in-call; the row is unchanged. Setting the same bid twice converges, but
-	// verify the bid in the ad platform before retrying.
+	// campaign's, so both must be MANUAL_BIDDING. CAMPAIGNS THIS SERVICE CREATES:
+	// one created with the dispatch config's `bidding.strategy` `manual`
+	// (create-campaigns) is created in exactly the shape this endpoint accepts on
+	// its platform — Microsoft EnhancedCpc with the ad group's CpcBid, Meta a
+	// link-click bid cap, Reddit MANUAL_BIDDING CPC on campaign and ad group, X
+	// MAX per link click, LinkedIn CPC with optimizationTargetType NONE and
+	// unitCost — so it can be re-bid here. One created with AUTOMATIC bidding (the
+	// default) is refused (409) until an operator moves it to a manual per-click
+	// bid in the platform's own UI: Microsoft MaxClicks, Meta
+	// LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO, LinkedIn MAX_CONVERSION.
+	// Either way the guard decides on what the platform REPORTS, never on what was
+	// created. On every adapter but LinkedIn the amount is in the AD ACCOUNT's own
+	// currency, not USD, and this service neither knows nor converts it; the
+	// LinkedIn adapter writes USD and refuses (409) a campaign whose bid is in any
+	// other or an unreported currency. Microsoft Advertising, Reddit, Meta, X and
+	// LinkedIn today: a campaign on any other platform is refused with 400.
+	// **409** when the change is refused BEFORE the platform is written, so
+	// nothing has changed: the campaign is unprovisioned; it belongs to a
+	// different ad account than the project's connection now resolves to, or does
+	// not record which ad account it was created under; its bid strategy is
+	// automated, a target, or unreported; or the bid could not be addressed (no
+	// recorded ad group, ad set or line item, one reporting another campaign or
+	// deleted, or one bidding in a unit other than `bid_type`). None is retryable.
+	// **400** for a request fault: a non-positive, non-finite or out-of-range bid,
+	// an unknown bid type, a platform with no bid-write capability wired, or a bid
+	// the campaign's platform refuses on its own minimum or maximum — the response
+	// names what it was. **503** when the platform could not be reached or did not
+	// confirm — including a throttled Meta, X or LinkedIn write, which is never
+	// retried in-call; the row is unchanged. Setting the same bid twice converges,
+	// but verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
@@ -794,6 +796,21 @@ type Campaign struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int
+	// How the campaign was CREATED to bid, as its dispatch config's
+	// `bidding.strategy` asked (LFXV2-2665): `automatic` (the default — the
+	// platform sets every bid) or `manual` (a manual max cost-per-click bid the
+	// update-campaign-bid endpoint can change). A record of the request, not an
+	// observation: an operator may switch the strategy in the ad platform
+	// afterwards. ABSENT when not recorded — a campaign created before this field
+	// existed, an adopted campaign, or a Google Ads or email campaign — never read
+	// as `automatic`.
+	BiddingStrategy *string
+	// The manual max cost-per-click bid this service most recently set, in the AD
+	// ACCOUNT's own currency (NOT USD): the starting bid of a campaign created
+	// with manual bidding, then whatever update-campaign-bid set. A request the
+	// platform confirmed, never an observation — a bid changed in the platform's
+	// own UI is not reflected. ABSENT when this service never set one.
+	MaxCpcBid *float64
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
@@ -818,7 +835,29 @@ type CampaignActionItem struct {
 type CampaignCreateInput struct {
 	// Platforms to create campaigns on (binding selection)
 	Platforms []string
-	// Per-platform campaign configuration
+	// Per-platform campaign configuration: an object keyed by platform config name
+	// (microsoftConfig, metaConfig, redditConfig, twitterConfig, linkedInConfig,
+	// googleAdsConfig, hubspotConfig) plus the top-level hsToken. BIDDING
+	// (LFXV2-2665): microsoftConfig, metaConfig, redditConfig, twitterConfig and
+	// linkedInConfig each accept an optional `bidding` object, {"strategy":
+	// "automatic" | "manual", "bidAmount": number}. Omitted means automatic
+	// (Microsoft MaxClicks, Meta LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO,
+	// LinkedIn MAX_CONVERSION — which LinkedIn will not activate until a
+	// conversion is associated with the campaign). `manual` requires `bidAmount`,
+	// the starting max cost-per-click bid in the ad account's own currency
+	// (LinkedIn: USD), greater than zero, at most 1,000,000 and a whole number of
+	// micro-units; it creates the campaign in the shape update-campaign-bid
+	// accepts. Per platform, a manual bid must also be: Microsoft within
+	// 0.01–1,000 (a legacy microsoftConfig.cpcBid without `bidding` still means a
+	// manual bid at that amount; with `bidding` it must be omitted or equal
+	// bidAmount); Meta at most two decimals, a whole minor unit of the account
+	// currency (checked against the currency at dispatch), and only for the
+	// traffic or leads objective; Reddit only for the traffic objective; LinkedIn
+	// whole cents. `automatic` with a `bidAmount`, an unknown strategy, or a bid
+	// breaking these rules is refused synchronously with 400 "invalid campaign
+	// config: <configKey>.bidding: ..." before any job exists.
+	// googleAdsConfig.bidding is refused with 400 (use
+	// googleAdsConfig.biddingStrategy).
 	Config any
 	// Create ANOTHER campaign on each selected platform instead of retrying.
 	// Without it, repeating a create for a platform that already has a completed
@@ -927,18 +966,21 @@ type CampaignSettingsField struct {
 	// `budget_amount`, `budget_type` and `campaign_name`, plus `start_date` and
 	// `end_date` on Meta, Reddit and X (a Microsoft campaign carries no flight
 	// dates, so they are not reported there); `status` and `bidding_strategy_type`
-	// are upstream-only on all four (none of their create paths records a
-	// strategy); Microsoft also reports `budget_explicitly_shared` upstream-only,
-	// Reddit `is_campaign_budget_optimization` and X `budget_optimization` — the
-	// last two say where the budget lives, and explain a budget that reads
-	// `unknown` because the campaign-level amount is not the one the row recorded
-	// (Reddit with campaign budget optimization off, X under anything but
-	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
-	// forward past UTC midnight (because the requested day had already begun at
-	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
-	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
-	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// are upstream-only on all four (since LFXV2-2665 their create paths record an
+	// `automatic` or `manual` choice — the campaign's `bidding_strategy` — but
+	// that vocabulary is deliberately not mapped onto each platform's strategy
+	// enum, for the reason given for Google above); Microsoft also reports
+	// `budget_explicitly_shared` upstream-only, Reddit
+	// `is_campaign_budget_optimization` and X `budget_optimization` — the last two
+	// say where the budget lives, and explain a budget that reads `unknown`
+	// because the campaign-level amount is not the one the row recorded (Reddit
+	// with campaign budget optimization off, X under anything but `CAMPAIGN`). A
+	// Meta or Reddit start that the create path itself nudged forward past UTC
+	// midnight (because the requested day had already begun at dispatch) is shown
+	// with both sides and an `unknown` verdict rather than a false `diverged`. On
+	// LinkedIn the COMPARED settings are `budget_amount`, `budget_type`,
+	// `campaign_name`, `start_date` and `end_date` (the start, like Meta's and
+	// Reddit's, may be nudged by the create path); `status`,
 	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
 	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
 	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the

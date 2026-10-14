@@ -251,6 +251,10 @@ type CampaignInput struct {
 	// AdAccountID optionally overrides the default account. Must be in the
 	// runtime config's accounts list when set.
 	AdAccountID string
+	// ManualCPCBid is the manual starting bid (LFXV2-2665), in USD like BudgetUSD (every
+	// LinkedIn write here is USD). ZERO means AUTOMATIC bidding; a positive value creates a
+	// manual max-CPC campaign. See campaignBidding for both request shapes and the citations.
+	ManualCPCBid float64
 	// Images holds the stored image for every ImageAssetID a variant names, keyed by that
 	// id. Each distinct key is uploaded ONCE per CreateCampaign however many variants share it.
 	Images map[string]ImageUpload
@@ -1895,7 +1899,7 @@ func (c *Client) findOrCreateCampaignGroup(ctx context.Context, accountID, name,
 // single-flight claim is PLANNED but NOT provided here (tracked separately as
 // LFXV2-2665); until it exists, callers MUST NOT rely on any dedup guarantee and
 // must serialize concurrent calls for the same name on their own.
-func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool) (string, error) {
+func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID, name, startDate string, endMs int64, budgetUSD float64, geoURNs []string, targetingProfile string, lifetimeBudget bool, bidding map[string]any) (string, error) {
 	campaignsPath := fmt.Sprintf("adAccounts/%s/adCampaigns", accountID)
 
 	// Scope the idempotency lookup to the resolved campaign group: the campaign
@@ -1951,11 +1955,11 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		"status":        "PAUSED",
 		"type":          "SPONSORED_UPDATES",
 		"objectiveType": "WEBSITE_CONVERSION",
-		// CPC, not CPM: these campaigns carry a WEBSITE_CONVERSION objective, so the
-		// budget should buy clicks rather than impressions. Verified against a draft
-		// created by hand on the LF Events account (campaign 868353296).
-		"costType": "CPC",
-		"locale":   map[string]any{"country": "US", "language": "en"},
+		// costType, optimizationTargetType and (for manual bidding) unitCost come from
+		// campaignBidding and are merged below. Before LFXV2-2665 this body sent costType CPC
+		// and NO optimizationTargetType, which LinkedIn defaults to NONE — manual bidding — with
+		// unitCost defaulting to 0, under which "the campaign does not deliver".
+		"locale": map[string]any{"country": "US", "language": "en"},
 		// false keeps delivery on LinkedIn itself. true opts the campaign into the
 		// LinkedIn Audience Network — placements beyond the feed, on third-party
 		// sites — which is a media-buying decision nobody makes in our UI, so it
@@ -1965,7 +1969,10 @@ func (c *Client) createSponsoredCampaign(ctx context.Context, accountID, groupID
 		budgetField:              map[string]any{"amount": amount, "currencyCode": "USD"},
 		"runSchedule":            map[string]any{"start": startMs, "end": endMs},
 	}
-	// Merge the targetingCriteria block.
+	// Merge the bidding fields, then the targetingCriteria block.
+	for k, v := range bidding {
+		body[k] = v
+	}
 	for k, v := range targeting {
 		body[k] = v
 	}
@@ -2484,6 +2491,12 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if _, _, err := ValidateBudgetAmount(in.BudgetUSD, in.LifetimeBudget); err != nil {
 		return nil, err
 	}
+	// The bidding fields, resolved BEFORE any POST: a manual bid that is not a whole number of
+	// cents is refused here, with nothing created, rather than after the campaign group exists.
+	bidding, err := campaignBidding(in.ManualCPCBid)
+	if err != nil {
+		return nil, err
+	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and
 	// campaign creation are permanent side effects, so an empty variant set would
@@ -2642,7 +2655,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	steps = append(steps, fmt.Sprintf("Campaign group: %s (ID: %s)", groupName, groupID))
 
-	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget)
+	campaignID, err := c.createSponsoredCampaign(ctx, accountID, groupID, campaignName, in.StartDate, endMs, in.BudgetUSD, geoURNs, in.TargetingProfile, in.LifetimeBudget, bidding)
 	if err != nil {
 		// findOrCreateCampaignGroup may have just created a PERMANENT campaign group
 		// (groupID) whose creation is a real side effect. Returning nil,err here

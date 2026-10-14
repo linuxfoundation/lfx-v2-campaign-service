@@ -524,7 +524,7 @@ func TestCreateSponsoredCampaign_SameNameDifferentGroupNotMatched(t *testing.T) 
 		context.Background(),
 		"123456789", wantGroupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",
-		false,
+		false, nil,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)
@@ -566,7 +566,7 @@ func TestCreateSponsoredCampaign_SameNameSameGroupMatched(t *testing.T) {
 		context.Background(),
 		"123456789", groupID, "Same Name", "2099-01-01", endMs,
 		100, []string{"urn:li:geo:103644278"}, "cloud-native",
-		false,
+		false, nil,
 	)
 	if err != nil {
 		t.Fatalf("createSponsoredCampaign: %v", err)

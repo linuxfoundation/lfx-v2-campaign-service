@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/twitter"
-description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, the account monitor's asynchronous stats-job primitives, a campaign budget read+write (GET then one paced, classified PUT of the daily *_local_micro amount) for the budget writer (LFXV2-2665), and a line-item bid_amount_local_micro write made only when the line item bids MAX per link click (which no campaign this service creates does)."
+description: "X (Twitter) Ads v12 client: OAuth 1.0a signing, ad-account discovery, the campaign -> line_item -> promoted_tweet creation flow, per-client write pacing toward X's 1-write/sec account limit, the account monitor's asynchronous stats-job primitives, a campaign budget read+write (GET then one paced, classified PUT of the daily *_local_micro amount) for the budget writer (LFXV2-2665), and a line-item bid_amount_local_micro write made only when the line item bids MAX per link click (the shape a create with manual bidding now produces, CampaignInput.MaxBid)."
 resource: "internal/platform/twitter"
 tags:
   - platform-client
@@ -1378,3 +1378,12 @@ endpoints on `WithMediaUploadBaseURL` (default `https://api.x.com`) and adds it 
 The key goes out as `media_keys` and is recorded in `CampaignResult.MediaKey`. `doBodyRequest`
 is the one body-carrying, never-retrying sender. It classifies outcomes the way `doRequestAbs`
 does. See [X Ads Creative Image Assets](../architecture/x-creative-assets.md).
+
+## Create-time bidding (`CampaignInput.MaxBid`, LFXV2-2665)
+
+`MaxBid` zero is AUTOMATIC: the line item is created with `bid_strategy` `AUTO` exactly as before.
+A positive `MaxBid` is MANUAL: `bid_strategy` `MAX`, `pay_by` `LINK_CLICK` and
+`bid_amount_local_micro` — `LineItemBid.ManualCPC`, the bid lever's guard. The amount is checked
+in the up-front validation block (`manualMaxBidMicros`): finite, positive, at most 1,000,000 and a
+WHOLE number of micro-units (refused, never rounded). The line-item step names the bid. A reused
+line item keeps whatever bidding it had.

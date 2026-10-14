@@ -2764,6 +2764,16 @@ type CampaignInput struct {
 	DSAPayor       string
 	HSToken        string
 	Variants       []AdVariant
+	// BidCap is the manual starting bid (LFXV2-2665), in whole units of the ad ACCOUNT's currency
+	// like Budget. ZERO means AUTOMATIC bidding: the ad set is created exactly as before, with
+	// bid_strategy LOWEST_COST_WITHOUT_CAP and billing_event IMPRESSIONS. A positive value creates
+	// the ad set as a LINK-CLICK BID CAP — bid_strategy LOWEST_COST_WITH_BID_CAP, billing_event
+	// LINK_CLICKS, bid_amount in minor units — the one shape the bid lever reads as a max cost per
+	// click (AdSetBid.CPCBidCap; see bid_update.go for the cited reasoning). Only an objective that
+	// optimizes for LINK_CLICKS can take it (ManualBidSupported); the amount must be a whole number
+	// of the currency's minor units, refused rather than rounded. Both are checked before the first
+	// mutating call.
+	BidCap float64
 	// ReconcileByName opts THIS call in to looking the campaign (and its ad set) up by
 	// name before creating, and reusing a PAUSED match instead of creating a second one.
 	//
@@ -3159,6 +3169,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if err != nil {
 		return nil, err
 	}
+	// The manual bid cap, encoded against the same offset and refused — never rounded — when it is
+	// not a whole number of minor units. Still before any mutating call.
+	var bidCapMinor int64
+	if in.BidCap != 0 {
+		if objParams.OptimizationGoal != OptimizationLinkClicks {
+			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding needs an objective that optimizes for link clicks (traffic or leads); %q optimizes for %s", objective, objParams.OptimizationGoal)}
+		}
+		if bidCapMinor, err = CreateBidMinorUnits(in.BidCap, offset); err != nil {
+			return nil, err
+		}
+	}
 
 	// Step 2: geo filtering + campaign creation.
 	// If the caller supplied geo targets but NONE survive validation (all bogus or
@@ -3470,6 +3491,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		adSetBody["lifetime_budget"] = budgetMinor
 	} else {
 		adSetBody["daily_budget"] = budgetMinor
+	}
+	// MANUAL bidding: a bid cap charged per link click, the shape the bid lever accepts. The
+	// optimization goal is already LINK_CLICKS (checked above), so all three fields name the same
+	// click and bid_amount is a max cost per link click in minor units. Meta: "If you select this
+	// [LOWEST_COST_WITH_BID_CAP], you must provide a bid cap with the bid_amount field", and a
+	// non-impression billing event's bid is "for each occurrence, and has a minimum value 1 US
+	// cents" (Ad Set reference, https://developers.facebook.com/docs/marketing-api/reference/ad-campaign).
+	if bidCapMinor > 0 {
+		adSetBody["bid_strategy"] = BidStrategyBidCap
+		adSetBody["billing_event"] = BillingEventLinkClicks
+		adSetBody["bid_amount"] = bidCapMinor
 	}
 
 	// Reconcile the ad set by name too, same rationale as the campaign lookup above:

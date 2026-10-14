@@ -65,6 +65,9 @@ type metaConfig struct {
 	// rejection fails the platform job BEFORE any mutating Meta call — it is a pre-create
 	// dispatch failure, not a synchronous 4xx on the campaign request. Left 0 → derived.
 	CurrencyOffset int64 `json:"currencyOffset"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
+	// (LOWEST_COST_WITHOUT_CAP, unchanged); manual creates a link-click bid cap — see metaBidPlan.
+	Bidding *biddingConfig `json:"bidding"`
 }
 
 // creativeAssetReader is the ONE creative-asset operation this dispatcher needs: read a
@@ -696,6 +699,14 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 	if err := unmarshalPlatformConfig(config, "metaConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call; the one currency-dependent rule (a
+	// whole number of minor units) is the client's, after its account preflight read and still
+	// before anything is created.
+	plan, err := metaBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer func() { plan.stamp(camp) }()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -768,6 +779,7 @@ func (d *MetaDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrie
 		// The RESOLVED variants (image bytes filled in), not cfg.Variants — cfg.Variants
 		// stays pristine for campaignFromMeta's snapshot and degraded-count check.
 		Variants: variants,
+		BidCap:   plan.amount,
 	}
 
 	client := meta.NewClient(meta.Credentials{AccessToken: creds.AccessToken}, account, d.opts...)
@@ -1466,4 +1478,40 @@ func metaAccountLabel(a meta.AdAccount) string {
 		label += " (" + reason + ")"
 	}
 	return label
+}
+
+// PreflightCreate refuses, before the create job exists, a metaConfig whose bidding cannot be
+// created as asked (see metaBidPlan). It never calls Meta, so every other outcome is
+// ErrPreflightNotApplicable; a config that does not decode is left to Dispatch.
+func (d *MetaDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	var cfg metaConfig
+	if err := unmarshalPlatformConfig(config, "metaConfig", &cfg); err != nil {
+		return domain.ErrPreflightNotApplicable
+	}
+	if _, err := metaBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
+}
+
+// metaBidPlan resolves metaConfig's bidding choice. Manual bidding is a LINK-CLICK bid cap on the
+// ad set — the only Meta shape the bid lever reads as a max cost per click — so it needs an
+// objective whose ad set optimizes for LINK_CLICKS (traffic, or leads, which runs as traffic here;
+// meta.ManualBidSupported), and at most two decimal places: every currency this service can encode
+// has a minor-unit scale of 100 or 1, so a third decimal is never a whole minor unit. Whether a
+// two-decimal amount is a whole unit of a ZERO-decimal currency (JPY) is known only after Meta
+// reports the account's currency, so the client checks that before its first mutating call.
+func metaBidPlan(cfg metaConfig) (bidPlan, error) {
+	const key = "metaConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	if !meta.ManualBidSupported(cfg.Objective) {
+		return bidPlan{}, biddingInvalid(key, "manual bidding is a cost-per-link-click bid cap, which needs the traffic or leads objective; use automatic bidding for this objective")
+	}
+	if _, ok := exactScaled(plan.amount, 100); !ok {
+		return bidPlan{}, biddingInvalid(key, "bidAmount %s has more than two decimal places, which is not a whole minor unit of any ad account currency; it is refused rather than rounded", formatBid(plan.amount))
+	}
+	return plan, nil
 }

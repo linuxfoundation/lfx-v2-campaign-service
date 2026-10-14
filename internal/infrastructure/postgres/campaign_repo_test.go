@@ -90,10 +90,21 @@ func TestCampaignRepo_OnConflictCarriesLivePredicate(t *testing.T) {
 func TestReplaceCampaignWritesTheBidColumn(t *testing.T) {
 	assert.Regexp(t, `max_cpc_bid=\$\d+`, normalizeWS(replaceCampaignQuery),
 		"ReplaceCampaign must SET max_cpc_bid, or a confirmed bid change is silently not recorded")
-	// RETURNING campaignCols legitimately SELECTS the column; what must be absent is a write.
-	assert.NotRegexp(t, `max_cpc_bid\s*=`, normalizeWS(upsertCampaignQuery),
-		"the dispatch upsert must not touch max_cpc_bid: it records only bids set through the bid "+
-			"endpoint, and a re-dispatch writing NULL over it would erase that record")
+	assert.Regexp(t, `bidding_strategy=\$\d+`, normalizeWS(replaceCampaignQuery),
+		"ReplaceCampaign must round-trip bidding_strategy (000047), or every update would null it")
+}
+
+// TestUpsertCampaignFillsBiddingOnlyWhileEmpty pins the dispatch upsert's treatment of the two
+// bidding columns (LFXV2-2665). The create path now records its bidding choice and its starting
+// manual bid, so the upsert writes them — but the STORED value must win: max_cpc_bid also holds
+// whatever update-campaign-bid set later, and an upsert that put the create's starting bid (or a
+// NULL) back over it would erase that record. COALESCE(EXCLUDED, campaigns) would do exactly that.
+func TestUpsertCampaignFillsBiddingOnlyWhileEmpty(t *testing.T) {
+	q := normalizeWS(upsertCampaignQuery)
+	assert.Contains(t, q, "max_cpc_bid=COALESCE(campaigns.max_cpc_bid, EXCLUDED.max_cpc_bid)",
+		"the upsert may fill max_cpc_bid only while it is empty; a bid set through the bid endpoint must win")
+	assert.Contains(t, q, "bidding_strategy=COALESCE(campaigns.bidding_strategy, EXCLUDED.bidding_strategy)",
+		"the upsert may fill bidding_strategy only while it is empty")
 }
 
 func TestClaimVersionIsBackedByACompareAndSwap(t *testing.T) {
@@ -550,7 +561,7 @@ var campaignColumnOrder = []string{
 	"id", "project_id", "brief_id", "job_id", "platform", "variant", "slot_version", "platform_campaign_id",
 	"campaign_name", "status", "budget_amount", "budget_type", "start_date", "end_date",
 	"config_snapshot", "result", "version", "created_by", "updated_by", "ran_on_system_account",
-	"created_at", "updated_at", "max_cpc_bid",
+	"created_at", "updated_at", "max_cpc_bid", "bidding_strategy",
 }
 
 // fakeCampaignRow is a pgx.Row handing scanCampaign a fixed, positionally ordered result set.
@@ -612,15 +623,18 @@ func TestScanCampaign_MapsEachColumnToItsField(t *testing.T) {
 	amount := 250.5
 	ranOnSystem := true
 	bid := 1.75
+	biddingStrategy := "manual"
 
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", &jobID, "google-ads", "demand-gen", 3, &pcID, "Spring launch", "created",
 		&amount, &budgetType, &start, &end,
 		json.RawMessage(`{"cfg":1}`), json.RawMessage(`{"res":2}`), int64(9),
 		[]byte(`{"email":"ada@lf.dev"}`), []byte(`{"email":"grace@lf.dev"}`), &ranOnSystem,
-		created, updated, &bid,
+		created, updated, &bid, &biddingStrategy,
 	}})
 	require.NoError(t, err)
+	require.NotNil(t, c.BiddingStrategy)
+	assert.Equal(t, model.BiddingManual, *c.BiddingStrategy)
 
 	assert.Equal(t, "c1", c.ID)
 	// max_cpc_bid (000039) and budget_amount are both *float64, so a destination swap would
@@ -680,7 +694,7 @@ func TestScanCampaign_NullActorsDecodeToNil(t *testing.T) {
 	c, err := scanCampaign(fakeCampaignRow{vals: []any{
 		"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 		nil, nil, nil, nil, nil, nil, int64(1),
-		nil, nil, nil, time.Time{}, time.Time{}, nil,
+		nil, nil, nil, time.Time{}, time.Time{}, nil, nil,
 	}})
 	require.NoError(t, err)
 	// A NULL max_cpc_bid means "never set through update-campaign-bid", which is nil.
@@ -714,7 +728,7 @@ func TestScanCampaign_MalformedActorJSONIsAnError(t *testing.T) {
 		return []any{
 			"c1", "cncf", "b1", nil, "google-ads", "default", 1, nil, "n", "created",
 			nil, nil, nil, nil, nil, nil, int64(1),
-			createdBy, updatedBy, nil, time.Time{}, time.Time{}, nil,
+			createdBy, updatedBy, nil, time.Time{}, time.Time{}, nil, nil,
 		}
 	}
 	_, err := scanCampaign(fakeCampaignRow{vals: base([]byte(`["not","an","actor"]`), nil)})

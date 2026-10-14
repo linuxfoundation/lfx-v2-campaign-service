@@ -61,6 +61,31 @@ type twitterConfig struct {
 	// to attach to the AUTHORED tweet as its image. Requires tweetText and no tweetId; see
 	// resolveTwitterImage (twitter_creative.go) and twitter/media.go.
 	ImageAssetID string `json:"imageAssetId"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic
+	// (the line item bids AUTO, unchanged); manual creates a MAX bid charged per link click.
+	Bidding *biddingConfig `json:"bidding"`
+}
+
+// twitterBidPlan resolves twitterConfig's bidding choice. Every X campaign here is WEBSITE_CLICKS,
+// so manual bidding needs no objective check: the line item bids MAX, pay_by LINK_CLICK, the shape
+// the bid lever accepts. X sets bids in micro-units, so the generic whole-micro rule is its
+// precision rule; X publishes no fixed bid floor this service could check ahead of it.
+func twitterBidPlan(cfg twitterConfig) (bidPlan, error) {
+	return resolveBidding("twitterConfig", cfg.Bidding)
+}
+
+// PreflightCreate refuses, before the create job exists, a twitterConfig whose bidding cannot be
+// created as asked. It never calls X, so every other outcome is ErrPreflightNotApplicable; a
+// config that does not decode is left to Dispatch.
+func (d *TwitterDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	var cfg twitterConfig
+	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
+		return domain.ErrPreflightNotApplicable
+	}
+	if _, err := twitterBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
 }
 
 // TwitterDispatcher creates X (Twitter) campaigns for the orchestrator.
@@ -203,6 +228,12 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	if err := unmarshalPlatformConfig(config, "twitterConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call; recorded on every returned row.
+	plan, err := twitterBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer func() { plan.stamp(camp) }()
 	bf, err := decodeBriefFields(brief)
 	if err != nil {
 		return nil, notCreated(err)
@@ -293,6 +324,7 @@ func (d *TwitterDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		TweetText:       cfg.TweetText,
 		AsUserID:        asUserID,
 		Image:           image,
+		MaxBid:          plan.amount,
 	}
 
 	// Built through the client cache, so concurrent dispatches for this account share ONE

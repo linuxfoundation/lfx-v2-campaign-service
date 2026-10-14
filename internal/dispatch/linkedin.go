@@ -193,6 +193,45 @@ type linkedinConfig struct {
 	AdAccountID        string                            `json:"adAccountId"`
 	TargetingProfiles  []linkedin.TargetingProfileConfig `json:"targetingProfiles"`
 	EmployerExclusions []string                          `json:"employerExclusions"`
+	// Bidding is the optional per-campaign bidding choice (bidding.go). Omitted means automatic:
+	// the campaign is created with optimizationTargetType MAX_CONVERSION. See linkedinBidPlan.
+	Bidding *biddingConfig `json:"bidding"`
+}
+
+// linkedinBidPlan resolves linkedInConfig's bidding choice. Manual bidding creates the campaign
+// with costType CPC, optimizationTargetType NONE and unitCost = the bid — the setup the bid lever
+// reads as a manual max CPC — and every LinkedIn write here is in USD at whole cents, so a manual
+// amount must be a whole number of cents (linkedin.ValidateBidAmount, refused rather than rounded).
+// LinkedIn's bid floor depends on the audience and is not a fixed figure this service can check
+// ahead of it; its refusal fails the job.
+func linkedinBidPlan(cfg linkedinConfig) (bidPlan, error) {
+	const key = "linkedInConfig"
+	plan, err := resolveBidding(key, cfg.Bidding)
+	if err != nil || !plan.manual() {
+		return plan, err
+	}
+	if _, verr := linkedin.ValidateBidAmount(plan.amount); verr != nil {
+		reason, ok := linkedin.BidAmountReason(verr)
+		if !ok {
+			reason = "the bid is not accepted by LinkedIn"
+		}
+		return bidPlan{}, biddingInvalid(key, "bidAmount: %s", reason)
+	}
+	return plan, nil
+}
+
+// PreflightCreate refuses, before the create job exists, a linkedInConfig whose bidding cannot be
+// created as asked. It never calls LinkedIn, so every other outcome is ErrPreflightNotApplicable;
+// a config that does not decode is left to Dispatch.
+func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ model.Provider, config json.RawMessage) error {
+	var cfg linkedinConfig
+	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
+		return domain.ErrPreflightNotApplicable
+	}
+	if _, err := linkedinBidPlan(cfg); err != nil {
+		return err
+	}
+	return domain.ErrPreflightNotApplicable
 }
 
 // LinkedInDispatcher creates LinkedIn campaigns for the orchestrator.
@@ -290,6 +329,12 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
 		return nil, notCreated(err)
 	}
+	// The bidding choice, validated before any upstream call; recorded on every returned row.
+	plan, err := linkedinBidPlan(cfg)
+	if err != nil {
+		return nil, notCreated(err)
+	}
+	defer func() { plan.stamp(camp) }()
 	// Reject an empty variant set BEFORE any upstream create. The client also refuses
 	// it (nil, err) after its own validation, but checking up front avoids the wasted
 	// input build + upstream round-trip and keeps the claim-release semantics obvious
@@ -361,6 +406,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 		Variants:         cfg.Variants,
 		AdAccountID:      adAccountID,
 		Images:           images,
+		ManualCPCBid:     plan.amount,
 	}
 
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), runtime, d.opts...)

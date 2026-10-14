@@ -73,6 +73,51 @@ func (s *CampaignSettings) ManualCPC() bool {
 	return false
 }
 
+// OptimizationTargetMaxConversion is the AUTOMATIC bidding target the create path sends
+// (LFXV2-2665). See campaignBidding.
+const OptimizationTargetMaxConversion = "MAX_CONVERSION"
+
+// costTypeCPM is the cost type LinkedIn pairs with auto-bidding targets.
+const costTypeCPM = "CPM"
+
+// campaignBidding returns the campaign-create fields that set its bidding (LFXV2-2665), from
+// LinkedIn's "Create and Manage Campaigns" page, "Optimization of Campaigns" (li-lms-2026-09),
+// https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaigns
+// consulted 2026-10-13.
+//
+// AUTOMATIC (manualBid == 0): optimizationTargetType MAX_CONVERSION with costType CPM and no
+// unitCost. The page: "Setting optimizationTargetType to one of the following activates
+// auto-bidding", and its objective table maps the "Website conversions" objective — the
+// WEBSITE_CONVERSION objectiveType every campaign here carries — to autobidding that "Optimizes
+// for conversions" (MAX_CONVERSION: "Maximize the campaign's number of conversions and spend the
+// daily budget without an advertiser specifying bid"). Every AUTO row of the page's
+// optimizationTargetType tables pairs MAX_* with costType CPM ("cost cap bidding charges by
+// impressions (same as auto-bidding)"). The page also states: "Campaigns optimizing for
+// MAX_CONVERSION must have a conversion associated with it to be activated" — this service
+// associates none, so an operator associates one in Campaign Manager before activating.
+//
+// MANUAL (manualBid > 0): costType CPC, optimizationTargetType NONE ("keeps a campaign in manual
+// bidding mode") and unitCost = the bid ("amount to bid (for manual bidding)"), in USD at whole
+// cents (ValidateBidAmount — refused, never rounded). That is exactly the setup the bid lever
+// reads as a manual max CPC (CampaignSettings.ManualCPC), so it can re-bid the campaign later.
+func campaignBidding(manualBid float64) (map[string]any, error) {
+	if manualBid == 0 {
+		return map[string]any{
+			"costType":               costTypeCPM,
+			"optimizationTargetType": OptimizationTargetMaxConversion,
+		}, nil
+	}
+	wire, err := ValidateBidAmount(manualBid)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"costType":               CostTypeCPC,
+		"optimizationTargetType": OptimizationTargetNone,
+		"unitCost":               map[string]any{"amount": wire, "currencyCode": "USD"},
+	}, nil
+}
+
 // linkedinMaxBid is the contract's ceiling (service.maxCampaignBid). LinkedIn's own range is
 // audience-dependent and LinkedIn's to enforce — its refusal is classified below.
 const linkedinMaxBid = 1_000_000.0
