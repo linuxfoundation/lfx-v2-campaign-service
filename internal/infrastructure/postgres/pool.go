@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strconv"
@@ -783,10 +784,7 @@ const requiredIndexQuery = `SELECT
 // INVALID counts as absent: it enforces nothing, which is the same fact to a caller
 // deciding whether the invariant holds, and its recovery is the drop-then-create above.
 func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong []string, err error) {
-	expected, err := serverDeparsedRequiredIndexes(ctx, conn)
-	if err != nil {
-		return nil, nil, err
-	}
+	expected := serverDeparsedRequiredIndexes(ctx, conn)
 	for _, want := range requiredIndexes {
 		var unique, live, rightTable bool
 		var predicate string
@@ -913,6 +911,21 @@ const probeIndexQuery = `SELECT
 		), '{}')
 	FROM pg_index i WHERE i.indexrelid = $1::regclass`
 
+// probeFault, when set (tests only), is consulted before each probe-infrastructure step and
+// makes that step fail with the returned error — standing in for a production role without the
+// TEMPORARY privilege, a read-only default, or a hot standby.
+var probeFault func(step string) error
+
+// probeStep runs one probe-infrastructure step, honouring probeFault.
+func probeStep(step string, run func() error) error {
+	if probeFault != nil {
+		if err := probeFault(step); err != nil {
+			return err
+		}
+	}
+	return run()
+}
+
 // serverDeparsedRequiredIndexes asks the RUNNING server how it deparses each required index's
 // expected definition, so the boot check compares the server's rendering of BOTH sides rather
 // than a live deparse against text captured on one PostgreSQL version. A major upgrade that
@@ -920,19 +933,30 @@ const probeIndexQuery = `SELECT
 // sides alike and cannot fail boot; a genuinely different definition still differs.
 //
 // How: inside ONE transaction that is always rolled back, it creates an empty TEMP copy of each
-// table (`LIKE`, columns only — no data, no lock beyond a brief share on the source) and builds
-// each expected index on it from createSQL's own key list and predicate, then reads that probe's
-// deparse. The stored strings stay valid SQL on any version that can parse them, which is all the
-// probe needs. If the server cannot build a probe (a stored string this version no longer
-// parses), that entry falls back to the stored text, so the check is never weaker than before.
-func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (map[string]deparsedIndex, error) {
+// table (`LIKE`, columns only — no data) and builds each expected index on it from createSQL's
+// key list and predicate, then reads that probe's deparse.
+//
+// BEST-EFFORT, and never stricter than the text comparison it improves on. The probe needs things
+// the boot check never needed before — a transaction, the TEMPORARY privilege, a writable session
+// — and a production role may lack them (no TEMP grant, default_transaction_read_only, a hot
+// standby). Any such infrastructure failure logs ONE warning naming the step and the error class
+// and leaves the affected entries (the rest of the list) on their stored text, exactly the
+// comparison made before this existed. A definition this server cannot parse falls back the same
+// way, entry by entry. It therefore returns no error: the worst case is the old behaviour.
+func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) map[string]deparsedIndex {
 	out := make(map[string]deparsedIndex, len(requiredIndexes))
 	for _, r := range requiredIndexes {
 		out[r.name] = deparsedIndex{keys: r.keys, predicate: r.predicate}
 	}
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("check for required indexes: begin probe: %w", err)
+	fallBack := func(step string, err error) map[string]deparsedIndex {
+		slog.WarnContext(ctx, "required-index check: the deparse probe could not run; comparing the remaining definitions as stored text (a Postgres upgrade that re-renders them could then report a mismatch)",
+			"step", step, "error_class", fmt.Sprintf("%T", err), "error", err)
+		return out
+	}
+
+	var tx pgxv5.Tx
+	if err := probeStep("begin", func() (err error) { tx, err = conn.Begin(ctx); return err }); err != nil {
+		return fallBack("begin", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -941,8 +965,11 @@ func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (map[s
 		tmp, ok := probed[r.table]
 		if !ok {
 			tmp = "required_index_probe_" + r.table
-			if _, err := tx.Exec(ctx, fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s)", tmp, r.table)); err != nil {
-				return nil, fmt.Errorf("check for required indexes: create probe table for %s: %w", r.table, err)
+			if err := probeStep("create temp table", func() error {
+				_, err := tx.Exec(ctx, fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s)", tmp, r.table))
+				return err
+			}); err != nil {
+				return fallBack("create temp table", err)
 			}
 			probed[r.table] = tmp
 		}
@@ -951,20 +978,29 @@ func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (map[s
 		ddl = strings.Replace(ddl, "CREATE UNIQUE INDEX", "CREATE INDEX", 1)
 		// A savepoint per probe, so a definition this server cannot parse falls back to the
 		// stored text for that entry alone instead of aborting the whole transaction.
-		if _, err := tx.Exec(ctx, "SAVEPOINT required_index_probe"); err != nil {
-			return nil, fmt.Errorf("check for required indexes: savepoint: %w", err)
+		if err := probeStep("savepoint", func() error {
+			_, err := tx.Exec(ctx, "SAVEPOINT required_index_probe")
+			return err
+		}); err != nil {
+			return fallBack("savepoint", err)
 		}
 		if _, err := tx.Exec(ctx, ddl); err != nil {
-			if _, rerr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT required_index_probe"); rerr != nil {
-				return nil, fmt.Errorf("check for required indexes: rollback probe: %w", rerr)
+			// About the DEFINITION, not the infrastructure: this entry keeps its stored text.
+			if rerr := probeStep("rollback to savepoint", func() error {
+				_, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT required_index_probe")
+				return err
+			}); rerr != nil {
+				return fallBack("rollback to savepoint", rerr)
 			}
 			continue
 		}
 		var d deparsedIndex
-		if err := tx.QueryRow(ctx, probeIndexQuery, "pg_temp."+probe).Scan(&d.predicate, &d.keys); err != nil {
-			return nil, fmt.Errorf("check for required indexes: read probe for %s: %w", r.name, err)
+		if err := probeStep("read probe", func() error {
+			return tx.QueryRow(ctx, probeIndexQuery, "pg_temp."+probe).Scan(&d.predicate, &d.keys)
+		}); err != nil {
+			return fallBack("read probe", err)
 		}
 		out[r.name] = d
 	}
-	return out, nil
+	return out
 }

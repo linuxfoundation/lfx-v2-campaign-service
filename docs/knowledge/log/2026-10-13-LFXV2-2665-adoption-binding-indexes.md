@@ -48,3 +48,9 @@ definition on an empty TEMP copy of its table inside a rolled-back transaction a
 probe's deparse. A live test proves a differently-spelled identical definition passes and a
 different one fails. `identifierRe` moved above the `requiredIndex` doc comment so godoc attaches
 correctly.
+
+The deparse probe is best-effort: a failure of any probe step (begin, CREATE TEMP TABLE, savepoint,
+rollback-to, reading the probe — a role without TEMPORARY, a read-only default, a hot standby)
+logs one WARN with the step and error class and falls back to the stored-text comparison for the
+remaining entries, so it adds no new way for boot to fail; a genuinely different definition is
+still refused either way.

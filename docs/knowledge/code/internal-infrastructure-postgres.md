@@ -1776,8 +1776,13 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   table (`LIKE`, in one always-rolled-back transaction, a savepoint per probe) and compares the
   server's deparse of BOTH sides, so a major upgrade that re-renders an expression or predicate
   cannot fail boot while a genuinely different definition still does
-  (`TestLiveRequiredIndexCheckComparesTheServersOwnDeparse`). A stored definition the server can
-  no longer parse falls back to the old text comparison. CI pins `postgres:16-alpine`
+  (`TestLiveRequiredIndexCheckComparesTheServersOwnDeparse`). The probe is BEST-EFFORT: if any
+  infrastructure step fails (begin, temp-table creation, savepoint, rollback-to, reading the probe
+  — e.g. a role without TEMPORARY, a read-only default, a hot standby) it logs one WARN naming the
+  step and error class and the remaining entries compare as stored text, so the check is never
+  stricter than before; a stored definition the server cannot parse falls back the same way
+  (`TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun`, via the test-only `probeFault`
+  hook). CI pins `postgres:16-alpine`
   (`.github/workflows/lfx-v2-campaign-service-build.yaml`); the deployed database is external
   (the chart only receives its connection settings), so its version is not pinned by this repo.
   **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so they

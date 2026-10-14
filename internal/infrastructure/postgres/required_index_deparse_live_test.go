@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -52,5 +53,55 @@ func TestLiveRequiredIndexCheckComparesTheServersOwnDeparse(t *testing.T) {
 	_, wrong, err = checkRequiredIndexes(ctx, conn)
 	if err != nil || len(wrong) != 1 || !strings.Contains(wrong[0], name) {
 		t.Fatalf("a different definition was not refused: wrong %v, err %v", wrong, err)
+	}
+}
+
+// TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun: a production role may lack the
+// TEMPORARY privilege, run read-only, or sit on a hot standby. Whichever probe step fails, the
+// check must fall back to the stored-text comparison — NOT fail boot — so it is never stricter
+// than before the probe existed: a correct schema still passes, and a genuinely different
+// definition is still refused.
+func TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun(t *testing.T) {
+	pool := creativeAssetTestPool(t)
+	ctx := context.Background()
+	c, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer c.Release()
+	conn := c.Conn()
+
+	const name = "uq_campaigns_microsoft_campaign_live"
+	i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == name })
+	saved := requiredIndexes[i]
+	t.Cleanup(func() { requiredIndexes[i] = saved; probeFault = nil })
+
+	for _, step := range []string{"begin", "create temp table", "savepoint", "read probe"} {
+		t.Run(step, func(t *testing.T) {
+			calls := 0
+			probeFault = func(s string) error {
+				if s == step {
+					calls++
+					return errors.New("permission denied to create temporary tables in database (simulated)")
+				}
+				return nil
+			}
+			defer func() { probeFault = nil }()
+
+			requiredIndexes[i] = saved
+			missing, wrong, err := checkRequiredIndexes(ctx, conn)
+			if err != nil || len(missing) != 0 || len(wrong) != 0 {
+				t.Fatalf("correct schema with the probe failing at %q: missing %v, wrong %v, err %v — the probe made boot STRICTER", step, missing, wrong, err)
+			}
+			if calls == 0 {
+				t.Fatalf("the %q step was never reached, so the fallback was not exercised", step)
+			}
+
+			requiredIndexes[i].keys = []string{"platform", "platform_campaign_id", `NULLIF(result ->> 'AccountID'::text, ''::text)`}
+			_, wrong, err = checkRequiredIndexes(ctx, conn)
+			if err != nil || len(wrong) != 1 || !strings.Contains(wrong[0], name) {
+				t.Fatalf("a different definition with the probe failing at %q was not refused: wrong %v, err %v", step, wrong, err)
+			}
+		})
 	}
 }
