@@ -753,7 +753,7 @@ gone. A currency outside the supported map leaves every budget 0 (pacing unknown
 `CreateCampaign` puts the budget on the AD SET, so a campaign this service created reports no
 campaign-level budget and used to be `PacingUnknown` forever. When any admitted, non-failed
 campaign has neither a positive `daily_budget` nor `lifetime_budget`, `fetchAccountAdSetBudgets`
-makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time&limit=500`
+makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time&limit=500`
 (`id` is the duplicate-row proof), bounded at `monitorAdSetMaxPages` (20) × 500, every body through
 `identityjson.Check` before decoding, and sums the ad sets per campaign when every one is
 `effective_status == ACTIVE`; any other status (paused, campaign-paused, archived, in review)

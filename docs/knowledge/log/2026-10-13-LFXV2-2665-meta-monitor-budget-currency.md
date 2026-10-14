@@ -4,7 +4,7 @@
 campaign-level budgets, but `CreateCampaign` puts the budget on the ad set, so every campaign this
 service creates read `pacing_unknown` and could never raise an under/overspend item. When an
 admitted campaign has neither campaign-level budget, `fetchAccountAdSetBudgets` makes ONE
-account-level paged read (`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time`,
+account-level paged read (`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time`,
 20 × 500 cap, `identityjson` before decode) and sums the ad sets per campaign — only when every
 one is `ACTIVE`; any other status leaves the campaign unknown (see the pacing-review entry); mixed
 daily/lifetime, an explicit `null`, an active ad set with no budget, a page-cap hit or an
@@ -15,8 +15,8 @@ own offset (unknown currency → budgets unknown). (3) `budgetToMinorUnits` and 
 rounded, so a ¥1.4 budget or bid was written as ¥1 and answered 200 (#235); an amount finer than
 one minor unit is now refused with a 400 before any write ("enter whole amounts for this
 currency" / "enter at most 2 decimal places"), via a decimal check immune to float representation
-error. The encoder is shared, so the create path refuses the same amounts. No API, design, gen or
-migration change. `rules/monitor_meta.go`'s pacing thresholds are unchanged, but its
+error. The encoder is shared, so the create path refuses the same amounts. No API-shape or migration
+change (the published Meta monitor example and the generated specs carrying it did change). `rules/monitor_meta.go`'s pacing thresholds are unchanged, but its
 action-item text and lifetime proration change (see the follow-ups below). See `architecture/account-monitor-endpoints.md`
 and `code/internal-platform-meta.md`.
 
