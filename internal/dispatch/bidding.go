@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -70,6 +72,11 @@ func (b *biddingConfig) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return fmt.Errorf("bidding must be an object")
+	}
+	// Exact keys only, as checkBiddingShape enforces: a case variant ("Strategy") or an unknown key
+	// would otherwise be silently ignored, and the campaign created automatic without the cap.
+	if msg := biddingKeyProblem(fields); msg != "" {
+		return fmt.Errorf("bidding: %s", msg)
 	}
 	*b = biddingConfig{}
 	if v, ok := fields["strategy"]; ok {
@@ -230,6 +237,21 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 	if json.Unmarshal(envelope[key], &platformCfg) != nil {
 		return nil
 	}
+	// The config struct is decoded by encoding/json, which matches `bidding` CASE-INSENSITIVELY and
+	// lets the LAST matching key win ("Bidding", "BIDDING" and "bidding" all land in the same field).
+	// Reading only the exact key here would therefore disagree with what Dispatch decodes (PR #332
+	// review): `"Bidding": null` would slip past the null check. Any case variant is refused, so the
+	// one key both decoders see is the exact `bidding`.
+	cfgKeys := make([]string, 0, len(platformCfg))
+	for k := range platformCfg {
+		cfgKeys = append(cfgKeys, k)
+	}
+	sort.Strings(cfgKeys)
+	for _, k := range cfgKeys {
+		if k != "bidding" && strings.EqualFold(k, "bidding") {
+			return biddingInvalid(key, "%s is not a config field; use \"bidding\" (exact spelling)", quoteKey(k))
+		}
+	}
 	raw, ok := platformCfg["bidding"]
 	if !ok {
 		return nil
@@ -241,6 +263,9 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
 		return biddingInvalid(key, "bidding must be an object, {\"strategy\": \"automatic\" | \"manual\", \"bidAmount\": number}")
+	}
+	if msg := biddingKeyProblem(fields); msg != "" {
+		return biddingInvalid(key, "%s", msg)
 	}
 	if v, ok := fields["strategy"]; ok {
 		var str string
@@ -255,6 +280,46 @@ func checkBiddingShape(config json.RawMessage, key string) error {
 		}
 	}
 	return nil
+}
+
+// biddingFields are the only keys a bidding object may carry, spelled exactly.
+var biddingFields = []string{"strategy", "bidAmount"}
+
+// biddingKeyProblem refuses any key of a bidding object that is not exactly "strategy" or
+// "bidAmount" (PR #332 review): a case variant names the field the caller meant ("use
+// \"strategy\""), and anything else is an unknown field. Without this, `{"Strategy":"manual",
+// "BidAmount":1.25}` decoded to an empty object — automatic bidding, no cap.
+func biddingKeyProblem(fields map[string]json.RawMessage) string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // a deterministic message when several keys are wrong
+	for _, k := range keys {
+		known := false
+		for _, f := range biddingFields {
+			if k == f {
+				known = true
+				break
+			}
+			if strings.EqualFold(k, f) {
+				return fmt.Sprintf("%s is not a bidding field; use %q (exact spelling)", quoteKey(k), f)
+			}
+		}
+		if !known {
+			return fmt.Sprintf("unknown bidding field %s; bidding accepts only \"strategy\" and \"bidAmount\"", quoteKey(k))
+		}
+	}
+	return ""
+}
+
+// quoteKey renders a caller-supplied key for a refusal message: quoted, and cut to 40 runes so a
+// pathological key cannot bloat the 400.
+func quoteKey(k string) string {
+	if r := []rune(k); len(r) > 40 {
+		k = string(r[:40]) + "…"
+	}
+	return strconv.Quote(k)
 }
 
 func isJSONNull(raw json.RawMessage) bool {

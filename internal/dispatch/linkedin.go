@@ -234,10 +234,13 @@ func (d *LinkedInDispatcher) PreflightCreate(_ context.Context, _ string, _ mode
 	if err := checkBiddingShape(config, "linkedInConfig"); err != nil {
 		return err
 	}
+	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
+	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
+	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
+	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
+	// stays "not applicable" — only bidding is promised as a synchronous 400.
 	var cfg linkedinConfig
-	if err := unmarshalPlatformConfig(config, "linkedInConfig", &cfg); err != nil {
-		return domain.ErrPreflightNotApplicable
-	}
+	_ = unmarshalPlatformConfig(config, "linkedInConfig", &cfg)
 	if _, err := linkedinBidPlan(cfg); err != nil {
 		return err
 	}

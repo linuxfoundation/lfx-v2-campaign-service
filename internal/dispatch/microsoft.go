@@ -301,10 +301,13 @@ func (d *MicrosoftDispatcher) PreflightCreate(_ context.Context, _ string, _ mod
 	if err := checkBiddingShape(config, "microsoftConfig"); err != nil {
 		return err
 	}
+	// BEST-EFFORT decode (PR #332 review): encoding/json fills every field it can and skips a
+	// field with the wrong type, so an unrelated broken field (a string budget) must not let an
+	// invalid bidding fail open into a 202. The bid plan runs on what decoded; a field that did
+	// not decode is its zero value, which no plan rule reads as a refusal. The decode error itself
+	// stays "not applicable" — only bidding is promised as a synchronous 400.
 	var cfg microsoftConfig
-	if err := unmarshalPlatformConfig(config, "microsoftConfig", &cfg); err != nil {
-		return domain.ErrPreflightNotApplicable
-	}
+	_ = unmarshalPlatformConfig(config, "microsoftConfig", &cfg)
 	if _, err := microsoftBidPlan(cfg); err != nil {
 		return err
 	}

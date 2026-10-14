@@ -467,6 +467,10 @@ bidding?: {
                                         is refused. Only an ABSENT field defaults: an explicit
                                         `"strategy": null` or `""`, `"bidAmount": null`, or
                                         `"bidding": null` is a 400, as is a wrong JSON type.
+                                        Keys are exact: `bidding`, `strategy`, `bidAmount` —
+                                        a case variant (`Bidding`, `Strategy`) or an unknown key
+                                        is a 400. An invalid bidding is a 400 even when another
+                                        config field is also broken.
   bidAmount?: number                  — REQUIRED with "manual", REFUSED with "automatic" (even 0).
                                         The starting max cost-per-click bid in the AD ACCOUNT's
                                         own currency, major units, no FX (LinkedIn: USD, like its

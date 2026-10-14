@@ -404,7 +404,24 @@ func TestPreflightCreate_WrongTypedBiddingIsA400OnEveryLanePlatform(t *testing.T
 				{name: "omitted bidding is the automatic default", config: `{"` + lane.key + `":{}}`},
 				// The budget is a real float64 field of each config, so a string there makes the whole
 				// decode fail — and that, unlike bidding, keeps its pre-#332 answer.
-				{name: "a non-bidding type error is left to dispatch", config: `{"` + lane.key + `":{"` + lane.budgetField + `":"50","bidding":{"strategy":"manual","bidAmount":1}}}`},
+				{name: "a non-bidding type error is left to dispatch", config: `{"` + lane.key + `":{"` + lane.budgetField + `":"50","bidding":{"strategy":"automatic"}}}`},
+				// KEY SPELLING (PR #332 review): encoding/json matches `bidding` case-insensitively and
+				// the last key wins, so every variant is refused; inside bidding only the exact
+				// "strategy" and "bidAmount" are accepted.
+				{name: "Bidding null at the config level", config: `{"` + lane.key + `":{"Bidding":null}}`,
+					want: lane.key + `.bidding: "Bidding" is not a config field; use "bidding"`},
+				{name: "BIDDING object beside bidding", config: `{"` + lane.key + `":{"bidding":{"strategy":"automatic"},"BIDDING":{"strategy":"manual","bidAmount":1}}}`,
+					want: lane.key + `.bidding: "BIDDING" is not a config field`},
+				{name: "case-variant fields", config: `{"` + lane.key + `":{"bidding":{"Strategy":"manual","BidAmount":1.25}}}`,
+					want: `is not a bidding field; use "`},
+				{name: "unknown bidding field", config: `{"` + lane.key + `":{"bidding":{"strategy":"automatic","cap":1}}}`,
+					want: lane.key + `.bidding: unknown bidding field "cap"`},
+				// SEMANTICS DESPITE A BROKEN UNRELATED FIELD (PR #332 review): the full decode fails on
+				// the string budget, but the invalid bidding is still the synchronous 400.
+				{name: "invalid strategy beside a broken field", config: `{"` + lane.key + `":{"` + lane.budgetField + `":"50","bidding":{"strategy":"max"}}}`,
+					want: lane.key + `.bidding: strategy must be "automatic" or "manual"`},
+				{name: "automatic with an amount beside a broken field", config: `{"` + lane.key + `":{"startDate":7,"` + lane.budgetField + `":"50","bidding":{"strategy":"automatic","bidAmount":1}}}`,
+					want: lane.key + `.bidding: bidAmount is only accepted with strategy "manual"`},
 			})
 		})
 	}
@@ -475,5 +492,45 @@ func TestDispatch_ExplicitNullStrategyFailsBeforeAnyUpstreamCall(t *testing.T) {
 				t.Fatalf("err=%v requests=%d, want ErrCreateConfigInvalid and 0", r.err, r.requests)
 			}
 		})
+	}
+}
+
+// TestPreflightCreate_PlatformBiddingRulesHoldDespiteABrokenField (PR #332 review): the per-platform
+// rules that need one more field — Meta's and Reddit's objective, X's budget — are checked from a
+// best-effort decode, so they stay a synchronous 400 when an unrelated field fails to decode.
+func TestPreflightCreate_PlatformBiddingRulesHoldDespiteABrokenField(t *testing.T) {
+	runBiddingPreflight(t, &MetaDispatcher{}, model.ProviderMetaAds, []biddingPreflightCase{
+		{name: "meta objective", config: `{"metaConfig":{"budget":"50","objective":"awareness","bidding":{"strategy":"manual","bidAmount":1}}}`, want: "traffic or leads objective"},
+	})
+	runBiddingPreflight(t, &RedditDispatcher{}, model.ProviderRedditAds, []biddingPreflightCase{
+		{name: "reddit objective", config: `{"redditConfig":{"budgetUsd":"50","objective":"awareness","bidding":{"strategy":"manual","bidAmount":1}}}`, want: "needs objective \"traffic\""},
+	})
+	runBiddingPreflight(t, &TwitterDispatcher{}, model.ProviderTwitterAds, []biddingPreflightCase{
+		{name: "x bid above budget", config: `{"twitterConfig":{"budgetAmount":1,"startDate":7,"bidding":{"strategy":"manual","bidAmount":2}}}`, want: "exceeds the daily budget"},
+	})
+	runBiddingPreflight(t, &MicrosoftDispatcher{}, model.ProviderMicrosoftAds, []biddingPreflightCase{
+		{name: "microsoft cpcBid with automatic", config: `{"microsoftConfig":{"budget":"50","cpcBid":1.5,"bidding":{"strategy":"automatic"}}}`, want: "MaxClicks"},
+	})
+	runBiddingPreflight(t, &LinkedInDispatcher{}, model.ProviderLinkedInAds, []biddingPreflightCase{
+		{name: "linkedin sub-cent", config: `{"linkedInConfig":{"budgetUsd":"50","bidding":{"strategy":"manual","bidAmount":2.345}}}`, want: "whole number of cents"},
+	})
+}
+
+// TestBiddingConfig_RefusesKeyVariantsOnDecode: the Dispatch-side decode agrees with the pre-check —
+// a case-variant or unknown key inside bidding is a decode error, never an empty (automatic) object.
+func TestBiddingConfig_RefusesKeyVariantsOnDecode(t *testing.T) {
+	for name, body := range map[string]string{
+		"Strategy":  `{"Strategy":"manual","bidAmount":1}`,
+		"BidAmount": `{"strategy":"manual","BidAmount":1}`,
+		"unknown":   `{"strategy":"manual","bidAmount":1,"cap":2}`,
+	} {
+		var cfg metaConfig
+		if err := json.Unmarshal([]byte(`{"bidding":`+body+`}`), &cfg); err == nil {
+			t.Errorf("%s: decoded %+v without error; a key the decoder would ignore must be refused", name, cfg.Bidding)
+		}
+	}
+	var ok metaConfig
+	if err := json.Unmarshal([]byte(`{"bidding":{"strategy":"manual","bidAmount":1}}`), &ok); err != nil || ok.Bidding == nil || ok.Bidding.Strategy != "manual" {
+		t.Fatalf("canonical bidding failed to decode: %v %+v", err, ok.Bidding)
 	}
 }

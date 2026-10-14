@@ -109,6 +109,8 @@ func TestCreateCampaigns_WrongTypedBiddingIsSynchronous400OnEveryLanePlatform(t 
 		// PRESENCE (PR #332 review): an explicit empty strategy is not the automatic default.
 		{"empty strategy", map[string]any{"strategy": ""}, "strategy must be a string"},
 		{"null bidAmount", map[string]any{"strategy": "manual", "bidAmount": nil}, "bidAmount must be a number"},
+		// KEY SPELLING (PR #332 review): case-variant fields are not read, so they are refused.
+		{"case-variant fields", map[string]any{"Strategy": "manual", "BidAmount": 1.25}, "\"BidAmount\" is not a bidding field"},
 	}
 	for _, lane := range lanes {
 		for _, body := range bodies {

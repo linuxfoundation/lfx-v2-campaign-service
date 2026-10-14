@@ -146,3 +146,19 @@ Other platforms checked for an equivalent rule:
   1516, which wrongly said a bid may not exceed the daily budget, now names the currency's maximum
   bid.
 - **Meta:** already enforces its documented daily budget ≥ 5 × bid rule in the client.
+
+**Exact keys and best-effort semantics (PR #332 review).**
+- **Key spelling.** `biddingConfig.UnmarshalJSON` read only the exact keys, so
+  `{"Strategy":"manual","BidAmount":1.25}` decoded to an empty object: automatic bidding with no
+  cap. The config struct itself matches `bidding` case-insensitively, with the last key winning, so
+  `"Bidding": null` slipped past the null check. Both decoders now agree. `checkBiddingShape`
+  refuses any case variant of `bidding` at the config level. `biddingKeyProblem` refuses a
+  case-variant key inside bidding ("use \"strategy\"") and any unknown key; the pre-check and the
+  Dispatch-side decoder both use it.
+- **Semantics despite a broken field.** The shape check alone let an invalid bidding (strategy
+  "max") through when another field broke the full decode, for example `budgetAmount: "50"`: the
+  decode error was "not applicable", so a job was created. Each lane `PreflightCreate` now decodes
+  best-effort, because encoding/json fills every field it can past a type error. It then runs the
+  platform's bid plan, including Meta's and Reddit's objective rule and X's bid ≤ budget rule, so an
+  invalid bidding is always the synchronous 400. The unrelated decode error still fails open as
+  before. Reddit's asset checks still run only on a clean decode.

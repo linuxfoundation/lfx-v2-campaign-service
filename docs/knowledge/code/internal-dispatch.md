@@ -4433,3 +4433,10 @@ decode failure left to Dispatch. Other fields' type errors are still left to Dis
 PRESENCE is preserved: `biddingConfig.UnmarshalJSON` records which keys appeared, and only a
 genuinely absent field defaults — an explicit `null`/`""` strategy, a `null` bidAmount or a `null`
 bidding is a 400 (`checkBiddingShape`, which Dispatch also runs, and `resolveBidding`).
+KEYS ARE EXACT: encoding/json matches the config's `bidding` case-insensitively with the last key
+winning, so `checkBiddingShape` refuses any case variant of it, and `biddingKeyProblem` (shared with
+`biddingConfig.UnmarshalJSON`) refuses a case-variant or unknown key inside bidding — keys sorted,
+so the message is deterministic. Each lane `PreflightCreate` decodes its config BEST-EFFORT
+(encoding/json fills every field it can past a type error) and runs the bid plan on that, so an
+invalid bidding is the 400 even when an unrelated field fails the full decode; that decode error
+itself stays not-applicable (Reddit's asset checks still run only on a clean decode).
