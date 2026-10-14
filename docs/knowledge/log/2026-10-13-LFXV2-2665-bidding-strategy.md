@@ -171,3 +171,10 @@ stored snapshot was no longer a valid config. All five configs now tag `Bidding`
 set and `bidAmount` when set, so `{}` stays `{}`. A test round-trips the snapshot each platform's
 `campaignFrom*` produces, for omitted, `{}`, automatic and manual configs, through
 `checkBiddingShape` and `resolveBidding` to the same plan.
+
+**The bidding fields are indexed (PR #332 review).** The HTTP campaign resource returned
+`bidding_strategy` and `max_cpc_bid`, but `campaignDoc` dropped them, so the Query Service index
+couldn't show them. `indexer.CampaignDoc` now carries both, tagged `omitempty`. `campaignDoc` maps
+both pointers, so a value that isn't recorded is absent from the document, never `null`, exactly as
+in the API. `TestIndexedDocsUseSnakeCase` covers populated values and omission. No separate indexer
+contract doc lists `CampaignDoc` fields.

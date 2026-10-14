@@ -236,7 +236,11 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        c.SlotVersion,
-		Version:            c.Version,
+		// The bidding fields the API returns (LFXV2-2665), so the Query Service index shows them
+		// too. Both pointers pass through: nil stays absent in the document.
+		BiddingStrategy: c.BiddingStrategy,
+		MaxCPCBid:       c.MaxCpcBid,
+		Version:         c.Version,
 	}
 }
 

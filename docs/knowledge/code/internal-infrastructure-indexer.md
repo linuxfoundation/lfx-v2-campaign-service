@@ -270,3 +270,6 @@ because config resolves it with `envOrDefaultUnlessSet` (`os.LookupEnv`): the or
 documented switch a no-op.
 
 See [internal/infrastructure/indexer](../../../internal/infrastructure/indexer).
+
+`CampaignDoc` also carries the campaign resource's optional `bidding_strategy` and `max_cpc_bid`
+(LFXV2-2665), both `omitempty`, so they are absent from the document exactly when the API omits them.
