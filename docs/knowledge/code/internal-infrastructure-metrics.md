@@ -67,7 +67,9 @@ can embed account ids and response fragments.
 counter rather than a `row_failed` outcome on `campaign_upstream_calls_total`, because that
 instrument also feeds the latency histogram and a row has no latency of its own. `class` is a
 closed set mirroring `model.MonitorFailureClass` (`auth`, `throttle`, `upstream_5xx`, `decode`,
-`no_report`, `other`); anything else collapses to `unknown`. A non-positive count records nothing.
+`no_report`, `other`, `unknown`); `unknown` is what the service records for a client class outside
+the set (classification drift), and anything else reaching the label collapses to it too. A
+non-positive count records nothing. Listed in README.md's service-metrics table.
 
 ## Histogram buckets come from the call budgets
 

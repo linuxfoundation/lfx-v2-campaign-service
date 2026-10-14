@@ -1254,7 +1254,9 @@ var AccountMonitorTotals = Type("account-monitor-totals", func() {
 // itself and over exactly the requested days, and all of these fields are omitted rather than
 // restating that.
 var AccountMonitor = Type("account-monitor", func() {
-	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Example("8666746580") })
+	// No example: account ids differ in format per platform (act_<digits> on Meta, t2_… on Reddit),
+	// so each monitor method's body type sets its own (design/account_monitor_examples.go).
+	Attribute("account_id", String, "The account this read covers, echoed back from the request.", func() { Meta("openapi:example", "false") })
 	Attribute("days", Int, "The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X's 90-day cap by an hour.", func() { Example(30) })
 	// No example on campaigns or action_items (nor on the type, below): rows and findings differ
 	// per platform, so each monitor method publishes its own whole-response example — see
@@ -1266,19 +1268,21 @@ var AccountMonitor = Type("account-monitor", func() {
 		Meta("openapi:example", "false")
 	})
 	Attribute("totals", AccountMonitorTotals)
+	// The four report-window fields carry no example here: only Microsoft Ads and X set them, so
+	// only their body types add one (design/account_monitor_examples.go).
 	Attribute("metrics_as_of", String, "Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.", func() {
 		Format(FormatDateTime)
-		Example("2026-10-05T14:30:00Z")
+		Meta("openapi:example", "false")
 	})
 	Attribute("metrics_window_start", String, "Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report's own window, in the timezone the platform's report is built in — the account's timezone on X; on Microsoft Ads the report's GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.", func() {
 		Format(FormatDate)
-		Example("2026-09-06")
+		Meta("openapi:example", "false")
 	})
 	Attribute("metrics_window_end", String, "Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.", func() {
 		Format(FormatDate)
-		Example("2026-10-05")
+		Meta("openapi:example", "false")
 	})
-	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Example(false) })
+	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Meta("openapi:example", "false") })
 	Required("account_id", "days", "campaigns", "action_items", "totals")
 	// Shared by six platforms whose responses differ, so no example here: one would describe five
 	// of them wrongly. Each method's 200 body carries its own (design/account_monitor_examples.go).

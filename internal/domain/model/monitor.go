@@ -45,7 +45,8 @@ const (
 // rows per class (service.reportUnmeasuredRows). It is not part of the API response.
 //
 // A FetchFailed row whose client set no class — Google Ads, whose client leaves classification to
-// its owner — is counted as MonitorFailureOther (NormalizeMonitorFailureClass).
+// its owner — is counted as MonitorFailureOther; one whose client set a value outside this set is
+// counted as MonitorFailureUnknown (NormalizeMonitorFailureClass).
 type MonitorFailureClass string
 
 const (
@@ -69,18 +70,26 @@ const (
 	// MonitorFailureOther: anything else — a transport error, a deadline, a status outside the
 	// classes above, or a row whose client did not classify it.
 	MonitorFailureOther MonitorFailureClass = "other"
+	// MonitorFailureUnknown is never set by a client: it is what NormalizeMonitorFailureClass
+	// makes of a NON-EMPTY class outside this set — a client bug or drift — so it is counted
+	// apart from MonitorFailureOther, where it would be indistinguishable from an honest
+	// "unclassified".
+	MonitorFailureUnknown MonitorFailureClass = "unknown"
 )
 
-// NormalizeMonitorFailureClass maps c onto the closed set: a value outside it, including the
-// empty class an unclassified FetchFailed row carries, becomes MonitorFailureOther. Callers use
-// the result as a log value and metric label, so it must never pass an arbitrary string through.
+// NormalizeMonitorFailureClass maps c onto the closed set: the empty class an unclassified
+// FetchFailed row carries becomes MonitorFailureOther, and any other value outside the set becomes
+// MonitorFailureUnknown. Callers use the result as a log value and metric label, so it must never
+// pass an arbitrary string through.
 func NormalizeMonitorFailureClass(c MonitorFailureClass) MonitorFailureClass {
 	switch c {
 	case MonitorFailureAuth, MonitorFailureThrottle, MonitorFailureUpstream5xx,
-		MonitorFailureDecode, MonitorFailureNoReport:
+		MonitorFailureDecode, MonitorFailureNoReport, MonitorFailureOther:
 		return c
-	default:
+	case "":
 		return MonitorFailureOther
+	default:
+		return MonitorFailureUnknown
 	}
 }
 

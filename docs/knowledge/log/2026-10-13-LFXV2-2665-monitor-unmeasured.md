@@ -57,3 +57,21 @@ fields. `AccountMonitor` and `AccountMonitorCampaign` no longer carry a whole ex
 fails on an unmapped one or on an account-monitor example not attached to an operation. Against the
 old examples it failed on every non-Google operation, on Google's flight dates, and on the shared
 OpenAPI 2 definition. See `architecture/account-monitor-endpoints.md`.
+
+Follow-up (#319, schema property examples, metric docs, class drift):
+- **Property examples.** The per-platform body types used `Extend(AccountMonitor)`, so they
+  inherited `AccountMonitor`'s property examples. Every schema therefore showed `account_id`
+  "8666746580", which is impossible on Meta (`act_<digits>`), and showed report-window examples on
+  the four live platforms. The body types now take the fields by `Reference`. `account_id` carries
+  each platform's own id, and the four report-window fields carry examples only on Microsoft and
+  X; the shared type carries none. Wire fields are unchanged.
+- **Schema guard.** The new `TestPublishedAccountMonitorSchemaExamplesMatchTheirPlatform` checks
+  all four specs, OpenAPI 2 included. Against the old specs it reported Meta's id and the live
+  platforms' report-window examples.
+- **README.** `campaign_monitor_unmeasured_rows_total{platform,class}` is now in README.md's
+  service-metrics table, with its bounded class set.
+- **Class drift.** `NormalizeMonitorFailureClass` still maps an empty class (an unclassified row)
+  to `other`. A non-empty class outside the set now maps to the new `MonitorFailureUnknown`
+  ("unknown") instead of hiding in `other`. It is logged in `unmeasured_by_class` and recorded
+  under the metric's `unknown` class, so the label set stays bounded. The existing per-request
+  test failed against the old normalisation (`other` 2, no `unknown`).

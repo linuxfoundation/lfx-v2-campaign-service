@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -315,4 +316,121 @@ func checkAccountMonitorExample(t *testing.T, where string, p accountMonitorExam
 	if hasTC != anyConv || (hasTC && math.Abs(tc-conv) > 1e-6) {
 		t.Errorf("%s: totals.conversions = %v (present=%v), want the rows' sum %v (present=%v)", where, totals["conversions"], hasTC, conv, anyConv)
 	}
+}
+
+// Every monitor operation's 200 schema, in all four published specs (OpenAPI 2 included, where
+// the schema is the only place an example lives), carries property examples its own platform
+// could return: account_id in the format that operation's own account_id parameter accepts
+// (Meta's act_<digits>, Reddit's t2_…, the numeric ids elsewhere), days inside the parameter's
+// bounds, and examples for the report-window fields only on the report-backed platforms. In
+// OpenAPI 3 the operation's response example must echo an account_id of that format too. The
+// parameter is read from the same spec, so the check follows the payload's own validation.
+func TestPublishedAccountMonitorSchemaExamplesMatchTheirPlatform(t *testing.T) {
+	for _, spec := range hubspotMonitorSpecs {
+		t.Run(spec, func(t *testing.T) {
+			doc := readAccountMonitorSpec(t, spec)
+			defs, _ := doc["definitions"].(map[string]any)
+			if defs == nil {
+				comps, _ := doc["components"].(map[string]any)
+				defs, _ = comps["schemas"].(map[string]any)
+			}
+			resolve := func(s map[string]any) map[string]any {
+				for i := 0; i < 8 && s != nil; i++ {
+					ref, ok := s["$ref"].(string)
+					if !ok {
+						return s
+					}
+					s, _ = defs[ref[strings.LastIndex(ref, "/")+1:]].(map[string]any)
+				}
+				return s
+			}
+			paths, _ := doc["paths"].(map[string]any)
+			checked := 0
+			for p, item := range paths {
+				ops, _ := item.(map[string]any)
+				for method, o := range ops {
+					op, _ := o.(map[string]any)
+					id, _ := op["operationId"].(string)
+					name := id[strings.LastIndex(id, "#")+1:]
+					platform, ok := accountMonitorExamplePlatforms[name]
+					if !ok {
+						if strings.HasPrefix(name, "monitor-") && strings.HasSuffix(name, "-ads-account") {
+							t.Errorf("%s: unmapped monitor operation", name)
+						}
+						continue
+					}
+					where := fmt.Sprintf("%s %s %s (%s)", spec, strings.ToUpper(method), p, name)
+					checked++
+					idParam, daysParam := accountMonitorParam(op, "account_id"), accountMonitorParam(op, "days")
+					pattern, _ := idParam["pattern"].(string)
+					re, err := regexp.Compile(pattern)
+					if pattern == "" || err != nil {
+						t.Errorf("%s: account_id parameter has no usable pattern (%q)", where, pattern)
+						continue
+					}
+					maxLen, _ := idParam["maxLength"].(float64)
+					idOK := func(v any) bool {
+						s, ok := v.(string)
+						return ok && re.MatchString(s) && (maxLen == 0 || float64(len(s)) <= maxLen)
+					}
+					resp, _ := op["responses"].(map[string]any)
+					r200, _ := resp["200"].(map[string]any)
+					sch, _ := r200["schema"].(map[string]any)
+					if sch == nil {
+						c, _ := r200["content"].(map[string]any)
+						j, _ := c["application/json"].(map[string]any)
+						sch, _ = j["schema"].(map[string]any)
+					}
+					body := resolve(sch)
+					props, _ := body["properties"].(map[string]any)
+					if props == nil {
+						t.Errorf("%s: 200 schema has no properties", where)
+						continue
+					}
+					acct, _ := props["account_id"].(map[string]any)
+					if ex, has := acct["example"]; !has || !idOK(ex) {
+						t.Errorf("%s: account_id property example %v does not match the operation's account_id format %s", where, acct["example"], pattern)
+					}
+					days, _ := props["days"].(map[string]any)
+					if d, ok := days["example"].(float64); !ok || d < accountMonitorParamNum(daysParam, "minimum") || d > accountMonitorParamNum(daysParam, "maximum") {
+						t.Errorf("%s: days property example %v outside the days parameter's bounds", where, days["example"])
+					}
+					for _, f := range []string{"metrics_as_of", "metrics_window_start", "metrics_window_end", "metrics_pending"} {
+						fp, _ := props[f].(map[string]any)
+						if _, has := fp["example"]; has != platform.reported {
+							t.Errorf("%s: %s property example present=%v, but this platform sets the field=%v", where, f, has, platform.reported)
+						}
+					}
+					if ex := accountMonitor200Example(op); ex != nil && !idOK(ex["account_id"]) {
+						t.Errorf("%s: response example account_id %v does not match %s", where, ex["account_id"], pattern)
+					}
+				}
+			}
+			if checked != len(accountMonitorExamplePlatforms) {
+				t.Errorf("checked %d monitor operations in %s, want %d", checked, spec, len(accountMonitorExamplePlatforms))
+			}
+		})
+	}
+}
+
+// accountMonitorParam returns one named parameter's constraints, from the parameter itself
+// (OpenAPI 2) or its schema (OpenAPI 3).
+func accountMonitorParam(op map[string]any, name string) map[string]any {
+	params, _ := op["parameters"].([]any)
+	for _, p := range params {
+		m, _ := p.(map[string]any)
+		if m["name"] != name {
+			continue
+		}
+		if s, ok := m["schema"].(map[string]any); ok {
+			return s
+		}
+		return m
+	}
+	return nil
+}
+
+func accountMonitorParamNum(p map[string]any, k string) float64 {
+	f, _ := p[k].(float64)
+	return f
 }

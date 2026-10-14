@@ -79,8 +79,9 @@ const (
 )
 
 // Monitor failure-class values, the `class` label on
-// campaign_monitor_unmeasured_rows_total. A CLOSED enum mirroring model.MonitorFailureClass;
-// anything else collapses to PlatformUnknown (safeMonitorFailureClass).
+// campaign_monitor_unmeasured_rows_total. A CLOSED enum mirroring model.MonitorFailureClass,
+// whose MonitorFailureUnknown is the service's own name for a client class outside the set;
+// anything else reaching the label collapses to that same "unknown" (safeMonitorFailureClass).
 const (
 	MonitorFailureAuth        = "auth"
 	MonitorFailureThrottle    = "throttle"
@@ -88,11 +89,13 @@ const (
 	MonitorFailureDecode      = "decode"
 	MonitorFailureNoReport    = "no_report"
 	MonitorFailureOther       = "other"
+	MonitorFailureUnknown     = PlatformUnknown
 )
 
 var safeMonitorFailureClasses = map[string]struct{}{
 	MonitorFailureAuth: {}, MonitorFailureThrottle: {}, MonitorFailureUpstream5xx: {},
 	MonitorFailureDecode: {}, MonitorFailureNoReport: {}, MonitorFailureOther: {},
+	MonitorFailureUnknown: {},
 }
 
 func safeMonitorFailureClass(c string) string {

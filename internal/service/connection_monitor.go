@@ -250,6 +250,7 @@ var monitorFailureClassOrder = []model.MonitorFailureClass{
 	model.MonitorFailureDecode,
 	model.MonitorFailureNoReport,
 	model.MonitorFailureOther,
+	model.MonitorFailureUnknown,
 }
 
 // reportUnmeasuredRows is the operational signal for the FetchFailed rows of one monitor

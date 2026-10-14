@@ -41,16 +41,22 @@ reaches), not project-scoped ones.
   platforms' rows differ (status literals, `campaign_url`, search channel, flight dates, lifetime
   budget, conversions, pacing formula, the report-window fields), so `AccountMonitor` and
   `AccountMonitorCampaign` carry no example and each monitor method's 200 body is a type of its
-  own that `Extend`s `AccountMonitor` — same fields and wire tags, so the service still returns
+  own that takes `AccountMonitor`'s fields — same fields and wire tags, so the service still returns
   the shared result — published as `GoogleAdsAccountMonitor`, `LinkedinAdsAccountMonitor`, … with
-  an example in that platform's shape. Each needs an explicit `openapi:typename` (type and body),
+  an example in that platform's shape. The body types take the fields by `Reference`, so the
+  property examples that differ by platform are set per type: `account_id` in that platform's id
+  format, and the four report-window fields only on Microsoft and X (the shared type carries
+  none). Each needs an explicit `openapi:typename` (type and body),
   because OpenAPI 3 deduplicates identical shapes and would otherwise point all six operations at
   Google's. OpenAPI 2 has no per-operation response example, so there the six definitions carry
   none. `TestPublishedAccountMonitorExamplesMatchTheirOperation` maps each operation id to its
   handler's evaluator (live platforms read at the examples' `2026-10-05T14:30:00Z`, X on its
   report window), recomputes pacing and action items, checks the platform's row shape and the
   totals, and fails on an unmapped monitor operation or an account-monitor example not attached
-  to one.
+  to one. `TestPublishedAccountMonitorSchemaExamplesMatchTheirPlatform` checks the 200 schema's
+  property examples in all four specs: `account_id` must match that operation's own `account_id`
+  parameter pattern, `days` its bounds, and report-window examples appear only where the
+  platform sets the fields.
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
@@ -608,6 +614,7 @@ Why a row failed (#220) is carried as `model.MonitorFailureClass` on
 | `decode` | Reddit: a 2xx body that is not valid JSON (`errUndecodable2xxResponse`, inside the `transportError` `request()` returns), an undecodable/misattributed report, page cap, an id it will not interpolate; LinkedIn and Meta: every failed row (unparseable budget, `costInUsd`, insights counter); Microsoft/X dispatchers: unparseable budget or flight |
 | `no_report` | `mergeAccountReport`, when no report has finished (a dispatcher's class is kept) |
 | `other` | anything else, and every Google row (its client sets no class; `NormalizeMonitorFailureClass`) |
+| `unknown` | never set by a client: `NormalizeMonitorFailureClass` maps a NON-EMPTY class outside this set to it, so a client emitting a new or misspelled class shows up as drift instead of inside `other` |
 
 `reportUnmeasuredRows` (service layer) then emits, per request: ONE `WARN`
 "account monitor: some campaigns could not be measured; totals may understate the account" with

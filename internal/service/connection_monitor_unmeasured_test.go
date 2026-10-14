@@ -97,7 +97,8 @@ func TestMonitorAccount_UnmeasuredRowsLoggedAndCountedOncePerRequest(t *testing.
 		{PlatformCampaignID: "a2", Name: "a2", Status: "ACTIVE", FetchFailed: true, FailureClass: model.MonitorFailureAuth},
 		{PlatformCampaignID: "t1", Name: "t1", Status: "ACTIVE", FetchFailed: true, FailureClass: model.MonitorFailureThrottle},
 		{PlatformCampaignID: "d1", Name: "d1", Status: "PAUSED", FetchFailed: true, FailureClass: model.MonitorFailureDecode},
-		// Unclassified (the Google case) and an out-of-set value both become other.
+		// Unclassified (the Google case) is other; an out-of-set value is a client bug and is
+		// counted as unknown, so the drift is visible instead of hiding inside other.
 		{PlatformCampaignID: "u1", Name: "u1", Status: "ACTIVE", FetchFailed: true},
 		{PlatformCampaignID: "u2", Name: "u2", Status: "ACTIVE", FetchFailed: true, FailureClass: "token abc123 revoked"},
 	}, rec)
@@ -122,7 +123,7 @@ func TestMonitorAccount_UnmeasuredRowsLoggedAndCountedOncePerRequest(t *testing.
 	if r["unmeasured_campaigns"] != float64(6) || r["campaign_count"] != float64(7) {
 		t.Errorf("log counts = %v/%v, want 6/7", r["unmeasured_campaigns"], r["campaign_count"])
 	}
-	wantByClass := map[string]float64{"auth": 2, "throttle": 1, "upstream_5xx": 0, "decode": 1, "no_report": 0, "other": 2}
+	wantByClass := map[string]float64{"auth": 2, "throttle": 1, "upstream_5xx": 0, "decode": 1, "no_report": 0, "other": 1, "unknown": 1}
 	byClass, _ := r["unmeasured_by_class"].(map[string]any)
 	if len(byClass) != len(wantByClass) {
 		t.Errorf("unmeasured_by_class = %v, want exactly the %d classes", byClass, len(wantByClass))
@@ -142,8 +143,9 @@ func TestMonitorAccount_UnmeasuredRowsLoggedAndCountedOncePerRequest(t *testing.
 	want := []unmeasuredRecord{
 		{platform: model.ProviderRedditAds, class: "auth", n: 2},
 		{platform: model.ProviderRedditAds, class: "decode", n: 1},
-		{platform: model.ProviderRedditAds, class: "other", n: 2},
+		{platform: model.ProviderRedditAds, class: "other", n: 1},
 		{platform: model.ProviderRedditAds, class: "throttle", n: 1},
+		{platform: model.ProviderRedditAds, class: "unknown", n: 1},
 	}
 	gotRecs := sortedUnmeasured(rec.unmeasuredRecords())
 	if len(gotRecs) != len(want) {

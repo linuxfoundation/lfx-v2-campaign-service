@@ -13647,21 +13647,17 @@ definitions:
             metrics_as_of:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
-                example: "2026-10-05T14:30:00Z"
                 format: date-time
             metrics_pending:
                 type: boolean
                 description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
-                example: false
             metrics_window_end:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
-                example: "2026-10-05"
                 format: date
             metrics_window_start:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
-                example: "2026-09-06"
                 format: date
             totals:
                 $ref: '#/definitions/AccountMonitorTotals'
@@ -16620,7 +16616,7 @@ definitions:
             account_id:
                 type: string
                 description: The account this read covers, echoed back from the request.
-                example: "8666746580"
+                example: "512345678"
             action_items:
                 type: array
                 items:
@@ -16639,21 +16635,17 @@ definitions:
             metrics_as_of:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
-                example: "2026-10-05T14:30:00Z"
                 format: date-time
             metrics_pending:
                 type: boolean
                 description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
-                example: false
             metrics_window_end:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
-                example: "2026-10-05"
                 format: date
             metrics_window_start:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
-                example: "2026-09-06"
                 format: date
             totals:
                 $ref: '#/definitions/AccountMonitorTotals'
@@ -17197,7 +17189,7 @@ definitions:
             account_id:
                 type: string
                 description: The account this read covers, echoed back from the request.
-                example: "8666746580"
+                example: act_8666746580
             action_items:
                 type: array
                 items:
@@ -17216,21 +17208,17 @@ definitions:
             metrics_as_of:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
-                example: "2026-10-05T14:30:00Z"
                 format: date-time
             metrics_pending:
                 type: boolean
                 description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
-                example: false
             metrics_window_end:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
-                example: "2026-10-05"
                 format: date
             metrics_window_start:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
-                example: "2026-09-06"
                 format: date
             totals:
                 $ref: '#/definitions/AccountMonitorTotals'
@@ -17494,7 +17482,7 @@ definitions:
             account_id:
                 type: string
                 description: The account this read covers, echoed back from the request.
-                example: "8666746580"
+                example: "187654321"
             action_items:
                 type: array
                 items:
@@ -18207,7 +18195,7 @@ definitions:
             account_id:
                 type: string
                 description: The account this read covers, echoed back from the request.
-                example: "8666746580"
+                example: t2_gv9wtbfa
             action_items:
                 type: array
                 items:
@@ -18226,21 +18214,17 @@ definitions:
             metrics_as_of:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the point in time these campaigns'' metrics describe — when the platform report they come from was requested (not when it was collected, which can be later). Those platforms'' reports take minutes, so the service serves the last finished report and builds the next one between requests. Absent when no report has finished yet; in that case every campaign has fetch_failed=true and is excluded from pacing and action items. Omitted on every other platform, whose metrics are read live in the request.'
-                example: "2026-10-05T14:30:00Z"
                 format: date-time
             metrics_pending:
                 type: boolean
                 description: 'Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.'
-                example: false
             metrics_window_end:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day (inclusive) the metrics cover, in the same timezone as metrics_window_start. Absent when no report has finished yet. Omitted on every other platform.'
-                example: "2026-10-05"
                 format: date
             metrics_window_start:
                 type: string
                 description: 'Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day (inclusive) the metrics cover, from the saved report''s own window, in the timezone the platform''s report is built in — the account''s timezone on X; on Microsoft Ads the report''s GMT (Europe/London) time zone, with the days named by their UTC dates. Absent when no report has finished yet (with metrics_as_of). Omitted on every other platform, which covers exactly the requested days.'
-                example: "2026-09-06"
                 format: date
             totals:
                 $ref: '#/definitions/AccountMonitorTotals'
@@ -18487,7 +18471,7 @@ definitions:
             account_id:
                 type: string
                 description: The account this read covers, echoed back from the request.
-                example: "8666746580"
+                example: 18ce54d4x5t
             action_items:
                 type: array
                 items:

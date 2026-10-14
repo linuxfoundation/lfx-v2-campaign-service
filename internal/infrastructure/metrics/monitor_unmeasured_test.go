@@ -44,6 +44,7 @@ func TestMonitorFailureClassLabelIsClosed(t *testing.T) {
 	for _, c := range []model.MonitorFailureClass{
 		model.MonitorFailureAuth, model.MonitorFailureThrottle, model.MonitorFailureUpstream5xx,
 		model.MonitorFailureDecode, model.MonitorFailureNoReport, model.MonitorFailureOther,
+		model.MonitorFailureUnknown,
 	} {
 		if got := safeMonitorFailureClass(string(c)); got != string(c) {
 			t.Errorf("safeMonitorFailureClass(%q) = %q, want it passed through", c, got)

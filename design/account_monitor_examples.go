@@ -25,10 +25,11 @@ import (
 // How, given what Goa allows. A Result(AccountMonitor, func() { Example(...) }) duplicates the
 // type under the same name, so the schemas collide; and a second Body(AccountMonitor, ...) trips
 // Goa's "transport plan mutated prepared design" guard. So each method's 200 body is a type of its
-// own that Extends AccountMonitor — same fields, so the generated encoder copies the shared
-// result into it and the service is untouched — with an explicit "openapi:typename" on both the
-// type and the endpoint body: OpenAPI 3 deduplicates structurally identical schemas by shape, and
-// without distinct names all six operations would reference the first one (Google's).
+// own that takes AccountMonitor's fields by Reference — same fields, so the generated encoder
+// copies the shared result into it and the service is untouched — with an explicit
+// "openapi:typename" on both the type and the endpoint body: OpenAPI 3 deduplicates structurally
+// identical schemas by shape, and without distinct names all six operations would reference the
+// first one (Google's).
 //
 // Each example's pacing and action items are exactly what that platform's evaluator
 // (internal/service/rules/monitor_*.go) produces for its rows, with days 30 and — for the
@@ -96,11 +97,31 @@ func accountMonitorExampleBody(body expr.UserType, example map[string]any) func(
 }
 
 // accountMonitorBodyType is one platform's 200 body: AccountMonitor's fields under a name of its
-// own (see the file comment for why it must be a separate type).
-func accountMonitorBodyType(name, platform string) expr.UserType {
+// own (see the file comment for why it must be a separate type). The fields are taken by
+// Reference, not Extend, so the property examples that differ by platform can be set here rather
+// than inherited from the shared type: account_id carries an id in this platform's format (the
+// shared "8666746580" is impossible on Meta, Reddit and X), and the report-window fields carry
+// examples only on the report-backed platforms, which are the only ones that set them.
+func accountMonitorBodyType(name, platform, accountID string, reported bool) expr.UserType {
 	return Type(name, func() {
 		Description("The " + platform + " account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in " + platform + "'s own shape.")
-		Extend(AccountMonitor)
+		Reference(AccountMonitor)
+		Attribute("account_id", func() { Example(accountID) })
+		Attribute("days")
+		Attribute("campaigns")
+		Attribute("action_items")
+		Attribute("totals")
+		reportField := func(f string, example any) {
+			if !reported {
+				Attribute(f)
+				return
+			}
+			Attribute(f, func() { Example(example) })
+		}
+		reportField("metrics_as_of", accountMonitorExampleAsOf)
+		reportField("metrics_window_start", accountMonitorExampleWindowFrom)
+		reportField("metrics_window_end", accountMonitorExampleWindowTo)
+		reportField("metrics_pending", false)
 		Required("account_id", "days", "campaigns", "action_items", "totals")
 		Meta("openapi:example", "false")
 		Meta("openapi:typename", name)
@@ -108,12 +129,12 @@ func accountMonitorBodyType(name, platform string) expr.UserType {
 }
 
 var (
-	googleAccountMonitorBody    = accountMonitorBodyType("google-ads-account-monitor", "Google Ads")
-	linkedinAccountMonitorBody  = accountMonitorBodyType("linkedin-ads-account-monitor", "LinkedIn Ads")
-	metaAccountMonitorBody      = accountMonitorBodyType("meta-ads-account-monitor", "Meta Ads")
-	microsoftAccountMonitorBody = accountMonitorBodyType("microsoft-ads-account-monitor", "Microsoft Ads")
-	redditAccountMonitorBody    = accountMonitorBodyType("reddit-ads-account-monitor", "Reddit Ads")
-	twitterAccountMonitorBody   = accountMonitorBodyType("twitter-ads-account-monitor", "X Ads")
+	googleAccountMonitorBody    = accountMonitorBodyType("google-ads-account-monitor", "Google Ads", "8666746580", false)
+	linkedinAccountMonitorBody  = accountMonitorBodyType("linkedin-ads-account-monitor", "LinkedIn Ads", "512345678", false)
+	metaAccountMonitorBody      = accountMonitorBodyType("meta-ads-account-monitor", "Meta Ads", "act_8666746580", false)
+	microsoftAccountMonitorBody = accountMonitorBodyType("microsoft-ads-account-monitor", "Microsoft Ads", "187654321", true)
+	redditAccountMonitorBody    = accountMonitorBodyType("reddit-ads-account-monitor", "Reddit Ads", "t2_gv9wtbfa", false)
+	twitterAccountMonitorBody   = accountMonitorBodyType("twitter-ads-account-monitor", "X Ads", "18ce54d4x5t", true)
 )
 
 // Google Ads: daily budgets paced as budget_day*days, no flight dates, campaign_url set.
