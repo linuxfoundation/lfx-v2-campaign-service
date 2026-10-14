@@ -311,6 +311,15 @@ var (
 	// tracking existed, or under a connection with no tenant id at all, needs.
 	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
 
+	// ErrCampaignProvenanceMixed indicates a SET of campaigns fails provenance both ways at
+	// once: some record a different creating tenant (ErrCampaignAccountMismatch) and others
+	// record none (ErrCampaignProvenanceUnknown). It is joined with BOTH of those (never
+	// returned alone), so every existing errors.Is check keeps matching, while a handler can
+	// check it first and name both remedies — re-dispatching the unrecorded rows AND
+	// reconciling the foreign ones. Naming only one would send the operator to fix half the
+	// problem and hit the other half on the next read.
+	ErrCampaignProvenanceMixed = errors.New("some campaigns record a different platform tenant and others record none")
+
 	// ErrCampaignUpstreamIdentityMismatch indicates the PLATFORM's own answer contradicts the
 	// identity this service recorded for a campaign, even though the recorded account and the
 	// connection agree: the platform reports the campaign under a different ad account, or a

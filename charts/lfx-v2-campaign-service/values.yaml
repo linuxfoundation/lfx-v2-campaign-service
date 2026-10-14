@@ -256,6 +256,9 @@ app:
     # account; at that point the gate is removed and this key goes away.
     # The same flag gates the Reddit audience read (reddit-ads/audience,
     # LFXV2-2665), which runs on the same reporting operation with breakdowns.
+    # Their reporting budget (Reddit's 60 report requests a minute per ad
+    # account) is kept per process, so templates/deployment.yaml refuses to
+    # render the flag with replicaCount > 1 (or autoscaling past one).
     REDDIT_METRICS_ENABLED:
       value: "false"
 

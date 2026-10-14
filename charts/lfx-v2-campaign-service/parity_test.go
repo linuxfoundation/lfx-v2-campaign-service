@@ -1194,3 +1194,51 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 		})
 	}
 }
+
+// TestDeploymentRefusesRedditReportsOnMultipleReplicas pins the Reddit single-replica guard, the
+// X guard's twin: the Reddit reporting budget (report_budget.go) is per process, so the chart
+// refuses REDDIT_METRICS_ENABLED with more than one replica — set through either env input, or
+// sourced where the template cannot see it — and still renders every other combination.
+func TestDeploymentRefusesRedditReportsOnMultipleReplicas(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	const on = "app.environment.REDDIT_METRICS_ENABLED.value=true"
+	for _, tc := range []struct {
+		name   string
+		set    []string
+		refuse bool
+	}{
+		{"default (flag off, one replica)", nil, false},
+		{"flag on, one replica", []string{on}, false},
+		{"flag off, three replicas", []string{"replicaCount=3"}, false},
+		{"flag on, two replicas", []string{on, "replicaCount=2"}, true},
+		{"flag on via extraEnv, two replicas", []string{"app.extraEnv[0].name=REDDIT_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
+		{"flag from a secret, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=null", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
+		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true},
+		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
+		// The EFFECTIVE value, as for the X guard: the last extraEnv entry wins.
+		{"environment on, extraEnv off, two replicas", []string{on, "app.extraEnv[0].name=REDDIT_METRICS_ENABLED,app.extraEnv[0].value=false", "replicaCount=2"}, false},
+		{"environment off, extraEnv on, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=false", "app.extraEnv[0].name=REDDIT_METRICS_ENABLED,app.extraEnv[0].value=true", "replicaCount=2"}, true},
+		{"extraEnv on then off, two replicas", []string{"app.extraEnv[0].name=REDDIT_METRICS_ENABLED,app.extraEnv[0].value=true,app.extraEnv[1].name=REDDIT_METRICS_ENABLED,app.extraEnv[1].value=false", "replicaCount=2"}, false},
+		{"environment on, extraEnv from a secret last, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=false", "app.extraEnv[0].name=REDDIT_METRICS_ENABLED,app.extraEnv[0].valueFrom.secretKeyRef.name=s,app.extraEnv[0].valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
+		// The X flag alone does not trip the Reddit guard (it trips its own, with its own text).
+		{"X flag on, Reddit off, one replica", []string{"app.environment.TWITTER_METRICS_ENABLED.value=true"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}
+			for _, s := range tc.set {
+				args = append(args, "--set", s)
+			}
+			out, err := exec.Command("helm", args...).CombinedOutput()
+			switch {
+			case tc.refuse && err == nil:
+				t.Fatalf("rendered with %v; want the single-replica refusal", tc.set)
+			case tc.refuse && !strings.Contains(string(out), "Run one replica while the Reddit flag is on"):
+				t.Errorf("failed, but not on the guard:\n%s", out)
+			case !tc.refuse && err != nil:
+				t.Fatalf("refused %v: %v\n%s", tc.set, err, out)
+			}
+		})
+	}
+}

@@ -103,6 +103,13 @@ name's LAST occurrence: the last `app.extraEnv` entry wins, an `app.environment`
 `value` when the key is present and its `valueFrom` otherwise, and a `valueFrom` on the effective
 entry (unreadable at render time) counts as on (`TestDeploymentRefusesXStatsJobsOnMultipleReplicas`).
 
+`REDDIT_METRICS_ENABLED` has the same render-time guard, judged on the effective value exactly as
+above (`TestDeploymentRefusesRedditReportsOnMultipleReplicas`): the Reddit reporting budget
+(`internal/platform/reddit/report_budget.go`, 45 of the ad account's 60 report requests a minute)
+is a per-process ledger, so N replicas could send N × 45. Unlike the X flag there is NO runtime
+lease behind it — the chart refusal is the only thing holding the quota account-wide until the
+ledger is shared, and it cannot see an out-of-band scale or an external HPA.
+
 The pod template carries the Prometheus scrape annotations by default (LFXV2-3221):
 `prometheus.io/scrape` and `prometheus.io/path` come from `values.yaml`, while
 `prometheus.io/port` is rendered from `service.port` in the TEMPLATE rather than

@@ -95,6 +95,43 @@
     {{- fail "TWITTER_METRICS_ENABLED is on with more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1). The X stats-job features' per-account limits (job budget, write pacer) are per process, so each replica would multiply them against X ad accounts shared across foundations. Run one replica while the flag is on (the runtime lease also refuses non-owner pods)." }}
   {{- end }}
 {{- end }}
+{{- /*
+  Guard: the Reddit report reads run on ONE replica.
+
+  REDDIT_METRICS_ENABLED turns on the Reddit campaign metrics read and the Reddit audience read,
+  which spend Reddit's `ads-reporting` quota (60 requests per 60 s per ad account). The ledger that
+  keeps them under it (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those for
+  the audience read) is process-local, so N replicas could send up to N × 45 a minute against one
+  account. Unlike the X guard above there is NO runtime lease behind this one: until the ledger is
+  shared, this render-time refusal is the only thing holding the quota account-wide, and it cannot
+  see an out-of-band scale or an external HPA.
+
+  It judges the EFFECTIVE value exactly as the X guard above does: the last app.extraEnv entry
+  named REDDIT_METRICS_ENABLED wins over app.environment, an app.environment entry renders `value`
+  when the key is present and `valueFrom` otherwise, and a valueFrom on the effective entry
+  cannot be inspected and is treated as on.
+*/}}
+{{- $redditReports := false }}
+{{- with (get .Values.app.environment "REDDIT_METRICS_ENABLED") }}
+  {{- if hasKey . "value" }}
+    {{- $redditReports = eq (toString .value) "true" }}
+  {{- else if .valueFrom }}
+    {{- $redditReports = true }}
+  {{- end }}
+{{- end }}
+{{- range $entry := .Values.app.extraEnv }}
+  {{- if eq (toString (default "" $entry.name)) "REDDIT_METRICS_ENABLED" }}
+    {{- $redditReports = or (and $entry.valueFrom true) (eq (toString $entry.value) "true") }}
+  {{- end }}
+{{- end }}
+{{- if $redditReports }}
+  {{- $replicas := int (default 1 .Values.replicaCount) }}
+  {{- $autoscaleMax := 1 }}
+  {{- with .Values.autoscaling }}{{- if .enabled }}{{- $autoscaleMax = int (default 2 .maxReplicas) }}{{- end }}{{- end }}
+  {{- if or (gt $replicas 1) (gt $autoscaleMax 1) }}
+    {{- fail "REDDIT_METRICS_ENABLED is on with more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1). The Reddit reporting budget (45 of the ad account's 60 report requests a minute) is kept per process, so each replica would multiply it against the account-wide quota. Run one replica while the Reddit flag is on." }}
+  {{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

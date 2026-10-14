@@ -735,7 +735,11 @@ redaction, page cap, pre-request refusals, concurrency bound).
 
 ### Reporting budget (`report_budget.go`, PR #306)
 
-`requestWithThrottleRetryCounted` calls `acquireReportSlot` at the top of EVERY attempt: when the
+`requestWithThrottleRetryCounted` calls `acquireReportSlot` on EVERY attempt — after the token
+refresh and the request build, immediately before `Do` and before the per-attempt deadline starts,
+so an attempt that fails before it could be sent (a failed refresh, a cancelled context) takes no
+slot, and a wait for a slot does not eat the attempt's timeout. `acquire` also checks `ctx.Err()`
+before every take (the first, and again after each wait). When the
 path is the reports operation (`reportPathRE`, `/ad_accounts/{id}/reports`), the attempt takes a
 slot from the account's ledger in the process-wide `defaultReportBudgets` (sliding 60 s; 45 in all,
 24 for attempts whose context carries `withInsightsReports` — the audience read). So each page and
@@ -743,4 +747,7 @@ each 429 retry of the audience read, the campaign metrics read and the account m
 A slot that will not free before the context's deadline fails at once with
 `ErrReportBudgetExhausted`, nothing sent. `WithReportBudgets` / `NewReportBudgets` let tests use a
 ledger of their own; the package's tests run on an unlimited default ledger
-(`report_budget_main_test.go`) and `report_budget_test.go` exercises the real limits.
+(`report_budget_main_test.go`) and `report_budget_test.go` exercises the real limits
+(`TestReportBudgets_UnsentAttemptsSpendNothing`: cancelled before the take, cancelled during a
+wait, a cancelled client read and a failing token refresh all leave `used` at zero). The ledger is
+per process, so the chart refuses `REDDIT_METRICS_ENABLED` with more than one replica.

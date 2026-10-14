@@ -183,6 +183,27 @@ func TestGetRedditAdsAudience_UnknownProvenanceIs409ReDispatch(t *testing.T) {
 	}
 }
 
+// A scope with BOTH faults is a 409 naming both remedies — re-dispatching the unrecorded campaigns
+// and reconciling the foreign ones — not the single-fault text of either arm.
+func TestGetRedditAdsAudience_MixedProvenanceNamesBothRemedies(t *testing.T) {
+	err := fmt.Errorf("1 foreign and 1 unrecorded CANARY: %w",
+		errors.Join(domain.ErrCampaignProvenanceMixed, domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch))
+	_, got := redditAudienceService(t, &redditAudienceDispatcher{err: err}, "t3_c").
+		GetRedditAdsAudience(context.Background(), &conn.GetRedditAdsAudiencePayload{ProjectID: "cncf"})
+	ce, ok := got.(*conn.ConflictError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want a 409", got, got)
+	}
+	for _, want := range []string{"different ad account", "do not record which ad account", "re-dispatch the unrecorded campaigns", "reconcile"} {
+		if !strings.Contains(ce.Message, want) {
+			t.Errorf("message %q does not contain %q", ce.Message, want)
+		}
+	}
+	if strings.Contains(ce.Message, "CANARY") {
+		t.Errorf("message echoes the wrapped detail: %q", ce.Message)
+	}
+}
+
 // The 409s carry the sentinels' fixed text, nothing from the wrapped detail.
 func TestGetRedditAdsAudience_ScopeConflictsUseFixedText(t *testing.T) {
 	for _, sentinel := range []error{domain.ErrAudienceScopeTooLarge, domain.ErrAudienceScopeInvalid} {

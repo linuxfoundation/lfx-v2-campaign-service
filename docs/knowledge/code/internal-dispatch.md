@@ -4299,7 +4299,9 @@ partial mismatch, matching/unknown provenance, 403 unclassified without the acco
 
 The Reddit audience read refuses a scope entry with NO recorded creation account
 (`ErrCampaignProvenanceUnknown` joined with `ErrCampaignAccountMismatch`, 409) rather than letting
-it through as the X/Meta reads do, and runs its upstream call through `d.audience`, a
+it through as the X/Meta reads do; a scope holding BOTH a foreign-account and an unrecorded entry
+returns `ErrCampaignProvenanceMixed` joined with both sentinels, so neither fault hides the other
+(`TestReddit_ReadRedditAudienceInsights_ForeignAndUnknownReportsBoth`). It runs its upstream call through `d.audience`, a
 `redditReportGuard` (`reddit_report_guard.go`): single flight for identical reads (account, window,
 UTC day, sorted scope) with leader-context re-lead, and a 60 s cache of successes. Tests:
 `reddit_report_guard_test.go`, and the provenance/budget cases in `reddit_audience_test.go`.

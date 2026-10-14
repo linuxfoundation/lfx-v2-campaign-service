@@ -18,7 +18,9 @@ import (
 // a budget that only one of them respects is not a budget. This file is the process-wide ledger:
 // EVERY HTTP attempt at the reporting operation, made by any Client in the process (each page of a
 // paginated report, and each 429 retry, is its own attempt), takes one slot from the ad account's
-// ledger before it is sent (requestWithThrottleRetryCounted).
+// ledger before it is sent (requestWithThrottleRetryCounted). The slot is taken as late as
+// possible — after the token refresh and the request build, immediately before the send — so an
+// attempt that fails before it could be sent (a failed refresh, a cancelled context) spends none.
 //
 // Sizing (per ad account, per process, over a sliding 60-second window):
 //
@@ -34,9 +36,10 @@ import (
 // partially.
 //
 // PER PROCESS. With more than one replica each process keeps its own ledger, so the account-wide
-// total is up to replicas × 45. The service runs one replica of these reads today; a multi-replica
-// deployment needs a shared ledger (as the X stats jobs use a database lease) before this bound can
-// be claimed account-wide.
+// total is up to replicas × 45. The chart therefore refuses to render REDDIT_METRICS_ENABLED with
+// more than one replica (templates/deployment.yaml, beside the TWITTER_METRICS_ENABLED guard); a
+// multi-replica deployment needs a shared ledger (as the X stats jobs use a database lease) before
+// that guard can be lifted.
 const (
 	reportBudgetWindow   = 60 * time.Second
 	reportBudgetTotal    = 45
@@ -101,11 +104,18 @@ func newReportBudgets(window time.Duration, total, insights int, now func() time
 // acquire takes one slot for an attempt on accountID — from the account's total and, for an
 // insight read, also from its insight sub-budget — waiting for one to free up only when that
 // happens before ctx's deadline.
+//
+// A done ctx takes no slot: ctx.Err() is checked before every take — so before the first, and
+// again after every wait — because the caller would not send the attempt, and a slot spent on an
+// attempt that is never sent is quota the account's other readers lose for a full window.
 func (b *ReportBudgets) acquire(ctx context.Context, accountID string, insights bool) error {
 	if b.total <= 0 || (insights && b.insights <= 0) {
 		return ErrReportBudgetExhausted // a slot can never free up
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%w: %w", ErrReportBudgetExhausted, err)
+		}
 		wait, ok := b.tryTake(accountID, insights)
 		if ok {
 			return nil
