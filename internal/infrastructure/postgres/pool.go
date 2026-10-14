@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	// pgxv5 is aliased because golang-migrate's driver above already occupies the
 	// identifier `pgx` (see the pgx.Postgres reference at the foot of this file).
 	pgxv5 "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -224,6 +226,11 @@ const invalidIndexQuery = `SELECT c.relname
 // starts against a schema whose lease index is invalid must refuse rather than quietly
 // accept the duplicate builds the index was added to prevent.
 func checkNoInvalidIndexes(dsn string) error {
+	// The OPTIONAL deparse probe runs FIRST, on its OWN connection under its OWN short budget,
+	// so however slow it is (a slow server, a held lock) it cannot spend the REQUIRED checks'
+	// deadline below, which only starts once the probe has returned. See probeRequiredIndexDeparse.
+	expected := probeRequiredIndexDeparse(dsn)
+
 	// Migrate takes no context (golang-migrate's Up() does not either). This is a
 	// single catalog read against a database the migration just finished using, so a
 	// short independent deadline is enough and keeps a hung read from wedging boot.
@@ -271,7 +278,7 @@ func checkNoInvalidIndexes(dsn string) error {
 	// constraint. A performance index going missing is slow, not wrong, and does not
 	// belong. The live test TestMigrateRefusesADroppedRequiredIndex fails if an entry
 	// names an index no migration creates, so a stale name cannot sit here unnoticed.
-	missing, wrong, err := checkRequiredIndexes(ctx, conn)
+	missing, wrong, err := checkRequiredIndexes(ctx, conn, expected)
 	if err != nil {
 		return err
 	}
@@ -397,6 +404,47 @@ var requiredIndexes = []requiredIndex{{
 	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
 		"(platform = 'linkedin-ads'::text))",
 }, {
+	// One live row per Meta campaign (000043). GLOBAL key: a Meta campaign is a Graph node with
+	// a globally unique id. Built without IF NOT EXISTS for 000020's reason.
+	name:   "uq_campaigns_meta_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id"},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'meta-ads'::text))",
+}, {
+	// One live row per Microsoft campaign PER AD ACCOUNT (000044): Microsoft ids are
+	// account-scoped, so the third key is the account extracted exactly as
+	// microsoftCreationAccountID reads it (accountId, else the aid= of microsoftAdsUrl).
+	// Captured from PostgreSQL 16's deparse (note the quoted "substring"); the boot check does
+	// NOT depend on that spelling — it compares the server's own deparse of this definition
+	// against the live index (serverDeparsedRequiredIndexes), so an upgrade cannot fail boot.
+	name:   "uq_campaigns_microsoft_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys: []string{"platform", "platform_campaign_id",
+		`COALESCE(NULLIF(result ->> 'accountId'::text, ''::text), NULLIF("substring"(result ->> 'microsoftAdsUrl'::text, '[?&]aid=([^&#]+)'::text), ''::text))`},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'microsoft-ads'::text))",
+}, {
+	// One live row per Reddit campaign PER AD ACCOUNT (000045): Reddit does not document its
+	// ids as global, so the account (result.accountId, redditCreationAccountID's field) keys it.
+	name:   "uq_campaigns_reddit_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id", "NULLIF(result ->> 'accountId'::text, ''::text)"},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'reddit-ads'::text))",
+}, {
+	// One live row per X campaign PER AD ACCOUNT (000046): X does not document its ids as
+	// global, so the account (result.AccountID, twitterCreationAccountID's field) keys it.
+	name:   "uq_campaigns_twitter_campaign_live",
+	table:  "campaigns",
+	unique: true,
+	keys:   []string{"platform", "platform_campaign_id", "NULLIF(result ->> 'AccountID'::text, ''::text)"},
+	predicate: "((status <> 'deleted'::text) AND (platform_campaign_id IS NOT NULL) AND " +
+		"(platform = 'twitter-ads'::text))",
+}, {
 	// at most one LIVE brief per (project, event slug, delivery type, stage). 000003 does not
 	// add this index alongside a constraint — it DROPs campaign_briefs_project_id_event_slug_key
 	// and replaces it, so from 000003 onward the index is the only thing there is. Absent, two
@@ -477,7 +525,18 @@ func (r requiredIndex) createSQL() string {
 	if r.unique {
 		b.WriteString("UNIQUE ")
 	}
-	fmt.Fprintf(&b, "INDEX %s ON %s (%s)", r.name, r.table, strings.Join(r.keys, ", "))
+	keys := make([]string, len(r.keys))
+	for i, k := range r.keys {
+		// A plain column key is an identifier; an EXPRESSION key (the account extracted from
+		// result JSON, 000044-000046) must be parenthesised in CREATE INDEX. The stored key is
+		// the deparsed form pg_get_indexdef renders, so the round trip holds either way.
+		if identifierRe.MatchString(k) {
+			keys[i] = k
+		} else {
+			keys[i] = "(" + k + ")"
+		}
+	}
+	fmt.Fprintf(&b, "INDEX %s ON %s (%s)", r.name, r.table, strings.Join(keys, ", "))
 	if r.predicate != "" {
 		// The stored predicate is the DEPARSED form, which is itself valid SQL — it is
 		// what pg_get_expr renders and what pg_get_indexdef embeds. Round-tripping it is
@@ -527,12 +586,18 @@ func describeMissing(names []string) string {
 	return strings.Join(out, "\n")
 }
 
+// identifierRe matches a plain column name — what pg_get_indexdef renders for a column key, as
+// opposed to an expression key.
+var identifierRe = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
 // requiredIndex is an index whose absence — or silent replacement by something of the
 // same name — leaves an invariant unenforced with no other symptom.
 type requiredIndex struct {
-	name      string
-	table     string
-	unique    bool
+	name   string
+	table  string
+	unique bool
+	// keys are the index's key columns IN ORDER, each as pg_get_indexdef(index, n, true)
+	// renders it: a bare column name, or the deparsed text of an expression key.
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
 }
@@ -708,10 +773,8 @@ const requiredIndexQuery = `SELECT
 		i.indrelid = to_regclass($2),
 		COALESCE(pg_get_expr(i.indpred, i.indrelid), ''),
 		COALESCE((
-			SELECT array_agg(a.attname ORDER BY k.ord)
-			FROM unnest(string_to_array(i.indkey::text, ' ')::int2[]) WITH ORDINALITY AS k(attnum, ord)
-			JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
-			WHERE k.ord <= i.indnkeyatts
+			SELECT array_agg(pg_get_indexdef(i.indexrelid, k.ord, true) ORDER BY k.ord)
+			FROM generate_series(1, i.indnkeyatts::int) AS k(ord)
 		), '{}')
 	FROM pg_class c
 	JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -726,7 +789,10 @@ const requiredIndexQuery = `SELECT
 // again and skips, leaving the operator where they started. An index that exists but is
 // INVALID counts as absent: it enforces nothing, which is the same fact to a caller
 // deciding whether the invariant holds, and its recovery is the drop-then-create above.
-func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong []string, err error) {
+//
+// expected is each index's definition as the server deparses it (probeRequiredIndexDeparse); an
+// entry absent from it — or a nil map — compares against the stored text.
+func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn, expected map[string]deparsedIndex) (missing, wrong []string, err error) {
 	for _, want := range requiredIndexes {
 		var unique, live, rightTable bool
 		var predicate string
@@ -746,11 +812,17 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) (missing, wrong
 		if !rightTable {
 			defects = append(defects, "on a different table than "+want.table)
 		}
-		if !slices.Equal(keys, want.keys) {
-			defects = append(defects, fmt.Sprintf("keys %v, want %v", keys, want.keys))
+		// Compared against THIS server's deparse of the expected definition, not against the
+		// stored text: see serverDeparsedRequiredIndexes.
+		exp, ok := expected[want.name]
+		if !ok {
+			exp = deparsedIndex{keys: want.keys, predicate: want.predicate}
 		}
-		if predicate != want.predicate {
-			defects = append(defects, fmt.Sprintf("predicate %q, want %q", predicate, want.predicate))
+		if !slices.Equal(keys, exp.keys) {
+			defects = append(defects, fmt.Sprintf("keys %v, want %v", keys, exp.keys))
+		}
+		if predicate != exp.predicate {
+			defects = append(defects, fmt.Sprintf("predicate %q, want %q", predicate, exp.predicate))
 		}
 		if len(defects) > 0 {
 			// The remedy travels with the defects rather than in the message's closing
@@ -832,3 +904,183 @@ func pgxURL(dsn string) (string, error) {
 
 // ensure the pgx5 migrate driver is linked.
 var _ = pgx.Postgres{}
+
+// deparsedIndex is one index definition as a particular PostgreSQL server deparses it.
+type deparsedIndex struct {
+	keys      []string
+	predicate string
+}
+
+// probeIndexQuery reads a probe index's deparsed keys and predicate by oid — the same renderings
+// requiredIndexQuery reads for the real index (pg_get_indexdef per key, pg_get_expr for the
+// predicate).
+const probeIndexQuery = `SELECT
+		COALESCE(pg_get_expr(i.indpred, i.indrelid), ''),
+		COALESCE((
+			SELECT array_agg(pg_get_indexdef(i.indexrelid, k.ord, true) ORDER BY k.ord)
+			FROM generate_series(1, i.indnkeyatts::int) AS k(ord)
+		), '{}')
+	FROM pg_index i WHERE i.indexrelid = $1::regclass`
+
+// probeBudget bounds the WHOLE optional deparse probe — connect, transaction and every probe
+// statement. Short on purpose: the probe only improves the comparison, and spending longer on it
+// than the required checks' own budget (invalidIndexCheckTimeout) would make an optional step the
+// likeliest cause of a failed boot.
+const probeBudget = 3 * time.Second
+
+// probeStatementTimeout / probeLockTimeout bound each probe statement inside its transaction
+// (SET LOCAL), so one statement waiting on a lock — CREATE TEMP TABLE ... (LIKE campaigns) takes
+// a share lock on the source — gives up quickly instead of consuming the budget.
+const (
+	probeStatementTimeout = "1500ms"
+	probeLockTimeout      = "500ms"
+)
+
+// probeRequiredIndexDeparse runs serverDeparsedRequiredIndexes on a DEDICATED connection under
+// probeBudget. Every failure — connect included — degrades to the stored-text comparison (a nil
+// map) with one WARN; it never returns an error, so it can only improve the boot check.
+func probeRequiredIndexDeparse(dsn string) map[string]deparsedIndex {
+	ctx, cancel := context.WithTimeout(context.Background(), probeBudget)
+	defer cancel()
+	var conn *pgxv5.Conn
+	if err := probeStep(ctx, "connect", func() (err error) { conn, err = pgxv5.Connect(ctx, dsn); return err }); err != nil {
+		slog.WarnContext(ctx, "required-index check: the deparse probe could not connect; comparing definitions as stored text",
+			probeErrAttrs("connect", err)...)
+		return nil
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	return serverDeparsedRequiredIndexes(ctx, conn)
+}
+
+// probeRedactedDiagnostic is the ONLY text the probe's warnings carry about a failure. The raw
+// error is never logged: a pgx connect or parse error repeats the DSN's identifiers (host, user,
+// database — and a parse error can echo credential text), and PostgreSQL's own diagnostics quote
+// the role and database (`password authentication failed for user "u"`). The same reasoning as
+// dsnParseError and dbtest.SafeDSNErr: nothing derived from the input or the server's message is
+// carried, only what identifies the failure's KIND.
+const probeRedactedDiagnostic = "error text withheld: it can repeat DATABASE_URL identifiers or credentials"
+
+// probeErrAttrs renders a probe failure for a log line: the step, the error's Go type, the
+// SQLSTATE when it is a server error (a code, never the message), and the fixed diagnostic.
+func probeErrAttrs(step string, err error) []any {
+	attrs := []any{"step", step, "error_class", fmt.Sprintf("%T", err)}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		attrs = append(attrs, "sqlstate", pgErr.Code)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		attrs = append(attrs, "timeout", true)
+	}
+	return append(attrs, "error", probeRedactedDiagnostic)
+}
+
+// probeFault, when set (tests only), is consulted before each probe-infrastructure step and
+// makes that step fail with the returned error — standing in for a production role without the
+// TEMPORARY privilege, a read-only default, or a hot standby.
+var probeFault func(ctx context.Context, step string) error
+
+// probeStep runs one probe-infrastructure step, honouring probeFault. ctx is the probe's own
+// budget, handed to the hook so a test can stand in for a step that blocks until it runs out.
+func probeStep(ctx context.Context, step string, run func() error) error {
+	if probeFault != nil {
+		if err := probeFault(ctx, step); err != nil {
+			return err
+		}
+	}
+	return run()
+}
+
+// serverDeparsedRequiredIndexes asks the RUNNING server how it deparses each required index's
+// expected definition, so the boot check compares the server's rendering of BOTH sides rather
+// than a live deparse against text captured on one PostgreSQL version. A major upgrade that
+// changes how an expression key (000044-000046) or a predicate is rendered then changes both
+// sides alike and cannot fail boot; a genuinely different definition still differs.
+//
+// How: inside ONE transaction that is always rolled back, it creates an empty TEMP copy of each
+// table (`LIKE`, columns only — no data) and builds each expected index on it from createSQL's
+// key list and predicate, then reads that probe's deparse.
+//
+// BEST-EFFORT, and never stricter than the text comparison it improves on. The probe needs things
+// the boot check never needed before — a transaction, the TEMPORARY privilege, a writable session
+// — and a production role may lack them (no TEMP grant, default_transaction_read_only, a hot
+// standby). Any such infrastructure failure logs ONE warning naming the step and the error class
+// and leaves the affected entries (the rest of the list) on their stored text, exactly the
+// comparison made before this existed. A definition this server cannot parse falls back the same
+// way, entry by entry. It therefore returns no error: the worst case is the old behaviour.
+func serverDeparsedRequiredIndexes(ctx context.Context, conn *pgxv5.Conn) map[string]deparsedIndex {
+	out := make(map[string]deparsedIndex, len(requiredIndexes))
+	for _, r := range requiredIndexes {
+		out[r.name] = deparsedIndex{keys: r.keys, predicate: r.predicate}
+	}
+	fallBack := func(step string, err error) map[string]deparsedIndex {
+		slog.WarnContext(ctx, "required-index check: the deparse probe could not run; comparing the remaining definitions as stored text (a Postgres upgrade that re-renders them could then report a mismatch)",
+			probeErrAttrs(step, err)...)
+		return out
+	}
+
+	var tx pgxv5.Tx
+	if err := probeStep(ctx, "begin", func() (err error) { tx, err = conn.Begin(ctx); return err }); err != nil {
+		return fallBack("begin", err)
+	}
+	// Rollback on a context of its own: the probe's may already be spent, and an open
+	// transaction holding temp objects must not outlive it.
+	defer func() {
+		rctx, rcancel := context.WithTimeout(context.Background(), time.Second)
+		defer rcancel()
+		_ = tx.Rollback(rctx)
+	}()
+
+	if err := probeStep(ctx, "set timeouts", func() error {
+		if _, err := tx.Exec(ctx, "SET LOCAL statement_timeout = '"+probeStatementTimeout+"'"); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '"+probeLockTimeout+"'")
+		return err
+	}); err != nil {
+		return fallBack("set timeouts", err)
+	}
+
+	probed := map[string]string{}
+	for n, r := range requiredIndexes {
+		tmp, ok := probed[r.table]
+		if !ok {
+			tmp = "required_index_probe_" + r.table
+			if err := probeStep(ctx, "create temp table", func() error {
+				_, err := tx.Exec(ctx, fmt.Sprintf("CREATE TEMP TABLE %s (LIKE %s)", tmp, r.table))
+				return err
+			}); err != nil {
+				return fallBack("create temp table", err)
+			}
+			probed[r.table] = tmp
+		}
+		probe := fmt.Sprintf("required_index_probe_%d", n)
+		ddl := strings.Replace(r.createSQL(), "INDEX "+r.name+" ON "+r.table+" ", "INDEX "+probe+" ON "+tmp+" ", 1)
+		ddl = strings.Replace(ddl, "CREATE UNIQUE INDEX", "CREATE INDEX", 1)
+		// A savepoint per probe, so a definition this server cannot parse falls back to the
+		// stored text for that entry alone instead of aborting the whole transaction.
+		if err := probeStep(ctx, "savepoint", func() error {
+			_, err := tx.Exec(ctx, "SAVEPOINT required_index_probe")
+			return err
+		}); err != nil {
+			return fallBack("savepoint", err)
+		}
+		if _, err := tx.Exec(ctx, ddl); err != nil {
+			// About the DEFINITION, not the infrastructure: this entry keeps its stored text.
+			if rerr := probeStep(ctx, "rollback to savepoint", func() error {
+				_, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT required_index_probe")
+				return err
+			}); rerr != nil {
+				return fallBack("rollback to savepoint", rerr)
+			}
+			continue
+		}
+		var d deparsedIndex
+		if err := probeStep(ctx, "read probe", func() error {
+			return tx.QueryRow(ctx, probeIndexQuery, "pg_temp."+probe).Scan(&d.predicate, &d.keys)
+		}); err != nil {
+			return fallBack("read probe", err)
+		}
+		out[r.name] = d
+	}
+	return out
+}

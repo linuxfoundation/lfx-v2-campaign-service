@@ -106,12 +106,82 @@ const platformCampaignUniqueIndex = "uq_campaigns_platform_campaign_live"
 // ids are globally unique). Its violation means ErrPlatformCampaignAlreadyBound too.
 const linkedInCampaignUniqueIndex = "uq_campaigns_linkedin_campaign_live"
 
-// isPlatformCampaignBindingViolation reports whether err violates one of the per-provider
-// "one upstream campaign, one live row" indexes (000020 for Google Ads, 000042 for LinkedIn).
-// Each provider keeps its OWN index — see 000042 for why they are not one widened predicate —
-// and every one of them means the same thing to a caller.
+// platformCampaignBindingIndexes are the per-provider "one upstream campaign, one live row"
+// indexes: 000020 (Google Ads) and 000042 (LinkedIn), both global; 000043 (Meta), global; and
+// 000044-000046 (Microsoft, Reddit, X), keyed on the ad account too. Each provider keeps its OWN
+// index — see 000042 for why they are not one widened predicate — and a violation of any of them
+// means the same thing to a caller: ErrPlatformCampaignAlreadyBound.
+var platformCampaignBindingIndexes = []string{
+	platformCampaignUniqueIndex,
+	linkedInCampaignUniqueIndex,
+	"uq_campaigns_meta_campaign_live",
+	"uq_campaigns_microsoft_campaign_live",
+	"uq_campaigns_reddit_campaign_live",
+	"uq_campaigns_twitter_campaign_live",
+}
+
+// isPlatformCampaignBindingViolation reports whether err violates one of
+// platformCampaignBindingIndexes.
 func isPlatformCampaignBindingViolation(err error) bool {
-	return isUniqueViolationOn(err, platformCampaignUniqueIndex) || isUniqueViolationOn(err, linkedInCampaignUniqueIndex)
+	for _, name := range platformCampaignBindingIndexes {
+		if isUniqueViolationOn(err, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// accountKeyedBindingSQL is, per provider whose binding index is keyed on the ad account
+// (000044-000046), the SQL that extracts that account from a row's result JSON — the same
+// expression as the index key. A live row where it is NULL records no account (a legacy row) and
+// so is invisible to that provider's index; refuseLegacyBinding uses it to refuse binding an id
+// such a row already holds, on adoption and dispatch alike, rather than let a second binding slip
+// past the index.
+var accountKeyedBindingSQL = map[model.Provider]string{
+	model.ProviderMicrosoftAds: `COALESCE(NULLIF(result ->> 'accountId', ''), NULLIF(substring(result ->> 'microsoftAdsUrl' from '[?&]aid=([^&#]+)'), ''))`,
+	model.ProviderRedditAds:    `NULLIF(result ->> 'accountId', '')`,
+	model.ProviderTwitterAds:   `NULLIF(result ->> 'AccountID', '')`,
+}
+
+// legacyBindingQuery reports whether a live row of the platform OTHER than the slot being
+// written already holds the upstream id while recording NO account (the %s is the provider's
+// account expression). The slot exclusion keeps a dispatch's own claim row — the row UpsertCampaign
+// is about to fill — from counting against itself.
+const legacyBindingQuery = `SELECT EXISTS (SELECT 1 FROM campaigns
+	WHERE platform = $1 AND platform_campaign_id = $2 AND status <> 'deleted' AND (%s) IS NULL
+	AND NOT (brief_id = $3 AND variant = $4 AND slot_version = $5))`
+
+// legacyBindingLockQuery serializes every writer binding one (platform, upstream id) for the rest
+// of the transaction, so the legacy-row check and the INSERT/UPSERT that follows are atomic
+// against another writer doing the same — the index cannot arbitrate against a NULL key.
+const legacyBindingLockQuery = `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`
+
+// refuseLegacyBinding is the account-keyed providers' guard for the gap their index leaves: a
+// live row recording NO account (written before the field existed) is NULL in the key, so the
+// index lets a second binding of the same upstream campaign through. Run inside the writer's
+// transaction, under legacyBindingLockQuery, it returns ErrPlatformCampaignAlreadyBound when such
+// a row holds the id — for adoption (AdoptCampaign) and for dispatch (UpsertCampaign) alike: X's
+// create path reuses campaigns by a name built from the event and project, so a second brief's
+// dispatch can resolve to the very campaign a legacy row binds. A no-op for providers whose
+// binding index is not account-keyed.
+func refuseLegacyBinding(ctx context.Context, tx pgx.Tx, op string, c *model.Campaign) error {
+	expr, ok := accountKeyedBindingSQL[c.Platform]
+	if !ok || c.PlatformCampaignID == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, legacyBindingLockQuery, string(c.Platform), c.PlatformCampaignID); err != nil {
+		return fmt.Errorf("%s: lock the upstream binding: %w", op, err)
+	}
+	var held bool
+	if err := tx.QueryRow(ctx, fmt.Sprintf(legacyBindingQuery, expr), string(c.Platform), c.PlatformCampaignID,
+		c.BriefID, model.NormalizeVariant(c.Variant), model.NormalizeSlotVersion(c.SlotVersion)).Scan(&held); err != nil {
+		return fmt.Errorf("%s: check legacy bindings: %w", op, err)
+	}
+	if held {
+		return fmt.Errorf("%s: %w: %s campaign %s is already bound to a brief (by a row that records no ad account)",
+			op, domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+	}
+	return nil
 }
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
@@ -491,15 +561,17 @@ func (r *CampaignRepo) ListRecentProjectPlatformCampaigns(ctx context.Context, p
 // the mutation routes are brief- and campaign-scoped, while the keyword rows a caller acts on
 // carry only the platform's numeric id.
 //
-// FOR GOOGLE ADS, AT MOST ONE ROW CAN MATCH, enforced by the schema rather than by this query:
-// migration 000020 creates uq_campaigns_platform_campaign_live, a UNIQUE index on
-// (platform, platform_campaign_id) WHERE platform = 'google-ads'. The index is GLOBAL — it has
-// no project_id column — so adding project_id can only narrow one row to zero or one.
+// FOR GOOGLE ADS, LINKEDIN AND META, AT MOST ONE ROW CAN MATCH, enforced by the schema rather
+// than by this query: migrations 000020, 000042 and 000043 create UNIQUE indexes on
+// (platform, platform_campaign_id) scoped to each of those platforms. They are GLOBAL — no
+// project_id column — so adding project_id can only narrow one row to zero or one.
 //
-// FOR MICROSOFT ADVERTISING MORE THAN ONE LIVE ROW CAN MATCH: that index does not cover it, and
-// Microsoft campaign ids are minted per ad account, so a project whose connection was re-pointed
-// to another account can hold two live rows with the same id. The return-every-row shape is
-// therefore LOAD-BEARING there, not merely defensive: no LIMIT and no DISTINCT, so the caller
+// FOR MICROSOFT ADVERTISING, REDDIT AND X MORE THAN ONE LIVE ROW CAN MATCH: their binding indexes
+// (000044-000046) are keyed on the AD ACCOUNT too (Microsoft mints ids per account; Reddit and X
+// do not document theirs as global), so a project whose connection was re-pointed to another
+// account can hold one live row per account for the same id — and a legacy row that records no
+// account is not constrained at all. The return-every-row shape is therefore LOAD-BEARING there,
+// not merely defensive: no LIMIT and no DISTINCT, so the caller
 // sees every match and refuses rather than acting on whichever row sorted first. Ordered by id so
 // a repeated call answers identically.
 const resolvePlatformCampaignQuery = `SELECT id, brief_id FROM campaigns
@@ -720,6 +792,11 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	if err != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
+	// The legacy account-less binding gap, closed on the DISPATCH path too, in this transaction
+	// and before the upsert (see refuseLegacyBinding).
+	if lerr := refuseLegacyBinding(ctx, tx, "upsert campaign", c); lerr != nil {
+		return nil, lerr
+	}
 
 	row := tx.QueryRow(ctx, upsertCampaignQuery,
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
@@ -842,6 +919,14 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 	}
 	if status != "approved" || version != expectedVersion {
 		return nil, domain.ErrStaleApproval
+	}
+
+	// LEGACY ROWS on an account-keyed binding index (000044-000046): a live row that records no
+	// account is NULL in the index key, so it can neither block nor be blocked by it. Adoption must
+	// not use that gap to bind the same upstream campaign a second time, so an id such a row holds
+	// is refused as already bound — conservatively, since the legacy row's account is unknown.
+	if lerr := refuseLegacyBinding(ctx, tx, "adopt campaign", c); lerr != nil {
+		return nil, lerr
 	}
 
 	// Both actor columns from ONE value: adoption creates the row and is also the last

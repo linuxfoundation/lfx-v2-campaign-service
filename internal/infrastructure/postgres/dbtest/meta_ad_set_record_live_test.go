@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -114,11 +115,14 @@ func seedRecordedMetaCampaign(ctx context.Context, t *testing.T, pool *pgxpool.P
 	t.Helper()
 	briefID = insertBrief(ctx, t, pool)
 	projectID = dbtest.UniqueID(t, "project")
+	// A run-unique Meta campaign id: 000043 allows one live row per Meta campaign in the WHOLE
+	// shared schema, so a fixed id would collide with the previous test's seed.
+	metaID := strconv.FormatInt(time.Now().UnixNano(), 10)
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status, platform_campaign_id, result)
-		VALUES ($1, $2, $3, $4, 'created', '555', '{"AccountID":"act_777","CampaignID":"555","AdSetID":"888"}')
+		VALUES ($1, $2, $3, $4, 'created', $5, jsonb_build_object('AccountID', 'act_777', 'CampaignID', $5::text, 'AdSetID', '888'))
 		RETURNING id, version`,
-		projectID, briefID, string(model.ProviderMetaAds), dbtest.UniqueID(t, "campaign")).Scan(&id, &version); err != nil {
+		projectID, briefID, string(model.ProviderMetaAds), dbtest.UniqueID(t, "campaign"), metaID).Scan(&id, &version); err != nil {
 		t.Fatalf("seed a meta campaign: %v", err)
 	}
 	return projectID, briefID, id, version
