@@ -207,6 +207,20 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   locks use; a hash collision between two slots only serializes them. Nothing does platform I/O
   under the lock.
 
+  **The lock orders writers; it does not decide whose row the upsert may finalize.** A pending
+  claim can be cleared (an operator acting on `StuckDispatchClaims`, or a concurrent
+  `DeleteDispatchClaim`) while the provider call is in flight, and an adopt — or a later job's
+  claim — can then take the slot. The stale dispatch's upsert used to `DO UPDATE` that row with
+  its own upstream id, untracking the adopted campaign. `upsertCampaignQuery`'s conflict arm now
+  carries `WHERE campaigns.job_id = EXCLUDED.job_id`: the claim INSERT stamps the dispatching
+  job's id, an adopted row has `job_id` NULL, and another job's claim has that job's id, so the
+  stored `job_id` is what identifies the claimant (state predicates such as `status = 'pending'`
+  would also match another job's claim, and would refuse the owner's legitimate re-upsert of its
+  own finalized row). Strict `=`, so a write with no job id never updates an existing row. Zero
+  rows back is `domain.ErrDispatchClaimLost` (error text names the upstream id, slot version and
+  job); nothing is written. Pinned by `TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption` and
+  `TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim`.
+
   The comments inside migrations `000036` and `000037` still say the old index is dropped "a
   release later". That timeline is superseded by the staging below; the files are applied (shipped
   in v1.0.17) and the migrations README forbids editing an applied migration, so they are left
@@ -1730,7 +1744,8 @@ runtime. `TestCampaignRepo_OnConflictCarriesLivePredicate` covers this statement
 
 `DO NOTHING` is what distinguishes adoption from an upsert. `UpsertCampaign`'s `DO UPDATE`
 arm is correct where it is used, because it overwrites a row describing THE SAME campaign
-this service is provisioning — that is how a retried dispatch converges. Adoption's caller
+this service is provisioning — and only the row whose stored `job_id` is the writer's (see the
+per-slot lock above), so a stale dispatch can never take that arm over an adopted row. Adoption's caller
 names an ARBITRARY upstream campaign, so an updating arm would repoint a live binding at a
 different campaign and orphan the one it used to name; this service never deletes or pauses
 upstream, so that orphan keeps spending with nothing here pointing at it. `RETURNING` is

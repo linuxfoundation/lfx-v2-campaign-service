@@ -1246,6 +1246,19 @@ var (
 	// Nothing was created upstream.
 	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
 
+	// ErrDispatchClaimLost indicates a dispatch tried to record its upstream campaign but the
+	// pending claim it took is no longer the row on its slot version: the claim was cleared
+	// (an operator removing an apparently-stuck claim, or a concurrent DeleteDispatchClaim)
+	// while the provider call was in flight, and ANOTHER row — an adoption, or a later
+	// dispatch's claim — took the slot before this write ran. UpsertCampaign then writes
+	// NOTHING rather than repointing that row at this dispatch's upstream id, which would
+	// silently untrack the campaign the other row binds.
+	//
+	// The paid campaign this dispatch created DOES exist upstream and this service no longer
+	// tracks it, so this is never a plain failure: the caller must report it as needing
+	// reconciliation and keep the upstream id where an operator can find it.
+	ErrDispatchClaimLost = errors.New("the dispatch's claim on this campaign slot was lost before its result could be recorded")
+
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.
 	//

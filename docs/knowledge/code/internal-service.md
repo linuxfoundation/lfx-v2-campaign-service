@@ -149,7 +149,11 @@ enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFL
 DO NOTHING of a `pending` campaign row, so exactly one worker across replicas
 wins the claim (the unique index arbitrates); the INSERT runs in a short transaction under a
 per-slot advisory lock that `AdoptCampaign` also takes, so an adopt never lands beside a
-claimed row, and nothing is held once it commits. A worker that loses the claim reuses the existing row instead of dispatching
+claimed row, and nothing is held once it commits. If the claim is cleared mid-flight and another
+row takes the slot, `UpsertCampaign` returns `domain.ErrDispatchClaimLost` without writing, and
+`dispatchPlatform` (success and retained-partial persists alike) fails the platform with a
+"claim was cleared ... untracked, reconciliation required" error that keeps the upstream id in
+`CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
 orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on

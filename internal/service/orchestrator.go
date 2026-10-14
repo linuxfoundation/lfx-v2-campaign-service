@@ -2001,7 +2001,9 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// concurrent DeleteDispatchClaim. On the conflict arm the query leaves the
 				// column alone, so passing it costs nothing; omitting it would leave a
 				// campaign with no recorded author on the one path that creates a row
-				// without a live claim in front of it.
+				// without a live claim in front of it. (If ANOTHER row has taken the slot by
+				// then — an adoption, or a later dispatch's claim — neither arm runs: the
+				// upsert returns domain.ErrDispatchClaimLost, handled below.)
 				campaign.CreatedBy = by
 				campaign.UpdatedBy = by
 				// Decide the persisted status. Preserve a dispatcher-set status that
@@ -2026,10 +2028,22 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// Index the RETAINED PARTIAL too: it is a real row an operator must be able to
 				// find in order to reconcile it. Indexing only clean successes would hide
 				// exactly the campaigns that need attention.
-				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); perr != nil {
+				_, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated))
+				switch {
+				case errors.Is(perr, domain.ErrDispatchClaimLost):
+					// The claim this partial would have been recorded on is gone and another
+					// row holds the slot, left untouched. Whatever exists upstream is now
+					// tracked by nothing, so the job carries the id (when there is one) and
+					// names reconciliation rather than a plain creation failure.
+					logLostClaim(ctx, p, jobID, brief.ProjectID, slotVersion, campaign.PlatformCampaignID, perr)
+					cancelPersist()
+					res.Error = lostClaimResultError
+					res.CampaignID = campaign.PlatformCampaignID
+					return res
+				case perr != nil:
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
-				} else {
+				default:
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
@@ -2081,6 +2095,16 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancelPersist()
 	if _, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); uerr != nil {
+		if errors.Is(uerr, domain.ErrDispatchClaimLost) {
+			// Checked FIRST: unlike the fallthrough below, the pending claim is NOT retained —
+			// it was cleared and another row (an adoption, or a later dispatch's claim) now
+			// holds the slot, which the repository left untouched. The paid campaign exists
+			// and nothing here tracks it, so the job keeps its id and says so.
+			logLostClaim(ctx, p, jobID, brief.ProjectID, slotVersion, campaign.PlatformCampaignID, uerr)
+			res.Error = lostClaimResultError
+			res.CampaignID = campaign.PlatformCampaignID
+			return res
+		}
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
@@ -2111,6 +2135,20 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	res.CampaignID = campaign.PlatformCampaignID
 	res.HubspotURL = hubspotURLFromResult(campaign.Result)
 	return res
+}
+
+// lostClaimResultError is the job result's message for domain.ErrDispatchClaimLost. It names
+// reconciliation, not a creation failure: the campaign was (or may have been) created upstream
+// and the platform result keeps its id, but the slot this dispatch claimed is now bound to a
+// different row, so nothing in this service tracks it.
+const lostClaimResultError = "created upstream campaign but this dispatch's claim was cleared and the slot is now bound to another campaign; the upstream campaign is untracked, reconciliation required"
+
+// logLostClaim records a domain.ErrDispatchClaimLost outcome with the identifiers an operator
+// needs to find the untracked upstream campaign.
+func logLostClaim(ctx context.Context, p model.Provider, jobID, projectID string, slotVersion int, platformCampaignID string, err error) {
+	slog.ErrorContext(ctx, "dispatch claim lost before its result was recorded; upstream campaign untracked, reconciliation required",
+		"platform", p, "job_id", jobID, "project_id", projectID, "slot_version", slotVersion,
+		"platform_campaign_id", platformCampaignID, "error", err)
 }
 
 // aggregateStatus folds per-platform outcomes into the job's status.

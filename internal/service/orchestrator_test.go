@@ -3647,3 +3647,51 @@ func TestOrchestrator_DispatchOntoABoundCampaignNamesTheConflict(t *testing.T) {
 		t.Errorf("result = %s, want the upstream id preserved for reconciliation", j.Result)
 	}
 }
+
+// lostClaimCampaignRepo fails UpsertCampaign as the real repo does when the dispatch's pending
+// claim was cleared mid-flight and another row (an adoption, a later job's claim) took the
+// slot: the conflict arm's job_id guard declines and nothing is written.
+type lostClaimCampaignRepo struct{ fakeCampaignRepo }
+
+func (r *lostClaimCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s (slot version 1) is no longer held by job %s",
+		domain.ErrDispatchClaimLost, c.Platform, c.PlatformCampaignID, *c.JobID)
+}
+
+// A lost claim is neither a success nor an ordinary persist failure: the paid campaign exists
+// upstream and nothing here tracks it. Both persist paths (the success upsert and the
+// retained-partial upsert) must fail the platform, name reconciliation, and keep the upstream
+// id in the job result so an operator can find the untracked campaign.
+func TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		dispatcher PlatformDispatcher
+		wantID     string
+	}{
+		{"success persist", okDispatcher{}, "pc-" + string(model.ProviderGoogleAds)},
+		{"retained-partial persist", partialResultDispatcher{}, "pc-orphan-" + string(model.ProviderGoogleAds)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := newFakeJobRepo()
+			orch := NewOrchestrator(&lostClaimCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: tc.dispatcher,
+			})
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+			id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+			j := waitForTerminal(t, jobs, id)
+			if j.Status != model.JobFailed {
+				t.Errorf("status = %s, want failed", j.Status)
+			}
+			res := string(j.Result)
+			if !strings.Contains(res, "reconciliation required") || !strings.Contains(res, "claim was cleared") {
+				t.Errorf("result = %s, want the lost claim named as needing reconciliation", res)
+			}
+			if strings.Contains(res, "failed to record it") || strings.Contains(res, "platform campaign creation failed") {
+				t.Errorf("result = %s, want the lost-claim outcome, not a generic persist/creation failure", res)
+			}
+			if !strings.Contains(res, tc.wantID) {
+				t.Errorf("result = %s, want the untracked upstream id %s kept for reconciliation", res, tc.wantID)
+			}
+		})
+	}
+}

@@ -750,6 +750,21 @@ const upsertCampaignQuery = `INSERT INTO campaigns
 			ELSE campaigns.ran_on_system_account
 		END,
 		version=campaigns.version+1, updated_at=now()
+	-- The conflict arm finalizes ONLY the claim this write owns. The claim INSERT stamped the
+	-- dispatching job's id on the pending row, and that id is what identifies the claimant:
+	-- an adopted row has job_id NULL (adoptCampaignQuery does not set it), and a later
+	-- dispatch's claim carries ITS job's id. Without this guard a dispatch whose claim was
+	-- cleared mid-flight (StuckDispatchClaims → manual delete) would DO UPDATE whatever row
+	-- took the slot since — repointing an adoption, or another dispatch's claim, at this
+	-- dispatch's upstream id and silently untracking the campaign that row bound.
+	--
+	-- job_id, not status = 'pending' or an empty platform_campaign_id: those describe the
+	-- row's STATE, not who owns it, so they would also match another job's pending claim; and
+	-- the owning job legitimately re-upserts its own row after finalizing it. Strict '=', so
+	-- a write carrying no job id (NULL) can never match — least of all an adoption's NULL.
+	-- Zero rows back is ErrDispatchClaimLost (see UpsertCampaign). Pinned by
+	-- TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption.
+	WHERE campaigns.job_id = EXCLUDED.job_id
 	RETURNING ` + campaignCols
 
 // replaceCampaignQuery refuses to touch a soft-deleted row, so a stale client cannot
@@ -814,11 +829,12 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	// orchestrator's path only when the claim row is gone by the time the result is
 	// persisted — see ClaimCampaignDispatch). What the lock buys is ORDERING against an adopt
 	// of the same slot, nothing more: an adopt that runs first is visible to this statement,
-	// and one that runs after sees this row and refuses. It does NOT stop the conflict arm
-	// from updating a row an adopt created at the same slot version — the upsert's DO UPDATE
-	// overwrites whatever live row holds that slot version, adopted or claimed. That is the
-	// pre-existing upsert contract (it finalizes the claim it follows), unchanged here. On the
-	// usual conflict arm the lock costs one uncontended round-trip.
+	// and one that runs after sees this row and refuses. The lock alone does NOT stop the
+	// conflict arm from updating a row an adopt (or another dispatch's claim) created at the
+	// same slot version after this dispatch's claim was cleared; the query's
+	// `WHERE campaigns.job_id = EXCLUDED.job_id` does, and this method reports that case as
+	// ErrDispatchClaimLost. On the usual conflict arm the lock costs one uncontended
+	// round-trip.
 	if lerr := lockCampaignSlot(ctx, tx, c.BriefID, c.Platform, model.NormalizeVariant(c.Variant)); lerr != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", lerr)
 	}
@@ -846,6 +862,14 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		if isPlatformCampaignBindingViolation(err) {
 			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s is already bound to another brief",
 				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+		}
+		// The INSERT arm always returns its row, so no row back means the conflict arm's
+		// ownership guard declined: the live row on this slot version is not this job's claim.
+		// Nothing was written, and the upstream id is named so the caller can keep it.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s (slot version %d) is no longer held by job %s",
+				domain.ErrDispatchClaimLost, c.Platform, c.PlatformCampaignID,
+				model.NormalizeSlotVersion(c.SlotVersion), derefStr(c.JobID))
 		}
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}

@@ -242,8 +242,12 @@ func (t CampaignLockToken) Handle() any {
 
 // CampaignWriter mutates campaigns.
 type CampaignWriter interface {
-	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
-	// Campaigns are updated in place when a brief changes after they exist.
+	// UpsertCampaign records a dispatch's result on its (brief, platform, variant, slot
+	// version). It INSERTs when the slot version has no live row, and otherwise updates the
+	// live row ONLY when that row is the claim this write's JobID took — the row's stored
+	// job_id equals c.JobID. Any other live row there (an adoption, another dispatch's claim)
+	// is left untouched and the call returns ErrDispatchClaimLost, having written nothing. A
+	// write with no JobID therefore never updates an existing row.
 	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 
 	// AdoptCampaign INSERTs the campaign row for a (brief, platform) pair that has no live
