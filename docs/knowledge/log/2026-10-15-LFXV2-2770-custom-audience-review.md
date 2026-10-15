@@ -37,3 +37,12 @@
   caller's choice alike: the topic filter is always a string `CONTAINS`.
 - **A suggested filter on a property name the contract refuses is dropped** (outside
   `^[A-Za-z0-9_]+$`, or over 100 characters), with the existing note.
+
+**Fix** — Greptile's review of the merged head:
+
+- **Reuse is judged against the answers.** The reuse ranking saw only the original request, so after
+  an answer narrowed a Seoul audience to speakers a general Seoul list could still be "reuse". The
+  prompt now carries the answers and the settled restrictions, and `GuardReuse` holds a "reuse" of a
+  list whose name does not show the restriction to "update".
+- **Previewed names fit create's limit.** `VersionedName` and derived names are cut to the input's
+  250-rune `MaxLength`, so a taken 250-character name previews as a `(v2)` create accepts.

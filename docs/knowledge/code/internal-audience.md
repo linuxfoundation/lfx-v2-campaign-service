@@ -493,7 +493,9 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
 - **Naming.** `CustomListName` follows the reference pattern
   (`<YYQN> - <Location> - Mailable Contacts - <Label>`, `<Event> Speakers - <Scope>`,
   `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never
-  reused: a matching name does not prove a matching audience.
+  reused: a matching name does not prove a matching audience. Every derived or versioned name is
+  cut (on a rune boundary) to `CustomMaxNameLen`, the input's 250-rune limit, so the name preview
+  returns is one create accepts back.
 - **Speakers-list auto-pick fails closed.** `SpeakerListFits` decides whether an existing list
   may stand in for a speaker restriction; a filled `ListID` REPLACES the scope and event-name
   filters, so it accepts a list only when its name provably fits: a speakers list discovery would
@@ -536,7 +538,11 @@ signal:
 - **Reuse before create.** `CustomReuseProbes` searches by location/label, `ReusableCandidate`
   drops masters, suppressions and test lists, and the model ranks the survivors
   (`CustomReuseSystemPrompt` / `ParseCustomReuse`: reuse / update / unrelated). It ranks only
-  what the search found — an id it returns that was not a candidate is dropped.
+  what the search found — an id it returns that was not a candidate is dropped. The ranking
+  prompt carries the operator's answers and the settled restrictions (speakers, ambassadors,
+  property filters, course topics), which narrow the request. `GuardReuse` then holds any "reuse"
+  of a list whose name does not show those restrictions to "update": a property filter or topic
+  never shows in a name, so with either no list is "reuse" (2026-10-15).
 
 A suggested property filter whose name is outside the contract's `^[A-Za-z0-9_]+$` or longer
 than 100 characters is dropped by `ParseCustomDraft` with a note, like a spaced name: one such row

@@ -112,6 +112,12 @@ var audienceWords = []string{"mailable", "marketable", "contacts", "catchment"}
 // audience however well its city matches — the live test ranked exactly that
 // "likely the same audience". A recommendation stands only when the name shares
 // an event word with the label or reads as a general audience list.
+//
+// A restricted audience (speakers, ambassadors, property filters, course topics)
+// is narrower than any list whose name does not carry the restriction, so such a
+// list is at most "update", never "reuse": using it as-is would reach people the
+// restriction rules out. A property filter or topic never shows in a name, so
+// with either no list is "reuse".
 func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarList {
 	keywords := EventKeywords(c.Label)
 	locationAudience := c.ContactLocation || c.EventRegistered || c.EducationEnrolled
@@ -125,11 +131,28 @@ func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarLi
 				s.Reason = "Named for a different event or audience."
 			}
 		}
+		if s.Recommendation == CustomReuseAsIs && !carriesRestriction(s.Name, c) {
+			s.Recommendation = CustomReuseUpdate
+			s.Reason = "Broader than this audience: its name does not carry the audience's restriction."
+		}
 		out = append(out, s)
 	}
 	order := map[CustomReuseRecommendation]int{CustomReuseAsIs: 0, CustomReuseUpdate: 1, "": 2, CustomReuseNone: 3}
 	sort.SliceStable(out, func(i, j int) bool { return order[out[i].Recommendation] < order[out[j].Recommendation] })
 	return out
+}
+
+// carriesRestriction reports whether a list name shows every restriction the
+// criteria narrow by. Property filters and course topics never show in a name.
+func carriesRestriction(name string, c CustomCriteria) bool {
+	lower := strings.ToLower(name)
+	if c.Speakers != nil && !strings.Contains(lower, "speaker") {
+		return false
+	}
+	if c.Ambassadors && !strings.Contains(lower, "ambassador") {
+		return false
+	}
+	return len(c.PropertyFilters) == 0 && len(cleanValues(c.EducationTopics)) == 0
 }
 
 // customMaxAnswerRounds bounds the question loop: after this many answers the

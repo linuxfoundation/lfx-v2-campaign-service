@@ -745,9 +745,28 @@ func speakerScopeLabel(s SpeakerScope) string {
 
 // VersionedName is the n-th version of a name that is already taken: "(v2)",
 // "(v3)" and so on. A taken name is never overwritten — matching a name does not
-// prove the existing list is the same audience.
+// prove the existing list is the same audience. The base is cut so the result
+// stays within CustomMaxNameLen.
 func VersionedName(name string, n int) string {
-	return fmt.Sprintf("%s (v%d)", strings.TrimSpace(name), n)
+	suffix := fmt.Sprintf(" (v%d)", n)
+	return cutName(strings.TrimSpace(name), CustomMaxNameLen-len(suffix)) + suffix
+}
+
+// CustomMaxNameLen is the custom input's name MaxLength (design/audience_builder.go),
+// counted in runes as the generated validator counts it.
+const CustomMaxNameLen = 250
+
+// FitListName cuts a list name to CustomMaxNameLen runes, so a name preview returns
+// is one create accepts back unchanged.
+func FitListName(name string) string { return cutName(name, CustomMaxNameLen) }
+
+// cutName cuts name to at most limit runes on a rune boundary, without a
+// trailing space.
+func cutName(name string, limit int) string {
+	if r := []rune(name); len(r) > limit {
+		return strings.TrimRight(string(r[:limit]), " ")
+	}
+	return name
 }
 
 // ---------------------------------------------------------------------------

@@ -266,10 +266,12 @@ func TestCreateCustom_InvalidCriteriaNeverReachThePortal(t *testing.T) {
 type seqLLM struct {
 	replies []string
 	systems []string
+	prompts []string
 }
 
-func (s *seqLLM) Complete(_ context.Context, system, _ string) (string, error) {
+func (s *seqLLM) Complete(_ context.Context, system, prompt string) (string, error) {
 	s.systems = append(s.systems, system)
+	s.prompts = append(s.prompts, prompt)
 	if len(s.replies) == 0 {
 		return "", errors.New("no reply queued")
 	}
@@ -642,4 +644,54 @@ func TestPreviewCustom_OnlyAStringPropertyCarriesTheTopic(t *testing.T) {
 	p, err = x.PreviewCustom(context.Background(), "proj-1", c, "")
 	require.NoError(t, err)
 	assert.Equal(t, "course_name", p.Criteria.EducationTopicProperty, "an enumeration the caller picked is replaced")
+}
+
+// A taken name at the input limit previews as a version create accepts back.
+func TestPreviewCustom_AVersionedNameFitsTheCreateLimit(t *testing.T) {
+	portal := seoulPortal()
+	long := strings.Repeat("n", audience.CustomMaxNameLen)
+	portal.lists[long] = "990"
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	p, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", seoulCriteria(), long)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len([]rune(p.Name)), audience.CustomMaxNameLen)
+	assert.True(t, strings.HasSuffix(p.Name, " (v2)"), "the taken name is versioned, not reused: %q", p.Name)
+}
+
+// An answer that narrows the audience reaches the reuse ranking, and a general list
+// the model still calls "reuse" is held to "update": using it as-is would reach the
+// people the answer ruled out.
+func TestInterpretCustom_ReuseIsJudgedAgainstTheAnswers(t *testing.T) {
+	portal := seoulPortal()
+	portal.lists["26Q3 - Seoul - Mailable Contacts - OSS Korea"] = "411"
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"LF","property_filters":[],"speakers":{"scope":"current","event_names":["OSS Korea 2026"]},"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":[],"label":"OSS Korea"},"questions":[],"notes":[]}`,
+		`{"lists":[{"list_id":"411","recommendation":"reuse","reason":"same city"}]}`,
+	}}
+	answers := []audience.CustomAnswer{{QuestionID: "who", Question: "Everyone in Seoul, or only speakers?", Answer: "Only speakers"}}
+
+	out, err := explorerOver(srv, llm).InterpretCustom(context.Background(), "proj-1", "Seoul contacts", "", answers)
+	require.NoError(t, err)
+	require.Len(t, llm.prompts, 2)
+	assert.Contains(t, llm.prompts[1], "Everyone in Seoul, or only speakers? => Only speakers")
+	assert.Contains(t, llm.prompts[1], "restriction: only event speakers (Current)")
+	require.Len(t, out.Similar, 1)
+	assert.Equal(t, audience.CustomReuseUpdate, out.Similar[0].Recommendation)
+}
+
+// A derived name joining several long locations is cut to the create limit too.
+func TestPreviewCustom_ADerivedNameFitsTheCreateLimit(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	c := seoulCriteria()
+	c.Cities = []string{strings.Repeat("a", 100), strings.Repeat("b", 100), strings.Repeat("c", 100)}
+
+	p, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", c, "")
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len([]rune(p.Name)), audience.CustomMaxNameLen)
 }

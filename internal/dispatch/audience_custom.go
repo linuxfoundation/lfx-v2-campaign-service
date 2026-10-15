@@ -125,7 +125,7 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			s.ListID = row.ListID
 		}
 	}
-	out.Similar = audience.GuardReuse(x.similarLists(ctx, client, request, out.Draft.Criteria), out.Draft.Criteria)
+	out.Similar = audience.GuardReuse(x.similarLists(ctx, client, request, answers, out.Draft.Criteria), out.Draft.Criteria)
 	if event != nil && event.BrandShort == "" && strings.TrimSpace(out.Draft.BrandShort) == "" {
 		// No brand from the page or the model: take the one this event's lists use.
 		// A brand the model named already resolved its own gate above, and is never
@@ -301,6 +301,8 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 	if listName == "" {
 		listName = audience.CustomListName(resolved, x.now())
 	}
+	// Create takes back the name preview returns, so it must fit the input's limit.
+	listName = audience.FitListName(listName)
 	listName, nerr := x.freeCustomName(ctx, client, listName)
 	if nerr != nil {
 		return nil, nerr
@@ -389,7 +391,7 @@ func contactList(ctx context.Context, client *hubspot.Client, id string) (*hubsp
 // similarLists finds lists that may already be this audience and asks the model
 // to rank them. Best effort throughout: a failed search or ranking costs the
 // operator a suggestion, never the draft.
-func (x *AudienceExplorer) similarLists(ctx context.Context, client *hubspot.Client, request string, criteria audience.CustomCriteria) []audience.CustomSimilarList {
+func (x *AudienceExplorer) similarLists(ctx context.Context, client *hubspot.Client, request string, answers []audience.CustomAnswer, criteria audience.CustomCriteria) []audience.CustomSimilarList {
 	seen := map[string]struct{}{}
 	var candidates []audience.ListRow
 	for _, probe := range audience.CustomReuseProbes(criteria) {
@@ -423,7 +425,7 @@ func (x *AudienceExplorer) similarLists(ctx context.Context, client *hubspot.Cli
 	if x.llm == nil {
 		return unranked
 	}
-	raw, err := x.llm.Complete(ctx, audience.CustomReuseSystemPrompt, audience.CustomReusePrompt(request, candidates))
+	raw, err := x.llm.Complete(ctx, audience.CustomReuseSystemPrompt, audience.CustomReusePrompt(request, answers, criteria, candidates))
 	if err != nil {
 		slog.WarnContext(ctx, "custom audience reuse ranking failed", "error", err)
 		return unranked

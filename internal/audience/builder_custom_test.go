@@ -6,7 +6,9 @@ package audience
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -519,4 +521,18 @@ func TestReusableCandidate_HidesWhatDiscoveryHides(t *testing.T) {
 	if !ReusableCandidate("26Q3 - Seoul - Mailable Contacts") {
 		t.Error("an ordinary audience list must stay reusable")
 	}
+}
+
+// Create takes back the name preview returned, so a versioned or derived name must
+// fit the input's 250-rune limit.
+func TestVersionedName_StaysWithinTheNameLimit(t *testing.T) {
+	long := strings.Repeat("é", CustomMaxNameLen)
+	v := VersionedName(long, 2)
+	assert.Equal(t, CustomMaxNameLen, utf8.RuneCountInString(v))
+	assert.True(t, strings.HasSuffix(v, " (v2)"))
+	assert.True(t, utf8.ValidString(v), "cut on a rune boundary")
+	assert.Equal(t, "KubeCon (v3)", VersionedName("KubeCon", 3))
+
+	assert.Equal(t, CustomMaxNameLen, utf8.RuneCountInString(FitListName(long+"x")))
+	assert.Equal(t, "short", FitListName("short"))
 }

@@ -69,6 +69,36 @@ func TestGuardReuse_TheLiveTokyoRanking(t *testing.T) {
 	assert.Equal(t, "2", out[0].ListID, "reuse sorts first")
 }
 
+// A restricted audience is narrower than any list whose name does not show the
+// restriction, so the model's "reuse" of a general list is held to "update".
+func TestGuardReuse_ARestrictedAudienceNeverReusesABroaderList(t *testing.T) {
+	general := CustomSimilarList{ListRow: ListRow{ListID: "2", Name: "26Q3 - Seoul - Mailable Contacts"}, Recommendation: CustomReuseAsIs}
+	speakers := CustomSimilarList{ListRow: ListRow{ListID: "5", Name: "26Q3 - Seoul - Speakers - Current - OSS Korea"}, Recommendation: CustomReuseAsIs}
+	base := CustomCriteria{Cities: []string{"Seoul"}, ContactLocation: true, Label: "OSS Korea"}
+
+	got := func(c CustomCriteria, s CustomSimilarList) CustomReuseRecommendation {
+		return GuardReuse([]CustomSimilarList{s}, c)[0].Recommendation
+	}
+	assert.Equal(t, CustomReuseAsIs, got(base, general), "an unrestricted audience keeps the model's reuse")
+
+	withSpeakers := base
+	withSpeakers.Speakers = &CustomSpeakers{Scope: SpeakerScopeCurrent}
+	assert.Equal(t, CustomReuseUpdate, got(withSpeakers, general), "a general list is broader than a speakers audience")
+	assert.Equal(t, CustomReuseAsIs, got(withSpeakers, speakers), "a speakers list carries the restriction")
+
+	withAmbassadors := base
+	withAmbassadors.Ambassadors = true
+	assert.Equal(t, CustomReuseUpdate, got(withAmbassadors, general))
+
+	withFilter := base
+	withFilter.PropertyFilters = []CustomPropertyFilter{{Property: "jobtitle", Operator: CustomOpContains, Values: []string{"CTO"}}}
+	assert.Equal(t, CustomReuseUpdate, got(withFilter, general), "a property filter never shows in a name")
+
+	withTopics := base
+	withTopics.EducationTopics = []string{"Kubernetes"}
+	assert.Equal(t, CustomReuseUpdate, got(withTopics, general))
+}
+
 func TestSettleQuestions(t *testing.T) {
 	qs := []CustomQuestion{{ID: "mailability"}, {ID: "topics"}}
 	assert.Len(t, SettleQuestions(qs, []CustomAnswer{{QuestionID: "mailability"}}), 1, "an answered question is not asked again")
