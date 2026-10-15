@@ -117,3 +117,7 @@
   segment sharing a word with the event name, so "PyTorch" lost every vote for "PyTorch Conference
   2026". `isEventSegment` now treats a segment as the event's own name only when it shares two or
   more event words, or every word of a one-word event; the AGNTCon exclusion still holds.
+- **A speakers-only audience is gated under the stricter reading** (Greptile). With no location or
+  history branch, the one roles/properties branch never took `gate_event_history`, so create could
+  include speakers outside the brand master list. It now carries the gate under that reading, and
+  `AllBranchesGated` counts it.

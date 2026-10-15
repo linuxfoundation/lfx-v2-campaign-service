@@ -582,7 +582,13 @@ func customBaseBranches(c CustomCriteria) []filterBranch {
 	}
 
 	if len(out) == 0 {
-		out = append(out, filterBranch{FilterBranchType: "AND", FilterBranches: []filterBranch{}, Filters: []filter{}})
+		// The roles/properties-only branch. A speaker restriction on it is event
+		// history, so the stricter mailable reading gates it like the rest.
+		b := filterBranch{FilterBranchType: "AND", FilterBranches: []filterBranch{}, Filters: []filter{}}
+		if c.GateEventHistory {
+			b.Filters = append(b.Filters, inListFilter(gate, "IN_LIST"))
+		}
+		out = append(out, b)
 	}
 	return out
 }
@@ -839,7 +845,11 @@ func AllBranchesGated(c CustomCriteria) bool {
 	if history && !c.GateEventHistory {
 		return false
 	}
-	return c.ContactLocation || history
+	if !c.ContactLocation && !history {
+		// The single roles/properties branch is gated only under the stricter reading.
+		return c.GateEventHistory
+	}
+	return true
 }
 
 // brandAliases are the long names brand master lists are filed under where they

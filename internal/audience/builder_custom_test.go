@@ -560,3 +560,30 @@ func TestCustomListFilter_GatedHistoryGatesTheNamedEditions(t *testing.T) {
 	assert.Empty(t, decodeBranch(t, raw).FilterBranches[0].Filters, "the reference reading leaves event history ungated")
 	assert.False(t, AllBranchesGated(c))
 }
+
+// A speakers-only audience has no location or history branch of its own: under the
+// stricter mailable reading its one branch still carries the gate.
+func TestCustomListFilter_GatedHistoryGatesASpeakersOnlyAudience(t *testing.T) {
+	c := CustomCriteria{
+		Speakers:         &CustomSpeakers{Scope: SpeakerScopeCurrent, EventNames: []string{"OSS Korea 2026"}, PropertyTypes: map[string]string{"is_event_speaker_bool": "bool"}},
+		GateListID:       "26716",
+		GateEventHistory: true,
+	}
+	raw, err := CustomListFilter(c)
+	require.NoError(t, err)
+	root := decodeBranch(t, raw)
+	require.NotEmpty(t, root.FilterBranches)
+	for _, b := range root.FilterBranches {
+		var gated bool
+		for _, f := range b.Filters {
+			if f.FilterType == "IN_LIST" && f.ListID == "26716" {
+				gated = true
+			}
+		}
+		assert.True(t, gated, "every speaker branch is inside the gate")
+	}
+	assert.True(t, AllBranchesGated(c))
+
+	c.GateEventHistory = false
+	assert.False(t, AllBranchesGated(c), "the reference reading leaves it ungated")
+}
