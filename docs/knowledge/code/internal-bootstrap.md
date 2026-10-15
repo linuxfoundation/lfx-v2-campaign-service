@@ -151,7 +151,7 @@ rather than the merge. Full context in
 `accountID` and `providerConfig` are tri-state, and which state an omission stands for depends on
 whether the row already exists. On a FIRST install an omitted `-account-id` is the credentials-first
 state, legal only where the account can be chosen afterwards (`accountDiscoveryProviders`, Google
-Ads, Meta since LFXV2-3061 and X since LFXV2-3319).
+Ads, Meta since LFXV2-3061, X since LFXV2-3319 and Microsoft since issue #181).
 
 The EMAIL channel is exempt from the requirement outright rather than admitted to that map, and the
 distinction matters: `accountDiscoveryProviders` says "the account can be chosen LATER", whereas
@@ -168,29 +168,35 @@ apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, b
 as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
 dispatch-failure LOG LINE and, since issue #208, the polled job result's `(reason: …)` suffix
 (`DispatchFailureMessage` classifies; it never quotes the error); Meta's toggle and metrics need
-no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft and Reddit, Microsoft (LFXV2-3064) and Reddit (LFXV2-2665,
-`list-reddit-ads-accounts`) have BOTH halves, and LinkedIn — which gained a discovery endpoint in the
-same ticket — is the one provider missing the OTHER half. X also holds both (LFXV2-3319) and,
-unlike Microsoft, has been admitted to the map. `resolveLinkedInCredentials` does tag
+no account id, so create — the asynchronous path — is its only account-needing one. Of the two
+paid-ads providers still outside the map, Reddit (LFXV2-2665, `list-reddit-ads-accounts`) has BOTH
+halves, and LinkedIn — which gained a discovery endpoint in LFXV2-3064 — is the one provider
+missing the OTHER half. X (LFXV2-3319) and Microsoft (discovery LFXV2-3064, admission issue #181)
+hold both and have been admitted to the map. `resolveLinkedInCredentials` does tag
 a missing account with `domain.ErrAccountNotSelected`, but `LinkedInDispatcher.Dispatch` does not
 call it; the create path resolves inline and returns a bare `notCreated`, so the missing choice is
 never named. Microsoft, Reddit and X all tag it on a path create actually reaches — and for X
 specifically, `Dispatch` calls the shared `validateTwitterConnection` itself, so it had the second
 half all along and LFXV2-3319 supplied only the first. For LinkedIn an account-less row would stay a
-DEAD row, which is why the map keeps it out. Reddit, like Microsoft, is eligible but not admitted:
+DEAD row, which is why the map keeps it out. Reddit is eligible but not admitted:
 its public connection config still `Require`s `account_id`, and admitting it to the CLI map alone
-would make it credentials-first for the CLI and not over HTTP. X was ADMITTED in LFXV2-3319, in the
-same change that dropped its `Required("account_id")`. Microsoft remains the standing exception
-and the distinction is worth keeping: it has both halves, so its absence from the map is a
-SEQUENCING decision rather than a missing capability — admitting it changes what the CLI accepts
-and belongs in its own change. That change is tracked by issue #181 and was deliberately NOT made
-in the 2026-10-13 drift fix: X's admission (LFXV2-3319) shows it is not a map entry alone but
-both gates at once — the map AND dropping `Required("account_id")` from
+would make it credentials-first for the CLI and not over HTTP — its absence is a SEQUENCING
+decision rather than a missing capability. X was ADMITTED in LFXV2-3319, in the
+same change that dropped its `Required("account_id")`. Microsoft was ADMITTED the same way in
+issue #181, after sitting out as a sequencing decision once its discovery endpoint landed
+(LFXV2-3064): one change made both gates — the map AND dropping `Required("account_id")` from
 `MicrosoftAdsConnectionConfig` (a `design/` change, a Goa regeneration and the matching
-`apivalidation` relaxation) — which makes Microsoft credentials-first on the public connection
-API as well as the CLI. #181 asks for a decision that the flow is ready to be OFFERED before
-that, and the subset test in `account_discovery_subset_test.go` re-derived rather than edited.
-Adding only the map entry would be the half-flow X's admission was careful to avoid. Note also that this map is a different gate from
+`apivalidation` relaxation) — so Microsoft is credentials-first on the public connection API as
+well as the CLI. `customer_id` is NOT a second choice credentials-first defers: it was already
+optional at both gates and is absent from `requiredConfigKeys`; discovery walks every customer the
+credential reaches without it; and the client omits the `CustomerId` header when it is empty. An
+operator who does use one passes `-config customer_id=…` on either run, and the later
+`-account-id` rotation keeps it, because an omitted `-config` keeps every column.
+`TestInstallMicrosoftIsCredentialsFirst` walks that lifecycle (install with credentials only, with
+and without `customer_id`; bind the discovered id; clear it again; shapes still enforced with no
+account id). The subset test in `account_discovery_subset_test.go` was re-derived rather than
+edited: its candidate roster is now `model.AllProviders()` filtered by `IsPaidAds()`, so a paid-ads
+provider missing from its dispatcher table fails instead of going unchecked. Note also that this map is a different gate from
 `design/connection.go`'s `Required("account_id")`, which governs the public connection APIs; a
 provider can be behaviourally eligible for one and not yet admitted to the other. The two gates
 are per-provider and must be relaxed TOGETHER to make a provider credentials-first — relaxing one

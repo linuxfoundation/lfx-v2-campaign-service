@@ -436,7 +436,7 @@ func TestTestConnUpstream_AllSixEndpointsProbe(t *testing.T) {
 			create: func(s *ConnectionService) error {
 				_, err := s.CreateMicrosoftAds(context.Background(), &conn.CreateMicrosoftAdsPayload{
 					ProjectID: "tlf",
-					Config:    &conn.MicrosoftAdsConnectionConfig{AccountID: "1234"},
+					Config:    &conn.MicrosoftAdsConnectionConfig{AccountID: strPtr("1234")},
 					Credentials: &conn.MicrosoftAdsCredentials{
 						ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt", RefreshToken: "rt",
 					},

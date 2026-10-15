@@ -238,17 +238,17 @@ func TestForceSystem_EveryPaidAdsProviderIsStillGuarded(t *testing.T) {
 // the fifth variant of this PR's recurring defect: a guard that fixes one path and breaks an
 // adjacent one.
 //
-// account_id is Required on LinkedIn, Reddit and Microsoft (design/connection.go's
+// account_id is Required on LinkedIn and Reddit (design/connection.go's
 // Required("account_id") on each config type, generated as a NON-POINTER string). PUT is a full
 // replace on every provider in this API, so a caller renaming a connection has no way to omit
 // the id — the schema will not decode a body without it. A guard that fired on the id being
 // PRESENT therefore returned 400 for every update those providers can express, which is
 // the whole update endpoint, not an edge of it.
 //
-// X left that group in LFXV2-3319 and is now credentials-first, so its account_id is a
-// *string and CAN be omitted. It is still asserted below, with the id PRESENT: re-sending a
-// stored id must remain a no-op for a credentials-first provider too, which is the property
-// this test pins and the one a presence-based guard would break.
+// X left that group in LFXV2-3319 and Microsoft in issue #181; both are now credentials-first,
+// so their account_id is a *string and CAN be omitted. Both are still asserted below, with the
+// id PRESENT: re-sending a stored id must remain a no-op for a credentials-first provider too,
+// which is the property this test pins and the one a presence-based guard would break.
 //
 // Each provider is asserted separately rather than through the shared helper because the bug
 // lived in what the ADAPTERS are obliged to send: reading Required("account_id") off the design
@@ -311,7 +311,7 @@ func TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider(t *t
 		if _, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
 			ProjectID: "cncf",
 			Config: &conn.MicrosoftAdsConnectionConfig{
-				Label: strPtr("CNCF bing"), AccountID: "1234567", CustomerID: strPtr("7654321"),
+				Label: strPtr("CNCF bing"), AccountID: strPtr("1234567"), CustomerID: strPtr("7654321"),
 			},
 			IfMatch: &ifMatch,
 		}); err != nil {
@@ -321,8 +321,9 @@ func TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider(t *t
 }
 
 // TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate covers the other half of the same
-// defect, on the providers whose account_id is OPTIONAL (Google Ads, Meta and — since
-// LFXV2-3319 — X; design/connection.go leaves all three out of Required, generated as *string).
+// defect, on the providers whose account_id is OPTIONAL (Google Ads, Meta, X since LFXV2-3319
+// and Microsoft since issue #181; design/connection.go leaves all four out of Required,
+// generated as *string).
 //
 // These could technically satisfy a presence check, but only by sending account_id absent —
 // and because PUT is a full replace, absent CLEARS the column. So the presence check did not

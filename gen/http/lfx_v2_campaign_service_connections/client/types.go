@@ -6905,8 +6905,10 @@ type TwitterAdsCredentialsRequestBody struct {
 type MicrosoftAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Microsoft Advertising account ID (positive integer)
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Microsoft Advertising account ID (positive integer). Optional: omit it to
+	// create the connection with credentials only, then choose one from GET
+	// .../connection-microsoft-ads/accounts and set it with PUT.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Microsoft Advertising customer ID (a positive integer, digits only).
 	// Optional: omit it to let the credential's own customers be discovered.
 	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
@@ -22952,9 +22954,11 @@ func validateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 // ValidateMicrosoftAdsConnectionConfigRequestBody runs the validations defined
 // on microsoft-ads-connection-config
 func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody) (err error) {
-	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[1-9][0-9]{0,17}$"))
-	if utf8.RuneCountInString(body.AccountID) > 18 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 18, false))
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[1-9][0-9]{0,17}$"))
+		if utf8.RuneCountInString(*body.AccountID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 18, false))
+		}
 	}
 	if body.CustomerID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,17})?$"))
@@ -22969,9 +22973,11 @@ func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectio
 // microsoft-ads-connection-config and reports errors using the path supplied
 // by its caller
 func validateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody, path string) (err error) {
-	err = goa.MergeErrors(err, goa.ValidatePattern(path+".account_id", body.AccountID, "^[1-9][0-9]{0,17}$"))
-	if utf8.RuneCountInString(body.AccountID) > 18 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 18, false))
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".account_id", *body.AccountID, "^[1-9][0-9]{0,17}$"))
+		if utf8.RuneCountInString(*body.AccountID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 18, false))
+		}
 	}
 	if body.CustomerID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern(path+".customer_id", *body.CustomerID, "^([1-9][0-9]{0,17})?$"))
