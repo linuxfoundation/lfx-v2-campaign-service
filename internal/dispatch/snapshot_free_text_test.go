@@ -5,6 +5,8 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -38,8 +40,47 @@ func snapLeaks(marker string) []string {
 	return []string{marker + "PATH", marker + "QUERY", marker + "FRAG", marker + "BARE"}
 }
 
-// assertSnapshotRedacted fails for every marker any of whose secret parts survived into the
-// snapshot, and requires the sanitized host to be there so an emptied field cannot pass.
+// The values every sanitized field must hold in the snapshot: snapText with both links reduced
+// to their host, and snapLink reduced to its scheme+host. Each field is checked against these
+// by value after decoding, so a field the builder drops or empties fails by name — a
+// whole-snapshot substring check would pass on any one surviving copy.
+const (
+	snapTextSanitized = "Register now https://events.example or visit events.example today"
+	snapLinkSanitized = "https://events.example"
+)
+
+// decodeSnapshot unmarshals the persisted ConfigSnapshot back into the adapter's config type.
+func decodeSnapshot[T any](t *testing.T, snapshot []byte) T {
+	t.Helper()
+	var out T
+	if err := json.Unmarshal(snapshot, &out); err != nil {
+		t.Fatalf("ConfigSnapshot does not decode: %v\n%s", err, snapshot)
+	}
+	return out
+}
+
+// assertStored fails unless the decoded snapshot field holds exactly want.
+func assertStored(t *testing.T, field, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("snapshot %s: got %q, want %q", field, got, want)
+	}
+}
+
+// assertStoredList fails unless the decoded snapshot list holds exactly want, element by element.
+func assertStoredList(t *testing.T, field string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("snapshot %s: got %q, want %q", field, got, want)
+		return
+	}
+	for i := range want {
+		assertStored(t, field+"["+strconv.Itoa(i)+"]", got[i], want[i])
+	}
+}
+
+// assertSnapshotRedacted fails for every marker any of whose secret parts survived anywhere in
+// the snapshot. It is the leak half only; each field's stored value is checked by assertStored.
 func assertSnapshotRedacted(t *testing.T, snapshot []byte, markers ...string) {
 	t.Helper()
 	if len(snapshot) == 0 {
@@ -52,9 +93,6 @@ func assertSnapshotRedacted(t *testing.T, snapshot []byte, markers ...string) {
 				t.Errorf("snapshot keeps %q (field marker %s) — the free text/URL was not sanitized:\n%s", leak, m, s)
 			}
 		}
-	}
-	if !strings.Contains(s, "https://events.example") {
-		t.Errorf("snapshot lost the sanitized scheme+host entirely:\n%s", s)
 	}
 }
 
@@ -83,12 +121,22 @@ func TestLinkedInSnapshot_RedactsFreeTextAndKeepsTheSentConfigWhole(t *testing.T
 	c := campaignFromLinkedIn(context.Background(), &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 1}, 1, cfg)
 
 	assertSnapshotRedacted(t, c.ConfigSnapshot, "LITP", "LIINTRO", "LIHEAD", "LIGEO", "LIPID", "LIPLABEL", "LISKILL", "LIGROUP")
-	s := string(c.ConfigSnapshot)
-	for _, keep := range []string{"Register now https://events.example or visit events.example today", "urn:li:image:C4E22AQ", "urn:li:geo:103644278", "urn:li:skill:1"} {
-		if !strings.Contains(s, keep) {
-			t.Errorf("snapshot should keep %q verbatim:\n%s", keep, s)
-		}
+	got := decodeSnapshot[linkedinConfig](t, c.ConfigSnapshot)
+	assertStored(t, "TargetingProfile", got.TargetingProfile, snapTextSanitized)
+	if len(got.Variants) != 1 || len(got.GeoTargets) != 1 || len(got.TargetingProfiles) != 2 {
+		t.Fatalf("snapshot lost list entries: %d variants, %d geo targets, %d profiles", len(got.Variants), len(got.GeoTargets), len(got.TargetingProfiles))
 	}
+	assertStored(t, "Variants[0].IntroText", got.Variants[0].IntroText, snapTextSanitized)
+	assertStored(t, "Variants[0].Headline", got.Variants[0].Headline, snapTextSanitized)
+	assertStored(t, "Variants[0].ImageURN", got.Variants[0].ImageURN, "urn:li:image:C4E22AQ")
+	assertStored(t, "GeoTargets[0].Label", got.GeoTargets[0].Label, snapTextSanitized)
+	assertStored(t, "GeoTargets[0].URN", got.GeoTargets[0].URN, "urn:li:geo:103644278")
+	assertStored(t, "TargetingProfiles[0].ID", got.TargetingProfiles[0].ID, snapTextSanitized)
+	assertStored(t, "TargetingProfiles[0].Label", got.TargetingProfiles[0].Label, snapTextSanitized)
+	assertStoredList(t, "TargetingProfiles[0].Skills", got.TargetingProfiles[0].Skills, []string{"urn:li:skill:1"})
+	assertStored(t, "TargetingProfiles[1].ID", got.TargetingProfiles[1].ID, "unselected")
+	assertStoredList(t, "TargetingProfiles[1].Skills", got.TargetingProfiles[1].Skills, []string{snapTextSanitized})
+	assertStoredList(t, "TargetingProfiles[1].Groups", got.TargetingProfiles[1].Groups, []string{snapTextSanitized})
 	assertSentWhole(t, "TargetingProfile", cfg.TargetingProfile, snapText("LITP"))
 	assertSentWhole(t, "Variants[0].IntroText", cfg.Variants[0].IntroText, snapText("LIINTRO"))
 	assertSentWhole(t, "Variants[0].Headline", cfg.Variants[0].Headline, snapText("LIHEAD"))
@@ -118,12 +166,20 @@ func TestMetaSnapshot_RedactsFreeTextAndURLsAndKeepsTheSentConfigWhole(t *testin
 	c := campaignFromMeta(context.Background(), &meta.CampaignResult{CampaignID: "c1"}, cfg)
 
 	assertSnapshotRedacted(t, c.ConfigSnapshot, "MGEO", "MPIXEL", "MDSAB", "MDSAP", "MPRIMARY", "MHEAD", "MDESC", "MIMG")
-	s := string(c.ConfigSnapshot)
-	for _, keep := range []string{"Register now https://events.example or visit events.example today", `"US"`, "17841400000000000", `"traffic"`} {
-		if !strings.Contains(s, keep) {
-			t.Errorf("snapshot should keep %q verbatim:\n%s", keep, s)
-		}
+	got := decodeSnapshot[metaConfig](t, c.ConfigSnapshot)
+	assertStored(t, "Objective", got.Objective, "traffic")
+	assertStored(t, "InstagramUserID", got.InstagramUserID, "17841400000000000")
+	assertStoredList(t, "GeoTargets", got.GeoTargets, []string{"US", snapTextSanitized})
+	assertStored(t, "PixelID", got.PixelID, snapTextSanitized)
+	assertStored(t, "DSABeneficiary", got.DSABeneficiary, snapTextSanitized)
+	assertStored(t, "DSAPayor", got.DSAPayor, snapTextSanitized)
+	if len(got.Variants) != 1 {
+		t.Fatalf("snapshot has %d variants, want 1", len(got.Variants))
 	}
+	assertStored(t, "Variants[0].PrimaryText", got.Variants[0].PrimaryText, snapTextSanitized)
+	assertStored(t, "Variants[0].Headline", got.Variants[0].Headline, snapTextSanitized)
+	assertStored(t, "Variants[0].Description", got.Variants[0].Description, snapTextSanitized)
+	assertStored(t, "Variants[0].ImageURL", got.Variants[0].ImageURL, snapLinkSanitized)
 	assertSentWhole(t, "GeoTargets[1]", cfg.GeoTargets[1], snapText("MGEO"))
 	assertSentWhole(t, "PixelID", cfg.PixelID, snapText("MPIXEL"))
 	assertSentWhole(t, "DSABeneficiary", cfg.DSABeneficiary, snapText("MDSAB"))
@@ -152,12 +208,22 @@ func TestRedditSnapshot_RedactsFreeTextAndURLsAndKeepsTheSentConfigWhole(t *test
 	c := campaignFromReddit(context.Background(), &reddit.CampaignResult{CampaignID: "c1"}, cfg)
 
 	assertSnapshotRedacted(t, c.ConfigSnapshot, "RGEO", "RSUB", "RINT", "RKW", "RHEAD", "RBODY", "RPOST", "RIMG", "RCTA", "RPIXEL", "RVIDEO")
-	s := string(c.ConfigSnapshot)
-	for _, keep := range []string{"Register now https://events.example or visit events.example today", `"US"`, `"kubernetes"`, `"cloud native"`, `"traffic"`} {
-		if !strings.Contains(s, keep) {
-			t.Errorf("snapshot should keep %q verbatim:\n%s", keep, s)
-		}
+	got := decodeSnapshot[redditConfig](t, c.ConfigSnapshot)
+	assertStored(t, "Objective", got.Objective, "traffic")
+	assertStoredList(t, "GeoTargets", got.GeoTargets, []string{"US", snapTextSanitized})
+	assertStoredList(t, "Subreddits", got.Subreddits, []string{"kubernetes", snapTextSanitized})
+	assertStoredList(t, "Interests", got.Interests, []string{snapTextSanitized})
+	assertStoredList(t, "Keywords", got.Keywords, []string{"cloud native", snapTextSanitized})
+	if len(got.Variants) != 1 {
+		t.Fatalf("snapshot has %d variants, want 1", len(got.Variants))
 	}
+	assertStored(t, "Variants[0].Headline", got.Variants[0].Headline, snapTextSanitized)
+	assertStored(t, "Variants[0].Body", got.Variants[0].Body, snapTextSanitized)
+	assertStored(t, "PostURL", got.PostURL, snapLinkSanitized)
+	assertStored(t, "ImageURL", got.ImageURL, snapLinkSanitized)
+	assertStored(t, "CallToAction", got.CallToAction, snapTextSanitized)
+	assertStored(t, "ConversionPixelID", got.ConversionPixelID, snapTextSanitized)
+	assertStored(t, "VideoGoal", got.VideoGoal, snapTextSanitized)
 	assertSentWhole(t, "GeoTargets[1]", cfg.GeoTargets[1], snapText("RGEO"))
 	assertSentWhole(t, "Subreddits[1]", cfg.Subreddits[1], snapText("RSUB"))
 	assertSentWhole(t, "Interests[0]", cfg.Interests[0], snapText("RINT"))
