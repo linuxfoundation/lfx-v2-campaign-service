@@ -18,6 +18,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 // metaCreds is the credential shape stored (encrypted) for a Meta connection. Meta
@@ -1341,6 +1342,19 @@ func (d *MetaDispatcher) ListAccounts(ctx context.Context, projectID string, pla
 // resolver's doc comment, and GoogleAdsDispatcher.ListAccountCampaignMetrics
 // (internal/dispatch/googleads.go) for the shared rationale.
 func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	read, err := d.ReadAccountMonitor(ctx, projectID, platform, accountID, days)
+	if err != nil {
+		return nil, err
+	}
+	return read.Rows, nil
+}
+
+var _ service.AccountMonitorReader = (*MetaDispatcher)(nil)
+
+// ReadAccountMonitor implements service.AccountMonitorReader: ListAccountCampaignMetrics' read
+// (the body of both, with every guard described above), plus the ad account's currency from the
+// same insights read (meta.Client.ListAccountCampaignsWithCurrency) — no extra call.
+func (d *MetaDispatcher) ReadAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
 	// cost a credential decrypt. The Goa design layer's Pattern already rejects a malformed id at
@@ -1367,7 +1381,7 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 	if aerr != nil {
 		return nil, aerr
 	}
-	rows, lerr := client.ListAccountCampaigns(ctx, scopedAccountID, days)
+	rows, currency, lerr := client.ListAccountCampaignsWithCurrency(ctx, scopedAccountID, days)
 	if lerr != nil {
 		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
 		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.
@@ -1396,7 +1410,7 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 			FailureClass:       r.FailureClass,
 		})
 	}
-	return out, nil
+	return &model.AccountMonitorRead{Rows: out, Currency: currency}, nil
 }
 
 // metaAccountLabel builds the string a picker shows for one ad account.

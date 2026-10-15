@@ -1911,6 +1911,21 @@ here and any progress feel is the caller's own concern.
 
 See [internal/service](../../../internal/service).
 
+## Account-monitor currency (LFXV2-2665)
+
+`AccountMonitorReader` (`orchestrator.go`) is `AccountMetricsReader`'s read plus the account's
+currency (`model.AccountMonitorRead`); `Orchestrator.ReadAccountCampaignMetrics` now returns that
+type, preferring `AccountMonitorReader` and falling back to `AccountMetricsReader` with no
+currency, and normalizes the code (`model.NormalizeCurrencyCode`). `AccountCurrencyReader`
+(`account_report.go`) is the report-backed counterpart: `ReadReportedAccountCampaigns` calls it
+LAST, on what remains of the shared budget and capped at `accountCurrencyReadTimeout` (3s), through
+`readAccountCurrency`, which records the
+upstream operation `read_account_currency`, logs a failure as a warning and answers `""` — a
+failed currency read never fails the monitor, and the currency is never saved with a report
+(`ReportedAccountRead.Currency`). `buildAccountMonitor` takes the currency and sets
+`AccountMonitor.Currency` only for a well-formed code. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 ## Report-backed account monitor (`account_report.go`)
 
 `AccountReportReader` is the optional dispatcher capability for a platform whose monitor
