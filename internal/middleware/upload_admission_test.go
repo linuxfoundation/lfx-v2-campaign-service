@@ -434,8 +434,9 @@ func TestUploadAdmissionWeightFor_PricesWithoutUnderCharging(t *testing.T) {
 		// the body is read, so the server cannot know what an undeclared body will spend, and
 		// floor-pricing admitted 16 concurrent uploads each holding a ~31.5 MiB decoded slice
 		// live through the whole insert -- ~480 MiB on a 512 MiB pod, pre-auth. Serializing
-		// undeclared uploads is the accepted cost; issue #183 (client declares its length) is
-		// what restores concurrency, by making this branch rare instead of the default.
+		// undeclared uploads is the accepted cost; issue #183 (pkg/uploadclient.RequestEncoder,
+		// which makes the generated client declare its length) is what restores concurrency, by
+		// making this branch rare instead of the default.
 		if got := constants.UploadAdmissionWeightFor(-1); got != ceiling {
 			t.Errorf("weight for unknown length = %d, want the worst-case ceiling %d", got, ceiling)
 		}
@@ -516,15 +517,16 @@ func TestUploadAdmissionWeightFor_PricesWithoutUnderCharging(t *testing.T) {
 // releases when image.Decode returns.
 //
 // So the property under test is now: ONE undeclared upload at a time, and the next is SHED with
-// 503 rather than queued or admitted. Issue #183 (make the generated client declare its length)
-// is what restores concurrency for ordinary uploads, by moving them off this branch entirely.
+// 503 rather than queued or admitted. Issue #183 (pkg/uploadclient.RequestEncoder makes the
+// generated client declare its length) is what restores concurrency for ordinary uploads, by
+// moving them off this branch entirely.
 //
 // The proof does not use sleeps or elapsed time. The first handler blocks until the test
 // releases it, so while it is parked the budget is provably exhausted; a second request sent in
 // that window must come back 503. The release channel is what makes the window deterministic.
 func TestUploadAdmission_UndeclaredLengthUploadsSerialize(t *testing.T) {
 	// ContentLength -1 is what net/http reports for a chunked or otherwise undeclared body --
-	// the exact value the generated client produces.
+	// the value the generated client produces with goa's stock encoder.
 	const undeclared int64 = -1
 
 	// Stated as an independent claim rather than derived from the constant under test: an

@@ -710,10 +710,16 @@ func TestForceSystem_CurrentRowReadIsConditional(t *testing.T) {
 		ifMatch := "1"
 		repo.gets = 0
 
+		// Every optional HubSpot config key is SENT (as ""), so the omission guard of issue #300
+		// has nothing to check and needs no read. Omitting them would make that guard read the
+		// row, and this case is about the force-system guard's scope alone.
+		empty := strPtr("")
 		if _, err := s.UpdateHubspot(context.Background(), &conn.UpdateHubspotPayload{
 			ProjectID: "cncf",
-			Config:    &conn.HubspotConnectionConfig{AccountID: "87654321"},
-			IfMatch:   &ifMatch,
+			Config: &conn.HubspotConnectionConfig{
+				AccountID: "87654321", PortalID: empty, SenderEmail: empty, SenderName: empty, BrandKit: empty,
+			},
+			IfMatch: &ifMatch,
 		}); err != nil {
 			t.Fatalf("HubSpot update must stay allowed while force-system mode is on: %v", err)
 		}
@@ -790,5 +796,31 @@ func TestForceSystem_NilCurrentRowDoesNotPanic(t *testing.T) {
 	if _, isNotFound := err.(*conn.NotFoundError); !isNotFound {
 		t.Errorf("err = %T (%v), want *conn.NotFoundError: a (nil, nil) read is the same absence "+
 			"ErrNotFound expresses, and the update would have 404'd on it anyway", err, err)
+	}
+}
+
+// TestForceSystem_StaleIfMatchIs412BeforeTheAccountGuard: with the flag on, a changed account_id
+// AND a stale If-Match, the answer is 412, not the guard's 400. The version is checked before
+// either guard, so a caller holding a stale ETag is told to re-read rather than being refused
+// over a row it never saw.
+func TestForceSystem_StaleIfMatchIs412BeforeTheAccountGuard(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderGoogleAds, Version: 5, AccountID: "1111111111",
+	}
+	s := newTestService(t, repo)
+	ifMatch := "4"
+
+	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+		IfMatch:   &ifMatch,
+	})
+	if _, ok := err.(*conn.PreconditionFailedError); !ok {
+		t.Fatalf("expected *conn.PreconditionFailedError (412) for a stale If-Match, got %T (%v)", err, err)
+	}
+	if repo.updateCalls != 0 {
+		t.Errorf("repo.Update called %d time(s); a stale update must not write", repo.updateCalls)
 	}
 }

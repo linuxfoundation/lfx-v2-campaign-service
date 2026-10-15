@@ -1402,13 +1402,25 @@ type HubspotConnectionConfig struct {
 	Label *string
 	// HubSpot list/audience ID
 	AccountID string
-	// HubSpot portal/account ID
+	// HubSpot portal/account ID. On update (PUT replaces the whole config):
+	// omitting this field while the connection has a stored value for it is
+	// refused with 400 naming the field. Send the current value to keep it, or
+	// send "" to clear it deliberately. JSON null counts as omitted.
 	PortalID *string
-	// Default sender address
+	// Default sender address. On update (PUT replaces the whole config): omitting
+	// this field while the connection has a stored value for it is refused with
+	// 400 naming the field. Send the current value to keep it, or send "" to clear
+	// it deliberately. JSON null counts as omitted.
 	SenderEmail *string
-	// Default sender name
+	// Default sender name. On update (PUT replaces the whole config): omitting
+	// this field while the connection has a stored value for it is refused with
+	// 400 naming the field. Send the current value to keep it, or send "" to clear
+	// it deliberately. JSON null counts as omitted.
 	SenderName *string
-	// Per-project brand kit selector
+	// Per-project brand kit selector. On update (PUT replaces the whole config):
+	// omitting this field while the connection has a stored value for it is
+	// refused with 400 naming the field. Send the current value to keep it, or
+	// send "" to clear it deliberately. JSON null counts as omitted.
 	BrandKit *string
 }
 
@@ -1861,7 +1873,10 @@ type MetaAdsConnectionConfig struct {
 	AccountID *string
 	// Facebook page ID
 	PageID string
-	// Meta app ID
+	// Meta app ID. On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	AppID *string
 }
 
@@ -1952,7 +1967,11 @@ type MicrosoftAdsConnectionConfig struct {
 	// .../connection-microsoft-ads/accounts and set it with PUT.
 	AccountID *string
 	// Microsoft Advertising customer ID (a positive integer, digits only).
-	// Optional: omit it to let the credential's own customers be discovered.
+	// Optional: leave it empty to let the credential's own customers be
+	// discovered. On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	CustomerID *string
 }
 
@@ -2213,7 +2232,11 @@ type RedditAdsConnectionConfig struct {
 	Label *string
 	// Reddit advertiser ID
 	AccountID string
-	// Reddit conversion pixel ID (Reddit Ads → Events Manager)
+	// Reddit conversion pixel ID (Reddit Ads → Events Manager). On update (PUT
+	// replaces the whole config): omitting this field while the connection has a
+	// stored value for it is refused with 400 naming the field. Send the current
+	// value to keep it, or send "" to clear it deliberately. JSON null counts as
+	// omitted.
 	ConversionPixelID *string
 }
 
@@ -2594,7 +2617,11 @@ type TwitterAdsConnectionConfig struct {
 	AccountID *string
 	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID string
-	// X/Twitter user id authorized to author this connection's tweets (numeric)
+	// X/Twitter user id authorized to author this connection's tweets (numeric, or
+	// "" for none). On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	AsUserID *string
 }
 

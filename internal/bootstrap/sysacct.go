@@ -484,9 +484,10 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // What differs is whether the operator can RECOVER. Reddit had no discovery
 // endpoint until LFXV2-2665, so an account-less row was unrecoverable from inside this API.
 // LinkedIn does have one — call discovery, rerun bootstrap with the chosen id — so its row is
-// recoverable; what it lacks is DIAGNOSIS, because the create failure names nothing, leaving
-// the operator with no reason to go looking. X and Microsoft held both halves and were
-// ADMITTED — X in LFXV2-3319, Microsoft in issue #181 (see the current state below). That is exactly the failure requiredConfigKeys
+// recoverable, and its create failure now names the missing choice too (see the current state
+// below). LinkedIn is excluded by neither: it has both halves and its absence is sequencing
+// alone. X and Microsoft held both halves and were ADMITTED — X in LFXV2-3319, Microsoft in
+// issue #181 (see the current state below). That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
@@ -544,10 +545,12 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //     half a flow. Eligibility is not admission, and members are not the only eligible
 //     providers — read the map for the current set rather than trusting this sentence to
 //     name the others, which is the mistake the note below is about.
-//   - LinkedIn has discovery but lacks the SECOND. resolveLinkedInCredentials tags
-//     ErrAccountNotSelected, but LinkedInDispatcher.Dispatch does not call it — it validates
-//     inline and answers an empty account id with a bare notCreated, so the create path names
-//     nothing. Routing Dispatch through the shared resolver is what would earn it a place.
+//   - LinkedIn has BOTH halves. LinkedInDispatcher.Dispatch now calls resolveLinkedInCredentials
+//     itself, the resolver that tags an empty account id with ErrConnectionNotUsable and
+//     ErrAccountNotSelected, so the create failure names the missing choice
+//     ("account_not_selected") instead of a bare notCreated. That makes it ELIGIBLE, not
+//     admitted: admission changes what this CLI accepts and is a separate decision, made in its
+//     own change rather than riding along with the create-path fix.
 //   - Microsoft has BOTH halves. validateMicrosoftConnection is called by Dispatch itself and
 //     tags the missing choice (ErrConnectionNotUsable + ErrAccountNotSelected), and discovery
 //     (MicrosoftDispatcher.ListAccounts) landed with LFXV2-3064. It was held out as a
