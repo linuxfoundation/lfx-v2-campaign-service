@@ -433,6 +433,48 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 	}
 }
 
+// An ABO campaign whose OWN campaign-level flight is unreadable (null, numeric or malformed
+// start_time/stop_time) still takes its budget and flight from its ad sets (PR #316 review). The
+// ad-set fallback supplies its own window, so it must not also require a readable campaign flight:
+// adding that guard would leave a freshly created ABO campaign pacing unknown, the bug this PR
+// fixes. The CBO counterpart, where the fallback must NOT run, is
+// TestListAccountCampaigns_CampaignFlightFieldsFailClosed.
+func TestListAccountCampaigns_ABOBudget_UnreadableCampaignFlightUsesAdSets(t *testing.T) {
+	const oct = `"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-31T23:59:59+0000"`
+	for _, tc := range []struct{ name, start, stop string }{
+		{"start null", `null`, `"2026-11-30T23:59:59+0000"`},
+		{"stop null", `"2026-09-01T00:00:00-0700"`, `null`},
+		{"start numeric", `1767225600`, `"2026-11-30T23:59:59+0000"`},
+		{"stop malformed", `"2026-09-01T00:00:00-0700"`, `"2026-11-30T99:00:00+0000"`},
+		{"start empty", `""`, `"2026-11-30T23:59:59+0000"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			campaign := `{"id":"111","name":"Campaign 111","status":"ACTIVE",` + settledUpdate +
+				`,"start_time":` + tc.start + `,"stop_time":` + tc.stop + `}`
+			rows, rec := listMonitorRowsAt(t, monitorFixture{
+				campaigns: []string{monitorList(campaign)},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+				adSets: []string{monitorList(
+					monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000",`+oct),
+					monitorAdSetRow("9002", "111", "ACTIVE", `"daily_budget":"1000",`+oct),
+				)},
+			})
+			r := rows["111"]
+			assertBudgets(t, r, 20, 0)
+			if r.StartDate != "2026-10-01" || r.EndDate != "2026-10-31" {
+				t.Errorf("flight = %q..%q, want the ad sets' 2026-10-01..2026-10-31", r.StartDate, r.EndDate)
+			}
+			if r.FetchFailed {
+				t.Errorf("row 111 = %+v, want not FetchFailed", r)
+			}
+			if got := adSetRequests(rec); len(got) == 0 {
+				t.Error("an ABO campaign with an unreadable campaign flight never read its ad sets")
+			}
+		})
+	}
+}
+
 // A malformed effective_status costs only its own campaign its ad-set budget (PR #316 review): it
 // used to fail the row's whole decode, which failed the whole read and with it every campaign
 // that needed an ad-set budget.
