@@ -66,11 +66,21 @@ const (
 	// with margin so a nudged start can't have slipped into the past by the time
 	// either request is finally accepted.
 	//
+	// The window actually covered starts EARLIER than the campaign POST: the horizon
+	// is taken before Step 1's account-verify GET (issue #208 moved the window check
+	// above it), so the buffer must also absorb that GET, Step 1.5's post authoring
+	// (and its ImageURLSource fetch), the campaign POST and up to two ad-group POSTs.
+	// The verify GET goes through the RETRYING request path, so one
+	// redditWorstCaseCreateWait (429 term included) is genuinely spendable there; the
+	// mutating creates each spend at most a request timeout plus a token refresh. That
+	// sum (~420s + 4*60s) stays well inside the 3*redditWorstCaseCreateWait + 60s budget.
+	//
 	// NOTE ON THE 429 TERM BELOW. Creates no longer retry throttles — see
-	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on this
-	// path any more, and the buffer is now larger than the worst case it derives
-	// from. That is left DELIBERATELY: the term is retained rather than removed
-	// because over-sizing this buffer costs a slightly later start time, while
+	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on the
+	// mutating creates any more (only on the retryable verify GET above), and the
+	// buffer is larger than the worst case it derives from. That is left
+	// DELIBERATELY: the term is retained rather than removed because over-sizing
+	// this buffer costs a slightly later start time, while
 	// under-sizing it makes Reddit reject the create outright for a start in the
 	// past. The asymmetry is the whole reason the derivation is conservative, and
 	// a retryable path could return here (a future idempotency key would make
@@ -1772,6 +1782,70 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		geos = []string{"US"}
 	}
 
+	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
+	// EventName/Project bounds keep caller inputs sane, but the composed names also include
+	// region/objective (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no
+	// count limit, so enough valid codes could push adGroupName past Reddit's limit.
+	//
+	// These run BEFORE Step 1's account-verify GET, not after it (issue #208): their inputs —
+	// EventName, Project, `objective` and `geos` — are all settled above, and nothing the GET
+	// returns feeds them, so a name Reddit would reject costs no upstream round trip. That
+	// also makes them pre-send refusals in the PreflightRefusal sense, so the async job may
+	// report the sentence verbatim. Both messages quote only rune counts this service computed;
+	// no caller text is formatted in (a caller value would need domain.CallerValue).
+	//
+	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
+	// composing it here serves both purposes.
+	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
+	geoLabel := strings.Join(geos, "+")
+	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
+	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
+		return nil, domain.PreflightRefusalf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
+	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
+		return nil, domain.PreflightRefusalf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
+
+	// The window check runs HERE, before Step 1's account-verify GET (issue #208).
+	//
+	// It used to sit just above the campaign POST, which was correct while the first mutating
+	// call WAS that POST. Step 1.5 moved the first mutating call earlier, so the check moved
+	// above Step 1.5 — with an ImageURL set it could otherwise return (nil, error) with a post
+	// already authored upstream, and RedditDispatcher.Dispatch keys claim release on
+	// `result == nil` alone, so a retry authored a duplicate. It then still ran after the
+	// account-verify GET, so a window Reddit would reject cost a token exchange and a GET to
+	// learn nothing, and its bare fmt.Errorf left the async job reporting the generic string.
+	//
+	// It is purely deterministic: its inputs are the caller's StartDate/EndDate (both already
+	// parsed as YYYY-MM-DD above) and the clock, and it consumes nothing any request returns.
+	// So it runs before ANY request and is a pre-send refusal in the PreflightRefusal sense.
+	// Both instants it quotes are rendered by toRedditTimestamp from a parsed time.Time (the
+	// end from the validated EndDate, the start from the clock), so the message carries no
+	// caller text and is unchanged. The horizon is now taken before the account-verify GET
+	// rather than after it; redditPastStartBuffer is sized with a 429-backoff term no create
+	// can spend any more, which more than covers that one extra (retryable) GET.
+	campaignEndTime := toISOTimestamp(in.EndDate)
+	effectiveStart := toISOTimestamp(in.StartDate)
+	// Nudge the start forward whenever it does not already clear the workflow HORIZON
+	// (now + redditPastStartBuffer), not merely when it is already past: a start only a few
+	// seconds/minutes ahead could slip into the past DURING account verification, the token
+	// exchange, or a 429 retry, since this one timestamp is reused for the campaign and the
+	// (possibly retried) ad-group POST. redditPastStartBuffer is sized (see its definition) to
+	// cover that whole retryable campaign->ad-group workflow, so a start at/after now+buffer is
+	// guaranteed to still be future when every request that reuses it is accepted; anything
+	// earlier is nudged up to now+buffer.
+	horizon := c.now().Add(redditPastStartBuffer)
+	if startMs, ok := parseRedditTimestamp(effectiveStart); !ok || startMs.Before(horizon) {
+		effectiveStart = toRedditTimestamp(horizon)
+	}
+	// After nudging a past start forward, the (unchanged) end could be at/before it; reject
+	// rather than sending an invalid window.
+	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
+		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
+			return nil, domain.PreflightRefusalf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
+		}
+	}
+
 	// Step 1: Verify account (non-fatal, mirrors TS try/catch). A verification
 	// FAILURE is only a warning — but a CALLER context cancellation is fatal:
 	// continuing would run the campaign POST under a dead ctx and then
@@ -1835,61 +1909,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// HTTP status, never the error body — a reflective Reddit validation error can
 	// echo the destination_url (which carries the caller's permitted secret-bearing
 	// query params), and persisting it in Steps would leak those.
-	// EVERY remaining deterministic check runs HERE, before Step 1.5 authors anything.
-	//
-	// The window check and the two composed-name checks used to sit further down, just above
-	// the campaign POST — which was correct while the first mutating call WAS that POST. Step
-	// 1.5 moved the first mutating call earlier without moving them, so with an ImageURL set
-	// they could return (nil, error) with a post already authored upstream. CreateCampaign's
-	// contract makes (nil, err) mean "nothing was or may have been created", and
-	// RedditDispatcher.Dispatch keys claim release on `result == nil` alone, so the claim was
-	// released on a post that definitely existed and a retry authored a duplicate.
-	//
-	// They belong here rather than being converted to partial returns because they are purely
-	// deterministic: their inputs are the caller's StartDate/EndDate/EventName/GeoTargets,
-	// `objective` and `geos` (both settled above), and the clock. None consumes anything the
-	// post produces, so failing them ahead of any mutating call restores the invariant Step
-	// 1.5's ordering was always meant to have — a bad input costs nothing upstream. Structural
-	// step toward #173.
-	campaignEndTime := toISOTimestamp(in.EndDate)
-	effectiveStart := toISOTimestamp(in.StartDate)
-	// Nudge the start forward whenever it does not already clear the workflow HORIZON
-	// (now + redditPastStartBuffer), not merely when it is already past: a start only a few
-	// seconds/minutes ahead could slip into the past DURING account verification, the token
-	// exchange, or a 429 retry, since this one timestamp is reused for the campaign and the
-	// (possibly retried) ad-group POST. redditPastStartBuffer is sized (see its definition) to
-	// cover that whole retryable campaign->ad-group workflow, so a start at/after now+buffer is
-	// guaranteed to still be future when every request that reuses it is accepted; anything
-	// earlier is nudged up to now+buffer.
-	horizon := c.now().Add(redditPastStartBuffer)
-	if startMs, ok := parseRedditTimestamp(effectiveStart); !ok || startMs.Before(horizon) {
-		effectiveStart = toRedditTimestamp(horizon)
-	}
-	// After nudging a past start forward, the (unchanged) end could be at/before it; reject
-	// rather than sending an invalid window.
-	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
-		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
-			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
-		}
-	}
-
-	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
-	// EventName/Project bounds keep caller inputs sane, but the composed names also include
-	// region/objective (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no
-	// count limit, so enough valid codes could push adGroupName past Reddit's limit.
-	//
-	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
-	// composing it here serves both purposes.
-	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
-	geoLabel := strings.Join(geos, "+")
-	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
-	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
-		return nil, fmt.Errorf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
-	}
-	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
-		return nil, fmt.Errorf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
-	}
-
 	if authorPost {
 		// A late image URL is obtained HERE, immediately before the request that hands it to
 		// Reddit, so nothing above (account verification, a Retry-After wait) can spend its

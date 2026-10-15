@@ -161,9 +161,11 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 // undeclared uploads run strictly ONE AT A TIME.
 //
 // That cost is real and was accepted deliberately, so do not "fix" it by lowering the charge
-// without re-reading this block. goa's generated RequestEncoder never sets ContentLength, so the
-// shipped briefs client streams this upload chunked and lands here: serialization is the DEFAULT
-// path for the only generated client that exists, not a rare branch.
+// without re-reading this block. goa's stock goahttp.RequestEncoder never sets ContentLength, so
+// a generated briefs client built with it streams this upload chunked and lands here. A Go
+// caller avoids that by passing pkg/uploadclient.RequestEncoder to the generated NewClient,
+// which declares the encoded length (issue #183); any client that still sends chunked -- a
+// stock-encoder Go caller or a third party -- is serialized here, by design.
 //
 // The floor was tried here and reverted. Charging the floor (8 MiB) admits 16 concurrent
 // undeclared uploads, and the aggregate that produces is not survivable:
@@ -191,11 +193,12 @@ const UploadAdmissionMinWeightBytes int64 = 8 << 20 // 8 MiB
 // property this middleware exists to provide, and because failing safe (a retryable 503 under
 // concurrent uploads) beats an OOM that takes the pod down for every route.
 //
-// The server cannot price what it has not read, so the honest fix is upstream: make the
-// generated client DECLARE its length, and undeclared bodies become the rare case rather than
-// the default. That is issue #183, and it is what restores concurrency for ordinary uploads.
-// Uploads are low-frequency, so serialized undeclared uploads are a throughput cost in the
-// meantime, not a correctness one.
+// The server cannot price what it has not read, so the fix is on the client: declare the length.
+// pkg/uploadclient.RequestEncoder does that for the generated client (issue #183), which makes
+// undeclared bodies the rare case rather than the default; TestUploadClient_* in
+// cmd/campaign-service prove it end to end, and that a chunked upload is still charged the
+// ceiling. Uploads are low-frequency, so serialized undeclared uploads remain a throughput cost
+// for clients that do not declare, not a correctness one.
 func UploadAdmissionWeightFor(contentLength int64) int64 {
 	if contentLength < 0 {
 		// Unknown length is charged the WORST CASE, which equals the whole budget, so
