@@ -1,4 +1,4 @@
-# 2026-10-13 — Microsoft image lookup needs one collection; errors must name our item
+# 2026-10-13 — Microsoft image lookup needs one collection; errors must name our item (PR #323)
 
 **Fix** — two late review threads on #312, both in
 `internal/platform/microsoft/image_extension.go`:
@@ -14,13 +14,14 @@
   to AddMedia, AddAdExtensions (attributed by the collection's `Index`) and
   SetAdExtensionsAssociations. New whole-wire decoders, `imageErrors` and `imageNestedErrors`,
   keep `Index` and tally evidence for our item and for other items across the entire array.
-- #323 review: the UNCONFIRMED messages no longer take codes from the retained prefix. That
+- The UNCONFIRMED messages no longer take codes from the retained prefix. That
   prefix drops `Index`, so when index-0 entries filled it they were reported as "naming another
   item". The decoders now collect the foreign entries' codes, with their index, over the whole
   wire, and the association, AddMedia and AddAdExtensions messages name only those. The
   concept's AddMedia, AddAdExtensions and Set bullets now state the index-0 rule and
-  `imageNestedErrors` in place of the earlier any-error and `boundedNestedErrorItems` wording.
-- #323 comment pass, comments only with no behaviour change. Every comment in
+  `imageNestedErrors` in place of the earlier any-error and `boundedNestedErrorItems` wording,
+  and its "Recording and outcomes" NOT-attached bullet now applies the same index-0 rule.
+- Comments only, with no behaviour change: every comment in
   `image_extension.go` now states the current rules:
   - Only a single collection answers the lookup, so `[]` is no longer described as "none".
   - The comments on `adExtensionIdentity`, `mediaIdentity` and the file's OUTCOMES block now

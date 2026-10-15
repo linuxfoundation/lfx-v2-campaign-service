@@ -142,8 +142,10 @@ A failed attach does not fail the job. The campaign exists, so an error would re
 for a reconcile that never re-runs this step. Instead the campaign is `created_degraded` with a
 Steps entry:
 
-- `Image extension NOT attached: …` for a definite failure: a 4xx, a PartialError explaining a
-  null id, or a failed lookup (only a read was sent).
+- `Image extension NOT attached: …` for a definite failure: a 4xx, a PartialError or
+  NestedPartialErrors entry that attributes index 0 (the one item sent) with no coded entry
+  naming another or an absent index, or a failed lookup (only a read was sent). A coded entry
+  naming any other index makes the 2xx contradictory, so it is UNCONFIRMED instead.
 - `Image extension UNCONFIRMED (it may be attached — verify …)` for an ambiguous one: transport
   failure, 5xx, mutating 429, or a 2xx with no usable id.
 
