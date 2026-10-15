@@ -619,8 +619,11 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 // ListAccounts: there is no second account to discover) — so accountID is validated against
 // the resolved connection's own account rather than used to build an account-agnostic client
 // the way Meta/GoogleAds/LinkedIn's monitor methods do.
+//
+// It makes NO ad-account read: the currency costs Reddit one extra call, which only
+// ReadAccountMonitor (the monitor's path) pays.
 func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
-	read, err := d.ReadAccountMonitor(ctx, projectID, platform, accountID, days)
+	read, err := d.readAccountMonitor(ctx, projectID, platform, accountID, days, false)
 	if err != nil {
 		return nil, err
 	}
@@ -631,8 +634,15 @@ var _ service.AccountMonitorReader = (*RedditDispatcher)(nil)
 
 // ReadAccountMonitor implements service.AccountMonitorReader: ListAccountCampaignMetrics' read
 // (the body of both, with every guard described above), plus the ad account's currency from one
-// identity-checked account read (reddit.Client.ListAccountCampaignsWithCurrency), best-effort.
+// identity-checked account read (reddit.Client.ListAccountCampaignsWithCurrency), best-effort and
+// run beside the report fan-out on its own short budget.
 func (d *RedditDispatcher) ReadAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
+	return d.readAccountMonitor(ctx, projectID, platform, accountID, days, true)
+}
+
+// readAccountMonitor is the body of ListAccountCampaignMetrics and ReadAccountMonitor;
+// withCurrency selects the client read that also fetches the account's currency.
+func (d *RedditDispatcher) readAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int, withCurrency bool) (*model.AccountMonitorRead, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
 	// cost a credential decrypt.
@@ -646,7 +656,14 @@ func (d *RedditDispatcher) ReadAccountMonitor(ctx context.Context, projectID str
 	if err != nil {
 		return nil, err
 	}
-	rows, currency, lerr := client.ListAccountCampaignsWithCurrency(ctx, accountID, days)
+	var rows []reddit.AccountCampaignRow
+	var currency string
+	var lerr error
+	if withCurrency {
+		rows, currency, lerr = client.ListAccountCampaignsWithCurrency(ctx, accountID, days)
+	} else {
+		rows, lerr = client.ListAccountCampaigns(ctx, accountID, days)
+	}
 	if lerr != nil {
 		// Defense in depth only: reachable if ListAccountCampaigns' own shape check ever
 		// diverges from ValidateAccountID's above it.

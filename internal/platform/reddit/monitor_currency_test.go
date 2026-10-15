@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 const monitorAccountPath = "/api/v3/ad_accounts/t2_test"
@@ -18,6 +19,10 @@ type accountStub struct {
 	*monitorStub
 	status int
 	body   string
+	// block, when set, holds the account read open until it is closed or the request ends.
+	block chan struct{}
+	// retryAfter, when set, is sent as the account read's Retry-After header.
+	retryAfter string
 }
 
 func (s *accountStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -25,6 +30,16 @@ func (s *accountStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.paths = append(s.paths, r.Method+" "+r.URL.Path)
 		s.mu.Unlock()
+		if s.block != nil {
+			select {
+			case <-s.block:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		if s.retryAfter != "" {
+			w.Header().Set("Retry-After", s.retryAfter)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(s.status)
 		_, _ = w.Write([]byte(s.body))
@@ -129,6 +144,63 @@ func TestReadMonitorAccountCurrency_ErrorsCarryNoUpstreamText(t *testing.T) {
 				if strings.Contains(err.Error(), leak) {
 					t.Errorf("error %q carries %q", err, leak)
 				}
+			}
+		})
+	}
+}
+
+// The currency read is off the monitor's critical path: an account read that hangs, or answers
+// 429 with a long Retry-After, costs the monitor at most monitorCurrencyTimeout (and the 429 is
+// not waited out at all) — the rows come back measured and the currency is "".
+func TestListAccountCampaignsWithCurrency_SlowOrThrottledAccountRead(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		block      bool
+		status     int
+		retryAfter string
+		within     time.Duration
+	}{
+		{"the account read hangs", true, 0, "", monitorCurrencyTimeout + 2*time.Second},
+		{"the account read is throttled for 30s", false, http.StatusTooManyRequests, "30", time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &accountStub{
+				monitorStub: &monitorStub{t: t, listBody: `{"data":` + manyActiveCampaignsBody(3) + `}`, report: healthyReport},
+				status:      tc.status, body: `{}`, retryAfter: tc.retryAfter,
+			}
+			if tc.block {
+				stub.block = make(chan struct{})
+				t.Cleanup(func() { close(stub.block) })
+			}
+			c := newMonitorClient(t, stub, fixedRedditClock())
+			start := time.Now()
+			rows, currency, err := c.ListAccountCampaignsWithCurrency(context.Background(), testAccount.AccountID, 7)
+			elapsed := time.Since(start)
+			if err != nil {
+				t.Fatalf("ListAccountCampaignsWithCurrency: %v", err)
+			}
+			if currency != "" {
+				t.Errorf("currency = %q, want \"\"", currency)
+			}
+			if len(rows) != 3 {
+				t.Fatalf("got %d rows, want 3", len(rows))
+			}
+			for _, r := range rows {
+				if r.FetchFailed {
+					t.Errorf("row %+v FetchFailed: a slow currency read must not touch the rows", r)
+				}
+			}
+			if elapsed > tc.within {
+				t.Errorf("took %v, want under %v", elapsed, tc.within)
+			}
+			reads := 0
+			for _, p := range stub.requestedPaths() {
+				if p == http.MethodGet+" "+monitorAccountPath {
+					reads++
+				}
+			}
+			if reads != 1 {
+				t.Errorf("ad-account reads = %d, want exactly 1 (a 429 is not retried)", reads)
 			}
 		})
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -20,6 +21,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -46,26 +48,6 @@ func TestReadAccountMonitor_CarriesCurrency(t *testing.T) {
 		}
 	})
 
-	t.Run("linkedin", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			if strings.Contains(r.URL.Path, "adAnalytics") {
-				_, _ = io.WriteString(w, `{"elements":[]}`)
-				return
-			}
-			_, _ = io.WriteString(w, `{"elements":[{"id":1,"name":"c","status":"ACTIVE","dailyBudget":{"amount":"10","currencyCode":"USD"}}],"metadata":{}}`)
-		}))
-		t.Cleanup(srv.Close)
-		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
-		read, err := d.ReadAccountMonitor(context.Background(), "cncf", model.ProviderLinkedInAds, "123456789", 30)
-		if err != nil {
-			t.Fatalf("ReadAccountMonitor: %v", err)
-		}
-		if read.Currency != "USD" || len(read.Rows) != 1 {
-			t.Errorf("read = %+v, want one row in USD", read)
-		}
-	})
-
 	t.Run("reddit", func(t *testing.T) {
 		var accountReads atomic.Int32
 		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +59,7 @@ func TestReadAccountMonitor_CarriesCurrency(t *testing.T) {
 				_, _ = io.WriteString(w, `{"data":[{"id":"t2_c1","name":"c","configured_status":"ACTIVE"}]}`)
 			case strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_acct"):
 				accountReads.Add(1)
+				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, `{"data":{"id":"t2_acct","currency":"CAD"}}`)
 			default:
 				t.Errorf("unexpected request %s", r.URL.Path)
@@ -100,7 +83,108 @@ func TestReadAccountMonitor_CarriesCurrency(t *testing.T) {
 		if n := accountReads.Load(); n != 1 {
 			t.Errorf("ad-account reads = %d, want 1", n)
 		}
+		// The metrics-reader path does not pay for the currency: no ad-account read.
+		if _, err := d.ListAccountCampaignMetrics(context.Background(), "proj", model.ProviderRedditAds, "t2_acct", 30); err != nil {
+			t.Fatalf("ListAccountCampaignMetrics: %v", err)
+		}
+		if n := accountReads.Load(); n != 1 {
+			t.Errorf("ad-account reads = %d after ListAccountCampaignMetrics, want still 1", n)
+		}
 	})
+}
+
+// LinkedIn's monitor reads spend in the account's own currency (costInLocalCurrency), so a EUR
+// account paces EUR spend against its EUR budget and names EUR; a USD account's numbers are what
+// they were (costInLocalCurrency is USD there); and budgets that disagree give no currency and
+// unknown pacing for the rows whose budget named one.
+func TestLinkedInMonitor_LocalCurrency(t *testing.T) {
+	now := time.Now()
+	serve := func(t *testing.T, list string) *LinkedInDispatcher {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.Contains(r.URL.Path, "adAnalytics") {
+				if !strings.Contains(r.URL.RawQuery, "costInLocalCurrency") || strings.Contains(r.URL.RawQuery, "costInUsd") {
+					t.Errorf("analytics query %q, want costInLocalCurrency and not costInUsd", r.URL.RawQuery)
+				}
+				// costInUsd is present and different, so a read of the wrong field shows.
+				_, _ = io.WriteString(w, `{"elements":[`+
+					`{"pivotValues":["urn:li:sponsoredCampaign:1"],"impressions":5000,"clicks":40,"costInLocalCurrency":"600.00","costInUsd":"650.00"},`+
+					`{"pivotValues":["urn:li:sponsoredCampaign:2"],"impressions":5000,"clicks":40,"costInLocalCurrency":"600.00","costInUsd":"650.00"}]}`)
+				return
+			}
+			_, _ = io.WriteString(w, list)
+		}))
+		t.Cleanup(srv.Close)
+		return NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
+	}
+	list := func(code1, code2 string) string {
+		return `{"elements":[` +
+			`{"id":1,"name":"a","status":"ACTIVE","dailyBudget":{"amount":"100.00","currencyCode":"` + code1 + `"}},` +
+			`{"id":2,"name":"b","status":"ACTIVE","dailyBudget":{"amount":"100.00","currencyCode":"` + code2 + `"}}],"metadata":{}}`
+	}
+	for _, tc := range []struct {
+		name, code1, code2, wantCurrency string
+		wantPaced                        bool
+	}{
+		{"a EUR account paces EUR spend against its EUR budget", "EUR", "EUR", "EUR", true},
+		{"a USD account is unchanged", "USD", "USD", "USD", true},
+		{"mixed currencies: no currency, no pacing", "USD", "EUR", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			read, err := serve(t, list(tc.code1, tc.code2)).ReadAccountMonitor(context.Background(), "cncf", model.ProviderLinkedInAds, "123456789", 30)
+			if err != nil {
+				t.Fatalf("ReadAccountMonitor: %v", err)
+			}
+			if read.Currency != tc.wantCurrency {
+				t.Errorf("currency = %q, want %q", read.Currency, tc.wantCurrency)
+			}
+			rows, _ := rules.EvaluateLinkedInMonitor(read.Rows, 30, now)
+			for _, r := range rows {
+				if r.Metrics.Spend != 600 || r.Metrics.BudgetDay != 100 {
+					t.Errorf("row %s spend=%v budget=%v, want 600 local spend against 100/day", r.Metrics.PlatformCampaignID, r.Metrics.Spend, r.Metrics.BudgetDay)
+				}
+				if r.Metrics.PacingUnknown == tc.wantPaced {
+					t.Errorf("row %s PacingUnknown = %v, want paced=%v", r.Metrics.PlatformCampaignID, r.Metrics.PacingUnknown, tc.wantPaced)
+				}
+				// 600 spent against 100/day over the 29 days LinkedIn's rules expect for a 30-day
+				// window: 600/2900 ≈ 20.69%, the same figure on a EUR and a USD account because both
+				// sides are in the account's own currency (costInUsd would give 650/2900 ≈ 22.41%).
+				if want := 600.0 / 2900 * 100; tc.wantPaced && (r.PacingPct < want-0.01 || r.PacingPct > want+0.01) {
+					t.Errorf("row %s pacing = %v%%, want %v%%", r.Metrics.PlatformCampaignID, r.PacingPct, want)
+				}
+			}
+		})
+	}
+}
+
+// One X monitor read — the campaign list, then the currency — makes exactly ONE account GET: the
+// currency rides on the account read the list made for the timezone.
+func TestTwitterMonitor_CurrencyReusesTheListsAccountRead(t *testing.T) {
+	t.Setenv(constants.EnvTwitterMetricsEnabled, "true")
+	routes := map[string]string{}
+	for k, v := range twitterMonitorRoutes {
+		routes[k] = v
+	}
+	routes["/12/accounts/acc1"] = `{"data":{"id":"acc1","timezone":"America/New_York","currency":"EUR"}}`
+	opts, _, seen := twitterMonitorServer(t, routes)
+	d := NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, opts...)
+	if _, err := d.ListAccountCampaigns(context.Background(), "cncf", model.ProviderTwitterAds, "acc1"); err != nil {
+		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	got, err := d.ReadAccountCurrency(context.Background(), "cncf", model.ProviderTwitterAds, "acc1")
+	if err != nil || got != "EUR" {
+		t.Fatalf("ReadAccountCurrency = %q, %v; want EUR", got, err)
+	}
+	n := 0
+	for _, p := range seen() {
+		if p == "/12/accounts/acc1" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d account GETs across the list and the currency read, want exactly 1", n)
+	}
 }
 
 // X's currency comes from the account read the monitor shares with the timezone, through the same
@@ -185,6 +269,19 @@ func TestMicrosoftMonitor_ReadAccountCurrency(t *testing.T) {
 		}
 		if n := calls.Load(); n != 1 {
 			t.Errorf("%d upstream calls, want 1", n)
+		}
+	})
+	t.Run("a second monitor read is served from the client's cache", func(t *testing.T) {
+		opts, calls := servers(t)
+		d := NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{}, opts...)
+		for i := 0; i < 3; i++ {
+			got, err := d.ReadAccountCurrency(context.Background(), "cncf", model.ProviderMicrosoftAds, "1234567")
+			if err != nil || got != "EUR" {
+				t.Fatalf("ReadAccountCurrency #%d = %q, %v; want EUR", i, got, err)
+			}
+		}
+		if n := calls.Load(); n != 1 {
+			t.Errorf("%d Account/Query calls over three reads, want 1", n)
 		}
 	})
 	for _, tc := range []struct {

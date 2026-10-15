@@ -6,6 +6,7 @@ package meta
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -91,6 +92,12 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 // "" too when any row's account_currency is not three upper-case letters, or when two rows
 // disagree — one account has one currency, so a disagreement means the field cannot be trusted.
 // Neither fails the read: the currency labels the amounts, and the rows are still good.
+//
+// It is also "" for any currency whose minor-unit offset is not 100 (JPY, KRW, … — and any code
+// currencyMinorUnitOffset does not list), which is logged. minorUnitsToWhole divides every budget
+// by 100, so on such an account the budgets are wrong by that factor, and naming the currency
+// beside them would present the wrong numbers as correct ones. Drop this restriction once the
+// budget conversion is currency-aware (linuxfoundation/lfx-v2-campaign-service#316).
 func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
 	if err := ValidateAccountID(accountID); err != nil {
 		return nil, "", fmt.Errorf("list account campaigns: %w", err)
@@ -142,7 +149,27 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 			rows = append(rows, row)
 		}
 	}
-	return rows, insights.currency(), nil
+	return rows, monitorPublishableCurrency(ctx, insights.currency()), nil
+}
+
+// monitorCurrencyOffset is the minor-unit offset minorUnitsToWhole assumes for every budget.
+const monitorCurrencyOffset = 100
+
+// monitorPublishableCurrency is code when the monitor's budgets are correct in it — its offset is
+// the 100 minorUnitsToWhole assumes — and "" otherwise (see ListAccountCampaignsWithCurrency).
+// TODO(#316): publish every recognised currency once budgets are converted by its offset.
+func monitorPublishableCurrency(ctx context.Context, code string) string {
+	if code == "" {
+		return ""
+	}
+	if off, ok := currencyOffsetFor(code); !ok || off != monitorCurrencyOffset {
+		// The code is three upper-case letters (insights.currency normalized it), so it is safe
+		// to log; no account id is.
+		slog.WarnContext(ctx, "meta account monitor: withholding the account currency; its budgets are not converted for this currency's minor unit",
+			"currency", code, "known_offset", ok, "offset", off)
+		return ""
+	}
+	return code
 }
 
 type metaCampaignListEntry struct {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -34,10 +35,16 @@ type currencyReportReader struct {
 	currency string
 	err      error
 	calls    int
+	// block holds the read until its context ends — a hung or throttled account read.
+	block bool
 }
 
-func (c *currencyReportReader) ReadAccountCurrency(context.Context, string, model.Provider, string) (string, error) {
+func (c *currencyReportReader) ReadAccountCurrency(ctx context.Context, _ string, _ model.Provider, _ string) (string, error) {
 	c.calls++
+	if c.block {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
 	return c.currency, c.err
 }
 
@@ -170,5 +177,28 @@ func TestBuildAccountMonitor_Currency(t *testing.T) {
 		if got := currencyOf(buildAccountMonitor("a", 30, nil, nil, in)); got != want {
 			t.Errorf("buildAccountMonitor(currency %q) = %s, want %s", in, got, want)
 		}
+	}
+}
+
+// A currency read that hangs costs the report-backed monitor at most accountCurrencyReadTimeout:
+// the response is served, with its rows and without a currency, well inside the call budget.
+func TestMonitorReportedAccount_SlowCurrencyReadIsBounded(t *testing.T) {
+	reader := &currencyReportReader{fakeReportReader: &fakeReportReader{campaigns: twoCampaigns(), submitID: "r1"}, block: true}
+	o := NewOrchestrator(&fakeCampaignRepo{}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{model.ProviderMicrosoftAds: reader})
+	o.SetAccountReportStore(&fakeReportStore{})
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	svc.SetOrchestrator(o)
+	start := time.Now()
+	got, err := svc.MonitorMicrosoftAdsAccount(context.Background(),
+		&conn.MonitorMicrosoftAdsAccountPayload{ProjectID: "p", AccountID: "123", Days: 7})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("MonitorMicrosoftAdsAccount: %v", err)
+	}
+	if got.Currency != nil || len(got.Campaigns) != 2 {
+		t.Errorf("currency=%v campaigns=%d, want absent and both rows", got.Currency, len(got.Campaigns))
+	}
+	if elapsed > accountCurrencyReadTimeout+2*time.Second || elapsed >= accountsCallTimeout {
+		t.Errorf("took %v, want about accountCurrencyReadTimeout (%v), far inside the %v call budget", elapsed, accountCurrencyReadTimeout, accountsCallTimeout)
 	}
 }

@@ -6294,10 +6294,12 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
-	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
-	// in the account's currency, so a non-USD LinkedIn account has no single
-	// currency to name.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -6456,10 +6458,12 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
-	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
-	// in the account's currency, so a non-USD LinkedIn account has no single
-	// currency to name.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -6509,10 +6513,12 @@ type MetaAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
-	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
-	// in the account's currency, so a non-USD LinkedIn account has no single
-	// currency to name.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -6562,10 +6568,12 @@ type RedditAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
-	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
-	// in the account's currency, so a non-USD LinkedIn account has no single
-	// currency to name.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -6615,10 +6623,12 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
-	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
-	// in the account's currency, so a non-USD LinkedIn account has no single
-	// currency to name.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
@@ -6668,10 +6678,12 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
 	// in this currency, unconverted. Absent when the platform didn't report it.
-	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
-	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
-	// in the account's currency, so a non-USD LinkedIn account has no single
-	// currency to name.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly.
 	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 

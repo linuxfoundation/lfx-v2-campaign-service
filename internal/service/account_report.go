@@ -178,20 +178,28 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 	}
 
 	read := mergeAccountReport(campaigns, snap)
-	// Last, and on what is left of the shared budget: the currency is a label for the amounts,
-	// never a reason to fail or to starve the report steps above, which keep the metrics fresh.
+	// Last, and on what is left of the shared budget, capped at accountCurrencyReadTimeout: the
+	// currency is a label for the amounts, never a reason to fail or to starve the report steps
+	// above, which keep the metrics fresh.
 	if cr, ok := d.(AccountCurrencyReader); ok {
 		read.Currency = o.readAccountCurrency(callCtx, ctx, cr, key)
 	}
 	return read, nil
 }
 
-// readAccountCurrency is the report-backed read's instrumented, best-effort currency read: any
-// failure is logged, as the report steps' failures are, and answered as "" (currency absent), so
-// the monitor still serves its rows.
+// accountCurrencyReadTimeout bounds the report-backed monitor's currency read, inside what is
+// left of the shared call budget: a slow or throttled account read may cost the monitor at most
+// this long, and then the response is served without a currency.
+const accountCurrencyReadTimeout = 3 * time.Second
+
+// readAccountCurrency is the report-backed read's instrumented, best-effort currency read, bounded
+// by accountCurrencyReadTimeout: any failure (the timeout included) is logged, as the report
+// steps' failures are, and answered as "" (currency absent), so the monitor still serves its rows.
 func (o *Orchestrator) readAccountCurrency(callCtx, ctx context.Context, reader AccountCurrencyReader, key model.AccountReportKey) string {
+	readCtx, cancel := context.WithTimeout(callCtx, accountCurrencyReadTimeout)
+	defer cancel()
 	start := time.Now()
-	currency, err := reader.ReadAccountCurrency(callCtx, key.ProjectID, key.Platform, key.AccountID)
+	currency, err := reader.ReadAccountCurrency(readCtx, key.ProjectID, key.Platform, key.AccountID)
 	o.recordUpstream(ctx, key.Platform, opReadAccountCurrency, start, err)
 	if err != nil {
 		slog.WarnContext(ctx, "account monitor: could not read the account currency; serving the monitor without it",

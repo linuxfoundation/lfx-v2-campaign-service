@@ -114,3 +114,40 @@ func TestAccountCurrency_FailureCarriesNoUpstreamText(t *testing.T) {
 		})
 	}
 }
+
+// A throttled Account/Query is not backed off and retried — the currency is only a label — and a
+// failure is never cached: the next read asks again, and its success is then reused.
+func TestAccountCurrency_NoThrottleRetryAndFailuresNotCached(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	c := newCustomerClient(t, AccountConfig{AccountID: "187654321"}, func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = io.WriteString(w, `{"Account":{"Id":187654321,"CurrencyCode":"BritishPound"}}`)
+	})
+	if got, err := c.AccountCurrency(context.Background()); err == nil || got != "" {
+		t.Fatalf("throttled AccountCurrency = %q, %v; want an error", got, err)
+	}
+	mu.Lock()
+	if calls != 1 {
+		t.Errorf("%d requests for a throttled read, want 1 (no retry)", calls)
+	}
+	mu.Unlock()
+	for i := 0; i < 2; i++ {
+		if got, err := c.AccountCurrency(context.Background()); err != nil || got != "GBP" {
+			t.Fatalf("AccountCurrency #%d = %q, %v; want GBP", i, got, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 {
+		t.Errorf("%d requests, want 2: the failure re-read once, the success then cached", calls)
+	}
+}

@@ -4267,8 +4267,10 @@ The account monitor's `currency` field reaches the service two ways
 - **Live reads.** `LinkedInDispatcher`, `MetaDispatcher` and `RedditDispatcher` implement
   `service.AccountMonitorReader` (`ReadAccountMonitor` → `model.AccountMonitorRead`), carrying
   the currency their client's `ListAccountCampaignsWithCurrency` returns. Their
-  `ListAccountCampaignMetrics` is now a wrapper returning `ReadAccountMonitor`'s rows, so every
-  guard is in one body. `GoogleAdsDispatcher` is untouched and implements only
+  `ListAccountCampaignMetrics` returns the same read's rows, so every guard is in one body;
+  Reddit's skips the currency (`readAccountMonitor(..., withCurrency=false)` calls the client's
+  plain `ListAccountCampaigns`), so the rows-only path pays no extra ad-account read. LinkedIn
+  also maps `AccountCampaignRow.PacingUnknown` (budgets disagreeing about the currency). `GoogleAdsDispatcher` is untouched and implements only
   `AccountMetricsReader`, so Google's currency is absent.
 - **Report-backed reads.** `MicrosoftDispatcher` and `TwitterDispatcher` implement
   `service.AccountCurrencyReader` (`ReadAccountCurrency`), each through its monitor's own

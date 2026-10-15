@@ -1914,7 +1914,8 @@ currency (`model.AccountMonitorRead`); `Orchestrator.ReadAccountCampaignMetrics`
 type, preferring `AccountMonitorReader` and falling back to `AccountMetricsReader` with no
 currency, and normalizes the code (`model.NormalizeCurrencyCode`). `AccountCurrencyReader`
 (`account_report.go`) is the report-backed counterpart: `ReadReportedAccountCampaigns` calls it
-LAST, on what remains of the shared budget, through `readAccountCurrency`, which records the
+LAST, on what remains of the shared budget and capped at `accountCurrencyReadTimeout` (3s), through
+`readAccountCurrency`, which records the
 upstream operation `read_account_currency`, logs a failure as a warning and answers `""` — a
 failed currency read never fails the monitor, and the currency is never saved with a report
 (`ReportedAccountRead.Currency`). `buildAccountMonitor` takes the currency and sets

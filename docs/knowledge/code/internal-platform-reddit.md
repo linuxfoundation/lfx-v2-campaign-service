@@ -539,7 +539,9 @@ type and the `AccountTotalsReader` plumbing were removed with it.
 
 `ListAccountCampaignsWithCurrency` is the same read plus the account's currency for the
 monitor's `currency` field. Neither the campaign list nor the reports carry one, so it makes ONE
-more request after the campaign list, `readMonitorAccountCurrency`: `GET /ad_accounts/{id}`,
+more request after the campaign list, run CONCURRENTLY with the report fan-out on its own
+`monitorCurrencyTimeout` (3s) and sent with `requestNoThrottleRetry` (a 429 is not waited out),
+so it never delays or fails the rows — `readMonitorAccountCurrency`: `GET /ad_accounts/{id}`,
 refused unless `identityjson` trusts the raw body and its `data.id` is the requested account,
 with errors that carry no upstream text and redact the account id (`errMonitorAccountUntrusted`).
 An absent, null or malformed `currency` is `""`; any error is dropped and the currency left `""`

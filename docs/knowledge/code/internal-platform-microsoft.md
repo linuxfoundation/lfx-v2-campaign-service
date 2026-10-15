@@ -999,7 +999,10 @@ orchestrator saves the state between requests instead (see
 `identityjson` and its `Account.Id` (bare or quoted) must be the client's account, else
 `errAccountCurrencyUntrusted`; errors carry no upstream text. `CurrencyCode` is a value-set NAME
 (`USDollar`, `Euro`, …), mapped to ISO 4217 by `currencyCodeISO`; an absent, null or unmapped name
-is `""` with no error. Unverified against a live account, like the rest of the monitor. See
+is `""` with no error. Sent with `idempotent=false` so a 429 is not backed off and retried. A
+successful answer (`""` included) is cached on the client per account for
+`accountCurrencyCacheFor` (6h — an account's currency does not change); failures are never
+cached. Unverified against a live account, like the rest of the monitor. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
 `ValidateMonitorAccountID` is the strict, Pattern-identical account-id check for this path.

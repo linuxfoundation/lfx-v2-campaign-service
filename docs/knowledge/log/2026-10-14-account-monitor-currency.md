@@ -14,3 +14,14 @@ than failing the monitor. New capabilities `service.AccountMonitorReader` (live)
 `service.AccountCurrencyReader` (report-backed, upstream operation `read_account_currency`);
 every non-Google published example carries `currency`. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
+Review round: LinkedIn's monitor now reads spend as Ad Analytics `costInLocalCurrency` instead of
+`costInUsd`, so spend, budgets and pacing share the account's own currency and `currency` names
+it on any account (a EUR account used to pace USD spend against EUR budgets). **For a USD account
+the numbers are unchanged.** Budgets that disagree about the currency leave `currency` absent and
+mark those campaigns' pacing unknown. Meta publishes its currency only when the minor-unit offset
+is 100 — its monitor budgets still divide by 100, so a JPY/KRW account's would be mislabelled —
+until #316's currency-aware conversion merges. The Reddit account read now runs beside the report
+fan-out on its own 3s budget with no 429 retry, and Reddit's rows-only metrics reader makes no
+account read; the Microsoft/X currency read is capped at 3s, Microsoft's `Account/Query` is not
+retried on a 429 and a successful answer is cached on the client per account for 6 hours.

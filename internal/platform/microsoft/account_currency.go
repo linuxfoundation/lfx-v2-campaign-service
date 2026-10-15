@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
@@ -116,6 +118,41 @@ var currencyCodeISO = map[string]string{
 	"YemeniRial":                           "YER",
 }
 
+// accountCurrencyCacheFor is how long a successful currency read is reused. An ad account's
+// currency is fixed when the account is created and Microsoft does not let it change, so hours
+// cost nothing in accuracy and spare one Customer Management call per monitor read.
+const accountCurrencyCacheFor = 6 * time.Hour
+
+// accountCurrencyCache is the client's cache of successful AccountCurrency answers, by account id.
+type accountCurrencyCache struct {
+	mu      sync.Mutex
+	entries map[string]accountCurrencyEntry
+}
+
+type accountCurrencyEntry struct {
+	code string
+	at   time.Time
+}
+
+func (c *accountCurrencyCache) get(accountID string, now time.Time) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[accountID]
+	if !ok || now.Sub(e.at) >= accountCurrencyCacheFor {
+		return "", false
+	}
+	return e.code, true
+}
+
+func (c *accountCurrencyCache) put(accountID, code string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = map[string]accountCurrencyEntry{}
+	}
+	c.entries[accountID] = accountCurrencyEntry{code: code, at: now}
+}
+
 // accountQueryResponse is the Account/Query envelope, decoded only for the account's id and
 // CurrencyCode. Id is RAW because Microsoft renders a `long` either bare or quoted (see
 // rawScalar); Account and CurrencyCode are pointers so absent is told from empty.
@@ -137,17 +174,30 @@ type accountQueryResponse struct {
 // the caller treats an error as "currency unknown". A CurrencyCode that is absent, null, or a
 // name currencyCodeISO does not list is "" with no error — the account answered, just not with a
 // currency this client can name. Errors never carry upstream text.
+//
+// A successful answer ("" included) is cached on the client for accountCurrencyCacheFor; a
+// failure is not, so the next monitor read tries again. The request is sent with
+// idempotent=false so a 429 is returned at once rather than backed off and retried: the currency
+// is only a label, and waiting out a throttle would spend the monitor's budget on it.
 func (c *Client) AccountCurrency(ctx context.Context) (string, error) {
 	if err := ValidateMonitorAccountID(c.account.AccountID); err != nil {
 		return "", err
 	}
+	if code, ok := c.currency.get(c.account.AccountID, c.now()); ok {
+		return code, nil
+	}
 	req := map[string]any{"AccountId": json.Number(c.account.AccountID)}
-	// idempotent: a read; a 429 retry cannot change anything.
-	body, err := c.doCustomerRequest(ctx, http.MethodPost, "Account/Query", req, true)
+	// idempotent=false, though this is a read: it is the switch that turns off the 429 retry.
+	body, err := c.doCustomerRequest(ctx, http.MethodPost, "Account/Query", req, false)
 	if err != nil {
 		return "", fmt.Errorf("read microsoft ad account: %w", err)
 	}
-	return accountCurrencyFromBody(body, c.account.AccountID)
+	code, err := accountCurrencyFromBody(body, c.account.AccountID)
+	if err != nil {
+		return "", err
+	}
+	c.currency.put(c.account.AccountID, code, c.now())
+	return code, nil
 }
 
 // accountCurrencyFromBody is AccountCurrency's decode, split out so its rules are testable on

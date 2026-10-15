@@ -30,6 +30,10 @@ func TestListAccountCampaignsWithCurrency(t *testing.T) {
 		{"no insights rows at all", `{"data":[],"paging":{}}`, ""},
 		{"malformed (lower case) dropped", `{"data":[` + row("111", `,"account_currency":"eur"`) + `],"paging":{}}`, ""},
 		{"malformed (four letters) dropped", `{"data":[` + row("111", `,"account_currency":"EURO"`) + `],"paging":{}}`, ""},
+		// JPY's minor-unit offset is 1, not the 100 minorUnitsToWhole divides budgets by, so its
+		// budgets read 100x too small: the currency is withheld until #316 converts them.
+		{"zero-decimal currency withheld", `{"data":[` + row("111", `,"account_currency":"JPY"`) + `],"paging":{}}`, ""},
+		{"well-formed but unlisted currency withheld", `{"data":[` + row("111", `,"account_currency":"ZZZ"`) + `],"paging":{}}`, ""},
 		{"rows disagree", `{"data":[` + row("111", `,"account_currency":"EUR"`) + `,` + row("222", `,"account_currency":"USD"`) + `],"paging":{}}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

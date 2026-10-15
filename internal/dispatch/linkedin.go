@@ -800,8 +800,9 @@ var _ service.AccountMonitorReader = (*LinkedInDispatcher)(nil)
 
 // ReadAccountMonitor implements service.AccountMonitorReader: ListAccountCampaignMetrics' read
 // (the body of both, with every guard described above), plus the currency the amounts are in,
-// from the budgets' currencyCode in the same campaign list — no extra call. Only ever "USD" or
-// absent: see linkedin.Client.ListAccountCampaignsWithCurrency.
+// from the budgets' currencyCode in the same campaign list — no extra call. Spend is
+// costInLocalCurrency, so it is the account's own code on any account; absent when the budgets do
+// not agree on one: see linkedin.Client.ListAccountCampaignsWithCurrency.
 func (d *LinkedInDispatcher) ReadAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
@@ -846,7 +847,8 @@ func (d *LinkedInDispatcher) ReadAccountMonitor(ctx context.Context, projectID s
 			PlatformCampaignID: r.CampaignID,
 			Name:               r.Name,
 			Status:             r.Status,
-			Spend:              r.SpendUSD,
+			Spend:              r.Spend, // costInLocalCurrency: the account's currency, as the budgets are
+			PacingUnknown:      r.PacingUnknown,
 			Impressions:        r.Impressions,
 			Clicks:             r.Clicks,
 			Ctr:                r.Ctr,

@@ -422,10 +422,11 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 
 // ListAccountCampaignsWithCurrency is ListAccountCampaigns plus the ad account's ISO 4217
 // currency, for the account monitor's response. Neither the campaign list nor the reports carry a
-// currency, so it costs ONE more call, made only once the campaign list has been read: GET
-// /ad_accounts/{id} (readMonitorAccountCurrency). That read is best-effort — a failed, untrusted
-// or currency-less answer leaves the currency "" and the rows are returned as ListAccountCampaigns
-// would return them.
+// currency, so it costs ONE more call, GET /ad_accounts/{id} (readMonitorAccountCurrency), made
+// once the campaign list has been read and run CONCURRENTLY with the report fan-out on its own
+// budget (monitorCurrencyTimeout), never retried on a 429. So it is off the critical path: a
+// slow, throttled or failing account read cannot delay or fail the rows, which are returned as
+// ListAccountCampaigns would return them; the currency is then "".
 func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
 	return c.listAccountCampaigns(ctx, accountID, days, true)
 }
@@ -448,11 +449,19 @@ func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, day
 	if err != nil {
 		return nil, "", fmt.Errorf("list account campaigns: %w", redactReportPath(err, accountID))
 	}
-	currency := ""
+	// The currency read starts after the list (the read's required half) and runs beside the
+	// report fan-out, on a context of its own bounded by monitorCurrencyTimeout. Its error is
+	// dropped: the currency is only a label.
+	currencyDone := make(chan string, 1)
 	if withCurrency {
-		// After the list (the read's required half) and before the report fan-out, which can
-		// spend the request's budget; the error is dropped: the currency is only a label.
-		currency, _ = c.readMonitorAccountCurrency(ctx, accountID)
+		go func() {
+			cctx, cancel := context.WithTimeout(ctx, monitorCurrencyTimeout)
+			defer cancel()
+			code, _ := c.readMonitorAccountCurrency(cctx, accountID)
+			currencyDone <- code
+		}()
+	} else {
+		currencyDone <- ""
 	}
 
 	// activeCampaigns: filter to configured_status ACTIVE or PAUSED, matching
@@ -561,8 +570,14 @@ func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, day
 			}
 		}
 	}
-	return rows, currency, nil
+	// Bounded: the read above is held to monitorCurrencyTimeout, and the channel is buffered so an
+	// early error return above never strands it.
+	return rows, <-currencyDone, nil
 }
+
+// monitorCurrencyTimeout bounds the monitor's best-effort account-currency read, which runs beside
+// the report fan-out: it must never be what holds the monitor up.
+const monitorCurrencyTimeout = 3 * time.Second
 
 // monitorAccountWire is the part of GET /ad_accounts/{id} the monitor reads. Pointers, so an
 // absent field is told from an empty one.
@@ -589,7 +604,10 @@ func (c *Client) readMonitorAccountCurrency(ctx context.Context, accountID strin
 	if err := ValidateAccountID(accountID); err != nil {
 		return "", err
 	}
-	resp, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+accountID, nil)
+	// Not retried on a 429: a throttled account read is answered as "currency unknown" rather
+	// than waited out, since the currency is only a label (requestNoThrottleRetry's own reason —
+	// a duplicated create — does not apply to a GET; this is about time).
+	resp, err := c.requestNoThrottleRetry(ctx, http.MethodGet, "/ad_accounts/"+accountID, nil)
 	if err != nil {
 		return "", fmt.Errorf("read reddit ad account: %w", redactReportPath(err, accountID))
 	}

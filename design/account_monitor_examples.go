@@ -41,9 +41,8 @@ const (
 	accountMonitorExampleWindowFrom = "2026-09-06"
 	accountMonitorExampleWindowTo   = "2026-10-05"
 	accountMonitorExampleDays       = 30
-	// accountMonitorExampleCurrency is the currency every non-Google example reports. USD on
-	// purpose: it is the one currency LinkedIn's monitor can name (see AccountMonitor.currency),
-	// and the action items' "$" amounts (Google, LinkedIn, Meta, Reddit, Microsoft) assume it.
+	// accountMonitorExampleCurrency is the currency every non-Google example reports. USD
+	// because the action items' "$" amounts (Meta, Reddit, Microsoft) are printed in it.
 	accountMonitorExampleCurrency = "USD"
 )
 

@@ -135,11 +135,11 @@ renderer formats with a symbol when it is present and without one otherwise.
 
 | Platform | Source | Extra call? |
 | -------- | ------ | ----------- |
-| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree | No |
-| LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); published only when it is `USD` | No |
-| Reddit | `GET /ad_accounts/{id}` after the campaign list (`reddit.Client.readMonitorAccountCurrency`) | One |
+| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless its minor-unit offset is 100 | No |
+| LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); spend is `costInLocalCurrency`, in the same currency | No |
+| Reddit | `GET /ad_accounts/{id}` (`reddit.Client.readMonitorAccountCurrency`), beside the report fan-out, 3s budget, no 429 retry | One |
 | X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
-| Microsoft | Customer Management `Account/Query` (`microsoft.Client.AccountCurrency`), `CurrencyCode` enum name mapped to ISO by `currencyCodeISO` | One |
+| Microsoft | Customer Management `Account/Query` (`microsoft.Client.AccountCurrency`), `CurrencyCode` enum name mapped to ISO by `currencyCodeISO`; no 429 retry; cached on the client 6h | One per account per 6h |
 | Google Ads | not set (Google Ads is owned separately) | — |
 
 - **Plumbing.** The live reads go through a new optional capability, `AccountMonitorReader`
@@ -148,20 +148,32 @@ renderer formats with a symbol when it is present and without one otherwise.
   and Reddit implement it, and their `ListAccountCampaignMetrics` is now a wrapper returning its
   rows. Google keeps only `AccountMetricsReader`, so its currency is absent. The report-backed
   read calls the optional `AccountCurrencyReader` (`ReadAccountCurrency`) LAST in
-  `ReadReportedAccountCampaigns`, on what is left of the shared budget, instrumented as
-  `read_account_currency`; the currency is never saved with a report
-  (`ReportedAccountRead.Currency`).
+  `ReadReportedAccountCampaigns`, on what is left of the shared budget and capped at
+  `accountCurrencyReadTimeout` (3s), instrumented as `read_account_currency`; the currency is
+  never saved with a report (`ReportedAccountRead.Currency`). The Reddit and Microsoft reads are
+  sent without the 429 back-off, so a throttle answers "no currency" at once.
+- **Off the critical path.** A slow, hung or throttled currency read costs a monitor read at most
+  3s — Reddit's runs beside the report fan-out, so usually nothing — and never a row or the
+  response. `RedditDispatcher.ListAccountCampaignMetrics` (the rows-only reader) makes no
+  ad-account read at all; only `ReadAccountMonitor` pays for it.
 - **Validation.** `model.NormalizeCurrencyCode` keeps a value only if it is exactly three ASCII
   upper-case letters — no trimming, no case folding — and is applied in each client, in the
   orchestrator, and in `buildAccountMonitor`. A malformed code is dropped, not an error.
 - **Agreement.** Meta and LinkedIn read the code off many elements; a missing code (LinkedIn), a
   malformed one (Meta) or two that disagree makes the whole set unusable rather than picking one,
   since one account has one currency.
-- **LinkedIn is USD or nothing.** Its spend is Ad Analytics' `costInUsd` while its budgets are in
-  the account's currency, so only a USD account has one currency for every amount. A EUR account
-  gets no `currency` — naming EUR would mislabel the spend, naming USD the budgets. (The pacing
-  comparison of USD spend against a non-USD budget is a pre-existing limitation this field does
-  not fix.)
+- **LinkedIn spends in the account's currency.** The monitor's Ad Analytics read asks for
+  `costInLocalCurrency`, not `costInUsd`, so spend is in the currency its budgets' `currencyCode`
+  names and pacing compares like with like on any account (before this, a EUR account's USD spend
+  was paced against its EUR budgets). For a USD account the numbers are unchanged. When the
+  budgets name two different codes, `currency` is absent and every row whose budget named one is
+  `PacingUnknown` (`linkedin.AccountCampaignRow.PacingUnknown`, honoured by
+  `rules.EvaluateLinkedInMonitor`): which budgets are in the spend's currency cannot be told. The
+  single-campaign metrics read and the audience read still report `costInUsd`.
+- **Meta withholds zero-decimal currencies.** The Meta monitor converts budgets from minor units by
+  dividing by 100 (`minorUnitsToWhole`), so a JPY/KRW/… account's budgets are wrong by that factor;
+  `monitorPublishableCurrency` publishes the code only when `currencyOffsetFor` gives 100, and logs
+  the rest. #316 makes the conversion currency-aware; the restriction goes when it merges.
 - **Identity and failure.** The two new reads (Reddit, Microsoft) and X's currency are taken only
   from a body `identityjson` trusts that names the requested account. Any failure — transport,
   status, untrusted body, another account's id — leaves `currency` absent and never fails the
