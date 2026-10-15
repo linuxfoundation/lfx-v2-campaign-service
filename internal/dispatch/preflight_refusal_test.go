@@ -27,6 +27,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // noSendTransport fails every request and counts it. A pre-flight refusal is by definition
@@ -680,6 +681,96 @@ func TestDispatch_LinkedInUnselectedAccountNamesTheMissingChoice(t *testing.T) {
 			}
 			if n := tr.sent.Load(); n != 0 {
 				t.Errorf("%d request(s) sent for an account-less connection", n)
+			}
+		})
+	}
+}
+
+// TestDispatch_LinkedInMissingOrgIDNamesTheRowItRead pins WHOSE connection the create path's
+// missing-org-id refusal names. The org id is checked inline after resolveLinkedInCredentials,
+// so it never passes through systemScoped; before this test it always said the PROJECT's
+// connection lacked one, even when the credentials came from the LF system fallback row — an
+// operator told to fix a connection the project does not own. The refusal now reads the same
+// provenance and uses the #208 connection-class sentence heads.
+//
+// Three rows: the project's own row; the unforced fallback (the project has no row); and the
+// forced flag substituting the LF row for a project row that HAS an org id — the case where
+// naming the project would be most wrong, because the project's own row is fine.
+//
+// Every case is still a pre-send refusal: NoUpstreamCreate (claim released), nil campaign,
+// verbatim job result, zero requests.
+func TestDispatch_LinkedInMissingOrgIDNamesTheRowItRead(t *testing.T) {
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	const (
+		projectWording = "this project's linkedin-ads connection is missing its org id; nothing was sent"
+		systemWording  = "the LF system linkedin-ads connection is missing its org id; nothing was sent"
+	)
+	noOrg := func() *model.Connection {
+		c := activeLinkedInConn(goodLinkedInCreds)
+		c.ProviderConfig = map[string]string{"org_id": "  "} // whitespace-only is missing too
+		return c
+	}
+	for _, tc := range []struct {
+		name   string
+		forced bool
+		repo   func() connReader
+		want   string
+	}{
+		{
+			name: "project-owned row",
+			repo: func() connReader { return fakeConnReader{conn: noOrg()} },
+			want: projectWording,
+		},
+		{
+			name: "lf system fallback",
+			repo: func() connReader {
+				return &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: noOrg()}}
+			},
+			want: systemWording,
+		},
+		{
+			name:   "forced lf system row over a complete project row",
+			forced: true,
+			repo: func() connReader {
+				return &scopedConnReader{rows: map[string]*model.Connection{
+					"cncf":                activeLinkedInConn(goodLinkedInCreds),
+					model.SystemProjectID: noOrg(),
+				}}
+			},
+			want: systemWording,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.forced {
+				t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+			}
+			tr := &noSendTransport{}
+			d := NewLinkedInDispatcher(tc.repo(), identityEncryptor{}, linkedin.WithHTTPClient(&http.Client{Transport: tr}))
+
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			if camp != nil {
+				t.Errorf("want no campaign for a connection with no org id, got %+v", camp)
+			}
+			if err == nil {
+				t.Fatal("Dispatch: want a refusal for a connection with no org id, got nil")
+			}
+			if !isNoUpstreamCreate(err) {
+				t.Errorf("error %v is not NoUpstreamCreate, so the dispatch claim would be retained", err)
+			}
+			if msg, ok := domain.AsPreflightRefusal(err); !ok || msg != tc.want {
+				t.Errorf("refusal = %q (preflight=%v)\nwant      %q", msg, ok, tc.want)
+			}
+			if got := service.DispatchFailureMessage(model.ProviderLinkedInAds, err, true); got != tc.want {
+				t.Errorf("job result error = %q\nwant               %q", got, tc.want)
+			}
+			if n := tr.sent.Load(); n != 0 {
+				t.Errorf("%d request(s) sent for a connection with no org id", n)
 			}
 		})
 	}
