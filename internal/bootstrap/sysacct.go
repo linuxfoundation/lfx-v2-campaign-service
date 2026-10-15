@@ -504,10 +504,11 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // state rather than a dead one.
 //
 // Be exact about WHERE the naming lands, because Meta's only account-needing path is the
-// asynchronous one and that changes the answer. dispatchPlatform collapses every dispatcher
-// error into the same "platform campaign creation failed" job result, so the reason token
-// reaches the operator in the dispatch-failure LOG LINE, not by polling the job. Google Ads
-// is identical on its create path; what differs is that Google Ads' toggle and metrics need
+// asynchronous one and that changes the answer. dispatchPlatform reports a dispatcher error in
+// the job result only by classification (DispatchFailureMessage, issue #208), so the reason
+// token reaches the operator in the dispatch-failure LOG LINE and as the job result's
+// "(reason: account_not_selected)" suffix — never as the error's text. Google Ads is identical
+// on its create path; what differs is that Google Ads' toggle and metrics need
 // the account id too and answer a synchronous 409, and Meta's do not. Log-only is still the
 // second half — an unclassified error names nothing at all — but it is a weaker signal than
 // the Google Ads case, and someone weighing the next provider should weigh the real one.

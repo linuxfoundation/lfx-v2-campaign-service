@@ -57,6 +57,9 @@ False positives are suppressed **per line**, with a
 - `internal/infrastructure/postgres/required_index_probe_redaction_test.go` — intentional
   fake DSN carrying a user, password, host and database, asserting the deparse probe's WARN
   withholds all four
+- `internal/dispatch/preflight_refusal_test.go` and `internal/service/dispatch_failure_test.go` —
+  an intentional fake `ghp_` token, asserting `domain.CallerValue` withholds it from a
+  dispatch failure message
 
 Prefer line directives over path exclusions here. Unlike the `*_test.go`
 allowlist in `.gitleaks.toml`, a secretlint path exclusion would silence
