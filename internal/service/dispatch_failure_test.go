@@ -303,20 +303,50 @@ func TestCallerValue(t *testing.T) {
 		{"reset/SECRET/208", "(value withheld)"}, // a path
 		{"SECRET%2F208", "(value withheld)"},     // percent-encoded payload
 		{"SECRET\\208", "(value withheld)"},      // escaped payload
+		{"/SECRET-208", "(value withheld)"},      // single-slash absolute path
+		{"reset/SECRET-208", "(value withheld)"}, // single-slash relative path
+		{"image/png", "(value withheld)"},        // MIME goes through MIMEValue, not here
+		{"say \"SECRET\"", "(value withheld)"},   // quotes
+		{"Learn More", "(value withheld)"},       // an invalid CTA with a space: withheld, not echoed
+		{"bell\x07", "(value withheld)"},         // control character
 		// Legitimate shapes the refusals quote must survive.
-		{"image/png", `"image/png"`}, // a MIME type the image refusals quote
 		{"2099-01-04", `"2099-01-04"`},
+		{"2099-01-04T00:00:00Z", `"2099-01-04T00:00:00Z"`}, // the ISO instant X's lead-time refusal quotes
+		{"t2_gv9wtbfa", `"t2_gv9wtbfa"`},
+		{"video_views", `"video_views"`},
+		{"VIDEO_VIEW_6S", `"VIDEO_VIEW_6S"`},
+		{"urn:li:skill:1", `"urn:li:skill:1"`},
+		{"US", `"US"`},
+		{"inactive", `"inactive"`},
 		{"3fa85f64-5717-4562-b3fc-2c963f66afa6", `"3fa85f64-5717-4562-b3fc-2c963f66afa6"`}, // asset/project UUID
 		{"act_193556282970417", `"act_193556282970417"`},
 		{"urn:li:image:D4E10AQGd7Hmvf3D4NAxyz", `"urn:li:image:D4E10AQGd7Hmvf3D4NAxyz"`},
 		{"1234567890123456789", `"1234567890123456789"`},
 		{"cloud-native-computing-foundation-events", `"cloud-native-computing-foundation-events"`}, // digit-free slug
 		{long, `"` + strings.Repeat("a", 64) + `…" (truncated)`},
-		{"bell\x07", "\"bell\uFFFD\""},
 		{"", `""`},
 	} {
 		if got := domain.CallerValue(tc.in); got != tc.want {
 			t.Errorf("CallerValue(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestMIMEValue: image refusals quote only the allowlisted image MIME types; anything else is
+// held to CallerValue, whose alphabet has no "/".
+func TestMIMEValue(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"image/png", `"image/png"`},
+		{"image/jpeg", `"image/jpeg"`},
+		{"image/gif", `"image/gif"`},
+		{"image/webp", `"image/webp"`},
+		{"image/svg+xml", "(value withheld)"},
+		{"text/plain", "(value withheld)"},
+		{"image/png/SECRET-208", "(value withheld)"},
+		{"png", `"png"`},
+	} {
+		if got := domain.MIMEValue(tc.in); got != tc.want {
+			t.Errorf("MIMEValue(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

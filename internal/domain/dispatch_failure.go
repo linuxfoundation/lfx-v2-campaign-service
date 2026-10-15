@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // PreflightRefusal is a create refusal THIS SERVICE authored and raised before anything was
@@ -99,74 +98,75 @@ func AsPreflightRefusal(err error) (string, bool) {
 // maxCallerValueRunes bounds how much of one caller-supplied value a refusal may quote.
 const maxCallerValueRunes = 64
 
-// callerValueWithheld replaces a caller value that is shaped like something that can carry a
-// secret.
+// callerValueWithheld replaces a caller value that is not shown.
 const callerValueWithheld = "(value withheld)"
 
-// CallerValue renders a caller-supplied scalar (a date, an id, a keyword) for a refusal that
-// may reach the job result verbatim (PreflightRefusal). Caller input is not upstream text, but
-// it is not ours either: an "id" field can hold a pasted URL whose query carries a token, and a
-// value can be arbitrarily long or carry control characters. So, modelled on the dispatchers'
-// former safeAssetIDForError:
-//
-//   - a value is not shown at all when it is shaped like something that carries a secret:
-//     it contains "://", "?", "#", "@", "=", "&", "\\", "%" or any whitespace (a URL, a
-//     query — including a bare one such as "access_token=…&scope=ads" — a userinfo
-//     credential, an escaped or percent-encoded payload, or a multi-line paste); it starts
-//     with "//" (a protocol-relative URL) or contains two or more "/" (a path); it contains
-//     a "/" together with a "." (a host and path, "events.example/reset/…" or
-//     "/events.example"); or it contains an opaque token: a run of 32 or more characters from
-//     [A-Za-z0-9+/_-] that includes a digit and is not a canonical UUID (base64, base64url
-//     and hex tokens). No value these refusals quote legitimately has any of these shapes:
-//     dates (no slash), numeric and short alphanumeric account/tweet/pixel/list ids,
-//     "urn:li:…" URNs (colons, no slash; the colons also break a token run), objectives and
-//     CTAs, and MIME types such as "image/png" (one slash, no dot). The UUIDs used as asset
-//     and project ids are exempted from the token rule by shape, and a digit-free run (a
-//     long slug) is kept;
-//   - otherwise it is cut to maxCallerValueRunes (marked with "…" and a trailing
-//     " (truncated)", so a cut value cannot be mistaken for a whole one), every non-graphic
-//     rune is replaced with U+FFFD, and the result is quoted.
-//
-// Every caller-supplied value formatted into a PreflightRefusal must go through this.
-func CallerValue(s string) string {
-	if strings.Contains(s, "://") || strings.ContainsAny(s, "?#@=&\\%") || strings.IndexFunc(s, unicode.IsSpace) >= 0 ||
-		looksLikePath(s) || hasOpaqueToken(s) {
-		return callerValueWithheld
-	}
-	var b strings.Builder
-	n := 0
-	truncated := false
-	for _, r := range s {
-		if n == maxCallerValueRunes {
-			b.WriteString("…")
-			truncated = true
-			break
-		}
-		if !unicode.IsGraphic(r) {
-			r = unicode.ReplacementChar
-		}
-		b.WriteRune(r)
-		n++
-	}
-	if truncated {
-		return strconv.Quote(b.String()) + " (truncated)"
-	}
-	return strconv.Quote(b.String())
-}
-
 var (
-	opaqueTokenRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{32,}`)
-	canonicalUUID  = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+	// callerValueCharset is the WHOLE alphabet a shown caller value may use. It is an
+	// allowlist, not a list of dangerous shapes: every shape that can carry a secret — a URL
+	// or protocol-relative URL, any path ("/SECRET", "reset/SECRET"), a query or bare
+	// "k=v&k=v", userinfo, a fragment, an escaped or percent-encoded payload, whitespace, a
+	// control character, quotes — needs a character outside it, so none needs its own rule.
+	callerValueCharset = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
+	opaqueTokenRun     = regexp.MustCompile(`[A-Za-z0-9_-]{32,}`)
+	canonicalUUID      = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
 )
 
-// looksLikePath reports whether s is shaped like a URL without a scheme or a path: it starts
-// with "//", it has two or more "/", or it has a "/" and a "." (a host beside a path). A single
-// slash with no dot — a MIME type such as "image/png", which the image refusals quote — passes.
-func looksLikePath(s string) bool {
-	if strings.HasPrefix(s, "//") || strings.Count(s, "/") >= 2 {
-		return true
+// CallerValue renders a caller-supplied scalar (a date, an id, a URN) for a refusal that may
+// reach the job result verbatim (PreflightRefusal). Caller input is not upstream text, but it
+// is not ours either: an "id" field can hold a pasted URL, path or query carrying a token.
+//
+// It is a strict ALLOWLIST (issue #208, after a blocklist kept missing shapes):
+//
+//   - the value is shown only if every character is in [A-Za-z0-9._:-] and it holds no opaque
+//     token — a run of 32+ characters from [A-Za-z0-9_-] that includes a digit and is not a
+//     canonical UUID (a base64url or hex secret fits the alphabet, so it needs this one extra
+//     rule). Anything else is "(value withheld)", never partially shown;
+//   - a shown value is cut to maxCallerValueRunes ("…" plus a trailing " (truncated)", so a cut
+//     value cannot pass for a whole one) and quoted.
+//
+// Every legitimate shape the refusals quote fits: dates and the ISO instants derived from them
+// ("2099-01-04", "2099-01-04T00:00:00Z"), numeric and alphanumeric account / tweet / pixel /
+// list / customer / funding-instrument ids, "act_…" and "t2_…" ids, "urn:li:…" URNs, UUIDs,
+// geo and match-type codes, objectives ("video_views"), video goals, targeting-profile and
+// project slugs, connection statuses. A value outside it is, at these call sites, already
+// invalid input — a CTA or keyword with a space, a MIME type (use MIMEValue) — so withholding
+// it costs the operator only the echo of a value they supplied, and the refusal still says
+// which field and why.
+//
+// Every caller-supplied value formatted into a PreflightRefusal must go through this or
+// MIMEValue.
+func CallerValue(s string) string {
+	if s == "" {
+		return `""`
 	}
-	return strings.Contains(s, "/") && strings.Contains(s, ".")
+	if !callerValueCharset.MatchString(s) || hasOpaqueToken(s) {
+		return callerValueWithheld
+	}
+	if n := len([]rune(s)); n > maxCallerValueRunes {
+		return strconv.Quote(string([]rune(s)[:maxCallerValueRunes])+"…") + " (truncated)"
+	}
+	return strconv.Quote(s)
+}
+
+// imageMIMEs are the only MIME types an image refusal may quote verbatim: the formats the
+// stored-asset store and the platform image validators deal in.
+var imageMIMEs = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/gif":  true,
+	"image/webp": true,
+}
+
+// MIMEValue renders a recorded or declared MIME type for an image refusal. A value in
+// imageMIMEs is quoted; anything else goes through CallerValue, whose alphabet has no "/", so
+// it is withheld. A dedicated helper rather than a "/" exception inside CallerValue keeps the
+// one character a path needs out of every other call site.
+func MIMEValue(s string) string {
+	if imageMIMEs[s] {
+		return strconv.Quote(s)
+	}
+	return CallerValue(s)
 }
 
 // hasOpaqueToken reports whether s contains a run shaped like a credential token (see

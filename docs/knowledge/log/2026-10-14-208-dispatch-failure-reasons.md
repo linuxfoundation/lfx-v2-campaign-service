@@ -69,3 +69,18 @@ Second PR #335 bot round:
   pin that an invalid LinkedIn or Microsoft stored image reaches the job result with nothing
   sent.
 
+Third PR #335 bot round: single-slash paths (`/SECRET-208`, `reset/SECRET-208`) still got
+through the blocklist. `CallerValue` is now a strict ALLOWLIST. A value is shown only if every
+character is in `[A-Za-z0-9._:-]` and it holds no opaque token. Anything else is withheld,
+which ends the shape-by-shape rules.
+
+Every call site's real shapes fit: dates and ISO instants, `act_`/`t2_` and numeric ids,
+`urn:li:` URNs, UUIDs, objectives such as `video_views`, video goals, geo and match-type codes,
+slugs and statuses. The only values it now withholds that the blocklist showed are invalid
+inputs with characters outside the alphabet, such as a keyword like `c++`. Values with spaces,
+such as Reddit CTAs like "Learn More" and multi-word keywords, were already withheld. In each
+case the refusal still names the field and the rule.
+
+Image refusals render MIME types through a dedicated `domain.MIMEValue` (`image/png`,
+`image/jpeg`, `image/gif`, `image/webp`) rather than a `/` exception.
+

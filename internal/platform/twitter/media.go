@@ -125,12 +125,14 @@ func validateImageInput(img *ImageInput) error {
 	switch img.MIME {
 	case "image/png", "image/jpeg":
 	default:
-		return fmt.Errorf("invalid creative image: type %s is not image/png or image/jpeg", domain.CallerValue(img.MIME))
+		return fmt.Errorf("invalid creative image: type %s is not image/png or image/jpeg", domain.MIMEValue(img.MIME))
 	}
 	// The stored asset was sniffed at upload; this re-check costs one look at 512 bytes and
 	// keeps the client correct for a caller that is not the dispatcher.
 	if sniffed := http.DetectContentType(img.Bytes); sniffed != img.MIME {
-		return fmt.Errorf("invalid creative image: bytes are %s, not the declared %s", sniffed, img.MIME)
+		// sniffed is net/http's own fixed content-type vocabulary, not caller text, so it is
+		// rendered as is; the declared MIME goes through domain.MIMEValue.
+		return fmt.Errorf("invalid creative image: bytes are %s, not the declared %s", sniffed, domain.MIMEValue(img.MIME))
 	}
 	return nil
 }

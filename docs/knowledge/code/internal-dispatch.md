@@ -4432,14 +4432,21 @@ are marked too: Reddit's stored-asset choice, LinkedIn's inactive / incomplete /
 no-variant / foreign-account refusals, X's missing funding instrument, and HubSpot's missing
 `sourceEmailId` and send-list-in-suppression check. Every CALLER or connection value a marked
 refusal names — dates, ids, URNs, objectives, keywords, CTA, video goal, list ids, targeting
-profile and facet names — is rendered through `domain.CallerValue`. That function quotes the
-value, cuts it to 64 runes, replaces non-graphic runes, and withholds it entirely
-("(value withheld)") when it contains `://`, `?`, `#`, `@`, `=`, `&`, `\`, `%` or whitespace;
-starts with `//`; contains two or more `/`, or a `/` together with a `.`; or contains an opaque
-token (a run of 32+ characters from `[A-Za-z0-9+/_-]` that includes a digit and is not a
-canonical UUID). A value it cuts carries "… (truncated)". It replaced the dispatchers'
-`safeAssetIDForError`. So a pasted secret-bearing URL, a bare query, or a token in an id
-field never reaches the job result. The shared helpers whose text
+profile and facet names — is rendered through `domain.CallerValue`, a strict ALLOWLIST.
+
+- **Shown:** a value whose every character is in `[A-Za-z0-9._:-]` and which holds no opaque
+  token. An opaque token is a run of 32+ characters from `[A-Za-z0-9_-]` that includes a digit
+  and is not a canonical UUID. A shown value is quoted and cut to 64 runes ("… (truncated)").
+- **Withheld:** anything else reads "(value withheld)". That covers every URL, every path
+  (including a single `/SECRET`), every query, every encoded payload, whitespace, control
+  characters and quotes.
+- **Still fit:** dates and ISO instants, ids including `act_`/`t2_`, `urn:li:` URNs, UUIDs,
+  objectives, video goals, codes and slugs.
+- **MIME types:** image refusals render them through `domain.MIMEValue`, which quotes only
+  `image/png`, `image/jpeg`, `image/gif` and `image/webp` and holds anything else to
+  `CallerValue`.
+- **Lineage:** `CallerValue` replaced the dispatchers' `safeAssetIDForError` and an earlier
+  blocklist. The shared helpers whose text
 reaches a marked refusal (LinkedIn `toMs`/`validateSchedule`/`resolveAccountID`/`resolveOrgID`/
 targeting profile and facet checks, Meta `buildPromotedObject`, Microsoft keyword/geo/ad-copy
 validators, X `validateDate`/`validateImageInput`, Reddit's asset-id check) use it too.

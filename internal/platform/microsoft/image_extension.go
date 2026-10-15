@@ -186,7 +186,7 @@ func ValidateImage(in ImageInput) error {
 		return fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
 	}
 	if format != wantFormat {
-		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.CallerValue(in.MimeType))
+		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.MIMEValue(in.MimeType))
 	}
 	if cfg.Width < minImageWidth || cfg.Height < minImageHeight {
 		return fmt.Errorf("%w: the image is %dx%d; Microsoft Advertising requires at least %dx%d", ErrImageInvalid, cfg.Width, cfg.Height, minImageWidth, minImageHeight)

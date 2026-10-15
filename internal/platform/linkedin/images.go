@@ -126,7 +126,7 @@ func ValidateImage(in ImageUpload) error {
 		return fmt.Errorf("%w: the image header could not be decoded", ErrImageInvalid)
 	}
 	if format != wantFormat {
-		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.CallerValue(in.MimeType))
+		return fmt.Errorf("%w: the image bytes are %s, not the recorded %s", ErrImageInvalid, domain.CallerValue(format), domain.MIMEValue(in.MimeType))
 	}
 	w, h := cfg.Width, cfg.Height
 	if int64(w)*int64(h) >= maxImagePixels {
