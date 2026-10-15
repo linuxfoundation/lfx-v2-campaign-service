@@ -41,10 +41,10 @@ import (
 //     eligibility half. accountDiscoveryProviders is {GoogleAds, Meta, X} — providers holding
 //     BOTH halves (X joined in LFXV2-3319). The second half is "Dispatch itself calls the validator that tags
 //     ErrAccountNotSelected", which is a CALL-GRAPH property: every dispatcher including Reddit
-//     mentions that sentinel, so no grep, symbol table or runtime reflection distinguishes
-//     LinkedIn (tags it in a resolver Dispatch does not call) from X (whose Dispatch calls the
-//     tagging validator itself). A derived sentence would therefore have to hardcode the very
-//     judgement that keeps going stale.
+//     mentions that sentinel, so no grep, symbol table or runtime reflection distinguished
+//     LinkedIn before its create path joined the resolver (it tagged it in a resolver Dispatch
+//     did not call) from X (whose Dispatch calls the tagging validator itself). A derived
+//     sentence would therefore have to hardcode the very judgement that keeps going stale.
 //
 // So the FIRST half — which is mechanically checkable, and is what LFXV2-3319 actually moved —
 // is pinned here against the interface itself, and the second half stays prose because it is a

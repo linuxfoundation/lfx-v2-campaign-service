@@ -2127,6 +2127,18 @@ func validateVariantImage(v AdVariant) error {
 	return validateVariantImageURL(v.ImageURL)
 }
 
+// callerValueList renders caller-supplied values, each through domain.CallerValue, joined
+// with ", ". It serves the geo PreflightRefusals and the success-path "Geo targets
+// dropped/skipped" Steps lines alike: Steps are saved on the create job, so a dropped entry
+// that is a URL (or any other non-code text) must read "(value withheld)" there too.
+func callerValueList(vs []string) string {
+	shown := make([]string, len(vs))
+	for i, v := range vs {
+		shown[i] = domain.CallerValue(v)
+	}
+	return strings.Join(shown, ", ")
+}
+
 // validateGeoTargets uppercases, trims, and filters to ISO-2 codes; defaults to
 // ["US"] when nothing valid remains (mirrors validateGeoTargets).
 func validateGeoTargets(geoTargets []string) []string {
@@ -3092,6 +3104,91 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		label = accountID
 	}
 
+	// Geo filtering and its two refusals run HERE, before Step 1's account preflight GET
+	// (issue #208). They read only the caller's GeoTargets and this package's static
+	// eligibility tables — nothing the preflight returns — so a geo list Meta cannot use costs
+	// no upstream round trip, and both refusals are pre-send refusals in the PreflightRefusal
+	// sense. They used to run after the preflight and the currency resolution, as bare
+	// fmt.Errorf. The "dropped"/"skipped" Steps lines are still appended at Step 2, after the
+	// preflight's "Account verified" line, in the same order as before; each listed entry is
+	// now quoted (or withheld) through callerValueList.
+	//
+	// If the caller supplied geo targets but NONE survive validation (all bogus or
+	// sanctioned), fail rather than silently falling back to US and targeting a
+	// country they didn't ask for. An empty input legitimately defaults to US.
+	allGeo := validateGeoTargets(in.GeoTargets)
+	// "Supplied geos" means NON-BLANK entries: a caller passing only whitespace
+	// (e.g. []string{"   "}) is semantically the same as passing none, which
+	// legitimately defaults to US — so the dropped/fallback checks below must not
+	// treat it as an explicit request and error with an empty "(dropped: )" list.
+	suppliedGeos := 0
+	for _, g := range in.GeoTargets {
+		if strings.TrimSpace(g) != "" {
+			suppliedGeos++
+		}
+	}
+	// Surface geos that were supplied but dropped by validateGeoTargets (bogus/
+	// non-ISO codes, or Meta-ineligible/sanctioned countries like IR/CU/KP/RU) as
+	// an explicit step, so a caller who mixed eligible + ineligible codes isn't
+	// left believing an excluded country is being targeted. This mirrors the
+	// regulated-country (SG/TW/KR) step emitted below. Skip the note when the only
+	// difference is the empty-input US fallback.
+	var droppedGeos []string
+	if suppliedGeos > 0 {
+		kept := make(map[string]struct{}, len(allGeo))
+		for _, g := range allGeo {
+			kept[g] = struct{}{}
+		}
+		seenDropped := make(map[string]struct{})
+		for _, g := range in.GeoTargets {
+			up := strings.ToUpper(strings.TrimSpace(g))
+			if up == "" {
+				continue
+			}
+			if _, ok := kept[up]; ok {
+				continue
+			}
+			if _, dup := seenDropped[up]; dup {
+				continue
+			}
+			seenDropped[up] = struct{}{}
+			droppedGeos = append(droppedGeos, up)
+		}
+	}
+	if suppliedGeos > 0 && len(allGeo) == 1 && allGeo[0] == "US" {
+		// Only a real problem if the caller didn't actually ask for US: this means
+		// every supplied geo was invalid or sanctioned and we fell back to US.
+		askedUS := false
+		for _, g := range in.GeoTargets {
+			if strings.EqualFold(strings.TrimSpace(g), "US") {
+				askedUS = true
+				break
+			}
+		}
+		if !askedUS {
+			// NAME the dropped geos in the error (the "Geo targets dropped" step is
+			// discarded when we return nil), so the caller learns exactly which codes
+			// were invalid/ineligible rather than a generic message. A dropped entry is
+			// caller text that failed validation — it can be anything — so each one is
+			// rendered through domain.CallerValue.
+			return nil, domain.PreflightRefusalf("no usable geo targets: all supplied geos are invalid or ineligible for Meta ads targeting (dropped: %s) — refusing to silently fall back to US", callerValueList(droppedGeos))
+		}
+	}
+	geoCountries := make([]string, 0, len(allGeo))
+	skippedGeos := make([]string, 0)
+	for _, g := range allGeo {
+		if regulatedCountries[g] {
+			skippedGeos = append(skippedGeos, g)
+		} else {
+			geoCountries = append(geoCountries, g)
+		}
+	}
+	if len(geoCountries) == 0 {
+		// skippedGeos holds only codes that passed validateGeoTargets AND are keys of the
+		// fixed regulatedCountries table, so the list is service-vetted, not free caller text.
+		return nil, domain.PreflightRefusalf("meta campaign skipped: all selected geo targets (%s) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target", strings.Join(skippedGeos, ", "))
+	}
+
 	// Step 1: Account preflight (GET the ad-account object). This both verifies
 	// access and fetches the account's ISO 4217 currency CODE — from which the
 	// minor-unit offset used to encode the budget is DERIVED (see below; the
@@ -3100,8 +3197,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// resource exists.
 	//
 	// A genuine CALLER-context cancellation/deadline must short-circuit here —
-	// otherwise, for inputs that go on to fail the geo checks, CreateCampaign would
-	// return that geo-validation error and mask the fact that the caller cancelled.
+	// otherwise, for inputs that go on to fail the currency or budget checks,
+	// CreateCampaign would return that validation error and mask the fact that the
+	// caller cancelled.
 	// Distinguish the caller ctx (ctx.Err() != nil) from the client's own
 	// http.Client.Timeout, which surfaces as a DeadlineExceeded-wrapped error while
 	// the caller ctx is still live.
@@ -3168,83 +3266,16 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, err
 	}
 
-	// Step 2: geo filtering + campaign creation.
-	// If the caller supplied geo targets but NONE survive validation (all bogus or
-	// sanctioned), fail rather than silently falling back to US and targeting a
-	// country they didn't ask for. An empty input legitimately defaults to US.
-	allGeo := validateGeoTargets(in.GeoTargets)
-	// "Supplied geos" means NON-BLANK entries: a caller passing only whitespace
-	// (e.g. []string{"   "}) is semantically the same as passing none, which
-	// legitimately defaults to US — so the dropped/fallback checks below must not
-	// treat it as an explicit request and error with an empty "(dropped: )" list.
-	suppliedGeos := 0
-	for _, g := range in.GeoTargets {
-		if strings.TrimSpace(g) != "" {
-			suppliedGeos++
-		}
-	}
-	// Surface geos that were supplied but dropped by validateGeoTargets (bogus/
-	// non-ISO codes, or Meta-ineligible/sanctioned countries like IR/CU/KP/RU) as
-	// an explicit step, so a caller who mixed eligible + ineligible codes isn't
-	// left believing an excluded country is being targeted. This mirrors the
-	// regulated-country (SG/TW/KR) step emitted below. Skip the note when the only
-	// difference is the empty-input US fallback.
-	var droppedGeos []string
-	if suppliedGeos > 0 {
-		kept := make(map[string]struct{}, len(allGeo))
-		for _, g := range allGeo {
-			kept[g] = struct{}{}
-		}
-		seenDropped := make(map[string]struct{})
-		for _, g := range in.GeoTargets {
-			up := strings.ToUpper(strings.TrimSpace(g))
-			if up == "" {
-				continue
-			}
-			if _, ok := kept[up]; ok {
-				continue
-			}
-			if _, dup := seenDropped[up]; dup {
-				continue
-			}
-			seenDropped[up] = struct{}{}
-			droppedGeos = append(droppedGeos, up)
-		}
-		if len(droppedGeos) > 0 {
-			steps = append(steps, fmt.Sprintf("Geo targets dropped (invalid code or not eligible for Meta ad targeting, e.g. sanctioned/excluded countries): %s", strings.Join(droppedGeos, ", ")))
-		}
-	}
-	if suppliedGeos > 0 && len(allGeo) == 1 && allGeo[0] == "US" {
-		// Only a real problem if the caller didn't actually ask for US: this means
-		// every supplied geo was invalid or sanctioned and we fell back to US.
-		askedUS := false
-		for _, g := range in.GeoTargets {
-			if strings.EqualFold(strings.TrimSpace(g), "US") {
-				askedUS = true
-				break
-			}
-		}
-		if !askedUS {
-			// NAME the dropped geos in the error (the "Geo targets dropped" step is
-			// discarded when we return nil), so the caller learns exactly which codes
-			// were invalid/ineligible rather than a generic message.
-			return nil, fmt.Errorf("no usable geo targets: all supplied geos are invalid or ineligible for Meta ads targeting (dropped: %s) — refusing to silently fall back to US", strings.Join(droppedGeos, ", "))
-		}
-	}
-	geoCountries := make([]string, 0, len(allGeo))
-	skippedGeos := make([]string, 0)
-	for _, g := range allGeo {
-		if regulatedCountries[g] {
-			skippedGeos = append(skippedGeos, g)
-		} else {
-			geoCountries = append(geoCountries, g)
-		}
-	}
-	if len(geoCountries) == 0 {
-		return nil, fmt.Errorf("meta campaign skipped: all selected geo targets (%s) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target", strings.Join(skippedGeos, ", "))
+	// Step 2: geo filtering (done above, before Step 1) + campaign creation.
+	// Both lists render through callerValueList, as the geo refusals do: droppedGeos is
+	// raw caller text that failed validation (it can be a URL carrying a token) and the
+	// Steps are persisted on the job, so each entry is quoted or withheld. skippedGeos is
+	// table-vetted, but goes the same way so the two lines quote codes alike.
+	if len(droppedGeos) > 0 {
+		steps = append(steps, fmt.Sprintf("Geo targets dropped (invalid code or not eligible for Meta ad targeting, e.g. sanctioned/excluded countries): %s", callerValueList(droppedGeos)))
 	}
 	if len(skippedGeos) > 0 {
-		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", strings.Join(skippedGeos, ", ")))
+		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", callerValueList(skippedGeos)))
 	}
 
 	campaignName := buildCampaignName(in, geoCountries)

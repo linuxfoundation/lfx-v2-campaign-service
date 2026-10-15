@@ -168,16 +168,18 @@ apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, b
 as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
 dispatch-failure LOG LINE and, since issue #208, the polled job result's `(reason: …)` suffix
 (`DispatchFailureMessage` classifies; it never quotes the error); Meta's toggle and metrics need
-no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft and Reddit, Microsoft (LFXV2-3064) and Reddit (LFXV2-2665,
-`list-reddit-ads-accounts`) have BOTH halves, and LinkedIn — which gained a discovery endpoint in the
-same ticket — is the one provider missing the OTHER half. X also holds both (LFXV2-3319) and,
-unlike Microsoft, has been admitted to the map. `resolveLinkedInCredentials` does tag
-a missing account with `domain.ErrAccountNotSelected`, but `LinkedInDispatcher.Dispatch` does not
-call it; the create path resolves inline and returns a bare `notCreated`, so the missing choice is
-never named. Microsoft, Reddit and X all tag it on a path create actually reaches — and for X
-specifically, `Dispatch` calls the shared `validateTwitterConnection` itself, so it had the second
-half all along and LFXV2-3319 supplied only the first. For LinkedIn an account-less row would stay a
-DEAD row, which is why the map keeps it out. Reddit, like Microsoft, is eligible but not admitted:
+no account id, so create — the asynchronous path — is its only account-needing one. LinkedIn,
+Microsoft (LFXV2-3064) and Reddit (LFXV2-2665, `list-reddit-ads-accounts`) all have BOTH halves
+now. LinkedIn was the last to complete the pair: it gained a discovery endpoint in LFXV2-3064, but
+until 2026-10-15 its `Dispatch` validated inline and answered an empty account id with a bare
+`notCreated`, never naming the choice. `Dispatch` now calls `resolveLinkedInCredentials` itself,
+which tags the missing account with `domain.ErrAccountNotSelected`, so the job result reads
+`(reason: account_not_selected)`. X also holds both (LFXV2-3319) and, unlike Microsoft, has been
+admitted to the map. Microsoft, Reddit, LinkedIn and X all tag it on a path create actually
+reaches — and for X specifically, `Dispatch` calls the shared `validateTwitterConnection` itself,
+so it had the second half all along and LFXV2-3319 supplied only the first. LinkedIn is ELIGIBLE
+but deliberately NOT admitted: admission changes what the CLI accepts and is its own decision,
+not part of the create-path fix. Reddit, like Microsoft, is eligible but not admitted:
 its public connection config still `Require`s `account_id`, and admitting it to the CLI map alone
 would make it credentials-first for the CLI and not over HTTP. X was ADMITTED in LFXV2-3319, in the
 same change that dropped its `Required("account_id")`. Microsoft remains the standing exception
