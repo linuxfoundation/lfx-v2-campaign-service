@@ -466,6 +466,11 @@ func isAmbiguousMutatingStatus(code int) bool {
 	return code == http.StatusTooManyRequests || (code >= 300 && code < 400) || code >= 500
 }
 
+// UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
+// answered with, and nothing else from the response — so the async create job can report it
+// (issue #208) without any path that could reach the body.
+func (e *apiError) UpstreamStatus() int { return e.StatusCode }
+
 func (e *apiError) Error() string {
 	return fmt.Sprintf("hubspot %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }

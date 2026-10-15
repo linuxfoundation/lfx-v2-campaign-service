@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // RoleViewer is the read-only Viewer role (value 100) which cannot create campaigns.
@@ -236,7 +238,7 @@ func ValidateAccountID(accountID string) error {
 	trimmed := strings.TrimSpace(accountID)
 	n := json.Number(trimmed)
 	if numberID(&n) == "" {
-		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be a positive integer", clipID(trimmed))
+		return fmt.Errorf("invalid Microsoft Advertising account id %s: must be a positive integer", domain.CallerValue(trimmed))
 	}
 	return nil
 }
@@ -263,7 +265,7 @@ func ValidateCustomerID(customerID string) error {
 	}
 	n := json.Number(trimmed)
 	if numberID(&n) == "" {
-		return fmt.Errorf("%w: %q must be a positive integer", ErrInvalidCustomerID, clipID(trimmed))
+		return fmt.Errorf("%w: %s must be a positive integer", ErrInvalidCustomerID, domain.CallerValue(trimmed))
 	}
 	return nil
 }

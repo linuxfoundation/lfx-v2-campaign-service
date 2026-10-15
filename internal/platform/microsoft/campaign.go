@@ -20,6 +20,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -393,35 +395,37 @@ type queryCampaignsRequest struct {
 //     caller must reconcile by name before retrying rather than blind-creating.
 //   - A definite 4xx (Microsoft rejected the request outright) is a clean failure.
 func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*CampaignResult, error) {
+	// Connection ids rendered through domain.CallerValue, checked before any request: an
+	// operator-safe refusal (issue #208).
 	if err := c.validateAccountIDs(); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 	// Require BOTH attribution fields, validated on the SANITIZED value (a
 	// delimiter-only value like "|||" passes a raw TrimSpace check yet sanitizes to
 	// nothing, which would drop the segment from the composed name). Mirrors the
 	// google-ads client.
 	if sanitizeNamePart(in.Project) == "" {
-		return nil, fmt.Errorf("microsoft-ads campaign requires a non-empty Project")
+		return nil, domain.PreflightRefusalf("microsoft-ads campaign requires a non-empty Project")
 	}
 	if sanitizeNamePart(in.EventName) == "" {
-		return nil, fmt.Errorf("microsoft-ads campaign requires a non-empty EventName")
+		return nil, domain.PreflightRefusalf("microsoft-ads campaign requires a non-empty EventName")
 	}
 	// Reject NaN/Inf explicitly (NaN passes every ordered comparison), and reject a
 	// non-positive budget. No micros rounding — Microsoft takes the decimal directly —
 	// but a sub-cent budget is still meaningless, so require > 0.
 	if math.IsNaN(in.Budget) || math.IsInf(in.Budget, 0) {
-		return nil, fmt.Errorf("microsoft-ads campaign budget must be a finite number, got %v", in.Budget)
+		return nil, domain.PreflightRefusalf("microsoft-ads campaign budget must be a finite number, got %v", in.Budget)
 	}
 	if in.Budget <= 0 {
-		return nil, fmt.Errorf("microsoft-ads campaign budget must be > 0, got %.2f", in.Budget)
+		return nil, domain.PreflightRefusalf("microsoft-ads campaign budget must be > 0, got %.2f", in.Budget)
 	}
 	if in.Budget > maxBudget {
-		return nil, fmt.Errorf("microsoft-ads campaign budget %.2f exceeds the maximum %.0f", in.Budget, maxBudget)
+		return nil, domain.PreflightRefusalf("microsoft-ads campaign budget %.2f exceeds the maximum %.0f", in.Budget, maxBudget)
 	}
 
 	campaignName := composeName(in)
 	if err := validateEntityName("campaign", campaignName, utf8.RuneCountInString(campaignName), maxCampaignNameRunes, "characters"); err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	// Validate the ad destination URL up front, BEFORE the campaign is created. It becomes
@@ -439,7 +443,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// up-front checks prevent.
 	finalURL := buildAdFinalURL(in)
 	if n := utf8.RuneCountInString(finalURL); n > maxFinalURLRunes {
-		return nil, fmt.Errorf("microsoft-ads composed ad final URL is %d characters, exceeding the %d limit (shorten the registration URL)", n, maxFinalURLRunes)
+		return nil, domain.PreflightRefusalf("microsoft-ads composed ad final URL is %d characters, exceeding the %d limit (shorten the registration URL)", n, maxFinalURLRunes)
 	}
 	// Microsoft also derives the ad's DISPLAY domain from the FinalUrls host and caps it at
 	// maxDisplayDomainRunes. A host longer than that passes the FinalUrls length check above
@@ -495,7 +499,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// descriptions), so a bad copy input fails cleanly before the campaign is created rather
 	// than at the paid ad create. composeAdCopy pads short lists to the required minimum.
 	if err := validateAdCopy(in); err != nil {
-		return nil, fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err)
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign ad copy invalid: %w", err))
 	}
 	// Validate the TARGETING inputs up front too, for the same reason as the URL and the copy:
 	// keywords are attached only at the LAST step, so a bad keyword or bid discovered there
@@ -504,18 +508,18 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// side effects, so a bad value is a clean (nil, err).
 	keywords, err := validateKeywords(in.Keywords)
 	if err != nil {
-		return nil, fmt.Errorf("microsoft-ads campaign keywords invalid: %w", err)
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign keywords invalid: %w", err))
 	}
 	cpcBid, cpcBidSet, err := validateCpcBid(in.CpcBid)
 	if err != nil {
-		return nil, fmt.Errorf("microsoft-ads campaign bid invalid: %w", err)
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign bid invalid: %w", err))
 	}
 	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
 	// below, before the first mutating call. Splitting the two is deliberate: this half needs
 	// no network, so an unsupported code fails with nothing sent at all.
 	geoCodes, err := validateGeoTargets(in.GeoTargets)
 	if err != nil {
-		return nil, fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err)
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign geo targets invalid: %w", err))
 	}
 
 	var steps []string

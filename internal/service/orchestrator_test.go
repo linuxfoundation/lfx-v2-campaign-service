@@ -2844,9 +2844,10 @@ func (accountNotSelectedDispatcher) Dispatch(_ context.Context, _ *model.Campaig
 // Every mention of that token — Meta's requireMetaAccountID, Google Ads' connection
 // validator, design/connection.go's rule for relaxing Required("account_id"), and the
 // api-catalog paragraph that justifies credentials-only connections — rests on an operator
-// being able to tell a missing account selection apart from a bad credential. None of them
-// can rest on the job result: dispatchPlatform sets it to "platform campaign creation
-// failed" for every dispatcher error alike. So the log line is the whole mechanism, and
+// being able to tell a missing account selection apart from a bad credential. Until issue
+// #208 none of them could rest on the job result: dispatchPlatform set it to "platform
+// campaign creation failed" for every dispatcher error alike. So the log line was the whole
+// mechanism (the job result now carries the token too — asserted below), and
 // before this it carried only err.Error() — the classification existed in prose describing a
 // field that was never emitted.
 //
@@ -2867,12 +2868,15 @@ func TestOrchestrator_PreCreateFailureLogsAClassifiedReason(t *testing.T) {
 	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderMetaAds}, nil)
 	j := waitForTerminal(t, jobs, id)
 
-	// The job result stays generic — that is the premise, not a defect, and the docs now say
-	// so. If this ever starts carrying the reason, the docs asserting otherwise are stale.
-	if strings.Contains(string(j.Result), "account_not_selected") || strings.Contains(j.Error, "account_not_selected") {
-		t.Errorf("job result = %q / error = %q; the reason is documented as absent from the polled "+
-			"result, so the api-catalog and design/connection.go paragraphs saying the detail is "+
-			"log-only need revisiting", string(j.Result), j.Error)
+	// Since issue #208 the job result carries the CLASSIFICATION too — a fixed sentence plus
+	// the same fixed-vocabulary token — and still never the error's text. The api-catalog and
+	// design/connection.go paragraphs say so; if this changes back, they are stale again.
+	if !strings.Contains(string(j.Result), "(reason: account_not_selected)") {
+		t.Errorf("job result = %q; it should name the reason token (DispatchFailureMessage), as the "+
+			"api-catalog and design/connection.go paragraphs now document", string(j.Result))
+	}
+	if strings.Contains(string(j.Result), "has no ad account selected") {
+		t.Errorf("job result = %q echoes the dispatcher error's text; only the classification may reach it", string(j.Result))
 	}
 
 	h.mu.Lock()
