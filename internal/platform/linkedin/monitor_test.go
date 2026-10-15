@@ -20,7 +20,7 @@ func TestListAccountCampaigns_OversizedAnalyticsResponse_IsRejected(t *testing.T
 	padding := strings.Repeat(" ", maxResponseBytes+64)
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]`+padding+`}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]`+padding+`}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
@@ -55,7 +55,7 @@ func TestListAccountCampaigns_RejectsMalformedAccountID(t *testing.T) {
 func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 	srv, rec := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]}`,
 	)
 	// fixedNow's local calendar date (AEST, UTC+10) is 2026-09-18, one day ahead of its UTC
 	// calendar date, 2026-09-17. restLiDate (metrics.go:477) renders day/month/year in the
@@ -106,7 +106,7 @@ func TestListAccountCampaigns_UsesInjectedClockNotWallClock(t *testing.T) {
 func TestListAccountCampaigns_CampaignAbsentFromAnalytics_IsZeroNotFailed(t *testing.T) {
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"},{"id":222,"name":"Campaign Two","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
@@ -126,18 +126,18 @@ func TestListAccountCampaigns_CampaignAbsentFromAnalytics_IsZeroNotFailed(t *tes
 	if missing.FetchFailed {
 		t.Errorf("row for campaign 222 = %+v, want FetchFailed=false — absent from a successful account-wide response means zero activity, not a failed fetch", missing)
 	}
-	if missing.Impressions != 0 || missing.Clicks != 0 || missing.SpendUSD != 0 {
+	if missing.Impressions != 0 || missing.Clicks != 0 || missing.Spend != 0 {
 		t.Errorf("row for campaign 222 = %+v, want zero metrics", missing)
 	}
 }
 
 // TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed pins a round-19 review fix: a
-// non-empty, unparseable costInUsd used to be silently ignored (SpendUSD left at 0), converting
+// non-empty, unparseable costInLocalCurrency used to be silently ignored (Spend left at 0), converting
 // an upstream-data failure into a trusted zero spend.
 func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) {
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE"}],"metadata":{}}`,
-		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"not-a-number"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"not-a-number"}]}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
@@ -149,10 +149,10 @@ func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) 
 		t.Fatalf("got %d rows, want 1: %+v", len(rows), rows)
 	}
 	if !rows[0].FetchFailed {
-		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose costInUsd failed to parse", rows[0])
+		t.Errorf("row for campaign 111 = %+v, want FetchFailed=true for a campaign whose costInLocalCurrency failed to parse", rows[0])
 	}
-	if rows[0].SpendUSD != 0 {
-		t.Errorf("row for campaign 111 = %+v, want SpendUSD=0 (never fabricated) alongside FetchFailed", rows[0])
+	if rows[0].Spend != 0 {
+		t.Errorf("row for campaign 111 = %+v, want Spend=0 (never fabricated) alongside FetchFailed", rows[0])
 	}
 }
 
@@ -164,7 +164,7 @@ func TestListAccountCampaigns_MalformedCostInUsd_MarksFetchFailed(t *testing.T) 
 func TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed(t *testing.T) {
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE","dailyBudget":{"amount":"not-a-number"}}],"metadata":{}}`,
-		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
@@ -183,7 +183,7 @@ func TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed(t *testing.T
 	}
 	// A malformed dailyBudget must not mask a successful analytics read: the row's other
 	// metrics still came back reliably and must not be discarded.
-	if rows[0].Impressions != 1000 || rows[0].SpendUSD != 12.50 {
+	if rows[0].Impressions != 1000 || rows[0].Spend != 12.50 {
 		t.Errorf("row for campaign 111 = %+v, want the successfully-read analytics metrics preserved alongside the budget failure", rows[0])
 	}
 }
@@ -195,7 +195,7 @@ func TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed(t *testing.T
 func TestListAccountCampaigns_EmptyBudgetAmount_IsZeroNotFailed(t *testing.T) {
 	srv, _ := adAccountsServer(t,
 		`{"elements":[{"id":111,"name":"Campaign One","status":"ACTIVE","dailyBudget":{"amount":""}}],"metadata":{}}`,
-		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		`{"elements":[{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
 
@@ -266,14 +266,14 @@ func TestListAccountCampaigns_NullAnalyticsElements_IsRejected(t *testing.T) {
 // TestListAccountCampaigns_UnattributableAnalyticsElement_IsRejected pins the round-31 review
 // fix at monitor.go:315-321: an analytics element with no pivotValues, or a pivotValues entry
 // that does not resolve to a campaign id, cannot be attributed to any campaign — there is no id
-// to key FetchFailed on, unlike a malformed costInUsd. Dropping the row instead of rejecting the
+// to key FetchFailed on, unlike a malformed costInLocalCurrency. Dropping the row instead of rejecting the
 // whole read would let ListAccountCampaigns read that campaign's real activity as a legitimate
 // zero, restoring the exact false-zero-delivery bug Copilot flagged on this range (PR #215
 // post-merge review comment).
 func TestListAccountCampaigns_UnattributableAnalyticsElement_IsRejected(t *testing.T) {
 	for name, analyticsBody := range map[string]string{
-		"empty pivotValues":            `{"elements":[{"pivotValues":[],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
-		"pivotValues resolves to none": `{"elements":[{"pivotValues":[""],"impressions":1000,"clicks":50,"costInUsd":"12.50"}]}`,
+		"empty pivotValues":            `{"elements":[{"pivotValues":[],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]}`,
+		"pivotValues resolves to none": `{"elements":[{"pivotValues":[""],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv, _ := adAccountsServer(t,

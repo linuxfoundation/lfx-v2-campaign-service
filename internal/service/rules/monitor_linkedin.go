@@ -59,7 +59,11 @@ func EvaluateLinkedInMonitor(rows []model.AccountCampaignMetrics, days int, now 
 		// the ladder rather than labelled underspending. What it did not do is SAY so: the row
 		// went out as MonitorPacingNormal with PacingUnknown unset, which a consumer reads as
 		// "on plan". Same treatment as Google and Meta now, for the same reason.
-		if m.TotalBudget <= 0 && m.BudgetDay <= 0 {
+		//
+		// A row the dispatcher already marked PacingUnknown — its budget's currency disagrees
+		// with another budget on the account, so it cannot be paced against the account's spend
+		// (linkedin.Client.ListAccountCampaignsWithCurrency) — takes the same unknown row.
+		if m.PacingUnknown || (m.TotalBudget <= 0 && m.BudgetDay <= 0) {
 			row := unknownPacingRow(m)
 			out = append(out, row)
 			items = append(items, linkedinActionItems(row.Metrics, 0, row.PacingLabel)...)

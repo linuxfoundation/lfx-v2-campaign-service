@@ -274,6 +274,15 @@ func (d upstreamCapableDispatcher) ListAccountCampaigns(context.Context, string,
 	return []model.AccountCampaignMetrics{}, nil
 }
 
+// ReadAccountCurrency implements AccountCurrencyReader so this fake drives the report-backed
+// monitor's best-effort currency read.
+func (d upstreamCapableDispatcher) ReadAccountCurrency(context.Context, string, model.Provider, string) (string, error) {
+	if d.err != nil {
+		return "", d.err
+	}
+	return "USD", nil
+}
+
 func (d upstreamCapableDispatcher) SubmitAccountReport(context.Context, string, model.Provider, string, int) (*model.AccountReportSubmission, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -741,6 +750,21 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 				_, err := o.submitAccountReport(ctx, ctx, upstreamReportReader(o, platform), reportKey(platform))
 				return err
 			},
+		},
+		{
+			// Absorbs the platform error by design: a failed currency read leaves the currency
+			// absent and never fails the monitor (readAccountCurrency).
+			name: "read account currency",
+			op:   opReadAccountCurrency,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				r, ok := o.dispatchers[platform].(AccountCurrencyReader)
+				if !ok {
+					panic("upstreamCapableDispatcher must implement AccountCurrencyReader")
+				}
+				o.readAccountCurrency(ctx, ctx, r, reportKey(platform))
+				return nil
+			},
+			absorbsPlatformError: true,
 		},
 		// The report-backed keyword read's two upstream calls, driven directly for the same
 		// one-call-per-case reason as the account report's (TestReadKeywords_* covers sequencing).
