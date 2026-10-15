@@ -2011,8 +2011,9 @@ In that window the lock is still held, so another pod's try-lock answers `ErrSta
 every `Own` from the moment `Close` marks it closed. The request-path drop stays detached. `StatsJobLeaseLockKeys`
 exposes the keys as they appear in `pg_locks` (`objsubid` 2). Live tests:
 `dbtest/stats_job_lease_live_test.go` (two leases cannot both own one account; Close hands it
-over — the test polls `pg_locks` and `pg_stat_activity`, bounded at 5s, until the closed
-backend has exited, rather than reading `pg_locks` once right after `Close`; a terminated owner session loses every lease, another pod takes one and the former owner
+over — the test polls `pg_locks`, bounded at 5s, until no backend holds the lock on two
+consecutive reads, rather than reading `pg_locks` once right after `Close` (not the closed pid in
+`pg_stat_activity`, which Postgres may reuse); a terminated owner session loses every lease, another pod takes one and the former owner
 refuses it but re-acquires the other on a new session; a cancelled or expired check keeps the
 lock in `pg_locks` and the next live check still owns it; no database is Unavailable; with a
 ONE-connection business pool, three accounts' leases sit on one session and an ordinary

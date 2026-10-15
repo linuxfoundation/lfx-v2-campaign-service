@@ -34,15 +34,19 @@ func leaseHolderPID(ctx context.Context, t *testing.T, pool *pgxpool.Pool, accou
 // leaseReleaseDeadline bounds how long a closed lease's backend may take to exit.
 const leaseReleaseDeadline = 5 * time.Second
 
-// waitForLeaseRelease waits until no backend holds accountID's lease and the closed session's
-// backend pid has left pg_stat_activity, failing after leaseReleaseDeadline.
+// waitForLeaseRelease waits until no backend holds accountID's lease on two consecutive reads,
+// failing after leaseReleaseDeadline.
 //
 // Close does not (and need not) wait for the server: pgx sends Terminate and closes the socket,
 // and Postgres drops the session's advisory locks only as that backend exits, a moment later and
 // asynchronously to the client. Until then the lock is still held, so a reader on another
 // connection can see it for a few milliseconds after Close returns. That window is the safe
 // direction: another instance's try-lock answers "held elsewhere", never a second owner.
-func waitForLeaseRelease(ctx context.Context, t *testing.T, pool *pgxpool.Pool, accountID string, pid int32) {
+//
+// Success is keyed on the lock alone, not on the closed backend's pid leaving pg_stat_activity:
+// Postgres can hand that pid to a new backend before the deadline under parallel load, which
+// would keep a pid check failing although the lease is already free.
+func waitForLeaseRelease(ctx context.Context, t *testing.T, pool *pgxpool.Pool, accountID string) {
 	t.Helper()
 	deadline := time.Now().Add(leaseReleaseDeadline)
 	// Bound each read too, so a stalled query fails at the deadline rather than at go test's timeout.
@@ -50,18 +54,19 @@ func waitForLeaseRelease(ctx context.Context, t *testing.T, pool *pgxpool.Pool, 
 	defer cancel()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
+	free := 0
 	for {
 		holder := leaseHolderPID(ctx, t, pool, accountID)
-		var alive bool
-		if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1)", pid).Scan(&alive); err != nil {
-			t.Fatalf("read pg_stat_activity: %v", err)
+		if holder == 0 {
+			free++
+		} else {
+			free = 0
 		}
-		if holder == 0 && !alive {
+		if free >= 2 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("lease not released %s after Close: holder %d, closed backend %d alive %v",
-				leaseReleaseDeadline, holder, pid, alive)
+			t.Fatalf("lease not released %s after Close: holder %d", leaseReleaseDeadline, holder)
 		}
 		<-tick.C
 	}
@@ -95,7 +100,7 @@ func TestLiveStatsJobLease_OneOwnerPerAccountAndReleaseOnClose(t *testing.T) {
 	}
 
 	a.Close(ctx)
-	waitForLeaseRelease(ctx, t, pool, account, pid)
+	waitForLeaseRelease(ctx, t, pool, account)
 	if err := b.Own(ctx, account); err != nil {
 		t.Errorf("b.Own after a closed: %v", err)
 	}
