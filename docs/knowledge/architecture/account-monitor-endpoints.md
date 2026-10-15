@@ -60,8 +60,7 @@ reaches), not project-scoped ones.
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
-- Each monitor dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit}.go`,
-  `microsoft_monitor.go`, `twitter_monitor.go`)
+- Each monitor dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit,microsoft_monitor,twitter_monitor}.go`)
   resolves its monitor read's credential via `credsSource.resolveOwned` —
   the project's own connection only, never the LF system-account fallback
   chain (`resolve` → `resolveWithFallback` → `systemConn` → forced-system)
