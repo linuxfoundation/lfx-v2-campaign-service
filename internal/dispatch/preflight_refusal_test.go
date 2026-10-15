@@ -69,6 +69,20 @@ func TestDispatch_PreflightRefusalsAreOperatorSafe(t *testing.T) {
 			want:   "reddit requires a conversion pixel id and none is configured: add it to this project's Reddit connection (Reddit Ads → Events Manager lists the account's pixel)",
 		},
 		{
+			// A composed name Reddit would reject. It used to be checked only AFTER the
+			// account-verify GET, so the dispatch sent a token exchange and a GET to learn
+			// nothing, and the refusal was unmarked (the job reported the generic string).
+			// Sixty valid codes make the "+"-joined geo segment push the ad-group name past
+			// Reddit's 200-rune limit while every per-field check passes.
+			name:     "reddit composed ad group name too long",
+			provider: model.ProviderRedditAds,
+			build: func(hc *http.Client) refusalDispatcher {
+				return NewRedditDispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{}, reddit.WithHTTPClient(hc))
+			},
+			config: `{"redditConfig":{"budgetUsd":500,"geoTargets":["us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us","us"],"startDate":"2099-01-04","endDate":"2099-01-18"}}`,
+			want:   "composed ad group name is too long: 240 characters (max 200)",
+		},
+		{
 			// A platform minimum, from the shared create/write validator.
 			name:     "linkedin daily budget under the minimum",
 			provider: model.ProviderLinkedInAds,

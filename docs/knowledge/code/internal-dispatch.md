@@ -4417,7 +4417,8 @@ and scope faults beat an inactive connection, 401 → expired, 5xx unclassified 
 
 Marked refusals: the pre-send validation in each client's `CreateCampaign`, up to its first
 request. That is Reddit up to the account-verify GET (name/project/budget/dates/objective/video
-goal/**conversion pixel**/CTA/headline/account id/geo), LinkedIn up to the group find-or-create
+goal/**conversion pixel**/CTA/headline/account id/geo, and the composed campaign and ad-group
+name lengths), LinkedIn up to the group find-or-create
 (account, targeting profile, event name, **budget minimums**, variants, project, geo, schedule,
 name lengths), Meta up to the account preflight GET (variants and lengths, budget, currency
 offset, dates, account/page id, project, event, IG id, DSA pair, objective, placements, promoted
@@ -4432,7 +4433,10 @@ way: `resolveLinkedInImages`, Meta `resolveVariantAssets`, Microsoft `resolveMic
 (including its `ValidateImage`), X `resolveTwitterImage` and Reddit `checkRedditAsset`. That
 covers malformed ids, a missing or foreign asset, size and byte limits, a full reservation, and
 empty bytes. Repository-error wraps stay unmarked. Reddit's composed campaign / ad-group name length
-checks are NOT: they run after the account-verify GET, so a request was already sent. Dispatcher-authored ones
+checks used to run after the account-verify GET and so stayed unmarked; they now run before it
+(every input — event name, project, objective, normalized geos — is settled by then) and are
+marked, pinned with zero upstream requests by `TestCreateCampaign_ComposedNameRefusedBeforeAnyRequest`
+and the "reddit composed ad group name too long" refusal case. Dispatcher-authored ones
 are marked too: Reddit's stored-asset choice, LinkedIn's inactive / incomplete / missing-org /
 no-variant / foreign-account refusals, X's missing funding instrument, and HubSpot's missing
 `sourceEmailId` and send-list-in-suppression check. Every CALLER or connection value a marked

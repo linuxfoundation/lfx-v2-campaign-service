@@ -1772,6 +1772,30 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		geos = []string{"US"}
 	}
 
+	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
+	// EventName/Project bounds keep caller inputs sane, but the composed names also include
+	// region/objective (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no
+	// count limit, so enough valid codes could push adGroupName past Reddit's limit.
+	//
+	// These run BEFORE Step 1's account-verify GET, not after it (issue #208): their inputs —
+	// EventName, Project, `objective` and `geos` — are all settled above, and nothing the GET
+	// returns feeds them, so a name Reddit would reject costs no upstream round trip. That
+	// also makes them pre-send refusals in the PreflightRefusal sense, so the async job may
+	// report the sentence verbatim. Both messages quote only rune counts this service computed;
+	// no caller text is formatted in (a caller value would need domain.CallerValue).
+	//
+	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
+	// composing it here serves both purposes.
+	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
+	geoLabel := strings.Join(geos, "+")
+	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
+	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
+		return nil, domain.PreflightRefusalf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
+	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
+		return nil, domain.PreflightRefusalf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
+	}
+
 	// Step 1: Verify account (non-fatal, mirrors TS try/catch). A verification
 	// FAILURE is only a warning — but a CALLER context cancellation is fatal:
 	// continuing would run the campaign POST under a dead ctx and then
@@ -1835,22 +1859,22 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// HTTP status, never the error body — a reflective Reddit validation error can
 	// echo the destination_url (which carries the caller's permitted secret-bearing
 	// query params), and persisting it in Steps would leak those.
-	// EVERY remaining deterministic check runs HERE, before Step 1.5 authors anything.
+	// The window check runs HERE, before Step 1.5 authors anything.
 	//
-	// The window check and the two composed-name checks used to sit further down, just above
-	// the campaign POST — which was correct while the first mutating call WAS that POST. Step
-	// 1.5 moved the first mutating call earlier without moving them, so with an ImageURL set
-	// they could return (nil, error) with a post already authored upstream. CreateCampaign's
-	// contract makes (nil, err) mean "nothing was or may have been created", and
+	// It used to sit further down, just above the campaign POST, with the two composed-name
+	// checks — which was correct while the first mutating call WAS that POST. Step 1.5 moved
+	// the first mutating call earlier without moving them, so with an ImageURL set they could
+	// return (nil, error) with a post already authored upstream. CreateCampaign's contract
+	// makes (nil, err) mean "nothing was or may have been created", and
 	// RedditDispatcher.Dispatch keys claim release on `result == nil` alone, so the claim was
-	// released on a post that definitely existed and a retry authored a duplicate.
+	// released on a post that definitely existed and a retry authored a duplicate. (The name
+	// checks have since moved further up, above Step 1's account-verify GET — issue #208.)
 	//
-	// They belong here rather than being converted to partial returns because they are purely
-	// deterministic: their inputs are the caller's StartDate/EndDate/EventName/GeoTargets,
-	// `objective` and `geos` (both settled above), and the clock. None consumes anything the
-	// post produces, so failing them ahead of any mutating call restores the invariant Step
-	// 1.5's ordering was always meant to have — a bad input costs nothing upstream. Structural
-	// step toward #173.
+	// It belongs here rather than being converted to a partial return because it is purely
+	// deterministic: its inputs are the caller's StartDate/EndDate and the clock. It consumes
+	// nothing the post produces, so failing it ahead of any mutating call restores the
+	// invariant Step 1.5's ordering was always meant to have — a bad input costs nothing
+	// upstream. Structural step toward #173.
 	campaignEndTime := toISOTimestamp(in.EndDate)
 	effectiveStart := toISOTimestamp(in.StartDate)
 	// Nudge the start forward whenever it does not already clear the workflow HORIZON
@@ -1871,23 +1895,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
 			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
 		}
-	}
-
-	// Compose BOTH names (campaign + ad group) and validate their lengths. The per-field
-	// EventName/Project bounds keep caller inputs sane, but the composed names also include
-	// region/objective (campaign) and a "+"-joined geo list (ad group), and GeoTargets has no
-	// count limit, so enough valid codes could push adGroupName past Reddit's limit.
-	//
-	// campaignName is also the handle an ambiguous partial carries when no id exists yet, so
-	// composing it here serves both purposes.
-	campaignName := buildRedditCampaignName(in, objective, resolveRegion(geos))
-	geoLabel := strings.Join(geos, "+")
-	adGroupName := fmt.Sprintf("Events | %s | %s | Intent | Communities + Keywords", replacePipes(in.EventName), geoLabel)
-	if n := utf8.RuneCountInString(campaignName); n > redditMaxNameRunes {
-		return nil, fmt.Errorf("composed campaign name is too long: %d characters (max %d)", n, redditMaxNameRunes)
-	}
-	if n := utf8.RuneCountInString(adGroupName); n > redditMaxNameRunes {
-		return nil, fmt.Errorf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
 	}
 
 	if authorPost {
