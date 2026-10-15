@@ -120,8 +120,10 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		}
 	}
 	out.Similar = audience.GuardReuse(x.similarLists(ctx, client, request, out.Draft.Criteria), out.Draft.Criteria)
-	if event != nil && event.BrandShort == "" {
+	if event != nil && event.BrandShort == "" && strings.TrimSpace(out.Draft.BrandShort) == "" {
 		// No brand from the page or the model: take the one this event's lists use.
+		// A brand the model named already resolved its own gate above, and is never
+		// overridden by whichever segment the event's lists happen to be filed under.
 		if hits, serr := client.SearchLists(ctx, event.Name); serr == nil {
 			names := make([]string, 0, len(hits))
 			for _, h := range hits {

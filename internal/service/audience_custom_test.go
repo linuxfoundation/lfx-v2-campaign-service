@@ -6,10 +6,14 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	explore "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_audience_builder"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -89,6 +93,10 @@ func TestCustomAudience_ErrorMapping(t *testing.T) {
 		"no model is a 503 that points at the form": {
 			err: audience.ErrCustomInterpretUnavailable, want: &explore.ConnServiceUnavailableError{}, msg: "fill in the criteria form instead",
 		},
+		"a HubSpot validation refusal says why, in neutral words": {
+			err: hubspotValidationError(t), want: &explore.BadRequestError{},
+			msg: "HubSpot rejected the request: Filter branch of type UNIFIED_EVENTS cannot have filter branches",
+		},
 		"a missing gate is a 404": {
 			err: fmt.Errorf("list 1: %w", audience.ErrListNotFound), want: &explore.NotFoundError{},
 		},
@@ -152,4 +160,20 @@ func exploreErrMessage(err error) string {
 		return e.Message
 	}
 	return err.Error()
+}
+
+// hubspotValidationError is a real client error from a HubSpot VALIDATION_ERROR 400.
+func hubspotValidationError(t *testing.T) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"status":"error","category":"VALIDATION_ERROR","message":"Filter branch of type UNIFIED_EVENTS cannot have filter branches"}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := hubspot.NewClient(hubspot.Credentials{PrivateAppToken: "test-token"}, hubspot.AccountConfig{}, hubspot.WithBaseURL(srv.URL))
+	_, err := c.SearchLists(context.Background(), "x")
+	require.Error(t, err)
+	require.NotEmpty(t, hubspot.ValidationMessage(err), "precondition: the client retained the reason")
+	return err
 }

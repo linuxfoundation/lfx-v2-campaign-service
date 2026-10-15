@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -137,15 +138,17 @@ func CustomInterpretPrompt(request string, answers []CustomAnswer, event *Custom
 	return strings.Join(lines, "\n"), nil
 }
 
-var blockMarkers = []string{"BEGIN REQUEST", "END REQUEST", "BEGIN ANSWERS", "END ANSWERS", "BEGIN LISTS", "END LISTS", "BEGIN EVENT", "END EVENT"}
+// blockMarkerRE matches a block marker in any case: the model reads "end request"
+// as readily as "END REQUEST".
+var blockMarkerRE = regexp.MustCompile(`(?i)\b(?:BEGIN|END)\s+(?:REQUEST|ANSWERS|LISTS|EVENT)\b`)
 
 func blockSafe(v string, maxLen int) string {
 	out := strings.Join(strings.Fields(v), " ")
-	for _, m := range blockMarkers {
-		out = strings.ReplaceAll(out, m, "[removed]")
-	}
-	if len(out) > maxLen {
-		out = out[:maxLen]
+	out = blockMarkerRE.ReplaceAllString(out, "[removed]")
+	// Cut on a rune boundary: a split multi-byte rune becomes U+FFFD and the value
+	// then matches nothing in the filter it is quoted into.
+	if r := []rune(out); len(r) > maxLen {
+		out = string(r[:maxLen])
 	}
 	return out
 }

@@ -1809,9 +1809,15 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	for _, id := range excludedIDs {
 		alreadyExcluded[id] = true
 	}
+	// The audited list, or a list it includes, sent as a "suppression" would exclude
+	// the audience itself; it is no suppression and must not count toward check 3.
+	notSuppression := map[string]bool{strings.TrimSpace(listID): true}
+	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
+		notSuppression[id] = true
+	}
 	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
 	for _, id := range audience.UniqueIDs(sendSuppressionIDs) {
-		if alreadyExcluded[id] {
+		if alreadyExcluded[id] || notSuppression[id] {
 			continue
 		}
 		if _, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr != nil {

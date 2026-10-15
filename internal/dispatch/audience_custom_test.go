@@ -356,6 +356,30 @@ func TestInterpretCustom_AnEventURLQuotesThePageToTheModel(t *testing.T) {
 	assert.Equal(t, []string{"South Korea"}, out.Draft.Criteria.Countries)
 }
 
+// A brand the model named is kept, with its gate: the lists-filed-under fallback
+// runs only when neither the page nor the model named one.
+func TestInterpretCustom_TheModelsBrandBeatsTheListsFallback(t *testing.T) {
+	portal := seoulPortal()
+	portal.lists["26Q2 - SYN - Master-list"] = "801"
+	portal.lists["26Q2 - OSS - Master-list"] = "802"
+	portal.lists["26Q3 - OSS - Synthetic Summit 2026 Registrants"] = "803"
+	portal.lists["26Q3 - OSS - Synthetic Summit 2026 Web Visitors"] = "804"
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"","eventDates":[]}`,
+		`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"SYN","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "SYN", out.Draft.BrandShort, "the model's brand is not replaced by the lists' segment")
+	assert.Equal(t, "801", out.Draft.Criteria.GateListID, "the model's brand keeps its own master gate")
+}
+
 func TestCreateCustom_TypesSpeakerSignalsFromThePortal(t *testing.T) {
 	portal := seoulPortal()
 	portal.regProps = map[string]string{"registration_type": "string", "is_event_speaker_bool": "bool"}
@@ -394,6 +418,11 @@ func TestRunQA_CountsSendTimeSuppression(t *testing.T) {
 	assert.True(t, with.Checks.Suppression.AppliedGDPR, "the GDPR list applied at send time satisfies the EU check")
 	assert.True(t, with.Checks.Suppression.AppliedOptOut)
 	assert.Empty(t, portal.creates, "QA never writes")
+
+	self, err := x.RunQA(context.Background(), "proj-1", "500", "", true, false, []string{"500"})
+	require.NoError(t, err)
+	assert.Equal(t, audience.VerdictFail, self.Checks.ExclusionCompleteness.Verdict, "the audited list sent as its own suppression is no exclusion")
+	assert.Zero(t, self.Checks.ExclusionCompleteness.SendTimeCount)
 }
 
 // TestDiscover_HidesWhatMustNotBeIncludedAndInfersTheBrand replays the live AgntCon

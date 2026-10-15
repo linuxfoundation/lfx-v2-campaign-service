@@ -325,8 +325,8 @@ func validationMessageFrom(status int, body []byte) string {
 		return ""
 	}
 	msg := strings.Join(strings.Fields(env.Message), " ")
-	if len(msg) > validationMessageMax {
-		msg = msg[:validationMessageMax]
+	if r := []rune(msg); len(r) > validationMessageMax {
+		msg = string(r[:validationMessageMax]) // on a rune boundary, never mid-character
 	}
 	return msg
 }

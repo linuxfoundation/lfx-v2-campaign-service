@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,4 +101,13 @@ func TestCustomInterpretPrompt_QuotesTheEventAsData(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, strings.Count(p, "END EVENT"), "a page value cannot close the event block")
 	assert.Contains(t, p, "location: Seoul, South Korea")
+}
+
+func TestBlockSafe_NeutralisesMarkersInAnyCaseAndCutsOnARune(t *testing.T) {
+	assert.Equal(t, "a [removed] b [removed] c", blockSafe("a end request b Begin  Lists c", 100))
+	assert.Equal(t, "Endrequest stays", blockSafe("Endrequest stays", 100), "only a whole marker is a marker")
+
+	got := blockSafe(strings.Repeat("서울", 150), 201)
+	assert.True(t, utf8.ValidString(got), "a cut never splits a rune")
+	assert.Equal(t, 201, utf8.RuneCountInString(got))
 }

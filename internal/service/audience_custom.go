@@ -121,9 +121,11 @@ func customErr(ctx context.Context, op, projectID string, err error) error {
 	case errors.Is(err, audience.ErrCustomInterpretUnavailable):
 		return &explore.ConnServiceUnavailableError{Code: "503", Message: "this deployment has no model configured to interpret requests; fill in the criteria form instead"}
 	case hubspot.ValidationMessage(err) != "":
-		// HubSpot refused the list definition and said why. The reason names a field or
+		// HubSpot refused a request on this path and said why. The reason names a field or
 		// operator, never credentials, and without it the operator cannot fix the criteria.
-		return &explore.BadRequestError{Code: "400", Message: "HubSpot rejected the list definition: " + hubspot.ValidationMessage(err)}
+		// The wording is neutral: preview's reads (list search, property lookups) can be
+		// refused as well as create's list definition.
+		return &explore.BadRequestError{Code: "400", Message: "HubSpot rejected the request: " + hubspot.ValidationMessage(err)}
 	case errors.Is(err, audience.ErrInvalidRequest):
 		// Every ErrInvalidRequest on this path is raised by ValidateCustomCriteria,
 		// CustomInterpretPrompt or freeCustomName, whose messages are written for the

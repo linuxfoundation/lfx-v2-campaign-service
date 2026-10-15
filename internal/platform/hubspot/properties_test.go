@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestGetContactProperty(t *testing.T) {
@@ -96,5 +97,13 @@ func TestValidationMessage_OnlyForValidationErrors(t *testing.T) {
 	_, err = c.doRequest(context.Background(), http.MethodGet, "/crm/v3/lists/x?kind=other", nil, true)
 	if got := ValidationMessage(err); got != "" {
 		t.Errorf("a non-validation body must not be retained, got %q", got)
+	}
+}
+
+func TestValidationMessage_CutsOnARuneBoundary(t *testing.T) {
+	long := strings.Repeat("é", validationMessageMax+50)
+	got := validationMessageFrom(http.StatusBadRequest, []byte(`{"category":"VALIDATION_ERROR","message":"`+long+`"}`))
+	if !utf8.ValidString(got) || utf8.RuneCountInString(got) != validationMessageMax {
+		t.Errorf("got %d runes, valid=%v", utf8.RuneCountInString(got), utf8.ValidString(got))
 	}
 }
