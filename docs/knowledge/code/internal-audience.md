@@ -522,8 +522,9 @@ signal:
 - `EducationTopics` narrow education enrolment to the brand's own courses with a CONTAINS filter
   inside every education `UNIFIED_EVENTS` node; with no location they are the education signal on
   their own. The property they filter on (`EducationTopicProperty`) is picked from the portal's
-  education event definition by `CourseTopicProperty` (course > topic > subject > program >
-  curriculum, by name or label). A caller's value is kept only when it is one of the portal's
+  education event definition by `CourseTopicCandidates` (course > topic > subject > program >
+  curriculum, by name or label), over STRING properties only, since the topic filter is always a
+  string CONTAINS. A caller's value is kept only when it is one of the portal's
   `CourseTopicCandidates`, otherwise the best candidate replaces it; the model's choice is never
   used. Topics with no such
   property are refused rather than silently dropped, because dropping them widens the list to
@@ -536,6 +537,10 @@ signal:
   drops masters, suppressions and test lists, and the model ranks the survivors
   (`CustomReuseSystemPrompt` / `ParseCustomReuse`: reuse / update / unrelated). It ranks only
   what the search found — an id it returns that was not a candidate is dropped.
+
+A suggested property filter whose name is outside the contract's `^[A-Za-z0-9_]+$` or longer
+than 100 characters is dropped by `ParseCustomDraft` with a note, like a spaced name: one such row
+would make the whole interpretation invalid (2026-10-15).
 
 **QA and send-time suppression (2026-10-12).** `CheckExclusionCompleteness(filters, sendTime)`
 counts suppression lists the send applies as well as the list's own `NOT_IN_LIST` filters. Custom

@@ -30,3 +30,10 @@
   (`CONTAINS`, not `CONTAINS_TOKEN`), ported-features paragraph, education-topic-property rule and
   PAGE_VIEW confirmation (list 31588) are current; and the hero-failure notes moved under the
   HubSpot Result-blob section, whose field list now includes `Warnings`.
+
+**Fix** — Copilot's two "previously missed" findings not covered above:
+
+- **Only a string event property carries the education topic**, for the automatic pick and the
+  caller's choice alike: the topic filter is always a string `CONTAINS`.
+- **A suggested filter on a property name the contract refuses is dropped** (outside
+  `^[A-Za-z0-9_]+$`, or over 100 characters), with the existing note.

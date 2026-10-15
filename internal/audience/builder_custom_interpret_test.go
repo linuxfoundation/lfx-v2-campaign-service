@@ -124,3 +124,20 @@ func TestParseCustomDraft_CapsPageViewURLsAndCanonicalizesCountries(t *testing.T
 	assert.Len(t, d.Criteria.PageViewURLs, CustomMaxPageViewURLs)
 	assert.Equal(t, []string{"United States", "United Kingdom"}, d.Criteria.Countries)
 }
+
+// A property filter whose name the criteria contract refuses is dropped, or one bad
+// suggestion makes the whole interpretation invalid.
+func TestParseCustomDraft_DropsAPropertyNameTheContractRefuses(t *testing.T) {
+	long := strings.Repeat("a", 101)
+	raw := `{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[` +
+		`{"property":"job-title","operator":"contains","values":["CTO"]},` +
+		`{"property":"` + long + `","operator":"is_known","values":[]},` +
+		`{"property":"jobtitle","operator":"contains","values":["CTO"]}` +
+		`],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":[],"label":""},"questions":[],"notes":[]}`
+
+	d, err := ParseCustomDraft(raw)
+	require.NoError(t, err)
+	require.Len(t, d.Criteria.PropertyFilters, 1)
+	assert.Equal(t, "jobtitle", d.Criteria.PropertyFilters[0].Property)
+	assert.Contains(t, strings.Join(d.Notes, "\n"), `"job-title"`)
+}

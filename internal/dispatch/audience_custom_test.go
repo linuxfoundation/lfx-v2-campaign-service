@@ -41,6 +41,8 @@ type fakePortal struct {
 	// eventProps are the education event definition's properties; nil means the
 	// portal has no such definition.
 	eventProps []string
+	// eventPropTypes overrides an education event property's type; the default is string.
+	eventPropTypes map[string]string
 	// regProps are the registration event's properties, name -> type.
 	regProps map[string]string
 }
@@ -101,7 +103,11 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/events/v3/event-definitions":
 			props := make([]string, 0, len(p.eventProps))
 			for _, name := range p.eventProps {
-				props = append(props, `{"name":"`+name+`","label":"","type":"string"}`)
+				typ := "string"
+				if t, ok := p.eventPropTypes[name]; ok {
+					typ = t
+				}
+				props = append(props, `{"name":"`+name+`","label":"","type":"`+typ+`"}`)
 			}
 			reg := make([]string, 0, len(p.regProps))
 			for name, typ := range p.regProps {
@@ -614,4 +620,26 @@ func TestPreviewCustom_CanonicalizesCountriesAndWarnsOnUnknownOptions(t *testing
 	joined := strings.Join(out.Warnings, "\n")
 	assert.Contains(t, joined, `"Narnia" is not one of country_dropdown's options`)
 	assert.NotContains(t, joined, `"United States" is not one`, "a canonical option is not reported")
+}
+
+// The topic filter is a string CONTAINS, so a number or enumeration event property
+// is never a candidate: not picked automatically, and not honoured when sent.
+func TestPreviewCustom_OnlyAStringPropertyCarriesTheTopic(t *testing.T) {
+	portal := seoulPortal()
+	portal.eventProps = []string{"course_number", "course_topic", "course_name"}
+	portal.eventPropTypes = map[string]string{"course_number": "number", "course_topic": "enumeration"}
+	srv := portal.serve(t)
+	defer srv.Close()
+	x := explorerOver(srv, nil)
+	c := audience.CustomCriteria{EducationEnrolled: true, EducationTopics: []string{"Kubernetes"}, Label: "KubeCon"}
+
+	p, err := x.PreviewCustom(context.Background(), "proj-1", c, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"course_name"}, p.EducationTopicCandidates)
+	assert.Equal(t, "course_name", p.Criteria.EducationTopicProperty)
+
+	c.EducationTopicProperty = "course_topic"
+	p, err = x.PreviewCustom(context.Background(), "proj-1", c, "")
+	require.NoError(t, err)
+	assert.Equal(t, "course_name", p.Criteria.EducationTopicProperty, "an enumeration the caller picked is replaced")
 }

@@ -181,9 +181,14 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 		if perr != nil {
 			return nil, fmt.Errorf("audience custom: read education event properties: %w", perr)
 		}
+		// The topic filter is always a string CONTAINS, so only a string property
+		// can carry it: a number or enumeration one would preview and then match
+		// nobody, for the automatic pick and the caller's alike.
 		names := make(map[string]string, len(props))
 		for _, p := range props {
-			names[p.Name] = p.Label
+			if strings.EqualFold(strings.TrimSpace(p.Type), "string") {
+				names[p.Name] = p.Label
+			}
 		}
 		topicCandidates = audience.CourseTopicCandidates(names)
 		if len(topicCandidates) > 0 {

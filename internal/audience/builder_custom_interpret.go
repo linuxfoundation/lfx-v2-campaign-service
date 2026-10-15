@@ -101,6 +101,7 @@ const (
 	customMaxOptions    = 4
 	customMaxValues     = 25
 	customMaxFilters    = 10
+	customMaxPropName   = 100
 	customMaxNotes      = 10
 )
 
@@ -114,6 +115,11 @@ const (
 	// CustomMaxPageViewURLs is page_view_urls' MaxLength.
 	CustomMaxPageViewURLs = 10
 )
+
+// customPropertyNameRE is the criteria contract's pattern for a HubSpot internal
+// property name (design/audience_builder.go); a row outside it is dropped, since
+// one such row would make the whole response invalid.
+var customPropertyNameRE = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // CustomInterpretPrompt renders the user prompt. Every operator-typed value is
 // collapsed to one line and has the block markers neutralised, so text inside a
@@ -251,7 +257,7 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 	for _, f := range c.PropertyFilters {
 		op := CustomPropertyOperator(strings.TrimSpace(f.Operator))
 		prop := field(f.Property)
-		if _, _, ok := op.hubspotOperator(false); !ok || prop == "" || strings.ContainsAny(prop, " \t") {
+		if _, _, ok := op.hubspotOperator(false); !ok || !customPropertyNameRE.MatchString(prop) || len(prop) > customMaxPropName {
 			d.Notes = append(d.Notes, fmt.Sprintf("Dropped a suggested filter on %q: not a usable property/operator.", prop))
 			continue
 		}

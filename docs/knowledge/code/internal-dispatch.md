@@ -4326,7 +4326,8 @@ Preview's `UpperBound` is the gate list's size only when every branch is gated.
 `similarLists` (2026-10-10) runs during interpretation: up to 8 candidates from deterministic name
 probes, ranked by a second model call. Best effort — a failed search or ranking returns the
 candidates unranked, never fails the draft. `previewCustom` resolves the education topic property
-with `EventTypeProperties` BEFORE validation: a caller's value is kept only when it is one of the
+with `EventTypeProperties` BEFORE validation, over string properties only (a number or
+enumeration property would preview and then match nobody): a caller's value is kept only when it is one of the
 portal's `CourseTopicCandidates`, otherwise the best candidate replaces it; the model's choice is
 never used.
 
