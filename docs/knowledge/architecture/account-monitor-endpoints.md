@@ -161,7 +161,7 @@ renderer formats with a symbol when it is present and without one otherwise.
   orchestrator, and in `buildAccountMonitor`. A malformed code is dropped, not an error.
 - **Decoded on its own, from a trusted page.** Every currency field — X's account `currency`,
   Meta's `account_currency`, LinkedIn's budget `currencyCode`, Reddit's ad-account `currency`
-  (`reddit.monitorAccountCurrencyField`) and Microsoft's `Account/Query` `CurrencyCode` — is read
+  and Microsoft's `Account/Query` `CurrencyCode` — is read
   RAW and decoded as a string separately, so a value of the wrong JSON type (a number, object,
   array, boolean) or `null` costs only the currency — never the rows, the timezone, the read or
   the account-id check that trusts the answer. Meta's insights pages and
