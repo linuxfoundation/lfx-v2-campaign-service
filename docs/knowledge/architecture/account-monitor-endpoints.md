@@ -60,22 +60,23 @@ reaches), not project-scoped ones.
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
-- Each dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit}.go`)
+- Each monitor dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit,microsoft_monitor,twitter_monitor}.go`)
   resolves its monitor read's credential via `credsSource.resolveOwned` —
   the project's own connection only, never the LF system-account fallback
   chain (`resolve` → `resolveWithFallback` → `systemConn` → forced-system)
   that account discovery still uses. This is deliberately narrower than
   discovery: see the Trust boundary section below for why (round-16/17
   review). Google Ads builds an account-agnostic client the same way
-  discovery does; Reddit, LinkedIn and Meta additionally scope the requested
-  `account_id` to their own resolved connection's single account. A
+  discovery does; Reddit, LinkedIn, Meta, Microsoft and X additionally scope
+  the requested `account_id` to their own resolved connection's single account. A
   connection is bound to exactly one ad account (`account_id TEXT NOT NULL` on
   every provider table, one LIVE row per project via a `(project_id)` unique
   index partial to `WHERE status <> 'deleted'`), so
   a request naming any other account is a request mismatch and answers
   `domain.ErrAccountNotManagedByConnection` (400) before any upstream call.
   Reddit checked this first (round-18 review); LinkedIn and Meta followed,
-  since the property is the shared schema's and not a Reddit quirk. Google
+  and Microsoft and X were built with it, since the property is the shared
+  schema's and not a Reddit quirk. Google
   Ads is the remaining gap and is tracked separately — it is one shared
   customer id across every foundation, so there is no second account to
   cross into today, and the change collides with an open PR.
@@ -90,10 +91,13 @@ reaches), not project-scoped ones.
   LinkedIn is the one platform where this is LIVE rather than defensive: it
   genuinely runs several ad accounts across foundations (`tlf` and `lf-events`
   are two of them), so a project naming another project's account is a real,
-  reachable request. The other ad platforms share a single account today, so
-  their stored `account_id` IS the shared account and a legitimate request
-  matches it — the guard is carried there against a future split, and never
-  fires meanwhile. `docs/architecture.md`'s "Account Tenancy" and "Current
+  reachable request. Meta, Reddit and X share a single account across
+  foundations today, so their stored `account_id` IS the shared account and a
+  legitimate request matches it — the guard is carried there against a future
+  split, and never fires meanwhile. Microsoft Ads' tenancy is "not yet
+  recorded" in the Account Tenancy table and it has no row in Current Platform
+  Accounts, so whether its guard is live or defensive is not asserted; it
+  refuses a mismatch either way. `docs/architecture.md`'s "Account Tenancy" and "Current
   Platform Accounts" tables are the authority for which platforms are shared
   and which run an account per foundation; issue #243 corrected both
   (2026-10-13), which had listed Meta/Reddit/X as per-foundation.

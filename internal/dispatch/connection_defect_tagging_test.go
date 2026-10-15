@@ -249,8 +249,8 @@ func TestTwitter_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 	)
 }
 
-// TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath covers the two entry points LFXV2-3196
-// routed through resolveLinkedInCredentials.
+// TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath covers every entry point routed through
+// resolveLinkedInCredentials: the two LFXV2-3196 moved there, and Dispatch, which joined later.
 //
 // The LF-system-fallback half is the load-bearing one. That helper tags system-scoped defects
 // from a DEFERRED closure over `conn := res` — a binding taken before the error returns, which
@@ -259,8 +259,9 @@ func TestTwitter_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 // does not own, while whoever installed the LF credential is never paged. Every other LinkedIn
 // test uses a project-owned row, so without this case that regression passes the whole suite.
 //
-// Dispatch is deliberately absent: it validates inline to preserve its notCreated() claim-release
-// contract (see internal-dispatch.md), so it does not route through the helper under test.
+// Dispatch wraps the helper's error in notCreated() to release the dispatch claim; the tags must
+// survive that wrap, which is what its row here pins (the wrap itself is pinned by
+// TestLinkedIn_PreCreateErrorsReleaseClaim).
 func TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 	srv := unreachablePlatform(t)
 	camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "123"}
@@ -274,6 +275,10 @@ func TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath(t *testing.T) {
 		func(repo connReader) map[string]func() error {
 			d := NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(srv.URL))
 			return map[string]func() error{
+				"Dispatch": func() error {
+					_, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, nil)
+					return err
+				},
 				"ToggleStatus": func() error {
 					return d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.CampaignRunPaused)
 				},
