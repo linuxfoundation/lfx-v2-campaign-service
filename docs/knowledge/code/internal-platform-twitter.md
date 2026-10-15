@@ -1130,7 +1130,8 @@ while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
   SAME cached account GET as `AccountTimezone` (both go through `accountSettings`, which caches
   the zone and the currency together), so after the campaign list it costs no call within the
   cache's minute. The currency is kept only when `identityjson` trusts the raw body, the body's
-  `id` is the configured account, and the value is three upper-case letters; otherwise it is
+  `id` is the configured account, and the value — decoded RAW, on its own, so a number, object or
+  `null` there cannot fail the timezone decode — is a string of three upper-case letters; otherwise it is
   `""`. The timezone's own rules are unchanged — a bad currency never fails the timezone read.
   An error only when the account read itself failed.
 - **`ListAccountCampaigns`** — `AccountTimezone` (GET the account root, `timezone`, loaded as

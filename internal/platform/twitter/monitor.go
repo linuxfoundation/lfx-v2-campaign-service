@@ -244,12 +244,25 @@ type monitorLineItemElement struct {
 // names campaign_ids as a multi-value filter without a number in the summary available here.
 const lineItemCampaignBatch = 200
 
-// accountElementTZ is the part of GET accounts/:account_id this file reads. Currency is a
-// pointer so an absent field is told from an empty one.
+// accountElementTZ is the part of GET accounts/:account_id this file reads. Currency is RAW and
+// decoded on its own (accountCurrencyField): it is optional, and a value of the wrong JSON type
+// there must cost only the currency — decoded as a typed field it would fail this whole decode,
+// and with it the timezone the monitor cannot run without.
 type accountElementTZ struct {
-	ID       string  `json:"id"`
-	Timezone string  `json:"timezone"`
-	Currency *string `json:"currency"`
+	ID       string          `json:"id"`
+	Timezone string          `json:"timezone"`
+	Currency json.RawMessage `json:"currency"`
+}
+
+// accountCurrencyField is the account's currency when the raw field is a JSON string holding an
+// ISO 4217-shaped code, and "" for anything else: absent, null, a number, an object, an array, a
+// boolean, or a malformed code.
+func accountCurrencyField(raw json.RawMessage) string {
+	var code string
+	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
+		return "" // json.Unmarshal of null into a string leaves it "", which is dropped too
+	}
+	return model.NormalizeCurrencyCode(code)
 }
 
 // AccountTimezone reads the ad account's configured timezone. X documents it as the zone that
@@ -326,8 +339,8 @@ func (c *Client) readAccountTimezone(ctx context.Context) (*time.Location, strin
 		return nil, "", errors.New("read x ads account: account timezone is not a recognised IANA zone")
 	}
 	currency := ""
-	if acct.Currency != nil && acct.ID == c.account.AccountID && identityjson.Check(resp.raw) == nil {
-		currency = model.NormalizeCurrencyCode(*acct.Currency)
+	if acct.ID == c.account.AccountID && identityjson.Check(resp.raw) == nil {
+		currency = accountCurrencyField(acct.Currency)
 	}
 	return loc, currency, nil
 }

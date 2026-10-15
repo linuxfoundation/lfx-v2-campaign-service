@@ -25,3 +25,11 @@ until #316's currency-aware conversion merges. The Reddit account read now runs 
 fan-out on its own 3s budget with no 429 retry, and Reddit's rows-only metrics reader makes no
 account read; the Microsoft/X currency read is capped at 3s, Microsoft's `Account/Query` is not
 retried on a 429 and a successful answer is cached on the client per account for 6 hours.
+
+PR #338 review: the currency fields are now decoded RAW, on their own — a number, object, array,
+boolean or `null` in X's `currency`, Meta's `account_currency` or a LinkedIn budget `currencyCode`
+leaves the currency absent (and that LinkedIn campaign's pacing unknown) instead of failing the
+shared decode, which on X took the timezone and the whole monitor with it. Meta's insights pages
+and LinkedIn's campaign-list pages are checked with `identityjson` before decoding, so a repeated
+or case-variant key can no longer collapse to its last value and be published; an untrusted page
+withholds the currency but keeps the rows, unlike the audience reads, which fail on one.

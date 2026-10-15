@@ -823,8 +823,11 @@ its budgets are in) — not `costInUsd` as the single-campaign metrics read does
 `ListAccountCampaignsWithCurrency` is the same read plus that currency for the monitor's
 `currency` field, from the `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign
 list (`budgetCurrencies`): the code when every budget names the same well-formed one, else `""`.
-Two different codes also set `PacingUnknown` on every row whose budget named one. No extra
-request. `ListAccountCampaigns` wraps it and drops the currency. See
+Two different codes also set `PacingUnknown` on every row whose budget named one. Each page is
+checked with `identityjson` and decoded element by element (`monitorCampaignElement`), each
+`currencyCode` RAW: an untrusted page withholds the currency, and an untrusted element or a code
+that is `null` or not a string also sets that row's `PacingUnknown`; rows are never dropped for
+it. No extra request. `ListAccountCampaigns` wraps it and drops the currency. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional

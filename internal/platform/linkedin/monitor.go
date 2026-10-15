@@ -4,6 +4,7 @@
 package linkedin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // AccountCampaignRow is one campaign read live from an ad account for the account-monitor
@@ -45,6 +47,11 @@ type AccountCampaignRow struct {
 	// budgetCurrencyNamed records that this row's dailyBudget or totalBudget carried a
 	// currencyCode, so a disagreement elsewhere in the list can withhold its pacing.
 	budgetCurrencyNamed bool
+	// budgetCurrencyAmbiguous records that this row's budget currency cannot be read: a
+	// currencyCode that is null or not a JSON string, or an element identityjson would not trust
+	// (a repeated key, exact or case-folded, that encoding/json would silently resolve). Its
+	// pacing is withheld whatever the rest of the list says.
+	budgetCurrencyAmbiguous bool
 	// FetchFailed marks a row this service could not read trustworthily: a malformed
 	// dailyBudget/totalBudget amount from fetchAccountCampaignList, or an unparseable
 	// costInLocalCurrency from the analytics pivot (monitorMetricsRow.FetchFailed, ORed in below). A
@@ -114,7 +121,7 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	out := make([]AccountCampaignRow, 0, len(campaigns))
 	for _, cm := range campaigns {
 		row := cm
-		if mismatch && row.budgetCurrencyNamed {
+		if (mismatch && row.budgetCurrencyNamed) || row.budgetCurrencyAmbiguous {
 			row.PacingUnknown = true
 		}
 		// A campaign absent from a SUCCESSFUL account-wide analytics response is not a fetch
@@ -172,36 +179,50 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			params["pageToken"] = pageToken
 		}
 		var resp struct {
-			Elements *[]struct {
-				ID          flexibleID `json:"id"`
-				Name        string     `json:"name"`
-				Status      string     `json:"status"`
-				DailyBudget *struct {
-					Amount       string  `json:"amount"`
-					CurrencyCode *string `json:"currencyCode"`
-				} `json:"dailyBudget"`
-				TotalBudget *struct {
-					Amount       string  `json:"amount"`
-					CurrencyCode *string `json:"currencyCode"`
-				} `json:"totalBudget"`
-				RunSchedule *struct {
-					Start int64 `json:"start"`
-					End   int64 `json:"end"`
-				} `json:"runSchedule"`
-			} `json:"elements"`
-			Metadata *linkedInMetadata `json:"metadata"`
+			// Elements stay RAW so each can be checked with identityjson and decoded on its own.
+			Elements *[]json.RawMessage `json:"elements"`
+			Metadata *linkedInMetadata  `json:"metadata"`
 		}
-		if err := c.doMonitorGET(ctx, nestedPath, params, &resp); err != nil {
+		// The page is fetched RAW and checked with identityjson before it is decoded, as the
+		// Meta audience read's pages are: encoding/json resolves a repeated key — exact or
+		// case-folded — in favour of the last value with no error, so a budget carrying
+		// `"currencyCode":"USD","CurrencyCode":"EUR"` would read as EUR. An untrusted page does
+		// not fail the monitor (its rows were read this way before the currency existed); it
+		// withholds the account currency, and an untrusted ELEMENT also withholds that
+		// campaign's pacing, since its budget's currency is ambiguous.
+		var page json.RawMessage
+		if err := c.doMonitorGET(ctx, nestedPath, params, &page); err != nil {
 			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: %w", err)
+		}
+		pageTrusted := identityjson.Check(page) == nil
+		if !pageTrusted {
+			currencies.unusable = true
+		}
+		if err := json.Unmarshal(page, &resp); err != nil {
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response is not a campaign page of the expected shape")
 		}
 		if resp.Elements == nil {
 			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response has no elements field")
 		}
-		for _, el := range *resp.Elements {
+		for _, raw := range *resp.Elements {
+			var el monitorCampaignElement
+			if err := json.Unmarshal(raw, &el); err != nil {
+				return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: an element is not a campaign of the expected shape")
+			}
 			row := AccountCampaignRow{CampaignID: el.ID.String(), Name: el.Name, Status: el.Status}
+			// An element identityjson refuses has no currency this read can believe — the decoded
+			// one is merely the last of a repeated key — so it is not folded into the account's
+			// set, which is withheld anyway (pageTrusted is false), and its pacing is withheld.
+			elTrusted := pageTrusted || identityjson.Check(raw) == nil
+			if !elTrusted && (el.DailyBudget != nil || el.TotalBudget != nil) {
+				row.budgetCurrencyAmbiguous = true
+			}
 			if el.DailyBudget != nil {
-				currencies.observe(el.DailyBudget.CurrencyCode)
-				row.budgetCurrencyNamed = row.budgetCurrencyNamed || el.DailyBudget.CurrencyCode != nil
+				if elTrusted {
+					named, usable := currencies.observe(el.DailyBudget.CurrencyCode)
+					row.budgetCurrencyNamed = row.budgetCurrencyNamed || named
+					row.budgetCurrencyAmbiguous = row.budgetCurrencyAmbiguous || !usable
+				}
 				if v, ok := parseUSDAmount(el.DailyBudget.Amount); ok {
 					row.DailyBudget = v
 				} else {
@@ -209,8 +230,11 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				}
 			}
 			if el.TotalBudget != nil {
-				currencies.observe(el.TotalBudget.CurrencyCode)
-				row.budgetCurrencyNamed = row.budgetCurrencyNamed || el.TotalBudget.CurrencyCode != nil
+				if elTrusted {
+					named, usable := currencies.observe(el.TotalBudget.CurrencyCode)
+					row.budgetCurrencyNamed = row.budgetCurrencyNamed || named
+					row.budgetCurrencyAmbiguous = row.budgetCurrencyAmbiguous || !usable
+				}
 				if v, ok := parseUSDAmount(el.TotalBudget.Amount); ok {
 					row.TotalBudget = v
 				} else {
@@ -244,24 +268,58 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 	return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: exceeded %d pages", monitorMaxPages)
 }
 
-// budgetCurrencies folds the currencyCode of every budget object the campaign list carried. One
-// account has one currency, so the set yields a code only when every budget named the same
-// well-formed one; a budget with no code leaves it unconfirmed, and two different codes (a
-// malformed one included) are a disagreement.
-type budgetCurrencies struct {
-	codes   map[string]struct{}
-	missing bool
+// monitorCampaignElement is one element of the campaign list, decoded only after the element
+// has been checked. Each budget's currencyCode is RAW and decoded on its own
+// (budgetCurrencies.observe), so a value of the wrong JSON type costs only the currency and that
+// campaign's pacing — never the element, the page or the read.
+type monitorCampaignElement struct {
+	ID          flexibleID      `json:"id"`
+	Name        string          `json:"name"`
+	Status      string          `json:"status"`
+	DailyBudget *monitorBudget  `json:"dailyBudget"`
+	TotalBudget *monitorBudget  `json:"totalBudget"`
+	RunSchedule *monitorRunTime `json:"runSchedule"`
 }
 
-func (b *budgetCurrencies) observe(code *string) {
-	if code == nil {
+type monitorBudget struct {
+	Amount       string          `json:"amount"`
+	CurrencyCode json.RawMessage `json:"currencyCode"`
+}
+
+type monitorRunTime struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+}
+
+// budgetCurrencies folds the currencyCode of every budget object the campaign list carried. One
+// account has one currency, so the set yields a code only when every budget named the same
+// well-formed one; a budget with no code leaves it unconfirmed, two different codes (a malformed
+// one included) are a disagreement, and a code that is null or not a JSON string — or a page
+// identityjson would not trust — makes the set unusable.
+type budgetCurrencies struct {
+	codes    map[string]struct{}
+	missing  bool
+	unusable bool
+}
+
+// observe folds one budget's raw currencyCode. named reports that the budget carried the field at
+// all; usable is false when it was null or not a JSON string, which leaves that budget's currency
+// unknown.
+func (b *budgetCurrencies) observe(raw json.RawMessage) (named, usable bool) {
+	if len(raw) == 0 {
 		b.missing = true
-		return
+		return false, true
+	}
+	var code string
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &code) != nil {
+		b.unusable = true
+		return true, false
 	}
 	if b.codes == nil {
 		b.codes = map[string]struct{}{}
 	}
-	b.codes[*code] = struct{}{}
+	b.codes[code] = struct{}{}
+	return true, true
 }
 
 // disagree reports whether two budgets named different currencies.
@@ -269,7 +327,7 @@ func (b budgetCurrencies) disagree() bool { return len(b.codes) > 1 }
 
 // code is the one well-formed currency every budget named, or "".
 func (b budgetCurrencies) code() string {
-	if b.missing || len(b.codes) != 1 {
+	if b.missing || b.unusable || len(b.codes) != 1 {
 		return ""
 	}
 	for c := range b.codes {

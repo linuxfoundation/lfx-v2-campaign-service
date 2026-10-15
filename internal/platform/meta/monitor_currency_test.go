@@ -34,6 +34,15 @@ func TestListAccountCampaignsWithCurrency(t *testing.T) {
 		// budgets read 100x too small: the currency is withheld until #316 converts them.
 		{"zero-decimal currency withheld", `{"data":[` + row("111", `,"account_currency":"JPY"`) + `],"paging":{}}`, ""},
 		{"well-formed but unlisted currency withheld", `{"data":[` + row("111", `,"account_currency":"ZZZ"`) + `],"paging":{}}`, ""},
+		{"a number", `{"data":[` + row("111", `,"account_currency":123`) + `],"paging":{}}`, ""},
+		{"an object", `{"data":[` + row("111", `,"account_currency":{"code":"EUR"}`) + `],"paging":{}}`, ""},
+		{"null", `{"data":[` + row("111", `,"account_currency":null`) + `],"paging":{}}`, ""},
+		{"one good row, one null", `{"data":[` + row("111", `,"account_currency":"EUR"`) + `,` + row("222", `,"account_currency":null`) + `],"paging":{}}`, ""},
+		{"one good row, one numeric", `{"data":[` + row("111", `,"account_currency":"EUR"`) + `,` + row("222", `,"account_currency":978`) + `],"paging":{}}`, ""},
+		// encoding/json would keep the LAST of a repeated key, publishing EUR; identityjson
+		// refuses the page's currency instead.
+		{"exact duplicate key", `{"data":[` + row("111", `,"account_currency":"USD","account_currency":"EUR"`) + `],"paging":{}}`, ""},
+		{"case-variant duplicate key", `{"data":[` + row("111", `,"account_currency":"USD","Account_Currency":"EUR"`) + `],"paging":{}}`, ""},
 		{"rows disagree", `{"data":[` + row("111", `,"account_currency":"EUR"`) + `,` + row("222", `,"account_currency":"USD"`) + `],"paging":{}}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,6 +56,11 @@ func TestListAccountCampaignsWithCurrency(t *testing.T) {
 			}
 			if len(rows) != 2 {
 				t.Errorf("got %d rows, want both campaigns whatever the currency: %+v", len(rows), rows)
+			}
+			for _, r := range rows {
+				if r.CampaignID == "111" && strings.Contains(tc.insights, `"campaign_id":"111"`) && (r.Impressions != 10 || r.FetchFailed) {
+					t.Errorf("row 111 = %+v, want its metrics read whatever the currency field holds", r)
+				}
 			}
 			if rec.count() != 2 {
 				t.Errorf("made %d requests, want the campaign list and insights only: %v", rec.count(), rec.all())

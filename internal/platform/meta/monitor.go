@@ -5,6 +5,7 @@ package meta
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 const (
@@ -280,10 +282,14 @@ type metaAccountInsights struct {
 	currencyUnusable bool
 }
 
-// observeCurrency folds one insights row's account_currency into the account's. Every row — a
+// observeCurrency folds one insights row's raw account_currency into the account's. Every row — a
 // row whose counters would not parse included — describes the same account, so every row is
-// evidence.
-func (r *metaAccountInsights) observeCurrency(code string) {
+// evidence. A field that is absent, null or not a JSON string is unusable, like a malformed code.
+func (r *metaAccountInsights) observeCurrency(raw json.RawMessage) {
+	var code string
+	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
+		code = ""
+	}
 	switch {
 	case r.currencyUnusable:
 	case model.NormalizeCurrencyCode(code) == "":
@@ -351,8 +357,10 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 				Impressions string `json:"impressions"`
 				Clicks      string `json:"clicks"`
 				Spend       string `json:"spend"`
-				// AccountCurrency is the ad account's ISO 4217 currency (Meta's own field name).
-				AccountCurrency string `json:"account_currency"`
+				// AccountCurrency is the ad account's ISO 4217 currency (Meta's own field name),
+				// RAW and decoded on its own (observeCurrency): a value of the wrong JSON type
+				// costs only the currency, never this row or the read.
+				AccountCurrency json.RawMessage `json:"account_currency"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -361,8 +369,26 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 				Next string `json:"next"`
 			} `json:"paging"`
 		}
-		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		// Fetched RAW and checked with identityjson before it is decoded, as the audience read's
+		// pages are (audience.go): encoding/json resolves a repeated key — exact or case-folded —
+		// in favour of the last value with no error, so `"account_currency":"USD",
+		// "Account_Currency":"EUR"` would read as EUR. Unlike the audience read, an untrusted page
+		// does not fail the monitor — the rows were read this way before the currency existed —
+		// but it withholds the currency the page would otherwise vouch for.
+		var body json.RawMessage
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &body); err != nil {
 			return nil, fmt.Errorf("list account campaign insights: %w", err)
+		}
+		if identityjson.Check(body) != nil {
+			res.currencyUnusable = true
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			// The decoder's message can quote a value; report the shape only.
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("list account campaign insights: response is not an insights page of the expected shape"),
+			}
 		}
 		if resp.Data == nil {
 			return nil, &transportError{

@@ -83,3 +83,67 @@ func TestListAccountCampaigns_SpendIsLocalCurrency(t *testing.T) {
 		}
 	}
 }
+
+// A budget currencyCode of the wrong JSON type, null, or repeated (exact or case-folded) cannot be
+// read: the account currency is withheld and that campaign's pacing is unknown, while every row
+// — and its metrics — survive. The good campaign beside it keeps its pacing.
+func TestListAccountCampaignsWithCurrency_UnreadableBudgetCurrency(t *testing.T) {
+	const analytics = `{"elements":[` +
+		`{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"12.50"},` +
+		`{"pivotValues":["urn:li:sponsoredCampaign:222"],"impressions":500,"clicks":5,"costInLocalCurrency":"3.00"}]}`
+	const good = `{"id":222,"name":"C222","status":"ACTIVE","dailyBudget":{"amount":"50.00","currencyCode":"USD"}}`
+	for _, field := range []string{"dailyBudget", "totalBudget"} {
+		for _, tc := range []struct {
+			name, budget string
+		}{
+			{"a number", `{"amount":"50.00","currencyCode":840}`},
+			{"an object", `{"amount":"50.00","currencyCode":{"code":"USD"}}`},
+			{"null", `{"amount":"50.00","currencyCode":null}`},
+			{"exact duplicate key", `{"amount":"50.00","currencyCode":"USD","currencyCode":"EUR"}`},
+			{"case-variant duplicate key", `{"amount":"50.00","currencyCode":"USD","CurrencyCode":"EUR"}`},
+		} {
+			t.Run(field+": "+tc.name, func(t *testing.T) {
+				list := `{"elements":[{"id":111,"name":"C111","status":"ACTIVE","` + field + `":` + tc.budget + `},` + good + `],"metadata":{}}`
+				srv, _ := adAccountsServer(t, list, analytics)
+				c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+				rows, currency, err := c.ListAccountCampaignsWithCurrency(context.Background(), "512345678", 7)
+				if err != nil {
+					t.Fatalf("ListAccountCampaignsWithCurrency: %v — an unreadable currency must not fail the read", err)
+				}
+				if currency != "" {
+					t.Errorf("currency = %q, want it withheld", currency)
+				}
+				if len(rows) != 2 {
+					t.Fatalf("got %d rows, want both", len(rows))
+				}
+				for _, r := range rows {
+					switch r.CampaignID {
+					case "111":
+						if !r.PacingUnknown || r.FetchFailed || r.Impressions != 1000 || r.Spend != 12.5 || (r.DailyBudget+r.TotalBudget) != 50 {
+							t.Errorf("row 111 = %+v, want pacing unknown with its metrics and budget kept", r)
+						}
+					case "222":
+						if r.PacingUnknown || r.Impressions != 500 {
+							t.Errorf("row 222 = %+v, want it paced and read", r)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// A repeated key at the PAGE level (outside any element) withholds the currency without touching
+// any campaign's pacing: no single budget's currency is in doubt.
+func TestListAccountCampaignsWithCurrency_UntrustedPageEnvelope(t *testing.T) {
+	list := `{"elements":[{"id":111,"name":"C111","status":"ACTIVE","dailyBudget":{"amount":"50.00","currencyCode":"USD"}}],"metadata":{},"Metadata":{}}`
+	srv, _ := adAccountsServer(t, list, `{"elements":[]}`)
+	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
+	rows, currency, err := c.ListAccountCampaignsWithCurrency(context.Background(), "512345678", 7)
+	if err != nil {
+		t.Fatalf("ListAccountCampaignsWithCurrency: %v", err)
+	}
+	if currency != "" || len(rows) != 1 || rows[0].PacingUnknown {
+		t.Errorf("currency=%q rows=%+v, want currency withheld and the row paced", currency, rows)
+	}
+}

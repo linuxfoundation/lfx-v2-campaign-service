@@ -25,6 +25,10 @@ func TestAccountCurrency(t *testing.T) {
 		{"malformed (lower case) dropped", `{"data":{"id":"account123","timezone":"America/Los_Angeles","currency":"eur"}}`, ""},
 		{"malformed (too long) dropped", `{"data":{"id":"account123","timezone":"America/Los_Angeles","currency":"EURO"}}`, ""},
 		{"another account's body", `{"data":{"id":"other456","timezone":"America/Los_Angeles","currency":"EUR"}}`, ""},
+		{"a number", `{"data":{"id":"account123","timezone":"America/Los_Angeles","currency":123}}`, ""},
+		{"an object", `{"data":{"id":"account123","timezone":"America/Los_Angeles","currency":{"code":"EUR"}}}`, ""},
+		{"an array", `{"data":{"id":"account123","timezone":"America/Los_Angeles","currency":["EUR"]}}`, ""},
+		{"a boolean", `{"data":{"id":"account123","timezone":"America/Los_Angeles","currency":true}}`, ""},
 		{"duplicate key refused", `{"data":{"id":"account123","timezone":"America/Los_Angeles","currency":"USD","Currency":"EUR"}}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
