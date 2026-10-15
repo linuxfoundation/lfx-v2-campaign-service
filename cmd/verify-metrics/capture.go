@@ -124,10 +124,15 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	if ex.token {
 		// Record the issued tokens so they are scrubbed wherever they reappear. The body is
 		// read whole (a token response is small) and handed back unchanged.
-		body, rerr := io.ReadAll(io.LimitReader(resp.Body, maxCapture))
+		// cap+1, so an oversized body is refused rather than handed back cut short as if
+		// it were the whole response (io.LimitReader reports EOF, not an error, at the cap).
+		body, rerr := io.ReadAll(io.LimitReader(resp.Body, maxCapture+1))
 		_ = resp.Body.Close()
 		if rerr != nil {
 			return nil, rerr
+		}
+		if len(body) > maxCapture {
+			return nil, fmt.Errorf("token exchange response exceeds %d bytes", maxCapture)
 		}
 		var doc any
 		if json.Unmarshal(body, &doc) == nil {

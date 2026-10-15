@@ -4,6 +4,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -180,6 +183,79 @@ func TestRedactBody(t *testing.T) {
 	}
 	if !strings.Contains(got, `"clicks": 4`) {
 		t.Errorf("redactBody dropped a non-secret field:\n%s", got)
+	}
+}
+
+// A real SAS URL has several parameters; JSON re-encoding must not split the URL run at an
+// escaped `&` and leave the signature behind (Microsoft's Poll response names the report file).
+func TestRedactBody_MultiParameterSignedURL(t *testing.T) {
+	body := `{"ReportRequestStatus":{"Status":"Success","ReportDownloadUrl":` +
+		`"https://bingads.blob.core.windows.net/r/abc.zip?sv=2020-08-04&st=2026&se=2026&sr=b&sp=r&sig=SUPERSECRETSIG%3D"}}`
+	got := redactBody([]byte(body))
+	for _, leak := range []string{"SUPERSECRETSIG", "sig=", "/r/abc.zip"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("redactBody leaked %q:\n%s", leak, got)
+		}
+	}
+	if !strings.Contains(got, `"Status": "Success"`) {
+		t.Errorf("redactBody dropped a non-secret field:\n%s", got)
+	}
+}
+
+func TestRedactBody_KeepsIntegerPrecision(t *testing.T) {
+	if got := redactBody([]byte(`{"id":9007199254740993}`)); !strings.Contains(got, "9007199254740993") {
+		t.Errorf("redactBody rounded an int64: %s", got)
+	}
+}
+
+// A Microsoft report download is a zip; -raw prints its files, redacted.
+func TestRenderResponse_UnpacksZip(t *testing.T) {
+	var zbuf bytes.Buffer
+	zw := zip.NewWriter(&zbuf)
+	f, _ := zw.Create("report.csv")
+	_, _ = io.WriteString(f, "CampaignId,Impressions,Clicks,Spend\n123,10,2,1.50\nsee https://x.example/p?sig=ZIPSECRETSIG&a=b\n")
+	_ = zw.Close()
+	b := &cappedBuffer{}
+	b.write(zbuf.Bytes())
+	got := renderResponse(b)
+	if !strings.Contains(got, "zip entry report.csv") || !strings.Contains(got, "123,10,2,1.50") {
+		t.Errorf("zip not unpacked:\n%s", got)
+	}
+	if strings.Contains(got, "ZIPSECRETSIG") {
+		t.Errorf("zip entry leaked a signature:\n%s", got)
+	}
+}
+
+func TestLookupCampaign(t *testing.T) {
+	opts := &options{provider: model.ProviderRedditAds, project: "p", campaign: "t3_c"}
+	one := model.ProjectCampaignScope{PlatformCampaignID: "t3_c", Result: json.RawMessage(`{"accountId":"t2_a"}`)}
+	other := model.ProjectCampaignScope{PlatformCampaignID: "t3_c", Result: json.RawMessage(`{"accountId":"t2_b"}`)}
+	unrelated := model.ProjectCampaignScope{PlatformCampaignID: "t3_x"}
+
+	c, found, err := lookupCampaign(context.Background(), &backend{campaigns: &fakeScopes{scopes: []model.ProjectCampaignScope{unrelated, one}}}, opts)
+	if err != nil || !found || string(c.Result) != string(one.Result) || c.PlatformCampaignID != "t3_c" {
+		t.Errorf("single match: c=%+v found=%v err=%v", c, found, err)
+	}
+	c, found, err = lookupCampaign(context.Background(), &backend{campaigns: &fakeScopes{scopes: []model.ProjectCampaignScope{unrelated}}}, opts)
+	if err != nil || found || len(c.Result) != 0 {
+		t.Errorf("no match: c=%+v found=%v err=%v", c, found, err)
+	}
+	if _, _, err = lookupCampaign(context.Background(), &backend{campaigns: &fakeScopes{scopes: []model.ProjectCampaignScope{one, other}}}, opts); err == nil ||
+		!strings.Contains(err.Error(), "different account provenance") {
+		t.Errorf("ambiguous rows must be refused, err = %v", err)
+	}
+}
+
+func TestRecorder_RefusesOversizedTokenResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("a"), maxCapture+1))
+	}))
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/access_token", strings.NewReader("grant_type=x"))
+	resp, err := newRecorder(newSecretSet()).client().Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("an oversized token response must be refused, not truncated")
 	}
 }
 
@@ -351,8 +427,14 @@ func TestOpenReadOnlyPool_RefusesWrites(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer pool.Close()
-	if _, err := pool.Exec(context.Background(), "CREATE TABLE verify_metrics_must_not_exist (x int)"); err == nil {
-		_, _ = pool.Exec(context.Background(), "DROP TABLE IF EXISTS verify_metrics_must_not_exist")
+	_, err = pool.Exec(context.Background(), "CREATE TABLE verify_metrics_must_not_exist (x int)")
+	if err == nil {
 		t.Fatal("a write succeeded on the read-only session")
+	}
+	// read_only_sql_transaction specifically: a permission or schema error would also fail the
+	// CREATE without proving the session is read-only.
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "25006" {
+		t.Fatalf("want SQLSTATE 25006 (read_only_sql_transaction), got %v", err)
 	}
 }

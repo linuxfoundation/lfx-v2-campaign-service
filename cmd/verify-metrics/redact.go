@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -178,10 +179,21 @@ func displayURL(u *url.URL) string {
 // so a signed URL in a body (Microsoft's poll response names the report file's) cannot leak its
 // signature. The secret-set scrub runs later, on everything printed.
 func redactBody(body []byte) string {
+	// UseNumber: a raw dump must not round an int64 id or count through float64.
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
 	var doc any
-	if err := json.Unmarshal(body, &doc); err == nil {
-		if out, merr := json.MarshalIndent(redactJSON(doc), "", "  "); merr == nil {
-			return redact.SnapshotText(string(out))
+	if err := dec.Decode(&doc); err == nil && dec.Decode(new(any)) == io.EOF {
+		// Rendered WITHOUT HTML escaping: an escaped `&` (\u0026) ends a URL run for
+		// SnapshotText, which would then reduce only the part before it and leave a later
+		// `sig=` in the text. redactJSON also reduces URLs on the decoded strings, before any
+		// encoding can split them.
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		if enc.Encode(redactJSON(doc)) == nil {
+			return redact.SnapshotText(strings.TrimRight(buf.String(), "\n"))
 		}
 	}
 	return redact.SnapshotText(string(body))
@@ -205,6 +217,8 @@ func redactJSON(v any) any {
 			out[i] = redactJSON(e)
 		}
 		return out
+	case string:
+		return redact.SnapshotText(t)
 	}
 	return v
 }

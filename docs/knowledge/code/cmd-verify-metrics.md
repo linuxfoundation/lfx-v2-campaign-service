@@ -31,7 +31,8 @@ go run ./cmd/verify-metrics -provider reddit-ads -project <slug|uuid|lf-system> 
 - `-campaign`: the PLATFORM's campaign id, not this service's campaign UUID. If the project holds
   a campaign row with that platform id, its provenance blob is passed along so the dispatcher's
   account-match guard runs as it does in the service; otherwise the read goes by platform id with
-  no provenance (the guard's documented "unknown" case), and the output says which.
+  no provenance (the guard's documented "unknown" case), and the output says which. Several rows
+  for the same platform id with different provenance are refused rather than picked from.
 - `-window`: any `model.MetricsWindow`; provider-specific window refusals come from the
   dispatcher, as they would from the endpoint.
 - `-raw`: also print every upstream request/response exchange (method, URL, status, request and
@@ -74,4 +75,8 @@ value of the credential document the dispatcher decrypted (recorded by wrapping 
 credential-bearing request header (Bearer tokens, OAuth 1.0a parameters, Microsoft's developer
 token), and the tokens a token exchange issued. Token exchanges are printed as a status line only.
 URLs go through `pkg/redact.URL` with secret-named query values (`sig`, `*token*`, …) withheld;
-bodies have secret-named JSON keys withheld and embedded URLs reduced by `pkg/redact.SnapshotText`.
+bodies have secret-named JSON keys withheld and every URL in a decoded string value reduced by
+`pkg/redact.SnapshotText` before re-encoding (without HTML escaping, which would otherwise split a
+multi-parameter signed URL at its first `&` and leave the signature behind). Numbers are decoded
+with `UseNumber`, so the raw dump never rounds an int64. A token exchange response over the 256 KiB
+capture cap is refused rather than handed back truncated.

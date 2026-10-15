@@ -253,19 +253,32 @@ func (a *app) run(ctx context.Context, args []string) int {
 // campaign this service does not hold (one created in the platform's own UI, or any campaign
 // read under the system scope, which owns no rows) is read by platform id alone, which is the
 // guard's documented "unknown provenance" case.
+//
+// One project can hold several rows for the same upstream id with DIFFERENT provenance (the id
+// is unique only within an ad account, and legacy rows record none). Picking one would make the
+// guard's verdict depend on row order, so that case is refused rather than guessed.
 func lookupCampaign(ctx context.Context, be *backend, opts *options) (*model.Campaign, bool, error) {
 	campaign := &model.Campaign{ProjectID: opts.project, Platform: opts.provider, PlatformCampaignID: opts.campaign}
 	scopes, err := be.campaigns.ListProjectPlatformCampaignIDs(ctx, opts.project, opts.provider)
 	if err != nil {
 		return nil, false, fmt.Errorf("look up the project's %s campaigns: %w", opts.provider, err)
 	}
+	var matches []model.ProjectCampaignScope
 	for _, s := range scopes {
 		if s.PlatformCampaignID == opts.campaign {
-			campaign.Result = s.Result
-			return campaign, true, nil
+			matches = append(matches, s)
 		}
 	}
-	return campaign, false, nil
+	switch len(matches) {
+	case 0:
+		return campaign, false, nil
+	case 1:
+		campaign.Result = matches[0].Result
+		return campaign, true, nil
+	}
+	return nil, false, fmt.Errorf("the project holds %d campaign rows for platform campaign %s with different account provenance; "+
+		"the read would depend on which one was picked, so it is refused (read it through the service endpoint by campaign UUID)",
+		len(matches), opts.campaign)
 }
 
 // result is the printed form of model.CampaignMetrics. Conversions stays a pointer so "not
