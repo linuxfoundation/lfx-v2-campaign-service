@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -259,6 +261,160 @@ func TestDispatch_TokenRefreshFailureIsClassified(t *testing.T) {
 	}
 	if strings.Contains(got, "SECRET") || strings.Contains(got, "invalid_grant") || strings.Contains(got, "access_token") {
 		t.Errorf("job result error %q leaks the token endpoint's response", got)
+	}
+}
+
+// toServerTransport sends every request to srv, keeping the path and query. LinkedIn's token
+// endpoint override is unexported, so this is how a dispatch-depth test points a REAL LinkedIn
+// client's refresh exchange at an httptest server.
+type toServerTransport struct{ srv *httptest.Server }
+
+func (t toServerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	u, err := url.Parse(t.srv.URL)
+	if err != nil {
+		return nil, err
+	}
+	r = r.Clone(r.Context())
+	r.URL.Scheme, r.URL.Host, r.Host = u.Scheme, u.Host, u.Host
+	return t.srv.Client().Transport.RoundTrip(r)
+}
+
+// refreshableLinkedInCreds is refreshable in shape with an EXPIRED access token, so the token
+// exchange is the first request Dispatch makes. The values are placeholders, not credentials.
+var refreshableLinkedInCreds = func() string {
+	past := time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
+	future := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+	return `{"AccessToken":"at","RefreshToken":"rt","ClientID":"ci","ClientSecret":"cs",` +
+		`"AccessTokenExpiresAt":"` + past + `","RefreshTokenExpiresAt":"` + future + `"}`
+}()
+
+const linkedInRefreshTestConfig = `{"linkedInConfig":{
+	"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+	"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+	"targetingProfile":"cloud-native",
+	"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"],"groups":["urn:li:group:100"]}],
+	"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+}}`
+
+// TestDispatch_ProviderTokenRefreshFailureIsClassified is the LinkedIn and Microsoft
+// counterpart of TestDispatch_TokenRefreshFailureIsClassified: a REAL dispatcher whose token
+// endpoint (an httptest server) answers 503 with a body carrying upstreamSecret. A 503 is not
+// a verdict on the stored credential, so neither client tags it as a connection fault, and the
+// job result must be the token-refresh sentence — reached through each client's own
+// domain.MarkTokenRefreshFailure — without the body. Nothing but the token request is sent.
+func TestDispatch_ProviderTokenRefreshFailureIsClassified(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider model.Provider
+		build    func(srv *httptest.Server) refusalDispatcher
+		config   string
+	}{
+		{
+			name:     "linkedin",
+			provider: model.ProviderLinkedInAds,
+			build: func(srv *httptest.Server) refusalDispatcher {
+				return NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(refreshableLinkedInCreds)}, identityEncryptor{},
+					linkedin.WithHTTPClient(&http.Client{Transport: toServerTransport{srv: srv}}), linkedin.WithBaseURL(srv.URL))
+			},
+			config: linkedInRefreshTestConfig,
+		},
+		{
+			name:     "microsoft",
+			provider: model.ProviderMicrosoftAds,
+			build: func(srv *httptest.Server) refusalDispatcher {
+				return NewMicrosoftDispatcher(fakeConnReader{conn: activeMicrosoftConn(goodMicrosoftCreds)}, identityEncryptor{},
+					microsoft.WithBaseURL(srv.URL), microsoft.WithCustomerBaseURL(srv.URL), microsoft.WithTokenURL(srv.URL+"/token"))
+			},
+			// geoTargets makes the geo resolve the first networked step; it runs before the
+			// find-existing lookup, so a refresh failure there is a clean pre-create abort. (A
+			// lookup failure is deliberately UNCONFIRMED: it cannot prove a prior attempt's
+			// campaign is absent.)
+			config: `{"microsoftConfig":{"budget":50,"geoTargets":["GB"]}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{"error":"temporarily_unavailable","error_description":"retry https://login.example/token?`+upstreamSecret+`"}`)
+			}))
+			defer srv.Close()
+			camp, err := tc.build(srv).Dispatch(context.Background(), testBrief(), tc.provider, json.RawMessage(tc.config))
+			if err == nil {
+				t.Fatalf("expected the create to fail, got %+v", camp)
+			}
+			if !domain.IsTokenRefreshFailure(err) {
+				t.Fatalf("the refresh failure is not marked, so the job would read the generic string; err = %v", err)
+			}
+			if camp != nil || !isNoUpstreamCreate(err) {
+				t.Fatalf("a failed token exchange sends no create, so it must stay pre-create; camp=%v err=%v", camp, err)
+			}
+			got := service.DispatchFailureMessage(tc.provider, err, true)
+			if want := string(tc.provider) + " token refresh failed, so nothing was sent; the connection may need re-authorizing"; got != want {
+				t.Errorf("job result error = %q\nwant               %q", got, want)
+			}
+			for _, leak := range []string{"SECRET", "temporarily_unavailable", "access_token", "login.example"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("job result error %q leaks %q from the token endpoint's response", got, leak)
+				}
+			}
+			if n := requests.Load(); n != 1 {
+				t.Errorf("%d request(s) reached the fake platform; want exactly the one token exchange", n)
+			}
+		})
+	}
+}
+
+// TestDispatch_CancelledTokenRefreshIsNotReportedAsARefreshFailure cancels the CALLER's
+// context while a real LinkedIn token exchange is in flight (the fake token endpoint blocks
+// until the test releases it). The cancellation says nothing about the credential, so the
+// job result must be the generic string, not "the connection may need re-authorizing".
+func TestDispatch_CancelledTokenRefreshIsNotReportedAsARefreshFailure(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(entered) })
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	defer close(release)
+	d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(refreshableLinkedInCreds)}, identityEncryptor{},
+		linkedin.WithHTTPClient(&http.Client{Transport: toServerTransport{srv: srv}}), linkedin.WithBaseURL(srv.URL))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-entered:
+			cancel()
+		case <-time.After(10 * time.Second):
+		}
+	}()
+	camp, err := d.Dispatch(ctx, testBrief(), model.ProviderLinkedInAds, json.RawMessage(linkedInRefreshTestConfig))
+	if err == nil {
+		t.Fatalf("expected the cancelled dispatch to fail, got %+v", camp)
+	}
+	select {
+	case <-entered:
+	default:
+		t.Fatalf("the token exchange never reached the fake endpoint, so nothing was cancelled mid-refresh; err = %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v; want the caller's cancellation in the chain", err)
+	}
+	preCreate := camp == nil && isNoUpstreamCreate(err)
+	if !preCreate {
+		t.Fatalf("a refresh cancelled before any create was sent must stay pre-create; camp=%v err=%v", camp, err)
+	}
+	if got := service.DispatchFailureMessage(model.ProviderLinkedInAds, err, preCreate); got != "platform campaign creation failed" {
+		t.Errorf("job result error = %q; want the generic fallback — a cancelled refresh says nothing about the credential", got)
 	}
 }
 

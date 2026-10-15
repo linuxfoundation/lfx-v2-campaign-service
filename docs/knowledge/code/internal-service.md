@@ -823,14 +823,17 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   (`internal/service/brief.go`) are synchronous, so they answer a **409** off this same sentinel.
   **Campaign create is not**: it answers `202`, so the same failure can only surface later, in
   the polled job result, never as a 409 — see `docs/api-catalog.md`. Be precise about what
-  reaches that result, because it is less than the sentinel carries:
-  `Orchestrator.dispatchPlatform` collapses every dispatcher error into one generic string, so
-  the job result says the platform dispatch failed and does NOT say which of the classified
-  reasons it was. The reason token survives only in that path's log line, via
-  `unusableConnectionReason`. Do not describe "campaign dispatch" as receiving a 409; the
-  dispatch layer produces the error, only the two synchronous readers turn it into a status
-  code, and the async path turns it into a log attribute rather than into anything the caller
-  polling the job can read.
+  reaches that result: since issue #208 `Orchestrator.dispatchPlatform` sets the platform's
+  `error` from `DispatchFailureMessage` (see "Dispatch failure reasons in the job result"
+  below), which never renders the error's text. A pre-create connection fault becomes a fixed
+  sentence per class, completed with the `unusableConnectionReason` token (for example
+  `(reason: account_not_selected)`); a `domain.PreflightRefusal` is echoed verbatim; a token
+  refresh failure and an upstream status get their own fixed sentences; anything else is the
+  generic `platform campaign creation failed`. Google Ads clients mark none of their errors
+  yet, so a Google Ads failure reaches only the connection, unconfirmed and generic classes.
+  Do not describe "campaign dispatch" as receiving a 409; the dispatch layer produces the
+  error, only the two synchronous readers turn it into a status code, and the async path turns
+  it into a fixed job-result sentence (plus the log line) rather than into a status code.
   `platformResult` also carries `HubspotURL string \`json:"hubspot_url,omitempty"\``, populated only
   for the HubSpot email channel via `hubspotURLFromResult(result json.RawMessage) string`. It reads
   back the `hubspotUrl` key that `campaignFromHubSpot` (`internal/dispatch/hubspot.go`) stashed into

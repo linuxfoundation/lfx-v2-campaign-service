@@ -2834,10 +2834,15 @@ Without the pre-check the failure was invisible. The variant stage in `Dispatch`
 complete campaign by then, so a non-2xx from HubSpot logs "could not create a HubSpot A/B test
 variant; the campaign proceeds as a single email" and carries on. `doRequest` discards a non-2xx
 body, so the log does not say why either. A user who ticked "A/B test" got one email and no
-explanation. The refusal cannot be raised from `Dispatch` itself: dispatch runs after the `202`,
-and the orchestrator collapses every dispatcher error into the one fixed job error `platform
-campaign creation failed` on purpose (the upstream text can carry connection and account ids). So
-the check runs on the synchronous create path instead.
+explanation. The refusal is still not raised from `Dispatch` itself: dispatch runs after the
+`202`, so the most it could do is fail the polled job. Since issue #208 the job result is no
+longer always the fixed `platform campaign creation failed`: `DispatchFailureMessage` (see
+[internal/service](internal-service.md), "Dispatch failure reasons in the job result") echoes a
+`domain.PreflightRefusal` verbatim and gives each other class a fixed sentence, but it still never
+renders a dispatcher error's own text, on purpose (the upstream text can carry connection and
+account ids). Google Ads errors are not marked yet and stay generic. A dispatch-time refusal would
+also arrive only after the caller had been told `202`, so the check runs on the synchronous create
+path instead, where it answers before anything is queued.
 
 What it does, in order:
 
