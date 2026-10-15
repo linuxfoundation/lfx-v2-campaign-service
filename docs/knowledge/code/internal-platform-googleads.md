@@ -998,11 +998,14 @@ double-create the criteria.
 
 Verification mirrors the create path exactly: a short or malformed mutate response, a
 resource name whose kind or account is wrong, or a `campaignCriterion` name reporting a
-different campaign id each yields `unconfirmedNegativeKeywordError`. An already-cancelled
-context — the one failure that happens before any request is built — yields
-`notAttemptedNegativeKeywordError`, which `IsOutcomeUnconfirmed` gives precedence over every
-shape-based inference, because a context error otherwise looks exactly like a request cut
-off in flight.
+different campaign id each yields `unconfirmedNegativeKeywordError`. Everything proven to have
+left the batch unsent yields `notAttemptedNegativeKeywordError` instead — the method's own
+boundary guards, an already-cancelled context, and whatever `ProbeNotSent` recognises after
+`doRequest` returns (a pre-send dial failure, or a context found already done at token
+acquisition). `IsOutcomeUnconfirmed` gives that precedence over every shape-based inference,
+because such a failure otherwise looks exactly like a request cut off in flight — and because
+the dispatcher's definite arm stamps an unmarked error onto every keyword as `REJECTED`, which
+would claim Google refused keywords it was never sent.
 
 ## Metrics reads (GA-5)
 
@@ -2507,13 +2510,16 @@ order decides whether the operator is told their connection is broken or that th
 complete. Neither predicate true is a third outcome: the platform refused a request this service
 BUILT, which is a service defect rather than a verdict.
 
-`probe.go` also exports `ProbeNotSent(err) bool`, the third and lowest-stakes member of the
-vocabulary: it answers only whether the failure ever left this process, and it changes nothing an
-operator sees. `internal/dispatch` has to ask it at the same boundary because the platform error
-chain is DROPPED there, so no later layer could tell a provider that answered badly from one that
-was never contacted; the answer reaches `Orchestrator.ProbeConnection`'s metrics arm alone, which
-keeps a local DNS or dial failure off `campaign_upstream_call_duration_seconds` rather than
-charging it to the provider's error rate. Its default runs OPPOSITE to `ProbeInconclusive`'s on
+`probe.go` also exports `ProbeNotSent(err) bool`, the third member of the vocabulary: it answers
+only whether the failure ever left this process. `internal/dispatch` has to ask it at the same
+boundary because the platform error chain is DROPPED there, so no later layer could tell a
+provider that answered badly from one that was never contacted; that answer reaches
+`Orchestrator.ProbeConnection`'s metrics arm, which keeps a local DNS or dial failure off
+`campaign_upstream_call_duration_seconds` rather than charging it to the provider's error rate.
+In this package it has a second caller that IS operator-visible:
+`mutateCampaignNegativeKeywords` asks the same question to separate `NOT_SENT` from `REJECTED`
+on a per-keyword outcome returned over HTTP 200, so a batch that never left the process is not
+reported as keywords Google refused. Its default runs OPPOSITE to `ProbeInconclusive`'s on
 purpose: `false` for an unrecognised error, so an error nobody classified stays on the upstream
 series instead of vanishing from it.
 

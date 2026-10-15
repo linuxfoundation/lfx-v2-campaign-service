@@ -177,7 +177,8 @@ func (d *GoogleAdsDispatcher) AddNegativeKeywords(ctx context.Context, projectID
 		}
 		// DEFINITE: the batch is atomic, so none of the sent keywords was attached and the
 		// campaign's existing exclusions are unchanged. NOT_SENT when the request never left
-		// (the deadline was already spent), REJECTED when Google refused it.
+		// this process — the deadline was already spent, or the client proved a pre-send
+		// transport failure — REJECTED when Google refused it.
 		code := model.KeywordTargetingErrRejected
 		var na interface{ NotAttempted() bool }
 		if errors.As(mErr, &na) && na.NotAttempted() {

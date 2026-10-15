@@ -176,6 +176,17 @@ func validateKeywordList(noun string, keywords []Keyword, max int) ([]Keyword, e
 		// batch of two could shrink to one operation here, Google would acknowledge one id,
 		// and the dispatcher — still expecting two — would answer UNCONFIRMED while one
 		// exclusion was silently never applied, the same way on every retry.
+		//
+		// validateKeywords (the POSITIVE create path) inherits this key, where that reason
+		// does not reach — no dispatcher compares positive keywords. It inherits it anyway so
+		// both entry points fold identically: one helper with two folds would be a worse
+		// defect than either fold, and the behaviour is deliberately not forked here. The
+		// trade on that path is not uniformly an improvement — simple folding joins "ΟΣ"/"ος"
+		// that ToLower kept apart, which strictly reduces duplicate operations, but keeps
+		// "İ"/"i" apart where ToLower collapsed them, so a pair Google considers one keyword
+		// could now be sent twice. That direction is bounded by this preflight being a
+		// best-effort guard, not the authority: Google refusing a duplicate is the atomic
+		// 4xx this check exists to make RARE, never the thing it promises cannot happen.
 		key := matchType + "\x00" + textfold.Key(text)
 		if _, dup := seen[key]; dup {
 			continue

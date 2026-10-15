@@ -446,3 +446,83 @@ func TestValidateNegativeKeywords_FoldsLikeTheDispatcher(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateKeywords_FoldsLikeTheNegativePath pins the POSITIVE create path to the same key.
+//
+// validateKeywords and validateNegativeKeywords share validateKeywordList, so the fold is not
+// forkable per caller — one helper with two folds would be a worse defect than either fold. No
+// dispatcher compares positive keywords, so the dispatcher-agreement argument does not reach this
+// path; what must hold here is simply that both entry points fold identically, which is what these
+// rows assert.
+func TestValidateKeywords_FoldsLikeTheNegativePath(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Keyword
+		want int
+		why  string
+	}{
+		{
+			name: "simple folding joins the two Greek final sigmas",
+			in:   []Keyword{{Text: "ΟΣ", MatchType: MatchTypeExact}, {Text: "ος", MatchType: MatchTypeExact}},
+			want: 1,
+			why:  "ToLower kept these apart and sent two operations Google counts as one keyword; the fold removes that duplicate",
+		},
+		{
+			name: "plain ASCII case still dedupes",
+			in:   []Keyword{{Text: "Kubernetes", MatchType: MatchTypeBroad}, {Text: "kubernetes", MatchType: MatchTypeBroad}},
+			want: 1,
+			why:  "the original reason this preflight dedupes at all — a duplicate fails the whole adGroupCriteria:mutate",
+		},
+		{
+			name: "match type is half the key",
+			in:   []Keyword{{Text: "free", MatchType: MatchTypeExact}, {Text: "free", MatchType: MatchTypeBroad}},
+			want: 2,
+			why:  "the same text under two match types is two distinct criteria",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := validateKeywords(tc.in)
+			if err != nil {
+				t.Fatalf("validateKeywords(%v): %v", tc.in, err)
+			}
+			if len(got) != tc.want {
+				t.Errorf("validateKeywords(%v) kept %d keywords, want %d — %s", tc.in, len(got), tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestAddCampaignNegativeKeywords_BoundaryRefusalsAreNotAttempted pins the method's own guards.
+//
+// These refuse before a request is built, so the batch provably does not exist. Returned plain,
+// each would reach the dispatcher's DEFINITE arm and stamp every keyword REJECTED over HTTP 200 —
+// Google refusing keywords it was never sent. validateAccountIDs is the reachable one: nothing
+// upstream validates the stored customer id.
+func TestAddCampaignNegativeKeywords_BoundaryRefusalsAreNotAttempted(t *testing.T) {
+	valid := []Keyword{{Text: "free", MatchType: MatchTypeBroad}}
+	tests := []struct {
+		name       string
+		account    AccountConfig
+		campaignID string
+		negatives  []Keyword
+	}{
+		{name: "malformed stored customer id", account: AccountConfig{CustomerID: "not-numeric"}, campaignID: "777", negatives: valid},
+		{name: "malformed campaign id", account: testAccount(), campaignID: "77x", negatives: valid},
+		{name: "keyword the create path would refuse", account: testAccount(), campaignID: "777", negatives: []Keyword{{Text: "", MatchType: MatchTypeBroad}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// No server: reaching one would itself be the failure under test.
+			c := NewClient(testCreds(), tc.account, WithClock(fixedClock()))
+			ids, err := c.AddCampaignNegativeKeywords(context.Background(), tc.campaignID, tc.negatives)
+			if err == nil {
+				t.Fatalf("expected a refusal, got ids %v", ids)
+			}
+			var notAttempted interface{ NotAttempted() bool }
+			if !errors.As(err, &notAttempted) || !notAttempted.NotAttempted() {
+				t.Fatalf("error does not report NotAttempted: %v — nothing was sent, so this must not read as a platform rejection", err)
+			}
+		})
+	}
+}

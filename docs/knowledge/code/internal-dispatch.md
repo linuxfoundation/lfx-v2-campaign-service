@@ -3947,7 +3947,9 @@ for that one line.
 request this service BUILT, which is not a verdict on the credential, and treating it as
 inconclusive would silently stop testing anything the day an endpoint moves.
 
-`ProbeNotSent` is the third and lowest-stakes member, and it decides nothing an operator sees. It
+`ProbeNotSent` is the third member. Here, on the probe path, it decides nothing an operator sees
+— though `internal/platform/googleads` has a second caller where it does, separating `NOT_SENT`
+from `REJECTED` on a negative-keyword outcome. It
 answers only whether the request whose failure ENDED the probe left this process at all, and it
 has to be asked HERE because the
 platform error chain is dropped at this boundary: past `probeClass` nothing downstream can tell a

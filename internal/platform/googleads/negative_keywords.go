@@ -167,19 +167,28 @@ func (c *Client) ListCampaignNegativeKeywords(ctx context.Context, campaignID st
 // One atomic campaignCriteria:mutate, exactly as the create path sends: the whole list shares one
 // outcome. The caller must have filtered out anything the campaign already excludes (see
 // ListCampaignNegativeKeywords) — a duplicate is not dropped by Google, it fails the batch.
+// Every guard below refuses BEFORE a request is built, so each is marked NotAttempted rather than
+// returned plain. The dispatcher's DEFINITE arm stamps an unmarked error onto every keyword as
+// REJECTED over HTTP 200 (internal/dispatch/googleads_negative_keywords.go), so a plain refusal
+// here is a claim that Google refused keywords it was never sent — the same false sentence the
+// pre-send transport guard below exists to prevent, arriving by a shorter route.
+// validateAccountIDs is the one that is genuinely reachable: the dispatcher pre-checks the
+// campaign id and the text/match-type rules, but nothing upstream validates the stored customer
+// or login-customer id, which is the exact analogue of the malformed-ad-group-id defect the bid
+// path already fixed.
 func (c *Client) AddCampaignNegativeKeywords(ctx context.Context, campaignID string, negatives []Keyword) ([]string, error) {
 	if err := c.validateAccountIDs(); err != nil {
-		return nil, err
+		return nil, &notAttemptedNegativeKeywordError{err: err}
 	}
 	if err := ValidateCampaignID(campaignID); err != nil {
-		return nil, err
+		return nil, &notAttemptedNegativeKeywordError{err: err}
 	}
 	// Re-validated at the package boundary rather than trusted from the dispatcher: this is an
 	// exported method, and the text/match-type rules are the ones the create path enforces, so a
 	// keyword that could not have been CREATED must not become reachable by editing.
 	validated, err := validateNegativeKeywords(negatives)
 	if err != nil {
-		return nil, err
+		return nil, &notAttemptedNegativeKeywordError{err: err}
 	}
 	if len(validated) == 0 {
 		return nil, nil
@@ -282,12 +291,14 @@ func (e *unconfirmedNegativeKeywordError) Unwrap() error     { return e.err }
 func (e *unconfirmedNegativeKeywordError) Unconfirmed() bool { return true }
 
 // notAttemptedNegativeKeywordError marks a failure PROVEN to have left the batch unsent, so the
-// criteria cannot exist. Two reach it: an already-cancelled context, caught before the request is
-// built, and a pre-send transport failure (DNS, connect-time refusal) that ProbeNotSent
-// recognises after doRequest returns. IsOutcomeUnconfirmed gives NotAttempted precedence over
-// every shape-based inference precisely for these — both otherwise look exactly like a request
-// cut off in flight, and would be reported as "the criteria may exist" when nothing was ever
-// sent. Anything ProbeNotSent does not recognise stays unclaimed and falls through to the
+// criteria cannot exist. Three routes reach it: AddCampaignNegativeKeywords' own boundary guards,
+// which refuse before a request is built; an already-cancelled context, caught at the same point;
+// and anything ProbeNotSent proves after doRequest returns — a pre-send dial failure (DNS,
+// connect-time refusal), or a context found already done at token acquisition, which is the one
+// cancellation whose side of the wire is known. IsOutcomeUnconfirmed gives NotAttempted precedence
+// over every shape-based inference precisely for these — they otherwise look exactly like a
+// request cut off in flight, and would be reported as "the criteria may exist" when nothing was
+// ever sent. Anything ProbeNotSent does not recognise stays unclaimed and falls through to the
 // ambiguity check, which is the cheap direction: a cancellation landing after transmission is
 // indistinguishable from one landing before it.
 type notAttemptedNegativeKeywordError struct{ err error }
