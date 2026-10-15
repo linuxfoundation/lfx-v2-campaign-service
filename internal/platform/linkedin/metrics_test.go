@@ -1853,6 +1853,12 @@ func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
 // carrying it publishes the sum; every element omitting it is likewise nil. A consumer reading
 // model.CampaignMetrics.Conversions must therefore not infer platform capability from nil, and
 // a change to any of these three outcomes is a contract change, not a refactor.
+//
+// This is the table-form contract pin. The single-case tests above (AbsentConversions...,
+// ConversionsAggregateAcrossElements, PartialConversionsCoverage..., ConversionsWithdrawn...)
+// each pin one outcome with its own failure narrative; this one states the three together,
+// over multi-element responses, and additionally checks that the withdrawal is scoped to
+// conversions — impressions and clicks still aggregate.
 func TestGetCampaignMetrics_NilConversionsIsAnIncompleteRead(t *testing.T) {
 	sum := func(v float64) *float64 { return &v }
 	cases := []struct {

@@ -17,11 +17,15 @@
   `Clicks >= minClicksForConversions` (50). The sentence now says the no-rows zero is about the
   truth of the field, and that a campaign with no delivery is `zero_delivery`'s finding.
   `code/internal-service-rules.md` says the same in the rule table and the floors section.
-- Test: `TestGetCampaignMetrics_NilConversionsIsAnIncompleteRead` pins the current LinkedIn
-  outcomes: one element omits the field → nil; every element carries it → the sum; every
-  element omits it → nil.
+- `docs/api-catalog.md`'s metrics-endpoint entry carries the same definition.
+- Test: `TestGetCampaignMetrics_NilConversionsIsAnIncompleteRead` is a table-form pin of the
+  current LinkedIn outcomes over multi-element responses (one element omits the field → nil;
+  every element carries it → the sum; every element omits it → nil), which the existing
+  single-case tests cover one at a time; it also checks impressions and clicks still aggregate
+  when conversions are withdrawn.
 - Not in scope: a `conversions_status` enum to tell the two nil cases apart on the wire is a
-  separate follow-up on #175. Googleads comments that still say nil is reserved for platforms
-  that cannot report at all were left untouched.
+  separate follow-up on #175. Googleads comments and tests (including
+  `internal/dispatch/googleads_test.go`) that still say nil is reserved for platforms that cannot
+  report at all were left untouched.
 - Concepts updated: `code/internal-dispatch.md`, `code/internal-service-rules.md`,
   `code/internal-platform-linkedin.md`.
