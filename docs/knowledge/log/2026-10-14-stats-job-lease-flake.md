@@ -1,4 +1,4 @@
-# 2026-10-14 — X stats-job lease: release-on-close test flake
+# 2026-10-14 — X (Twitter) stats-job lease: release-on-close test flake
 
 **Fix** — `TestLiveStatsJobLease_OneOwnerPerAccountAndReleaseOnClose` failed intermittently
 with "backend … still holds the lease after Close" (about 3% of runs under parallel load, rarer
