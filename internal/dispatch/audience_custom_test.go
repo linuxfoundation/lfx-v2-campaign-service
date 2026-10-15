@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/snowflake"
 )
 
 // fakePortal is a HubSpot stand-in for the custom-audience paths: named lists,
@@ -32,8 +34,10 @@ type fakePortal struct {
 	sizes      map[string]int64  // id -> size
 	objTypes   map[string]string // id -> objectTypeId; absent is a contact list ("0-1")
 	properties map[string]string // name -> type
-	creates    []map[string]any
-	createBody string // raw reply to a create; default is a confirmed list
+	// propOptions are an enumeration property's option values, by property name.
+	propOptions map[string][]string
+	creates     []map[string]any
+	createBody  string // raw reply to a create; default is a confirmed list
 	// eventProps are the education event definition's properties; nil means the
 	// portal has no such definition.
 	eventProps []string
@@ -89,7 +93,11 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			_, _ = io.WriteString(w, `{"name":"`+name+`","type":"`+typ+`"}`)
+			opts := make([]string, 0, len(p.propOptions[name]))
+			for _, v := range p.propOptions[name] {
+				opts = append(opts, `{"label":"`+v+`","value":"`+v+`"}`)
+			}
+			_, _ = io.WriteString(w, `{"name":"`+name+`","type":"`+typ+`","options":[`+strings.Join(opts, ",")+`]}`)
 		case r.URL.Path == "/events/v3/event-definitions":
 			props := make([]string, 0, len(p.eventProps))
 			for _, name := range p.eventProps {
@@ -552,4 +560,58 @@ func TestRunQA_FlagsTheEventsOwnRegistrantsAuditedDirectly(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, audience.VerdictPass, out.Checks.CurrentRegistrants.Verdict,
 		"sending a registration push to this edition's own registrants must not pass")
+}
+
+// An event family with more past editions than registered_for's contract cap must
+// still produce a draft preview accepts unedited: the most recent are kept, every
+// array fits the design's bounds, and a note says how many were left out.
+func TestInterpretCustom_CapsPastEditionsToTheContract(t *testing.T) {
+	portal := seoulPortal()
+	portal.lists["26Q2 - SYN - Master-list"] = "801"
+	srv := portal.serve(t)
+	defer srv.Close()
+	urls := make([]string, 0, 15)
+	for i := range 15 {
+		urls = append(urls, fmt.Sprintf(`"events.example.org/page-%d"`, i))
+	}
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":["Seoul"],"countries":["Korea"],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[` + strings.Join(urls, ",") + `],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	events := make([]snowflake.Event, 0, 40)
+	for year := 1990; year < 2026; year++ {
+		events = append(events, snowflake.Event{EventName: fmt.Sprintf("Synthetic Summit %d", year)})
+	}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	c := out.Draft.Criteria
+	require.Len(t, c.RegisteredFor, audience.CustomMaxRegisteredFor, "registered_for is MaxLength(25) in the contract")
+	assert.Equal(t, "Synthetic Summit 2025", c.RegisteredFor[0], "the most recent editions are kept")
+	assert.Equal(t, "Synthetic Summit 2001", c.RegisteredFor[len(c.RegisteredFor)-1])
+	assert.Len(t, c.PageViewURLs, audience.CustomMaxPageViewURLs, "page_view_urls is MaxLength(10) in the contract")
+	assert.Equal(t, []string{"South Korea"}, c.Countries, "a country alias is canonicalized on entry")
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "11 older ones were left out")
+	require.NoError(t, audience.ValidateCustomCriteria(c), "the unedited draft is one preview accepts")
+}
+
+// A country alias builds on the stored form, and a country an enumeration
+// country_dropdown has no option for is reported rather than silently matching nobody.
+func TestPreviewCustom_CanonicalizesCountriesAndWarnsOnUnknownOptions(t *testing.T) {
+	portal := seoulPortal()
+	portal.propOptions = map[string][]string{"country_dropdown": {"United States", "South Korea"}}
+	srv := portal.serve(t)
+	defer srv.Close()
+	c := seoulCriteria()
+	c.Countries = []string{"USA", "Narnia"}
+
+	out, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", c, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"United States", "Narnia"}, out.Criteria.Countries, "preview shows the value actually filtered on")
+	joined := strings.Join(out.Warnings, "\n")
+	assert.Contains(t, joined, `"Narnia" is not one of country_dropdown's options`)
+	assert.NotContains(t, joined, `"United States" is not one`, "a canonical option is not reported")
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1053,13 +1054,15 @@ func TestOrchestrator_IDlessOrphanWithResultIsNotASkipSuccess(t *testing.T) {
 // "hubspotUrl" (the shape internal/dispatch/hubspot.go writes). Deleting the
 // `res.HubspotURL = hubspotURLFromResult(existing.Result)` assignment at that call site
 // would leave TestHubspotURLFromResult, TestHubSpot_ResultBlobCarriesTheClonedEmailAppURL
-// and TestBriefService_GetJob_HubspotURL all green while this test fails.
+// and TestBriefService_GetJob_HubspotURL all green while this test fails. The same holds
+// for the hero-image Warnings the Result blob carries: deleting this call site's
+// `res.Warnings = hubspotWarningsFromResult(existing.Result)` fails this test alone.
 func TestOrchestrator_FastPathReuseCarriesHubspotURL(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{existing: map[string]*model.Campaign{
 		"b1|" + string(model.ProviderHubSpot): {
 			ID: "existing-hs1", PlatformCampaignID: "999",
-			Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+			Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings","warnings":["The hero image was not attached: synthetic warning."]}`),
 		},
 	}}
 	disp := &countingDispatcher{}
@@ -1078,6 +1081,7 @@ func TestOrchestrator_FastPathReuseCarriesHubspotURL(t *testing.T) {
 	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
 		t.Errorf("result = %s, want it to carry the reused campaign's hubspot_url", j.Result)
 	}
+	assertJobCarriesHubspotWarning(t, j.Result)
 }
 
 // TestOrchestrator_ClaimConflictReuseCarriesHubspotURL drives dispatchPlatform's OTHER
@@ -1090,7 +1094,7 @@ func TestOrchestrator_FastPathReuseCarriesHubspotURL(t *testing.T) {
 // what the subsequent claim conflicts against. Deleting the
 // `res.HubspotURL = hubspotURLFromResult(existing.Result)` assignment at THIS call site
 // (distinct from line 1425's) would leave every other hubspotUrl-seam test green while
-// this test fails.
+// this test fails. Likewise for this site's `res.Warnings = hubspotWarningsFromResult(...)`.
 func TestOrchestrator_ClaimConflictReuseCarriesHubspotURL(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{
@@ -1098,7 +1102,7 @@ func TestOrchestrator_ClaimConflictReuseCarriesHubspotURL(t *testing.T) {
 		existing: map[string]*model.Campaign{
 			"b1|" + string(model.ProviderHubSpot): {
 				ID: "existing-hs2", PlatformCampaignID: "999",
-				Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+				Result: []byte(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings","warnings":["The hero image was not attached: synthetic warning."]}`),
 			},
 		},
 	}
@@ -1118,12 +1122,36 @@ func TestOrchestrator_ClaimConflictReuseCarriesHubspotURL(t *testing.T) {
 	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
 		t.Errorf("result = %s, want it to carry the claim-conflict row's hubspot_url", j.Result)
 	}
+	assertJobCarriesHubspotWarning(t, j.Result)
 	disp.mu.Lock()
 	calls := disp.calls
 	disp.mu.Unlock()
 	if calls != 0 {
 		t.Errorf("Dispatch called %d times, want 0 (the claim conflict must reuse, not dispatch)", calls)
 	}
+}
+
+// hubspotSeamWarning is the hero-image warning the three CarriesHubspotURL tests seed
+// in the campaign's Result blob.
+const hubspotSeamWarning = "The hero image was not attached: synthetic warning."
+
+// assertJobCarriesHubspotWarning asserts the persisted job result carries the HubSpot
+// platform's Warnings, read from the campaign's Result blob at the dispatch call site.
+func assertJobCarriesHubspotWarning(t *testing.T, result json.RawMessage) {
+	t.Helper()
+	var stored []struct {
+		Platform string   `json:"platform"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(result, &stored); err != nil {
+		t.Fatalf("job result is not a platform-result array: %v (%s)", err, result)
+	}
+	for _, p := range stored {
+		if p.Platform == string(model.ProviderHubSpot) && slices.Contains(p.Warnings, hubspotSeamWarning) {
+			return
+		}
+	}
+	t.Errorf("result = %s, want the HubSpot platform's warnings to carry %q", result, hubspotSeamWarning)
 }
 
 // freshHubspotCreateDispatcher simulates a HubSpot dispatch that actually runs (no
@@ -1136,7 +1164,7 @@ func (freshHubspotCreateDispatcher) Dispatch(_ context.Context, _ *model.Campaig
 		PlatformCampaignID: "pc-" + string(p),
 		Status:             "created",
 		CampaignName:       "n",
-		Result:             json.RawMessage(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings"}`),
+		Result:             json.RawMessage(`{"hubspotUrl":"https://app.hubspot.com/email/8112310/edit/999/settings","warnings":["The hero image was not attached: synthetic warning."]}`),
 	}, nil
 }
 
@@ -1144,7 +1172,8 @@ func (freshHubspotCreateDispatcher) Dispatch(_ context.Context, _ *model.Campaig
 // hubspotURLFromResult call site (orchestrator.go:1792, at the end of a successful FRESH
 // dispatch — no existing row to reuse) in isolation from the two reuse sites above.
 // Deleting the `res.HubspotURL = hubspotURLFromResult(campaign.Result)` assignment there
-// would leave every reuse-path and read-path hubspotUrl test green while this test fails.
+// would leave every reuse-path and read-path hubspotUrl test green while this test fails,
+// and so would deleting this site's `res.Warnings = hubspotWarningsFromResult(...)`.
 func TestOrchestrator_FreshDispatchCarriesHubspotURL(t *testing.T) {
 	jobs := newFakeJobRepo()
 	camps := &fakeCampaignRepo{}
@@ -1163,6 +1192,7 @@ func TestOrchestrator_FreshDispatchCarriesHubspotURL(t *testing.T) {
 	if !strings.Contains(string(j.Result), "https://app.hubspot.com/email/8112310/edit/999/settings") {
 		t.Errorf("result = %s, want it to carry the freshly-dispatched campaign's hubspot_url", j.Result)
 	}
+	assertJobCarriesHubspotWarning(t, j.Result)
 }
 
 // TestOrchestrator_ClaimErrorIsFailure verifies that a failure to claim the

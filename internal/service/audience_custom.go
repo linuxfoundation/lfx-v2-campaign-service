@@ -144,8 +144,9 @@ func customCriteria(in *explore.AudienceCustomCriteria) audience.CustomCriteria 
 		return audience.CustomCriteria{}
 	}
 	out := audience.CustomCriteria{
-		Cities:            in.Cities,
-		Countries:         in.Countries,
+		Cities: in.Cities,
+		// Canonicalized on entry, so "USA" filters on what HubSpot stores.
+		Countries:         audience.CanonicalCountries(in.Countries),
 		ContactLocation:   derefBool(in.ContactLocation),
 		EventRegistered:   derefBool(in.EventRegistered),
 		EducationEnrolled: derefBool(in.EducationEnrolled),

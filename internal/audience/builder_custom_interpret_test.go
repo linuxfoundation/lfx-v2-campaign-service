@@ -111,3 +111,16 @@ func TestBlockSafe_NeutralisesMarkersInAnyCaseAndCutsOnARune(t *testing.T) {
 	assert.True(t, utf8.ValidString(got), "a cut never splits a rune")
 	assert.Equal(t, 201, utf8.RuneCountInString(got))
 }
+
+// page_view_urls has its own, tighter contract cap than the other arrays, and a
+// country alias is canonicalized as it enters, like the brief path's.
+func TestParseCustomDraft_CapsPageViewURLsAndCanonicalizesCountries(t *testing.T) {
+	urls := make([]string, 0, 15)
+	for i := range 15 {
+		urls = append(urls, `"events.example.org/p`+strings.Repeat("x", i)+`"`)
+	}
+	d, err := ParseCustomDraft(`{"criteria":{"countries":["USA","United States","uk"],"page_view_urls":[` + strings.Join(urls, ",") + `]},"questions":[],"notes":[]}`)
+	require.NoError(t, err)
+	assert.Len(t, d.Criteria.PageViewURLs, CustomMaxPageViewURLs)
+	assert.Equal(t, []string{"United States", "United Kingdom"}, d.Criteria.Countries)
+}

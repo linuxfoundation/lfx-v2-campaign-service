@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
@@ -2040,6 +2042,11 @@ func TestHeroFailureReason(t *testing.T) {
 		{errors.New(`hubspot: source URL did not return an image (content-type "text/html")`), "did not return an image"},
 		{errors.New("hubspot: download image from https://x.example/h.jpg: dial tcp: refused"), "could not be downloaded"},
 		{errors.New("hubspot: downloaded image exceeds 26214400 bytes"), "too large"},
+		// The SSRF guard's refusal, wrapped exactly as fetchImage wraps a client.Do failure
+		// (through the dialer's OpError): classified by identity, not as a failed download.
+		{fmt.Errorf("hubspot: download image from https://x.example/h.jpg: %w",
+			&net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("%w: 169.254.169.254", eventurl.ErrEventURLForbidden)}),
+			"network safety check"},
 		{errors.New("hubspot: missing private-app token"), "files permission"},
 		{errors.New("something unexpected with secret-token-abc"), "did not accept the upload"},
 	}

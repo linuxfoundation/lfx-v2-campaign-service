@@ -462,10 +462,40 @@ func TestSpeakerListFits(t *testing.T) {
 		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers [psh-test]", SpeakerScopeCurrent, false},
 		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers Suppression", SpeakerScopeCurrentPast, false},
 		{"26Q2 - CNCF - KubeCon Japan 2026 Registrants", SpeakerScopeCurrent, false},
+		// current_past fails closed: only the explicit suffix proves the scope.
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Current + Past", SpeakerScopeCurrentPast, true},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Current", SpeakerScopeCurrentPast, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Past", SpeakerScopeCurrentPast, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers", SpeakerScopeCurrentPast, false},
+		// A suffix naming another scope never fits a single-edition restriction.
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Current + Past", SpeakerScopeCurrent, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Current + Past", SpeakerScopePast, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Past", SpeakerScopePast, true},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers", SpeakerScope("bogus"), false},
 	}
 	for _, tc := range cases {
 		if got := SpeakerListFits(tc.name, tc.scope, editions); got != tc.want {
 			t.Errorf("SpeakerListFits(%q, %s) = %v, want %v", tc.name, tc.scope, got, tc.want)
+		}
+	}
+}
+
+// With no editions named, nothing in a list's name can be checked against the
+// event, so no list fits — whatever the scope — and the pick stays manual.
+func TestSpeakerListFits_EmptyEventNamesFailsClosed(t *testing.T) {
+	names := []string{
+		"26Q2 - CNCF - KubeCon Japan 2026 Speakers",
+		"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Current",
+		"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Past",
+		"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Current + Past",
+	}
+	for _, scope := range []SpeakerScope{SpeakerScopeCurrent, SpeakerScopePast, SpeakerScopeCurrentPast} {
+		for _, editions := range [][]string{nil, {}, {"  ", ""}} {
+			for _, name := range names {
+				if SpeakerListFits(name, scope, editions) {
+					t.Errorf("SpeakerListFits(%q, %s, %q) = true, want false", name, scope, editions)
+				}
+			}
 		}
 	}
 }

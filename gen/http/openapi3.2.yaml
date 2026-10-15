@@ -432,61 +432,13 @@ paths:
                         example:
                             custom:
                                 criteria:
-                                    ambassadors: true
                                     cities:
-                                        - Autem modi neque.
-                                        - Corrupti nobis nostrum.
-                                        - Consequatur nulla culpa magnam.
+                                        - Seoul
                                     contact_location: true
                                     countries:
-                                        - Praesentium vel et quia.
-                                        - Cumque dolorem.
-                                        - Possimus explicabo in aut aut ratione fuga.
-                                    education_enrolled: true
-                                    education_topic_property: Vel ut est.
-                                    education_topics:
-                                        - Est in et sed corrupti et.
-                                        - Minima dolor non impedit.
-                                        - Non totam culpa iusto occaecati necessitatibus pariatur.
-                                    event_registered: false
-                                    gate_event_history: false
-                                    gate_list_id: Magnam aliquid non iure natus dolor.
-                                    label: an4
-                                    page_view_urls:
-                                        - Aspernatur laudantium aut autem doloribus laboriosam.
-                                        - Molestiae nulla earum illo est.
-                                        - Animi consequatur eum.
-                                    property_filters:
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                    registered_for:
-                                        - Nam alias dicta assumenda sunt.
-                                        - Porro soluta laboriosam sed explicabo dicta.
-                                        - Non nemo in similique ex dolore soluta.
-                                    speakers:
-                                        event_names:
-                                            - Ea ut enim similique sit assumenda.
-                                            - Ab temporibus sed est.
-                                            - Dolores aliquam dignissimos.
-                                        list_id: Qui enim eos.
-                                        scope: current
-                                name: np4
+                                        - South Korea
+                                    gate_list_id: "26716"
+                                    label: OSS Korea
             responses:
                 "201":
                     description: Created response.
@@ -843,61 +795,13 @@ paths:
                         example:
                             custom:
                                 criteria:
-                                    ambassadors: true
                                     cities:
-                                        - Autem modi neque.
-                                        - Corrupti nobis nostrum.
-                                        - Consequatur nulla culpa magnam.
+                                        - Seoul
                                     contact_location: true
                                     countries:
-                                        - Praesentium vel et quia.
-                                        - Cumque dolorem.
-                                        - Possimus explicabo in aut aut ratione fuga.
-                                    education_enrolled: true
-                                    education_topic_property: Vel ut est.
-                                    education_topics:
-                                        - Est in et sed corrupti et.
-                                        - Minima dolor non impedit.
-                                        - Non totam culpa iusto occaecati necessitatibus pariatur.
-                                    event_registered: false
-                                    gate_event_history: false
-                                    gate_list_id: Magnam aliquid non iure natus dolor.
-                                    label: an4
-                                    page_view_urls:
-                                        - Aspernatur laudantium aut autem doloribus laboriosam.
-                                        - Molestiae nulla earum illo est.
-                                        - Animi consequatur eum.
-                                    property_filters:
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                    registered_for:
-                                        - Nam alias dicta assumenda sunt.
-                                        - Porro soluta laboriosam sed explicabo dicta.
-                                        - Non nemo in similique ex dolore soluta.
-                                    speakers:
-                                        event_names:
-                                            - Ea ut enim similique sit assumenda.
-                                            - Ab temporibus sed est.
-                                            - Dolores aliquam dignissimos.
-                                        list_id: Qui enim eos.
-                                        scope: current
-                                name: np4
+                                        - South Korea
+                                    gate_list_id: "26716"
+                                    label: OSS Korea
             responses:
                 "200":
                     description: OK response.
@@ -906,76 +810,23 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/AudienceCustomPreviewResult'
                             example:
-                                branch_count: 6857487235144582774
+                                branch_count: 4
                                 criteria:
-                                    ambassadors: true
                                     cities:
-                                        - Autem modi neque.
-                                        - Corrupti nobis nostrum.
-                                        - Consequatur nulla culpa magnam.
+                                        - Seoul
                                     contact_location: true
                                     countries:
-                                        - Praesentium vel et quia.
-                                        - Cumque dolorem.
-                                        - Possimus explicabo in aut aut ratione fuga.
-                                    education_enrolled: true
-                                    education_topic_property: Vel ut est.
-                                    education_topics:
-                                        - Est in et sed corrupti et.
-                                        - Minima dolor non impedit.
-                                        - Non totam culpa iusto occaecati necessitatibus pariatur.
-                                    event_registered: false
-                                    gate_event_history: false
-                                    gate_list_id: Magnam aliquid non iure natus dolor.
-                                    label: an4
-                                    page_view_urls:
-                                        - Aspernatur laudantium aut autem doloribus laboriosam.
-                                        - Molestiae nulla earum illo est.
-                                        - Animi consequatur eum.
-                                    property_filters:
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                        - operator: is_known
-                                          property: p
-                                          values:
-                                            - Sequi sint porro.
-                                            - Earum quibusdam modi eos et ratione eum.
-                                            - Consequuntur quis.
-                                    registered_for:
-                                        - Nam alias dicta assumenda sunt.
-                                        - Porro soluta laboriosam sed explicabo dicta.
-                                        - Non nemo in similique ex dolore soluta.
-                                    speakers:
-                                        event_names:
-                                            - Ea ut enim similique sit assumenda.
-                                            - Ab temporibus sed est.
-                                            - Dolores aliquam dignissimos.
-                                        list_id: Qui enim eos.
-                                        scope: current
-                                education_topic_candidates:
-                                    - Molestiae libero alias praesentium ab velit quia.
-                                    - Praesentium perferendis id dolores.
+                                        - South Korea
+                                    gate_list_id: "26716"
+                                    label: OSS Korea
                                 gate:
-                                    hubspot_url: Sequi hic ut culpa repellat.
-                                    list_id: Necessitatibus non adipisci.
-                                    name: Nam assumenda sit dolorem cupiditate.
-                                    size: 3935453728792165491
-                                name: Sed voluptatibus earum temporibus enim.
-                                upper_bound: 2547515972424224129
-                                warnings:
-                                    - Aut omnis.
-                                    - Molestiae nihil eaque quisquam ab.
-                                    - Velit libero fuga quis facere et placeat.
+                                    hubspot_url: https://app.hubspot.com/contacts/8675309/lists/26716
+                                    list_id: "26716"
+                                    name: 26Q2 - The Linux Foundation - Master-list
+                                    size: 2500000
+                                name: 26Q4 - Seoul and South Korea - Mailable Contacts - OSS Korea
+                                upper_bound: 2500000
+                                warnings: []
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -17486,61 +17337,13 @@ components:
                     maxLength: 250
             example:
                 criteria:
-                    ambassadors: true
                     cities:
-                        - Autem modi neque.
-                        - Corrupti nobis nostrum.
-                        - Consequatur nulla culpa magnam.
+                        - Seoul
                     contact_location: true
                     countries:
-                        - Praesentium vel et quia.
-                        - Cumque dolorem.
-                        - Possimus explicabo in aut aut ratione fuga.
-                    education_enrolled: true
-                    education_topic_property: Vel ut est.
-                    education_topics:
-                        - Est in et sed corrupti et.
-                        - Minima dolor non impedit.
-                        - Non totam culpa iusto occaecati necessitatibus pariatur.
-                    event_registered: false
-                    gate_event_history: false
-                    gate_list_id: Magnam aliquid non iure natus dolor.
-                    label: an4
-                    page_view_urls:
-                        - Aspernatur laudantium aut autem doloribus laboriosam.
-                        - Molestiae nulla earum illo est.
-                        - Animi consequatur eum.
-                    property_filters:
-                        - operator: is_known
-                          property: p
-                          values:
-                            - Sequi sint porro.
-                            - Earum quibusdam modi eos et ratione eum.
-                            - Consequuntur quis.
-                        - operator: is_known
-                          property: p
-                          values:
-                            - Sequi sint porro.
-                            - Earum quibusdam modi eos et ratione eum.
-                            - Consequuntur quis.
-                        - operator: is_known
-                          property: p
-                          values:
-                            - Sequi sint porro.
-                            - Earum quibusdam modi eos et ratione eum.
-                            - Consequuntur quis.
-                    registered_for:
-                        - Nam alias dicta assumenda sunt.
-                        - Porro soluta laboriosam sed explicabo dicta.
-                        - Non nemo in similique ex dolore soluta.
-                    speakers:
-                        event_names:
-                            - Ea ut enim similique sit assumenda.
-                            - Ab temporibus sed est.
-                            - Dolores aliquam dignissimos.
-                        list_id: Qui enim eos.
-                        scope: current
-                name: np4
+                        - South Korea
+                    gate_list_id: "26716"
+                    label: OSS Korea
             required:
                 - criteria
         AudienceCustomInterpretResult:
@@ -17773,76 +17576,23 @@ components:
                         - Molestiae nihil eaque quisquam ab.
                         - Velit libero fuga quis facere et placeat.
             example:
-                branch_count: 6857487235144582774
+                branch_count: 4
                 criteria:
-                    ambassadors: true
                     cities:
-                        - Autem modi neque.
-                        - Corrupti nobis nostrum.
-                        - Consequatur nulla culpa magnam.
+                        - Seoul
                     contact_location: true
                     countries:
-                        - Praesentium vel et quia.
-                        - Cumque dolorem.
-                        - Possimus explicabo in aut aut ratione fuga.
-                    education_enrolled: true
-                    education_topic_property: Vel ut est.
-                    education_topics:
-                        - Est in et sed corrupti et.
-                        - Minima dolor non impedit.
-                        - Non totam culpa iusto occaecati necessitatibus pariatur.
-                    event_registered: false
-                    gate_event_history: false
-                    gate_list_id: Magnam aliquid non iure natus dolor.
-                    label: an4
-                    page_view_urls:
-                        - Aspernatur laudantium aut autem doloribus laboriosam.
-                        - Molestiae nulla earum illo est.
-                        - Animi consequatur eum.
-                    property_filters:
-                        - operator: is_known
-                          property: p
-                          values:
-                            - Sequi sint porro.
-                            - Earum quibusdam modi eos et ratione eum.
-                            - Consequuntur quis.
-                        - operator: is_known
-                          property: p
-                          values:
-                            - Sequi sint porro.
-                            - Earum quibusdam modi eos et ratione eum.
-                            - Consequuntur quis.
-                        - operator: is_known
-                          property: p
-                          values:
-                            - Sequi sint porro.
-                            - Earum quibusdam modi eos et ratione eum.
-                            - Consequuntur quis.
-                    registered_for:
-                        - Nam alias dicta assumenda sunt.
-                        - Porro soluta laboriosam sed explicabo dicta.
-                        - Non nemo in similique ex dolore soluta.
-                    speakers:
-                        event_names:
-                            - Ea ut enim similique sit assumenda.
-                            - Ab temporibus sed est.
-                            - Dolores aliquam dignissimos.
-                        list_id: Qui enim eos.
-                        scope: current
-                education_topic_candidates:
-                    - Molestiae libero alias praesentium ab velit quia.
-                    - Praesentium perferendis id dolores.
+                        - South Korea
+                    gate_list_id: "26716"
+                    label: OSS Korea
                 gate:
-                    hubspot_url: Sequi hic ut culpa repellat.
-                    list_id: Necessitatibus non adipisci.
-                    name: Nam assumenda sit dolorem cupiditate.
-                    size: 3935453728792165491
-                name: Sed voluptatibus earum temporibus enim.
-                upper_bound: 2547515972424224129
-                warnings:
-                    - Aut omnis.
-                    - Molestiae nihil eaque quisquam ab.
-                    - Velit libero fuga quis facere et placeat.
+                    hubspot_url: https://app.hubspot.com/contacts/8675309/lists/26716
+                    list_id: "26716"
+                    name: 26Q2 - The Linux Foundation - Master-list
+                    size: 2500000
+                name: 26Q4 - Seoul and South Korea - Mailable Contacts - OSS Korea
+                upper_bound: 2500000
+                warnings: []
             required:
                 - name
                 - criteria
@@ -23902,61 +23652,13 @@ components:
             example:
                 custom:
                     criteria:
-                        ambassadors: true
                         cities:
-                            - Autem modi neque.
-                            - Corrupti nobis nostrum.
-                            - Consequatur nulla culpa magnam.
+                            - Seoul
                         contact_location: true
                         countries:
-                            - Praesentium vel et quia.
-                            - Cumque dolorem.
-                            - Possimus explicabo in aut aut ratione fuga.
-                        education_enrolled: true
-                        education_topic_property: Vel ut est.
-                        education_topics:
-                            - Est in et sed corrupti et.
-                            - Minima dolor non impedit.
-                            - Non totam culpa iusto occaecati necessitatibus pariatur.
-                        event_registered: false
-                        gate_event_history: false
-                        gate_list_id: Magnam aliquid non iure natus dolor.
-                        label: an4
-                        page_view_urls:
-                            - Aspernatur laudantium aut autem doloribus laboriosam.
-                            - Molestiae nulla earum illo est.
-                            - Animi consequatur eum.
-                        property_filters:
-                            - operator: is_known
-                              property: p
-                              values:
-                                - Sequi sint porro.
-                                - Earum quibusdam modi eos et ratione eum.
-                                - Consequuntur quis.
-                            - operator: is_known
-                              property: p
-                              values:
-                                - Sequi sint porro.
-                                - Earum quibusdam modi eos et ratione eum.
-                                - Consequuntur quis.
-                            - operator: is_known
-                              property: p
-                              values:
-                                - Sequi sint porro.
-                                - Earum quibusdam modi eos et ratione eum.
-                                - Consequuntur quis.
-                        registered_for:
-                            - Nam alias dicta assumenda sunt.
-                            - Porro soluta laboriosam sed explicabo dicta.
-                            - Non nemo in similique ex dolore soluta.
-                        speakers:
-                            event_names:
-                                - Ea ut enim similique sit assumenda.
-                                - Ab temporibus sed est.
-                                - Dolores aliquam dignissimos.
-                            list_id: Qui enim eos.
-                            scope: current
-                    name: np4
+                            - South Korea
+                        gate_list_id: "26716"
+                        label: OSS Korea
             required:
                 - custom
         RedditAdsAccountMonitor:

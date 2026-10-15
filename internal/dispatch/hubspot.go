@@ -15,6 +15,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/utm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
@@ -695,7 +696,15 @@ func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL strin
 // heroFailureReason maps a hero re-host failure to a short, fixed sentence an operator can act on.
 // It matches on the stable text of this package's own errors and falls back to a generic line, so
 // an error carrying unexpected upstream text is never echoed into a persisted, API-visible string.
+//
+// The SSRF guard's refusal is classified by identity, FIRST: the download path wraps every
+// client.Do failure (guard refusals included) as "download image from ...: %w", and the guard's
+// own text names none of the substrings below, so a string match would always report a refused
+// private or metadata address as a failed download — inviting a retry that fails identically.
 func heroFailureReason(err error) string {
+	if errors.Is(err, eventurl.ErrEventURLForbidden) {
+		return "the image address was refused by the service's network safety check."
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "not one this service re-hosts"),

@@ -602,6 +602,17 @@ var AudienceCustomInput = Type("audience-custom-input", func() {
 	Attribute("criteria", AudienceCustomCriteria, "The reviewed criteria")
 	Attribute("name", String, "Explicit list name; derived from the criteria when omitted. A taken name is versioned, never reused", func() { MaxLength(250) })
 	Required("criteria")
+	// An explicit example: the generated one filled page_view_urls with prose sentences, which
+	// the service refuses, so the CLI usage it produced was a request that returns a 400.
+	Example(map[string]any{
+		"criteria": map[string]any{
+			"cities":           []string{"Seoul"},
+			"countries":        []string{"South Korea"},
+			"contact_location": true,
+			"gate_list_id":     "26716",
+			"label":            "OSS Korea",
+		},
+	})
 })
 
 // AudienceCustomPreviewResult is what create would build. Nothing is written.
@@ -614,6 +625,28 @@ var AudienceCustomPreviewResult = Type("audience-custom-preview-result", func() 
 	Attribute("upper_bound", Int, "The gate list's size when every branch is gated; absent otherwise")
 	Attribute("warnings", ArrayOf(String), "Things that may make the list smaller than intended")
 	Required("name", "criteria", "branch_count", "warnings")
+	// An explicit example: the generated one set upper_bound beside ungated page-view and
+	// registration branches, which the field's own description rules out. Here every branch
+	// is a gated contact-location one, so upper_bound is the gate's size.
+	Example(map[string]any{
+		"name": "26Q4 - Seoul and South Korea - Mailable Contacts - OSS Korea",
+		"criteria": map[string]any{
+			"cities":           []string{"Seoul"},
+			"countries":        []string{"South Korea"},
+			"contact_location": true,
+			"gate_list_id":     "26716",
+			"label":            "OSS Korea",
+		},
+		"branch_count": 4,
+		"gate": map[string]any{
+			"list_id":     "26716",
+			"name":        "26Q2 - The Linux Foundation - Master-list",
+			"size":        2500000,
+			"hubspot_url": "https://app.hubspot.com/contacts/8675309/lists/26716",
+		},
+		"upper_bound": 2500000,
+		"warnings":    []string{},
+	})
 })
 
 var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
@@ -835,6 +868,12 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			Attribute("list_ref", String, "List id or name to audit", func() { MinLength(1) })
 			Attribute("targets_eu", Boolean, "The send targets the EU, so a GDPR suppression is expected")
 			Attribute("targets_ca", Boolean, "The send targets Canada, so a CASL opt-out suppression is expected")
+			// Custom lists and directly attached lists carry no suppression of their own: the
+			// send applies it. Without these ids QA judged such a list on its own filters and
+			// failed every one of them.
+			Attribute("send_suppression_list_ids", ArrayOf(String), "Suppression lists the send applies on top of this list; counted like the list's own exclusions", func() {
+				MaxLength(200)
+			})
 			// OPTIONAL, and the check it enables is OMITTED without it rather than guessed.
 			//
 			// A registration list names its own edition ("26Q2 AGNTCon + MCPCon North America
@@ -845,12 +884,6 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 			// existing caller's audit: no client sends `event_name` yet, so every previously
 			// PASSing audit would have become NEEDS VERIFY and trained operators to ignore the
 			// verdict.
-			// Custom lists and directly attached lists carry no suppression of their own: the
-			// send applies it. Without these ids QA judged such a list on its own filters and
-			// failed every one of them.
-			Attribute("send_suppression_list_ids", ArrayOf(String), "Suppression lists the send applies on top of this list; counted like the list's own exclusions", func() {
-				MaxLength(200)
-			})
 			Attribute("event_name", String, "This edition's event name, so an included registration list for THIS event can be told from another event's", func() {
 				MinLength(1)
 			})

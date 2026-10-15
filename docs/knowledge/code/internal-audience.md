@@ -477,9 +477,10 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   `RegisteredFor` adds a branch for exact edition names (this edition's registrants).
 - **Restrictions reach EVERY branch.** Extra property filters are ANDed into each branch; the
   speaker restriction is an `IN_LIST` on an existing speakers list or, absent one, each branch is
-  copied once per speaker signal (`registration_type CONTAINS_TOKEN Speaker`,
-  `is_event_speaker_bool`, `is_event_speaker`) because HubSpot will not take an OR nested inside a
-  branch; ambassadors copy each branch once per programme property. A restriction on only some
+  copied once per speaker signal the portal's registration event defines
+  (`registration_type CONTAINS Speaker`, `is_event_speaker_bool`, `is_event_speaker`), each with
+  the operation type its portal property requires (HubSpot has no `CONTAINS_TOKEN`), because
+  HubSpot will not take an OR nested inside a branch; ambassadors copy each branch once per programme property. A restriction on only some
   branches is an OR'd way around it. Copies clone their slices so appending to one cannot alias
   another. The expansion is capped at `customBranchLimit` (60).
 - **No suppression on a custom list.** It is an inclusion building block: suppressions apply once,
@@ -493,13 +494,28 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   (`<YYQN> - <Location> - Mailable Contacts - <Label>`, `<Event> Speakers - <Scope>`,
   `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never
   reused: a matching name does not prove a matching audience.
+- **Speakers-list auto-pick fails closed.** `SpeakerListFits` decides whether an existing list
+  may stand in for a speaker restriction; a filled `ListID` REPLACES the scope and event-name
+  filters, so it accepts a list only when its name provably fits: a speakers list discovery would
+  offer, naming every requested edition (NO editions means no fit — nothing can be checked), and
+  of the requested scope. A scope suffix (` - Current`, ` - Past`, ` - Current + Past`) must equal
+  the requested scope; `current_past` — the parser's default — is met ONLY by that explicit
+  suffix, since an unsuffixed name says nothing about which editions it covers; `current`/`past`
+  refuse a name that mentions the other scope. Anything else is left for the operator.
+- **Countries are canonicalized on entry.** `CanonicalCountries` maps each value through
+  `DisplayName` (and collapses aliases of one country) where criteria enter the service —
+  `ParseCustomDraft` and the service's `customCriteria` — exactly as the brief path's `BuildPlan`
+  does, so "USA" filters on "United States" instead of a literal that matches nobody.
+- **Draft arrays stay inside the contract.** `ParseCustomDraft` caps every array at 25 except
+  `page_view_urls`, capped at `CustomMaxPageViewURLs` (10) to match its `MaxLength`; producers of
+  `registered_for` honour `CustomMaxRegisteredFor` (25), so an unedited draft passes preview.
 - **Gate resolution.** `BrandMasterProbes`/`MatchesBrandMaster` find the brand's STANDING master
   list (`… - Master-list`), never a per-event `… - Master`, which is one event's audience and the
   wrong gate for a location list. A short brand matches only as a whole token.
 
-Not ported, deliberately: the legacy Education brand-fit topic filter (it needs a course/topic
-property on the education event type that this portal has not been shown to carry) and the
-legacy REUSE/UPDATE/CREATE negotiation (the existing Reuse step already lists prior masters).
+Both legacy pieces the first cut left out are now ported: the Education brand-fit topic filter
+(`EducationTopics` / `EducationTopicProperty`) and the REUSE/UPDATE/UNRELATED negotiation
+(`CustomReuseSystemPrompt` / `ParseCustomReuse`) — see below.
 
 **Added 2026-10-10.** Three more criteria close the legacy "Create list" gap for every missing
 signal:
@@ -507,14 +523,15 @@ signal:
   inside every education `UNIFIED_EVENTS` node; with no location they are the education signal on
   their own. The property they filter on (`EducationTopicProperty`) is picked from the portal's
   education event definition by `CourseTopicProperty` (course > topic > subject > program >
-  curriculum, by name or label) — never by the caller or the model — and topics with no such
+  curriculum, by name or label). A caller's value is kept only when it is one of the portal's
+  `CourseTopicCandidates`, otherwise the best candidate replaces it; the model's choice is never
+  used. Topics with no such
   property are refused rather than silently dropped, because dropping them widens the list to
   every enrolment.
 - `PageViewURLs` add one ungated `PAGE_VIEW` branch per URL (`HAS_PAGEVIEW_CONTAINS`, `pageUrl`).
   `filter.MarshalJSON` omits `operation` for that filter type only; every other filter's wire
   shape is unchanged. A fragment shorter than 8 characters is refused, since it matches every
-  page that mentions it. The PAGE_VIEW shape follows the v3 Lists API documentation and has not
-  yet been confirmed against a live create.
+  page that mentions it. The PAGE_VIEW shape was confirmed by a live create (list 31588).
 - **Reuse before create.** `CustomReuseProbes` searches by location/label, `ReusableCandidate`
   drops masters, suppressions and test lists, and the model ranks the survivors
   (`CustomReuseSystemPrompt` / `ParseCustomReuse`: reuse / update / unrelated). It ranks only

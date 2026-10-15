@@ -104,6 +104,17 @@ const (
 	customMaxNotes      = 10
 )
 
+// The contract's per-field caps on criteria arrays (design/audience_builder.go).
+// A draft interpret returns is fed straight back to preview/create, whose
+// generated validators enforce these, so every producer of a draft must stay
+// inside them or an unedited draft is refused with a 400.
+const (
+	// CustomMaxRegisteredFor is registered_for's MaxLength.
+	CustomMaxRegisteredFor = customMaxValues
+	// CustomMaxPageViewURLs is page_view_urls' MaxLength.
+	CustomMaxPageViewURLs = 10
+)
+
 // CustomInterpretPrompt renders the user prompt. Every operator-typed value is
 // collapsed to one line and has the block markers neutralised, so text inside a
 // block cannot close it and be read as instructions.
@@ -204,7 +215,7 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 	}
 
 	field := func(v string) string { return blockSafe(v, 200) }
-	values := func(in []string) []string {
+	capped := func(in []string, limit int) []string {
 		out := make([]string, 0, len(in))
 		for _, v := range in {
 			if v = field(v); v != "" {
@@ -212,24 +223,25 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 			}
 		}
 		out = cleanValues(out)
-		if len(out) > customMaxValues {
-			out = out[:customMaxValues]
+		if len(out) > limit {
+			out = out[:limit]
 		}
 		return out
 	}
+	values := func(in []string) []string { return capped(in, customMaxValues) }
 
 	c := w.Criteria
 	d := &CustomDraft{
 		Criteria: CustomCriteria{
 			Cities:            values(c.Cities),
-			Countries:         values(c.Countries),
+			Countries:         CanonicalCountries(values(c.Countries)),
 			ContactLocation:   c.ContactLocation,
 			EventRegistered:   c.EventRegistered,
 			EducationEnrolled: c.EducationEnrolled,
 			GateEventHistory:  c.GateEventHistory,
 			Ambassadors:       c.Ambassadors,
 			EducationTopics:   values(c.EducationTopics),
-			PageViewURLs:      values(c.PageViewURLs),
+			PageViewURLs:      capped(c.PageViewURLs, CustomMaxPageViewURLs),
 			RegisteredFor:     values(c.RegisteredFor),
 			Label:             field(c.Label),
 		},

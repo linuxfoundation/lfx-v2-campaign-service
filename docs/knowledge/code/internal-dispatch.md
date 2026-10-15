@@ -2876,12 +2876,28 @@ unchanged into `hubspot.RebuildEmailContentInput.HeroImageAlt` — see
 falls back to a generic "Event banner" when blank).
 
 `campaignFromHubSpot` builds the value persisted as the campaign's `Result` blob from a struct
-that embeds `*hubspot.Email` alongside explicit `PortalID`, `HubspotURL` and `ABTestVariant`
-fields. `HubspotURL: e.AppURL` restates `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded
+that embeds `*hubspot.Email` alongside explicit `PortalID`, `HubspotURL`, `ABTestVariant` and
+`Warnings` fields (`Warnings` is the hero-image warning list described below, under the key
+`warnings`). `HubspotURL: e.AppURL` restates `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded
 type, so it would not otherwise serialize — under the real JSON key `hubspotUrl`. That is the only
 reason the value survives into the persisted blob: `internal/service`'s
 `hubspotURLFromResult` reads that same key back out to populate the polled job result's
 `hubspot_url` field (see [internal/service](internal-service.md)).
+
+### HubSpot hero failures are reported, not silent
+
+`uploadHeroImage` re-hosts the scraped hero in the portal file manager and stays best-effort: a failure leaves
+the draft without a hero section instead of failing the dispatch. It now also returns an operator-facing
+warning, built from `heroFailureReason`'s fixed vocabulary (format email cannot use, not an image, download
+failed, too large, refused by the network guard, missing files permission, otherwise generic) and never from
+the error text, which can carry upstream content. The network-guard refusal is classified by identity, FIRST
+(`errors.Is(err, eventurl.ErrEventURLForbidden)`): the download path wraps every `client.Do` failure as
+"download image from …: %w", and the guard's own text names none of the matched substrings, so a string match
+reported a refused private or metadata address as a failed download, inviting a retry that fails identically. `Dispatch` stores the warnings in the campaign's Result blob
+(`warnings`), the orchestrator reads them back with `hubspotWarningsFromResult` next to `hubspotURLFromResult`
+at all three of `dispatchPlatform`'s call sites (fast-path reuse, claim-conflict reuse, fresh dispatch — each
+pinned by its own `TestOrchestrator_*CarriesHubspotURL` test), and `GetJob` returns them as
+`PlatformResult.warnings`. A campaign that asked for no hero reports none.
 
 ## The system account is a connection row, not a second mechanism
 
@@ -4252,7 +4268,12 @@ endpoint can say, because an operator reads an empty panel as "this event has ne
 
 `RunQA` reads a list's own filter branch plus the NAMES of the lists it references — including
 names only the legacy v1 endpoint can still resolve — and hands both to the pure rules in
-`builder_qa.go`. A name it cannot read is a suppression it cannot credit, which is why the legacy
+`builder_qa.go`. The optional `send_suppression_list_ids` (up to 200) name the suppression lists
+the send applies on top of the list — custom and directly attached lists carry none of their own.
+Each is read; an unreadable id, a non-contact list, the audited list itself, a list it includes,
+or one it already excludes is skipped; the rest feed `CheckSuppression` and
+`CheckExclusionCompleteness(filters, len(sendTimeIDs))`, so `exclusion_count` includes them and
+`send_time_count` reports their share. A name it cannot read is a suppression it cannot credit, which is why the legacy
 lookup is not optional decoration. A single request-scoped `map[string]*hubspot.List` cache
 (seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
@@ -4305,17 +4326,19 @@ Preview's `UpperBound` is the gate list's size only when every branch is gated.
 `similarLists` (2026-10-10) runs during interpretation: up to 8 candidates from deterministic name
 probes, ranked by a second model call. Best effort — a failed search or ranking returns the
 candidates unranked, never fails the draft. `previewCustom` resolves the education topic property
-with `EventTypeProperties` BEFORE validation and discards any value the caller sent.
+with `EventTypeProperties` BEFORE validation: a caller's value is kept only when it is one of the
+portal's `CourseTopicCandidates`, otherwise the best candidate replaces it; the model's choice is
+never used.
 
-### HubSpot hero failures are reported, not silent
-
-`uploadHeroImage` re-hosts the scraped hero in the portal file manager and stays best-effort: a failure leaves
-the draft without a hero section instead of failing the dispatch. It now also returns an operator-facing
-warning, built from `heroFailureReason`'s fixed vocabulary (format email cannot use, not an image, download
-failed, too large, refused by the network guard, missing files permission, otherwise generic) and never from
-the error text, which can carry upstream content. `Dispatch` stores the warnings in the campaign's Result blob
-(`warnings`), the orchestrator reads them back with `hubspotWarningsFromResult` next to `hubspotURLFromResult`,
-and `GetJob` returns them as `PlatformResult.warnings`. A campaign that asked for no hero reports none.
+Interpretation keeps every draft inside the contract preview enforces: an event audience's
+`registered_for` takes the warehouse's past editions capped at `CustomMaxRegisteredFor` (25) by
+`capPastEditions` — newest year first, since the warehouse returns them alphabetically and up to
+its own 500-row cap — with a draft note naming how many were left out, and `ParseCustomDraft` caps
+`page_view_urls` at 10. The speakers list is auto-picked only through `audience.SpeakerListFits`,
+which fails closed (no editions, or a `current_past` list without the explicit suffix, never fits).
+`previewCustom` canonicalizes countries (`audience.CanonicalCountries`) and, when
+`country_dropdown` is an enumeration, warns about each country that is not one of its options,
+since the enumeration branch can never match it.
 
 ## Reddit audience read (`reddit_audience.go`, LFXV2-2665)
 

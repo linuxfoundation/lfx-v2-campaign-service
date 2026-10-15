@@ -188,9 +188,11 @@ type CustomCriteria struct {
 	// up every Kubernetes course enrolment. With no location they are the whole
 	// education signal on their own.
 	EducationTopics []string
-	// EducationTopicProperty is the education event's course/topic property. Set by
-	// the orchestration from the portal's event definition, never by the caller or
-	// the model: a guessed event property matches nobody.
+	// EducationTopicProperty is the education event's course/topic property,
+	// resolved by the orchestration from the portal's event definition. A caller's
+	// value is honoured only when it is one of the portal's candidates
+	// (CourseTopicCandidates); otherwise the best candidate replaces it. The model's
+	// choice is never used: a guessed event property matches nobody.
 	EducationTopicProperty string
 	// PageViewURLs select contacts who viewed a page whose URL contains any of them.
 	// Ungated, as in the reference runbook: a page view alone is the signal.
@@ -233,19 +235,50 @@ const (
 	propUserCountry     = "user_country"
 )
 
+// CanonicalCountries maps each country to the form HubSpot stores it in
+// (DisplayName), so "USA" filters on "United States" rather than on a literal
+// that matches nobody — the fix the brief path's BuildPlan already applies. It is
+// applied where criteria enter the service, so preview shows the value actually
+// filtered on. Blank values are dropped and aliases of one country collapse to a
+// single entry; an unknown country is kept as written. Empty input returns nil.
+func CanonicalCountries(countries []string) []string {
+	if len(countries) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(countries))
+	for _, c := range countries {
+		out = append(out, DisplayName(c))
+	}
+	return cleanValues(out)
+}
+
 // SpeakerListFits reports whether an existing list may stand in for a speaker
 // restriction. Once a list id is filled in it REPLACES the scope and event-name
-// filters, so a list is only accepted when nothing in its name contradicts them:
-// it must be a speakers list discovery would offer (never a test, staff or
-// suppression list), it must not name the other scope ("past" for a current-only
-// restriction, "current" for a past-only one), and it must name every requested
-// edition. Anything else is left for the operator to pick by hand.
+// filters, so it fails closed: a list is only accepted when its name provably
+// fits. It must be a speakers list discovery would offer (never a test, staff or
+// suppression list); the restriction must name at least one edition, and the
+// list must name every one of them (with no editions nothing in the name can be
+// checked against the event, so the pick is left to the operator); and its scope
+// must match. A list whose name ends in a scope suffix (" - current",
+// " - past", " - current + past") must carry exactly the requested scope; a
+// current+past restriction is only met by that explicit suffix, since an
+// unsuffixed name does not say which editions it covers; and a current-only or
+// past-only restriction refuses a name that mentions the other scope. Anything
+// else is left for the operator to pick by hand.
 func SpeakerListFits(name string, scope SpeakerScope, eventNames []string) bool {
-	lower := strings.ToLower(name)
+	lower := strings.ToLower(strings.TrimSpace(name))
 	if !strings.Contains(lower, "speaker") {
 		return false
 	}
 	if _, hidden := DiscoveryHidden(name, false); hidden {
+		return false
+	}
+	editions := cleanValues(eventNames)
+	if len(editions) == 0 {
+		return false
+	}
+	suffixScope, suffixed := speakerScopeFromSuffix(lower)
+	if suffixed && suffixScope != scope {
 		return false
 	}
 	tokens := strings.FieldsFunc(lower, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
@@ -258,13 +291,31 @@ func SpeakerListFits(name string, scope SpeakerScope, eventNames []string) bool 
 		if slices.Contains(tokens, "current") {
 			return false
 		}
+	case SpeakerScopeCurrentPast:
+		if !suffixed {
+			return false
+		}
+	default:
+		return false
 	}
-	for _, edition := range cleanValues(eventNames) {
+	for _, edition := range editions {
 		if !strings.Contains(lower, strings.ToLower(edition)) {
 			return false
 		}
 	}
 	return true
+}
+
+// speakerScopeFromSuffix returns the scope a speaker list's name states through
+// the naming convention's suffix, and whether it states one at all. lower must
+// already be lower-cased and trimmed.
+func speakerScopeFromSuffix(lower string) (SpeakerScope, bool) {
+	for _, s := range speakerScopeSuffixes {
+		if strings.HasSuffix(lower, s.suffix) {
+			return s.scope, true
+		}
+	}
+	return "", false
 }
 
 // CheckFilterKinds refuses a property filter the builder cannot express for the

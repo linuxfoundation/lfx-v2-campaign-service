@@ -177,3 +177,11 @@ func hubspotValidationError(t *testing.T) error {
 	require.NotEmpty(t, hubspot.ValidationMessage(err), "precondition: the client retained the reason")
 	return err
 }
+
+// Countries are canonicalized where API criteria enter the service, so "USA"
+// filters on the value HubSpot stores, exactly as the brief path does.
+func TestCustomCriteria_CanonicalizesCountries(t *testing.T) {
+	got := customCriteria(&explore.AudienceCustomCriteria{Countries: []string{"USA", " united states ", "Narnia"}})
+	assert.Equal(t, []string{"United States", "Narnia"}, got.Countries)
+	assert.Nil(t, customCriteria(&explore.AudienceCustomCriteria{}).Countries)
+}

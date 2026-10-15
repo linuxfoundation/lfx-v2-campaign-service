@@ -76,7 +76,13 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		}
 		// Past editions come from the warehouse, verbatim: they are exact filter values.
 		if len(event.PastEditions) > 0 {
-			draft.Criteria.RegisteredFor = append([]string(nil), event.PastEditions...)
+			kept, omitted := capPastEditions(event.PastEditions)
+			draft.Criteria.RegisteredFor = kept
+			if omitted > 0 {
+				draft.Notes = append(draft.Notes, fmt.Sprintf(
+					"Kept the %d most recent past editions in registered_for; %d older ones were left out (the field takes at most %d).",
+					len(kept), omitted, audience.CustomMaxRegisteredFor))
+			}
 		}
 	}
 	draft.Questions = audience.SettleQuestions(draft.Questions, answers)
@@ -161,6 +167,9 @@ func (x *AudienceExplorer) PreviewCustom(ctx context.Context, projectID string, 
 }
 
 func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Client, criteria audience.CustomCriteria, name string) (*audience.CustomPreview, error) {
+	// Idempotent; the service already did this, but every filter value built below
+	// must be the form HubSpot stores whichever entry point the criteria came from.
+	criteria.Countries = audience.CanonicalCountries(criteria.Countries)
 	// The topic property is read from the portal BEFORE validation, which refuses
 	// topics without one. A caller's choice is honoured only when it is one of the
 	// portal's own candidates; anything else is replaced by the best candidate.
@@ -214,6 +223,7 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 	// which decides the operation type. Both are things a guess gets silently wrong.
 	types := map[string]bool{}
 	kinds := map[string]string{}
+	var countryOptions map[string]bool
 	var missing []string
 	for _, prop := range audience.CustomContactProperties(criteria) {
 		def, perr := client.GetContactProperty(ctx, prop)
@@ -226,6 +236,12 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 		}
 		types[prop] = def.IsEnumeration()
 		kinds[prop] = strings.ToLower(strings.TrimSpace(def.Type))
+		if prop == "country_dropdown" && def.IsEnumeration() {
+			countryOptions = make(map[string]bool, len(def.Options))
+			for _, o := range def.Options {
+				countryOptions[o.Value] = true
+			}
+		}
 	}
 	if len(missing) > 0 {
 		return nil, &audience.UnknownPropertiesError{Names: missing}
@@ -235,6 +251,15 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 	}
 	if len(criteria.Countries) > 0 && criteria.ContactLocation && !types["country_dropdown"] {
 		warnings = append(warnings, "country_dropdown is not an enumeration in this portal; the country branch may match nobody.")
+	}
+	if criteria.ContactLocation && countryOptions != nil {
+		// An enumeration only ever holds its own options: a country outside them
+		// adds nothing to the country_dropdown branch, silently.
+		for _, country := range criteria.Countries {
+			if !countryOptions[country] {
+				warnings = append(warnings, fmt.Sprintf("%q is not one of country_dropdown's options in this portal; the country_dropdown branch will not match it.", country))
+			}
+		}
 	}
 	resolved := criteria
 	resolved.PropertyFilters = make([]audience.CustomPropertyFilter, len(criteria.PropertyFilters))
@@ -444,4 +469,19 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 		Location:     sanitizeExtractedField(details.Location),
 		Dates:        identity.Dates,
 	}, nil
+}
+
+// capPastEditions bounds the warehouse's past editions to registered_for's
+// contract cap, so an unedited event-audience draft still passes preview. The
+// warehouse returns them alphabetically and may return up to its own row cap,
+// far above the contract's, so the most recent are kept: ordered newest year
+// first (an edition with no year in its name sorts last), the input order
+// breaking ties. It returns the kept names, verbatim, and how many were left out.
+func capPastEditions(past []string) ([]string, int) {
+	kept := append([]string(nil), past...)
+	if len(kept) <= audience.CustomMaxRegisteredFor {
+		return kept, 0
+	}
+	slices.SortStableFunc(kept, func(a, b string) int { return strings.Compare(yearIn(b), yearIn(a)) })
+	return kept[:audience.CustomMaxRegisteredFor], len(past) - audience.CustomMaxRegisteredFor
 }
