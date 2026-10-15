@@ -31,9 +31,9 @@ const livePredicate = `status <> 'deleted'`
 // action keyword (DO). The capture is what the assertions inspect for the predicate.
 //
 // slot_version joined the target in 000037. All three statements name the four-column index
-// as their arbiter, because the follow-up release drops the three-column one and a statement
-// still naming it would then fail at runtime with "no unique or exclusion constraint matching
-// the ON CONFLICT specification" — the same failure this test exists for.
+// as their arbiter, because 000047 dropped the three-column one and a statement still naming
+// it would fail at runtime with "no unique or exclusion constraint matching the ON CONFLICT
+// specification" — the same failure this test exists for.
 var onConflictBriefPlatform = regexp.MustCompile(`(?is)ON\s+CONFLICT\s*\(\s*brief_id\s*,\s*platform\s*,\s*variant\s*,\s*slot_version\s*\)(.*?)\bDO\b`)
 
 // TestCampaignRepo_OnConflictCarriesLivePredicate pins the single most dangerous

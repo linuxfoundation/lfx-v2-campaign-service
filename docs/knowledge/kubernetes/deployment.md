@@ -224,16 +224,18 @@ rolling back is asking for, including whatever the new constraint existed to pre
 
 An image-only rollback is also why a contract migration waits for the code it relies on to
 be a release old, not just present. The campaigns slot index (`000022`'s
-`uq_campaigns_brief_platform_variant_live`) is dropped one release AFTER the per-slot
+`uq_campaigns_brief_platform_variant_live`) is dropped by `000047` one release AFTER the per-slot
 adopt/claim advisory lock ships (LFXV2-2023): the binary before the lock takes no slot lock, so
 if the drop shipped with the lock, rolling the image back would leave that binary's adopt free
 to race a slot-2 claim on a schema with nothing else to stop it. Staged a release apart, the
 binary a rollback returns to either still has the index or already takes the lock. That also
 means the lock release must BOOT on the contracted schema, not just behave on it: startup runs
 `postgres.Migrate`, and the pool is closed on any error from its required-index check. So the
-lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot,
-present is still validated in full — while the four-column
-`uq_campaigns_brief_platform_variant_slot_version_live` stays required and its absence still fails
-startup with `ErrMissingRequiredIndex`. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex`.
+lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot —
+and the release that ships `000047` removes the entry (and the `optional` mechanism) altogether.
+The four-column `uq_campaigns_brief_platform_variant_slot_version_live` stays required throughout
+and its absence still fails startup with `ErrMissingRequiredIndex`. Pinned live by
+`TestMigrateRefusesADroppedDispatchIndex`. Rolling back `000047` itself (its down re-creates the
+index) fails once any slot holds two live campaigns; resolve the extra versions by hand first.
 
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

@@ -334,53 +334,25 @@ var requiredIndexes = []requiredIndex{{
 	// false alarm, on the same reasoning as 000014's guard.
 	predicate: "(status = 'building'::text)",
 }, {
-	// at most one live campaign per (brief, platform) — the arbiter of
-	// ClaimCampaignDispatch, and since 000014 dropped campaigns_brief_id_platform_key,
-	// the ONLY one. 000014's guard pins this same definition before it drops the
-	// constraint, but that guard runs once, at migration time. Nothing re-checked it
-	// afterwards, so an index dropped or replaced later — including by an operator
-	// clearing invalid-index debris and rebuilding from 000013 with IF NOT EXISTS
-	// silently no-opping against a same-named leftover — left uniqueness unenforced with
-	// a clean boot and duplicate PAID campaigns as the first symptom. Two guards on one
-	// definition is the point: a migration-time check cannot speak for the schema a year
-	// of operations later.
-	name:   "uq_campaigns_brief_platform_variant_live",
-	table:  "campaigns",
-	unique: true,
-	// (brief, platform, VARIANT) since 000022. Google's UI offers Search and Demand Gen
-	// as simultaneous checkboxes, so a brief legitimately holds several google-ads
-	// campaigns; keying on (brief, platform) alone made the second dispatch read the
-	// first's row and report a false success. Every other provider writes 'default', so
-	// the invariant is unchanged for them — one live campaign per pair, now spelled with
-	// a third column.
-	keys: []string{"brief_id", "platform", "variant"},
-	// Deparsed, and character-identical to the form 000023's guard compares against.
-	predicate: "(status <> 'deleted'::text)",
-	// OPTIONAL from the lock release on (LFXV2-2023, PR #260): absent is a healthy boot,
-	// present is still checked in full. This image is the image-only rollback target for
-	// the later release that drops the index, so it must start on the schema that release
-	// leaves behind — staging the drop a release after the lock promises exactly that, and
-	// a hard requirement here would turn the rollback into a boot loop on
-	// ErrMissingRequiredIndex. The N-1 binary that still relies on the index for its claims
-	// is not this one: its own boot check keeps it required, and a rollback to it happens
-	// only before the drop.
-	optional: true,
-}, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
-	// four-column successor to the entry above, widening the slot so a DELIBERATE second
-	// campaign on one slot is distinguishable from a RETRY of the first.
+	// arbiter of ClaimCampaignDispatch, UpsertCampaign and AdoptCampaign, and since 000047
+	// dropped 000022's three-column uq_campaigns_brief_platform_variant_live, the ONLY index
+	// standing between two concurrent claims of one slot version and two paid campaigns.
+	// Membership here is what re-checks it at every boot. A migration-time guard (000014's,
+	// 000023's) runs once, and an index lost afterwards — an operator clearing invalid-index
+	// debris, a rebuild whose IF NOT EXISTS no-opped against a same-named leftover — leaves a
+	// schema that boots clean with duplicate PAID campaigns as the first symptom.
 	//
-	// Both entries are listed on purpose while expand/contract runs. The three-column
-	// index is what the N-1 binary's claims key on; the four-column one is what this
-	// release's claim, upsert and adopt name as their ON CONFLICT arbiter. Only THIS one is
-	// required: the entry above is optional (see its comment) so this image still boots
-	// once the follow-up release drops the narrower index, and a missing four-column index
-	// is still a boot failure.
+	// The slot_version column is what lets a DELIBERATE second campaign on one
+	// (brief, platform, variant) slot coexist with the first. "An adopt binds only an empty
+	// slot", which the three-column index used to enforce, is now enforced by the per-slot
+	// advisory lock in campaign_repo.go — not by any index, so not by this check.
 	name:   "uq_campaigns_brief_platform_variant_slot_version_live",
 	table:  "campaigns",
 	unique: true,
 	keys:   []string{"brief_id", "platform", "variant", "slot_version"},
-	// Deparsed form, matching the sibling entry above.
+	// Deparsed form of `WHERE status <> 'deleted'`, character-identical to what 000023's
+	// guard compared for the three-column index this one replaced.
 	predicate: "(status <> 'deleted'::text)",
 }, {
 	// at most one live campaign per (platform, platform_campaign_id) — the guard that keeps
@@ -556,9 +528,8 @@ func (r requiredIndex) createSQL() string {
 	return b.String()
 }
 
-// RequiredIndexNames returns the names of every index Migrate validates, in the order the
-// error reports them. Migrate refuses to boot without each one except those
-// RequiredIndexIsOptional reports, whose absence it tolerates.
+// RequiredIndexNames returns the names of every index Migrate refuses to boot without, in
+// the order the error reports them.
 //
 // It is exported for the live-database tests in the dbtest package, which are in a
 // different package and so cannot reach the unexported list — and driving them off the real
@@ -571,15 +542,6 @@ func RequiredIndexNames() []string {
 		out = append(out, r.name)
 	}
 	return out
-}
-
-// RequiredIndexIsOptional reports whether Migrate tolerates the named index's ABSENCE (it is
-// still validated when present). False for a name not in the list. Exported, like
-// RequiredIndexNames, so the dbtest drop-each-index tests can tell the two kinds apart off
-// the real list instead of a hand-written copy.
-func RequiredIndexIsOptional(name string) bool {
-	i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == name })
-	return i >= 0 && requiredIndexes[i].optional
 }
 
 // RequiredIndexRebuildSQL returns the statement that recreates the named required index,
@@ -619,11 +581,6 @@ type requiredIndex struct {
 	// renders it: a bare column name, or the deparsed text of an expression key.
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
-	// optional tolerates the index's ABSENCE — an index a contract migration is scheduled to
-	// drop, which this image must still boot without (see the entry that sets it). A
-	// PRESENT optional index is checked exactly like a required one: invalid, not ready, or
-	// carrying the name with the wrong definition is still refused.
-	optional bool
 }
 
 // createIndexRe matches the CREATE statement for a named index in a migration file.
@@ -764,7 +721,7 @@ func describeInvalid(names []string) string {
 //
 // It is per-name and not per-message because more than one index can be reported at once
 // and they need not share an owner: `uq_campaign_audiences_brief_platform_building` comes
-// from 000018 and `uq_campaigns_brief_platform_variant_live` from 000022. A single
+// from 000018 and `uq_campaigns_platform_campaign_live` from 000020. A single
 // `force <version-1>` sentence covering both is wrong for at least one of them — an
 // operator who forces 17 replays 000018 and the campaigns index is still absent, with the
 // error now silent because the message they followed said this was the remedy. Advice
@@ -823,9 +780,6 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn, expected map[st
 		var keys []string
 		row := conn.QueryRow(ctx, requiredIndexQuery, want.name, want.table)
 		switch scanErr := row.Scan(&unique, &live, &rightTable, &predicate, &keys); {
-		case errors.Is(scanErr, pgxv5.ErrNoRows) && want.optional:
-			// Dropped on schedule by a contract migration: nothing to enforce, nothing to report.
-			continue
 		case errors.Is(scanErr, pgxv5.ErrNoRows), scanErr == nil && !live:
 			missing = append(missing, want.name)
 			continue

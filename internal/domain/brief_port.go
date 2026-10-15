@@ -201,10 +201,8 @@ type CampaignReader interface {
 	// carried no authenticated principal, and NULL means "not recorded", not "nobody".
 	//
 	// slotVersion names WHICH campaign on the slot is being claimed (model.Campaign.
-	// SlotVersion); 1 for the first. A claim for a slot version the schema cannot hold yet
-	// returns domain.ErrSlotVersionUnavailable, having written nothing. A claim is serialized
-	// per (brief, platform, variant) against AdoptCampaign, so an adopt never lands beside a
-	// claimed row on the same slot.
+	// SlotVersion); 1 for the first. A claim is serialized per (brief, platform, variant)
+	// against AdoptCampaign, so an adopt never lands beside a claimed row on the same slot.
 	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
 	// DeleteDispatchClaim removes the still-'pending' claim row jobID took on (brief,
 	// platform, variant, slot version) so the slot can be retried after a dispatch fails
