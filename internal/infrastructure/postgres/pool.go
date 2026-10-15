@@ -592,6 +592,11 @@ type requiredIndex struct {
 var createIndexRe = regexp.MustCompile(
 	`(?is)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([a-zA-Z0-9_]+)"?`)
 
+// dropIndexRe matches a DROP INDEX statement in a migration file, read from the same
+// executable SQL as createIndexRe (prose and dollar-quoted bodies stripped).
+var dropIndexRe = regexp.MustCompile(
+	`(?is)DROP\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?"?([a-zA-Z0-9_]+)"?`)
+
 // lineCommentRe matches a `--` comment to end of line. Comments are stripped before the
 // CREATE scan because these migrations DISCUSS the statements they are avoiding: 000009's
 // header contains the phrase "a failed CREATE INDEX CONCURRENTLY", from which the regexp
@@ -685,6 +690,37 @@ var migrationIndexOwners = sync.OnceValue(func() map[string]int {
 	return owners
 })
 
+// migrationIndexDrops maps an index name to the highest migration version whose up-file DROPs
+// it unconditionally, read like migrationIndexOwners. indexRecovery compares the two: an index
+// dropped after its last CREATE is not part of the schema the migrations build.
+var migrationIndexDrops = sync.OnceValue(func() map[string]int {
+	drops := map[string]int{}
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		return drops // feeds an error MESSAGE only; see migrationIndexOwners
+	}
+	for _, e := range entries {
+		base := e.Name()
+		if !strings.HasSuffix(base, ".up.sql") {
+			continue
+		}
+		v, cerr := strconv.Atoi(strings.SplitN(base, "_", 2)[0])
+		if cerr != nil {
+			continue
+		}
+		body, rerr := migrations.FS.ReadFile(base)
+		if rerr != nil {
+			continue
+		}
+		for _, m := range dropIndexRe.FindAllStringSubmatch(executableSQL(string(body)), -1) {
+			if v > drops[m[1]] {
+				drops[m[1]] = v
+			}
+		}
+	}
+	return drops
+})
+
 // describeInvalid renders the invalid index names, annotating each one this repo's
 // migrations create with the version to force back to.
 //
@@ -740,6 +776,13 @@ func indexRecovery(name string) string {
 		return "rebuild with: " + requiredIndexes[i].createSQL()
 	}
 	if v, ok := migrationIndexOwners()[name]; ok {
+		// An index a LATER migration drops is no recovery target either: forcing back to its
+		// creator replays every migration up to the one that removes it again (000022's slot
+		// index, dropped by 000047 — an invalid copy is what a failed 000047 down leaves), and
+		// the distance makes the replay unsafe as described above.
+		if d := migrationIndexDrops()[name]; d > v {
+			return fmt.Sprintf("migration %06d drops this; drop it, leave the schema version alone", d)
+		}
 		return fmt.Sprintf("migration %06d: force %d", v, v-1)
 	}
 	return "no migration creates this; drop it, leave the schema version alone"

@@ -479,6 +479,15 @@ narrowness is not incidental either: `requiredIndexes` grows only when an index'
 would be silent, and the invalid-index scan must keep annotating correctly for every index
 it does not list, both today's and the ones added after this code was written.
 
+An index a LATER migration drops is not a recovery target either. `migrationIndexDrops` reads
+the same files for `DROP INDEX` statements, and when a name's highest drop is above its highest
+create (`uq_campaigns_brief_platform_live`: 000013 → 000024; `uq_campaigns_brief_platform_variant_live`:
+000022 → 000047) `indexRecovery` answers "migration N drops this; drop it, leave the schema
+version alone" instead of forcing back to the creator — which would replay every migration up to
+the one that removes the index again. The case that reaches it: a `000047` down that fails on two
+live slot versions leaves an INVALID copy, and an operator who abandons the rollback and forces 47
+then boots into the invalid-index scan. Pinned by `TestIndexRecovery_ADroppedIndexIsNotForcedBack`.
+
 **Narrow is not the same as short, and the first draft of the list confused the two.** It
 held one entry — the index the change at hand created — while the rule it stated ("a unique
 index standing in for a constraint") admits ten. The seven per-provider connection indexes

@@ -370,6 +370,23 @@ func TestRequiredIndexes_AreAllCreatedByAMigration(t *testing.T) {
 	}
 }
 
+// TestIndexRecovery_ADroppedIndexIsNotForcedBack pins the remedy for an INVALID copy of an index
+// a later migration drops. 000022 creates uq_campaigns_brief_platform_variant_live and 000047
+// drops it, so the copy a failed 000047 down leaves behind must be dropped with the version left
+// alone — never "force 21", which would replay 000022..000047 only to drop the index again.
+func TestIndexRecovery_ADroppedIndexIsNotForcedBack(t *testing.T) {
+	const legacy = "uq_campaigns_brief_platform_variant_live"
+	require.Equal(t, 22, migrationIndexOwners()[legacy])
+	require.Equal(t, 47, migrationIndexDrops()[legacy])
+	got := indexRecovery(legacy)
+	assert.Equal(t, "migration 000047 drops this; drop it, leave the schema version alone", got)
+	assert.NotContains(t, got, "force ")
+	// 000024 drops 000013's two-column index the same way.
+	assert.Contains(t, indexRecovery("uq_campaigns_brief_platform_live"), "migration 000024 drops this")
+	// A still-live index keeps its owner's force advice.
+	assert.Contains(t, indexRecovery("idx_campaigns_stuck_claims"), "migration 000008: force 7")
+}
+
 // TestMigrationIndexOwners_IgnoresAConditionalRebuild is the finding that a CREATE inside a
 // DO block cannot be a recovery target.
 //

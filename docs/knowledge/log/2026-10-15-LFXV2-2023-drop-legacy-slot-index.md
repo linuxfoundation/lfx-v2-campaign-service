@@ -24,6 +24,12 @@ slots 3–8 at once each land exactly once); `TestMigrateRefusesADroppedDispatch
 scratch database against the slot-version index and replaces
 `TestMigrateToleratesTheDroppedLegacySlotIndex`. The `new_version` API description and
 api-catalog no longer mention the expand-phase refusal. Google stays outside
-`model.ProviderSupportsSlotVersions`. See
+`model.ProviderSupportsSlotVersions`.
+
+**Review fix.** Without its `requiredIndexes` entry, an INVALID copy of the legacy index (what a
+failed `000047` down leaves) fell through to `migrationIndexOwners` and was advised "force 21",
+replaying 000022–000047. New `migrationIndexDrops` makes `indexRecovery` answer "migration 000047
+drops this; drop it, leave the schema version alone" for any index dropped after its last create
+(`TestIndexRecovery_ADroppedIndexIsNotForcedBack`). See
 [internal/infrastructure/postgres](../code/internal-infrastructure-postgres.md),
 [internal/service](../code/internal-service.md) and [deployment](../kubernetes/deployment.md).
