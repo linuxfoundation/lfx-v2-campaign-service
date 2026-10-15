@@ -81,7 +81,7 @@ func adSetReadRoutes() map[string]settingsRoute {
 			`{"id":"888","name":"Leads US","status":"ACTIVE","effective_status":"ACTIVE","daily_budget":"5000","bid_strategy":"LOWEST_COST_WITHOUT_CAP","campaign_id":"555","account_id":"777"},` +
 			`{"id":"889","name":"Leads EU","status":"PAUSED","effective_status":"PAUSED","campaign_id":"555","account_id":"777"}` +
 			`],"paging":{}}`},
-		"GET /act_777": {status: 200, body: `{"currency":"USD"}`},
+		"GET /act_777": {status: 200, body: `{"currency":"USD","id":"act_777"}`},
 		"GET /act_777/insights": {status: 200, body: `{"data":[` +
 			`{"adset_id":"888","campaign_id":"555","account_currency":"USD","impressions":"1000","clicks":"20","spend":"7.25"}` +
 			`],"paging":{}}`},
@@ -149,7 +149,7 @@ func TestMeta_ReadMetaAdSets_RendersBudgetsMetricsAndRecorded(t *testing.T) {
 func TestMeta_ReadMetaAdSets_CurrencyOffsets(t *testing.T) {
 	t.Run("zero-decimal", func(t *testing.T) {
 		r := adSetReadRoutes()
-		r["GET /act_777"] = settingsRoute{status: 200, body: `{"currency":"JPY"}`}
+		r["GET /act_777"] = settingsRoute{status: 200, body: `{"currency":"JPY","id":"act_777"}`}
 		r["GET /act_777/insights"] = settingsRoute{status: 200, body: `{"data":[],"paging":{}}`}
 		d, _ := adSetDispatcher(t, r)
 		got, err := d.ReadMetaAdSets(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), model.MetricsWindowLast30Days)
@@ -159,7 +159,7 @@ func TestMeta_ReadMetaAdSets_CurrencyOffsets(t *testing.T) {
 	})
 	t.Run("unmapped currency leaves the amount absent, never guessed", func(t *testing.T) {
 		r := adSetReadRoutes()
-		r["GET /act_777"] = settingsRoute{status: 200, body: `{"currency":"ZZZ"}`}
+		r["GET /act_777"] = settingsRoute{status: 200, body: `{"currency":"ZZZ","id":"act_777"}`}
 		r["GET /act_777/insights"] = settingsRoute{status: 200, body: `{"data":[],"paging":{}}`}
 		d, _ := adSetDispatcher(t, r)
 		got, err := d.ReadMetaAdSets(context.Background(), "proj", model.ProviderMetaAds, adSetRow(), model.MetricsWindowLast30Days)

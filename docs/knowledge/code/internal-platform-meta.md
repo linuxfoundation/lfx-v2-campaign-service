@@ -767,10 +767,17 @@ kept). Decoded into strings, null and malformed read as a missing flight and a d
 was paced over the whole window.
 
 **Budgets: where the campaign keeps them, in the account currency (LFXV2-2665).** The read makes
-one `GET /{act}?fields=currency` (via `accountCurrency`, identity-checked) per request and converts
+one `GET /{act}?fields=currency` (via `accountCurrency`, identity-checked: the raw body through
+`getChecked`, and the answer's `id` — which Graph returns on every node read — must name the
+requested account, `act_` prefix ignored on both sides, `sameMetaAccount`) per request and converts
 every minor-unit budget with that currency's own offset (`minorToWhole`); the BFF-ported
 `minorUnitsToWhole` divided by 100 unconditionally, reading a JPY/KRW budget 100x too small, and is
 gone. A currency outside the supported map leaves every budget 0 (pacing unknown), never guessed.
+So does an answer naming another account, or none (`errAccountCurrencyWrongAccount`, PR #316
+review): the monitor reads it as currency unknown — budgets unconverted, no ad-set read, and the
+published `currency` withheld by `monitorPublishableCurrency`, which compares the insights code
+against this same validated read — rather than converting a USD account's budgets at JPY's offset
+(100x off). The ad-set read (`ListCampaignAdSets`) fails on it, as it does on no currency.
 `CreateCampaign` puts the budget on the AD SET, so a campaign this service created reports no
 campaign-level budget and used to be `PacingUnknown` forever. When any admitted, non-failed
 campaign has neither a positive `daily_budget` nor `lifetime_budget`, `fetchAccountAdSetBudgets`
@@ -802,7 +809,13 @@ daily ad-set budget is likewise used only with one shared window, since daily pa
 the flight's days in the window too. "Malformed" is decided by `dateOnly`, which parses the WHOLE
 timestamp as Graph's `2006-01-02T15:04:05-0700` or RFC 3339 and takes the date as written; it used
 to check only the first 10 characters, so `"2026-10-01garbage"` passed as a flight date (it serves
-the campaign list's `start_time`/`stop_time` too). An unknown budget is 0/0, which `metaPacingPct` already reports as not
+the campaign list's `start_time`/`stop_time` too). A flight END — the campaign list's `stop_time`
+and an ad set's `end_time` — goes through `endDateOnly` instead, which yields the LAST inclusive
+day: a stop at exactly `00:00:00` (in the timestamp's own offset, the frame every flight date is
+written in) is the instant that date begins, so the end is the day before. An externally managed
+campaign stopping at `"2026-10-11T00:00:00+0000"` used to read as ending 2026-10-11, counting one
+flight day too many — a 10-day, 1,000 lifetime flight spending exactly 700 over its first 7 days
+paced ~110%, a false overspend (PR #316 review). `CreateCampaign`'s `23:59:59` end is unchanged. An unknown budget is 0/0, which `metaPacingPct` already reports as not
 computable. A negative campaign-level budget is unreadable (`FetchFailed`), never "no budget" sent
 to the ad-set fallback. `rules/monitor_meta.go` changed in two ways: its action-item text prints
 money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`; and lifetime

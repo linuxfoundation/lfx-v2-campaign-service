@@ -127,6 +127,28 @@ func TestMetaPacingPct_LifetimeEndDateIsInclusive(t *testing.T) {
 	}
 }
 
+// TestMetaPacingPct_MidnightStopIsTheDayBefore pins the PR #316 review example end to end in the
+// rules layer: a 1,000 lifetime flight running 2026-10-01 00:00 through 2026-10-11 00:00 is TEN
+// days, and the Meta read hands it over as EndDate 2026-10-10 (meta.endDateOnly). Spending 700
+// over 10-01..10-07 is exactly on plan: 1000/10*7 = 700, 100%. The old reading, EndDate
+// 2026-10-11, counted 11 days and expected ~636 — ~110%, a false overspend.
+func TestMetaPacingPct_MidnightStopIsTheDayBefore(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC) // window 10-01..10-07
+	m := model.AccountCampaignMetrics{TotalBudget: 1000, StartDate: "2026-10-01", EndDate: "2026-10-10", Spend: 700}
+	if pct, ok := metaPct(m, 7, now); !ok || pct != 100 {
+		t.Errorf("midnight stop read as 10-10: pct = %v (ok %v), want 100 (1000/10 × 7 = 700)", pct, ok)
+	}
+	if exp, ok := metaExpectedSpend(withMetaWindow([]model.AccountCampaignMetrics{m}, 7, now)[0]); !ok || exp != 700 {
+		t.Errorf("expected = %v (ok %v), want 700 over a 10-day flight", exp, ok)
+	}
+	// What the midnight's own date would have produced: 11 flight days, a false overspend.
+	stale := m
+	stale.EndDate = "2026-10-11"
+	if pct, _ := metaPct(stale, 7, now); pct != 110 {
+		t.Errorf("an 11-day reading = %v, want 110 (the overcount the read now avoids)", pct)
+	}
+}
+
 // TestMetaPacingPct_OpenEndedLifetimeIsUnknown: a lifetime budget with no end date has no flight
 // length to spread it over. Reading the flight as "ends today" expected the WHOLE budget at once
 // on a flight's first day — a false underspend — so it is pacing unknown (PR #316 review).

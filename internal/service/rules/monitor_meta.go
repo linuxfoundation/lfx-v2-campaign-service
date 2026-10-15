@@ -99,8 +99,10 @@ func metaPacingPct(m model.AccountCampaignMetrics) (float64, bool) {
 //     taken as the window's own edge: a daily budget needs no flight length, and a campaign
 //     reporting no dates is paced over the whole window as before.
 //
-// EndDate is a day the flight still runs on (CreateCampaign writes end_time as 23:59:59 of it),
-// so it is counted inclusively. A window the flight does not overlap at all (not started, or
+// EndDate is a day the flight still runs on, so it is counted inclusively: CreateCampaign writes
+// end_time as 23:59:59 of it, and the Meta read (meta.endDateOnly) maps a stop at exactly
+// midnight — which an externally managed campaign can carry — to the day before, the last day it
+// ran. Counting that midnight's own date added a flight day and a false overspend (PR #316 review). A window the flight does not overlap at all (not started, or
 // ended before the window) is not computable: a zero spend there is correct, not underspending.
 //
 // The second return says whether the figure is COMPUTABLE. It used to be an `unknown` flag that

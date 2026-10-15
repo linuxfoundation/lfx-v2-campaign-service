@@ -226,6 +226,8 @@ func TestListCampaignAdSets_RefusesUntrustworthyAnswers(t *testing.T) {
 		{"a fractional budget", adSetListKey, page("", adSetRow("888", "555", "777", `,"daily_budget":"1.5"`))},
 		{"a status outside the charset", adSetListKey, page("", adSetRow("888", "555", "777", `,"status":"<b>"`))},
 		{"no account currency", adSetAcctKey, `{"id":"act_777"}`},
+		{"a currency of another account", adSetAcctKey, `{"currency":"JPY","id":"act_999"}`},
+		{"a currency answer naming no account", adSetAcctKey, `{"currency":"USD"}`},
 		{"duplicated key on an insights page", adSetInsKey, `{"data":[{"adset_id":"888","campaign_id":"555","account_currency":"USD","spend":"1","spend":"2"}],"paging":{}}`},
 		{"an insights row of another campaign", adSetInsKey, page("", insRow("888", "556", ""))},
 		{"a duplicated insights row", adSetInsKey, page("", insRow("888", "555", ""), insRow("888", "555", ""))},
