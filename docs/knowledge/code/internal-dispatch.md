@@ -2902,7 +2902,9 @@ reported a refused private or metadata address as a failed download, inviting a 
 (`warnings`), the orchestrator reads them back with `hubspotWarningsFromResult` next to `hubspotURLFromResult`
 at all three of `dispatchPlatform`'s call sites (fast-path reuse, claim-conflict reuse, fresh dispatch — each
 pinned by its own `TestOrchestrator_*CarriesHubspotURL` test), and `GetJob` returns them as
-`PlatformResult.warnings`. A campaign that asked for no hero reports none.
+`PlatformResult.warnings`. A campaign that asked for no hero reports none. The warning sends the operator
+to the HubSpot editor: staging again reuses the stored campaign and its warnings, so it does not retry
+the upload.
 
 ## The system account is a connection row, not a second mechanism
 

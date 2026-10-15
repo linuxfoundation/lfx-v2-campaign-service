@@ -111,16 +111,20 @@ var audienceWords = []string{"mailable", "marketable", "contacts", "catchment"}
 // named for a different event ("Open Compliance Summit Tokyo 2025") is not this
 // audience however well its city matches — the live test ranked exactly that
 // "likely the same audience". A recommendation stands only when the name shares
-// an event word with the label or reads as a general audience list.
+// a DISTINCTIVE event word with the label or reads as a general audience list.
+// The audience's own cities and countries, and generic event words ("summit",
+// "europe"), are not distinctive: "Open Compliance Summit Tokyo 2025" shares
+// "Tokyo" with "AGNTCon + MCPCon Tokyo" and is still another event's list.
 //
 // A restricted audience (speakers, ambassadors, property filters) is narrower
 // than any list whose name does not carry the restriction, so such a list is at
 // most "update", never "reuse": using it as-is would reach people the restriction
-// rules out. A property filter never shows in a name, so with one no list is
-// "reuse". Course topics are not a restriction: every education audience carries
+// rules out. A speakers list must be the selected one, or one whose name proves
+// the requested scope and editions (SpeakerListFits). A property filter never
+// shows in a name, so with one no list is "reuse". Course topics are not a restriction: every education audience carries
 // them as its brand fit, and treating them as one would make reuse unreachable.
 func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarList {
-	keywords := EventKeywords(c.Label)
+	keywords := distinctiveEventKeywords(c)
 	locationAudience := c.ContactLocation || c.EventRegistered || c.EducationEnrolled
 	out := make([]CustomSimilarList, 0, len(similar))
 	for _, s := range similar {
@@ -132,7 +136,7 @@ func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarLi
 				s.Reason = "Named for a different event or audience."
 			}
 		}
-		if s.Recommendation == CustomReuseAsIs && !carriesRestriction(s.Name, c) {
+		if s.Recommendation == CustomReuseAsIs && !carriesRestriction(s, c) {
 			s.Recommendation = CustomReuseUpdate
 			s.Reason = "Broader than this audience: its name does not carry the audience's restriction."
 		}
@@ -143,12 +147,36 @@ func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarLi
 	return out
 }
 
-// carriesRestriction reports whether a list name shows every restriction the
-// criteria narrow by. A property filter never shows in a name.
-func carriesRestriction(name string, c CustomCriteria) bool {
-	lower := strings.ToLower(name)
-	if c.Speakers != nil && !strings.Contains(lower, "speaker") {
-		return false
+// distinctiveEventKeywords are the label's event words that can tell one event
+// from another: not a generic event word, and not one of the audience's own
+// locations, which every list for the place shares.
+func distinctiveEventKeywords(c CustomCriteria) map[string]struct{} {
+	locations := EventKeywords(strings.Join(append(cleanValues(c.Cities), cleanValues(c.Countries)...), " "))
+	out := EventKeywords(c.Label)
+	for token := range out {
+		_, generic := genericEventWords[token]
+		_, location := locations[token]
+		if generic || location {
+			delete(out, token)
+		}
+	}
+	return out
+}
+
+// carriesRestriction reports whether a similar list shows every restriction the
+// criteria narrow by. A speakers list must be the one already selected, or one
+// SpeakerListFits accepts for the requested scope and editions (it fails closed,
+// as the auto-pick does). A property filter never shows in a name.
+func carriesRestriction(s CustomSimilarList, c CustomCriteria) bool {
+	lower := strings.ToLower(s.Name)
+	if sp := c.Speakers; sp != nil {
+		selected := strings.TrimSpace(sp.ListID)
+		if selected != "" && s.ListID != selected {
+			return false
+		}
+		if selected == "" && !SpeakerListFits(s.Name, sp.Scope, sp.EventNames) {
+			return false
+		}
 	}
 	if c.Ambassadors && !strings.Contains(lower, "ambassador") {
 		return false

@@ -87,3 +87,13 @@
   edition's registrants, or answered that past registrants are excluded, got the whole family.
   Named editions now win (kept only as exact known names; others dropped with a note), and a model
   reply with `include_past_editions: false` gets none.
+
+**Fix** — Copilot's re-review of the current head:
+
+- **A shared city is not an event word.** `GuardReuse` judged "same event" on every label word, so
+  another event's list in the same city kept a model "reuse". It now uses only distinctive words:
+  not the audience's own locations, not generic event words.
+- **A speakers list is reused only when it is the right one**: the selected list, or one
+  `SpeakerListFits` accepts for the scope and editions, as the auto-pick requires.
+- **The hero warning points to the HubSpot editor.** Staging again reuses the stored campaign and
+  its warnings, so "or stage again" invited retries that could not repair the draft.

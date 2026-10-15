@@ -547,8 +547,11 @@ signal:
   property filters), which narrow the request. A property filter is described by its property and
   operator only: its values can be a real contact's email or phone, and the prompt goes to an
   external model. `GuardReuse` then holds any "reuse" of a list whose name does not show those
-  restrictions to "update"; a property filter never shows in a name, so with one no list is
-  "reuse". Course topics are not a restriction: every education audience carries them as its brand
+  restrictions to "update": a speakers list must be the one already selected, or one
+  `SpeakerListFits` accepts for the requested scope and editions, and a property filter never
+  shows in a name, so with one no list is "reuse". Its "is this the same event" check uses only
+  DISTINCTIVE label words: the audience's own cities and countries and generic event words
+  ("summit", "tokyo") are dropped, so another event's list in the same city is never kept. Course topics are not a restriction: every education audience carries them as its brand
   fit, so counting them would make reuse unreachable (2026-10-15).
 
 **QA and send-time suppression (2026-10-12).** `CheckExclusionCompleteness(filters, sendTime)`

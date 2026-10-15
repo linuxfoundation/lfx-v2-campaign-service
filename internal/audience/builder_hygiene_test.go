@@ -71,9 +71,33 @@ func TestGuardReuse_TheLiveTokyoRanking(t *testing.T) {
 
 // A restricted audience is narrower than any list whose name does not show the
 // restriction, so the model's "reuse" of a general list is held to "update".
+// A city both events share is not an event word: another event's list in the same
+// city is still another event's list.
+func TestGuardReuse_ASharedCityDoesNotMakeAnotherEventsListReusable(t *testing.T) {
+	c := CustomCriteria{Cities: []string{"Tokyo"}, ContactLocation: true, Label: "AGNTCon + MCPCon Tokyo"}
+	out := GuardReuse([]CustomSimilarList{
+		{ListRow: ListRow{ListID: "1", Name: "25Q3 - Events - Open Compliance Summit (OCS) Tokyo 2025"}, Recommendation: CustomReuseAsIs},
+		{ListRow: ListRow{ListID: "4", Name: "26Q3 - AGNTCon + MCPCon Tokyo 2026 Registrants"}, Recommendation: CustomReuseUpdate},
+	}, c)
+	got := map[string]CustomReuseRecommendation{}
+	for _, s := range out {
+		got[s.ListID] = s.Recommendation
+	}
+	assert.Equal(t, CustomReuseNone, got["1"], "sharing the city alone does not make it this event's list")
+	assert.Equal(t, CustomReuseUpdate, got["4"], "a list of this event still stands")
+
+	// A city that is no generic event word ("tokyo" is one) is excluded as the audience's
+	// own location.
+	seoul := CustomCriteria{Cities: []string{"Seoul"}, ContactLocation: true, Label: "OSS Seoul"}
+	other := GuardReuse([]CustomSimilarList{
+		{ListRow: ListRow{ListID: "8", Name: "25Q4 - KubeCon Seoul 2025 Registrants"}, Recommendation: CustomReuseAsIs},
+	}, seoul)
+	assert.Equal(t, CustomReuseNone, other[0].Recommendation, "a shared city is not an event word")
+}
+
 func TestGuardReuse_ARestrictedAudienceNeverReusesABroaderList(t *testing.T) {
 	general := CustomSimilarList{ListRow: ListRow{ListID: "2", Name: "26Q3 - Seoul - Mailable Contacts"}, Recommendation: CustomReuseAsIs}
-	speakers := CustomSimilarList{ListRow: ListRow{ListID: "5", Name: "26Q3 - Seoul - Speakers - Current - OSS Korea"}, Recommendation: CustomReuseAsIs}
+	speakers := CustomSimilarList{ListRow: ListRow{ListID: "5", Name: "26Q3 - OSS Korea 2026 Speakers - Current"}, Recommendation: CustomReuseAsIs}
 	base := CustomCriteria{Cities: []string{"Seoul"}, ContactLocation: true, Label: "OSS Korea"}
 
 	got := func(c CustomCriteria, s CustomSimilarList) CustomReuseRecommendation {
@@ -82,9 +106,19 @@ func TestGuardReuse_ARestrictedAudienceNeverReusesABroaderList(t *testing.T) {
 	assert.Equal(t, CustomReuseAsIs, got(base, general), "an unrestricted audience keeps the model's reuse")
 
 	withSpeakers := base
-	withSpeakers.Speakers = &CustomSpeakers{Scope: SpeakerScopeCurrent}
+	withSpeakers.Speakers = &CustomSpeakers{Scope: SpeakerScopeCurrent, EventNames: []string{"OSS Korea 2026"}}
 	assert.Equal(t, CustomReuseUpdate, got(withSpeakers, general), "a general list is broader than a speakers audience")
-	assert.Equal(t, CustomReuseAsIs, got(withSpeakers, speakers), "a speakers list carries the restriction")
+	assert.Equal(t, CustomReuseAsIs, got(withSpeakers, speakers), "a speakers list proving the scope and edition carries the restriction")
+	// A speakers list for the wrong scope or edition is the wrong people, as the auto-pick knows.
+	pastList := CustomSimilarList{ListRow: ListRow{ListID: "6", Name: "26Q3 - OSS Korea 2026 Speakers - Past"}, Recommendation: CustomReuseAsIs}
+	lastYear := CustomSimilarList{ListRow: ListRow{ListID: "7", Name: "25Q3 - OSS Korea 2025 Speakers - Current"}, Recommendation: CustomReuseAsIs}
+	assert.Equal(t, CustomReuseUpdate, got(withSpeakers, pastList), "a past-speakers list is not a current-speakers audience")
+	assert.Equal(t, CustomReuseUpdate, got(withSpeakers, lastYear), "last year's speakers are not this edition's")
+	// When a speakers list is already selected, only that list is the audience.
+	selected := withSpeakers
+	selected.Speakers = &CustomSpeakers{Scope: SpeakerScopeCurrent, ListID: "7"}
+	assert.Equal(t, CustomReuseAsIs, got(selected, lastYear), "the selected list is the speakers restriction")
+	assert.Equal(t, CustomReuseUpdate, got(selected, speakers), "another speakers list is not the selected one")
 
 	withAmbassadors := base
 	withAmbassadors.Ambassadors = true
