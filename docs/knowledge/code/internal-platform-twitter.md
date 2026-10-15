@@ -1126,6 +1126,14 @@ for every `days` value, because X's synchronous stats endpoint is capped at 7 da
 and has one 250-requests-per-15-minutes budget shared by every foundation on the LF token,
 while a stats job covers up to 90 days (https://docs.x.com/x-ads-api/analytics).
 
+- **`AccountCurrency`** — the account's currency for the monitor's `currency` field, from the
+  SAME cached account GET as `AccountTimezone` (both go through `accountSettings`, which caches
+  the zone and the currency together), so after the campaign list it costs no call within the
+  cache's minute. The currency is kept only when `identityjson` trusts the raw body, the body's
+  `id` is the configured account, and the value — decoded RAW, on its own, so a number, object or
+  `null` there cannot fail the timezone decode — is a string of three upper-case letters; otherwise it is
+  `""`. The timezone's own rules are unchanged — a bad currency never fails the timezone read.
+  An error only when the account read itself failed.
 - **`ListAccountCampaigns`** — `AccountTimezone` (GET the account root, `timezone`, loaded as
   an IANA zone; absent/unknown fails closed; a success is cached on the client for
   `accountTimezoneCacheFor`, one minute, so list-then-submit in one read costs one account GET,
