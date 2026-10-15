@@ -46,6 +46,21 @@ type AccountReportReader interface {
 	CheckAccountReport(ctx context.Context, projectID string, platform model.Provider, accountID, reportID string) (*model.AccountReportCheck, error)
 }
 
+// AccountCurrencyReader is an OPTIONAL capability of a report-backed dispatcher: read the ad
+// account's ISO 4217 currency for the account monitor's response. Separate from
+// AccountReportReader because the currency is not part of the saved report — it is read on each
+// request, best-effort — and a report-backed platform that cannot read it simply does not
+// implement this.
+//
+// The trust boundary is AccountReportReader's: the project's own connection, and only the account
+// it is bound to. The read must be identity-checked (the response must describe accountID), must
+// keep upstream text out of its error, and must return "" with a nil error for an account whose
+// currency the platform did not report in a usable shape. ReadReportedAccountCampaigns treats any
+// error as "currency unknown": a failed currency read never fails the monitor.
+type AccountCurrencyReader interface {
+	ReadAccountCurrency(ctx context.Context, projectID string, platform model.Provider, accountID string) (string, error)
+}
+
 // accountReportFreshFor is how long a finished report is served before the next read submits a
 // newer one. Thirty minutes because the platform's own data is not fresher than that in practice
 // — Microsoft's reporting lags delivery — and each submission costs a report build on Microsoft's
@@ -90,7 +105,9 @@ func (o *Orchestrator) accountReportStore() domain.AccountReportRepository {
 //     failed it or it has been pending past accountReportAbandonAfter;
 //  3. if nothing is pending and the last finished report is missing or older than
 //     accountReportFreshFor, submit a new one;
-//  4. fill each live campaign's metrics from the last finished report.
+//  4. fill each live campaign's metrics from the last finished report;
+//  5. if the dispatcher implements AccountCurrencyReader, read the account's currency —
+//     best-effort, on what is left of the budget; a failure leaves it absent.
 //
 // One budget, not one per step: three independent 20s timeouts could together outlast the 60s
 // platform ingress, and the steps after the list are best-effort anyway — a check or submit that
@@ -160,7 +177,36 @@ func (o *Orchestrator) ReadReportedAccountCampaigns(ctx context.Context, project
 		return nil, rerr
 	}
 
-	return mergeAccountReport(campaigns, snap), nil
+	read := mergeAccountReport(campaigns, snap)
+	// Last, and on what is left of the shared budget, capped at accountCurrencyReadTimeout: the
+	// currency is a label for the amounts, never a reason to fail or to starve the report steps
+	// above, which keep the metrics fresh.
+	if cr, ok := d.(AccountCurrencyReader); ok {
+		read.Currency = o.readAccountCurrency(callCtx, ctx, cr, key)
+	}
+	return read, nil
+}
+
+// accountCurrencyReadTimeout bounds the report-backed monitor's currency read, inside what is
+// left of the shared call budget: a slow or throttled account read may cost the monitor at most
+// this long, and then the response is served without a currency.
+const accountCurrencyReadTimeout = 3 * time.Second
+
+// readAccountCurrency is the report-backed read's instrumented, best-effort currency read, bounded
+// by accountCurrencyReadTimeout: any failure (the timeout included) is logged, as the report
+// steps' failures are, and answered as "" (currency absent), so the monitor still serves its rows.
+func (o *Orchestrator) readAccountCurrency(callCtx, ctx context.Context, reader AccountCurrencyReader, key model.AccountReportKey) string {
+	readCtx, cancel := context.WithTimeout(callCtx, accountCurrencyReadTimeout)
+	defer cancel()
+	start := time.Now()
+	currency, err := reader.ReadAccountCurrency(readCtx, key.ProjectID, key.Platform, key.AccountID)
+	o.recordUpstream(ctx, key.Platform, opReadAccountCurrency, start, err)
+	if err != nil {
+		slog.WarnContext(ctx, "account monitor: could not read the account currency; serving the monitor without it",
+			"platform", key.Platform, "project_id", key.ProjectID, "error", err)
+		return ""
+	}
+	return model.NormalizeCurrencyCode(currency)
 }
 
 // collectPendingAccountReport is step 2 of ReadReportedAccountCampaigns. It updates snap in

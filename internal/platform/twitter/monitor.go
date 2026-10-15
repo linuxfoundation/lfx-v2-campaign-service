@@ -25,6 +25,9 @@ import (
 	// on a static base image; embedding the database keeps time.LoadLocation working whether or
 	// not that image carries /usr/share/zoneinfo. Costs ~450 KB of binary.
 	_ "time/tzdata"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // Account monitor primitives — the X counterpart of microsoft/monitor.go, and REPORT-BACKED for
@@ -241,10 +244,25 @@ type monitorLineItemElement struct {
 // names campaign_ids as a multi-value filter without a number in the summary available here.
 const lineItemCampaignBatch = 200
 
-// accountElementTZ is the part of GET accounts/:account_id this file reads.
+// accountElementTZ is the part of GET accounts/:account_id this file reads. Currency is RAW and
+// decoded on its own (accountCurrencyField): it is optional, and a value of the wrong JSON type
+// there must cost only the currency — decoded as a typed field it would fail this whole decode,
+// and with it the timezone the monitor cannot run without.
 type accountElementTZ struct {
-	ID       string `json:"id"`
-	Timezone string `json:"timezone"`
+	ID       string          `json:"id"`
+	Timezone string          `json:"timezone"`
+	Currency json.RawMessage `json:"currency"`
+}
+
+// accountCurrencyField is the account's currency when the raw field is a JSON string holding an
+// ISO 4217-shaped code, and "" for anything else: absent, null, a number, an object, an array, a
+// boolean, or a malformed code.
+func accountCurrencyField(raw json.RawMessage) string {
+	var code string
+	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
+		return "" // json.Unmarshal of null into a string leaves it "", which is dropped too
+	}
+	return model.NormalizeCurrencyCode(code)
 }
 
 // AccountTimezone reads the ad account's configured timezone. X documents it as the zone that
@@ -256,46 +274,75 @@ type accountElementTZ struct {
 // A successful read is reused for accountTimezoneCacheFor, so one monitor read — list, then
 // submit — costs one account GET rather than two.
 func (c *Client) AccountTimezone(ctx context.Context) (*time.Location, error) {
+	loc, _, err := c.accountSettings(ctx)
+	return loc, err
+}
+
+// AccountCurrency is the ad account's ISO 4217 currency for the account monitor's response, from
+// the SAME cached account GET AccountTimezone makes — so the monitor, which has just read the
+// timezone to list its campaigns, pays no extra call for it inside accountTimezoneCacheFor. ""
+// when the account read did not yield a currency this client trusts (see readAccountTimezone);
+// an error only when the account read itself failed, which the caller treats as "currency
+// unknown".
+func (c *Client) AccountCurrency(ctx context.Context) (string, error) {
+	_, currency, err := c.accountSettings(ctx)
+	return currency, err
+}
+
+// accountSettings is the cached account read behind AccountTimezone and AccountCurrency.
+func (c *Client) accountSettings(ctx context.Context) (*time.Location, string, error) {
 	if err := ValidateMonitorAccountID(c.account.AccountID); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	c.tzMu.Lock()
 	if c.tzLoc != nil && c.timeFn().Sub(c.tzAt) < accountTimezoneCacheFor {
-		loc := c.tzLoc
+		loc, currency := c.tzLoc, c.tzCurrency
 		c.tzMu.Unlock()
-		return loc, nil
+		return loc, currency, nil
 	}
 	c.tzMu.Unlock()
-	loc, err := c.readAccountTimezone(ctx)
+	loc, currency, err := c.readAccountTimezone(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	c.tzMu.Lock()
-	c.tzLoc, c.tzAt = loc, c.timeFn()
+	c.tzLoc, c.tzCurrency, c.tzAt = loc, currency, c.timeFn()
 	c.tzMu.Unlock()
-	return loc, nil
+	return loc, currency, nil
 }
 
-// readAccountTimezone is AccountTimezone's uncached read.
-func (c *Client) readAccountTimezone(ctx context.Context) (*time.Location, error) {
+// readAccountTimezone is accountSettings' uncached read: the timezone (required, as before) and
+// the currency (best-effort).
+//
+// The currency is held to stricter rules than the timezone, because it is new and nothing
+// depends on it: it is taken only when identityjson trusts the raw body (no duplicate keys, no
+// silently-replaced invalid UTF-8 or lone surrogates) AND the body describes the configured
+// account, and only when it is three upper-case letters. Any other answer leaves it "" without
+// failing the read — the timezone's own rules are unchanged, so the monitor and the reports
+// behave exactly as before whatever the currency field holds.
+func (c *Client) readAccountTimezone(ctx context.Context) (*time.Location, string, error) {
 	resp, err := c.request(ctx, http.MethodGet, "")
 	if err != nil {
-		return nil, fmt.Errorf("read x ads account: %w", err)
+		return nil, "", fmt.Errorf("read x ads account: %w", err)
 	}
 	var acct accountElementTZ
 	if resp == nil || len(resp.Data) == 0 || json.Unmarshal(resp.Data, &acct) != nil {
-		return nil, errors.New("read x ads account: response carried no account object")
+		return nil, "", errors.New("read x ads account: response carried no account object")
 	}
 	tz := strings.TrimSpace(acct.Timezone)
 	if tz == "" {
-		return nil, errors.New("read x ads account: account has no timezone")
+		return nil, "", errors.New("read x ads account: account has no timezone")
 	}
 	loc, lerr := time.LoadLocation(tz)
 	if lerr != nil {
 		// The zone name is upstream text; it is not echoed.
-		return nil, errors.New("read x ads account: account timezone is not a recognised IANA zone")
+		return nil, "", errors.New("read x ads account: account timezone is not a recognised IANA zone")
 	}
-	return loc, nil
+	currency := ""
+	if acct.ID == c.account.AccountID && identityjson.Check(resp.raw) == nil {
+		currency = accountCurrencyField(acct.Currency)
+	}
+	return loc, currency, nil
 }
 
 // ListAccountCampaigns reads every non-deleted, non-draft campaign on the account with its

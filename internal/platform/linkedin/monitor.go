@@ -4,6 +4,7 @@
 package linkedin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // AccountCampaignRow is one campaign read live from an ad account for the account-monitor
@@ -30,21 +32,35 @@ type AccountCampaignRow struct {
 	Impressions int64
 	Clicks      int64
 	Ctr         float64
-	SpendUSD    float64
+	// Spend is Ad Analytics' costInLocalCurrency: the account's own currency, the same one its
+	// budgets are in, so the two can be paced against each other on any account.
+	Spend       float64
 	Conversions *float64
 	DailyBudget float64
 	TotalBudget float64
 	StartDate   string
 	EndDate     string
+	// PacingUnknown is set on a row whose budget names a currency when the campaign list's
+	// budgets disagree about the account's currency: which of them is in the spend's currency
+	// cannot be told, so none is paced (see budgetCurrencies).
+	PacingUnknown bool
+	// budgetCurrencyNamed records that this row's dailyBudget or totalBudget carried a
+	// currencyCode, so a disagreement elsewhere in the list can withhold its pacing.
+	budgetCurrencyNamed bool
+	// budgetCurrencyAmbiguous records that this row's budget currency cannot be read: a
+	// currencyCode that is null or not a JSON string, or an element identityjson would not trust
+	// (a repeated key, exact or case-folded, that encoding/json would silently resolve). Its
+	// pacing is withheld whatever the rest of the list says.
+	budgetCurrencyAmbiguous bool
 	// FetchFailed marks a row this service could not read trustworthily: a malformed
 	// dailyBudget/totalBudget amount from fetchAccountCampaignList, or an unparseable
-	// costInUsd from the analytics pivot (monitorMetricsRow.FetchFailed, ORed in below). A
+	// costInLocalCurrency from the analytics pivot (monitorMetricsRow.FetchFailed, ORed in below). A
 	// campaign the analytics pivot omits from a SUCCESSFUL response is NOT a fetch failure —
 	// LinkedIn omits campaigns with no activity in the window, and the zero-value fields left
 	// in place are the honest "no delivery" reading (see ListAccountCampaigns).
 	FetchFailed bool
 	// FailureClass is why FetchFailed is set. Every LinkedIn row failure is a value LinkedIn
-	// returned that would not parse (a budget amount or costInUsd) — the analytics read is one
+	// returned that would not parse (a budget amount or costInLocalCurrency) — the analytics read is one
 	// account-level call that fails the whole read rather than one row — so it is always decode.
 	FailureClass model.MonitorFailureClass
 }
@@ -67,34 +83,53 @@ const monitorMaxPages = 50
 // arithmetic. That is a deliberate asymmetry, not an oversight — today's only caller is that
 // service layer; a future non-HTTP caller of this package directly would need its own bound.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
+	rows, _, err := c.ListAccountCampaignsWithCurrency(ctx, accountID, days)
+	return rows, err
+}
+
+// ListAccountCampaignsWithCurrency is ListAccountCampaigns plus the currency the monitor's amounts
+// are in, at no extra call: the currencyCode LinkedIn puts on every campaign's dailyBudget and
+// totalBudget in the campaign list this read already walks. Spend is read as
+// costInLocalCurrency — the account's currency — so spend and budgets share it on any account.
+//
+// The answer is that code when every budget the list carried named the same well-formed one. It
+// is "" when the list carried no budget, when any budget omitted its code, when the code is not
+// three upper-case letters, or when two budgets disagree. A disagreement also sets PacingUnknown
+// on every row whose budget named a currency: one account has one currency, so the list cannot be
+// trusted to say which budgets are in the spend's. None of these fails the read.
+func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
 	// Same guard client.go:654 and targeting.go apply before interpolating an account/campaign
 	// id into a URN or path: the Goa design layer's Pattern(`^[0-9]+$`) already rejects a
 	// malformed id at the HTTP boundary, but this dispatcher method is also reachable directly
 	// (e.g. from tests or a future non-HTTP caller), so it re-checks rather than trusting the
 	// caller.
 	if err := ValidateAccountID(accountID); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	campaigns, err := c.fetchAccountCampaignList(ctx, accountID)
+	campaigns, budgetCurrency, err := c.fetchAccountCampaignList(ctx, accountID)
+	mismatch := budgetCurrency.disagree()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	metricsByID, err := c.fetchAccountCampaignAnalytics(ctx, accountID, start, end)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	out := make([]AccountCampaignRow, 0, len(campaigns))
 	for _, cm := range campaigns {
 		row := cm
+		if (mismatch && row.budgetCurrencyNamed) || row.budgetCurrencyAmbiguous {
+			row.PacingUnknown = true
+		}
 		// A campaign absent from a SUCCESSFUL account-wide analytics response is not a fetch
 		// failure: fetchAccountCampaignAnalytics is one account-level call that either returns
 		// this whole map or a non-nil error above, and LinkedIn omits a campaign with no
 		// activity in the window from its pivoted results entirely (round-19 review). Leaving
 		// the row at its zero defaults reports the honest "no delivery" reading; only a
-		// genuine per-row parse failure (m.FetchFailed, from a malformed costInUsd) marks the
+		// genuine per-row parse failure (m.FetchFailed, from a malformed costInLocalCurrency) marks the
 		// row failed.
 		//
 		// row.FetchFailed may already be true from fetchAccountCampaignList's own budget parse
@@ -103,7 +138,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		if m, ok := metricsByID[cm.CampaignID]; ok {
 			row.Impressions = m.Impressions
 			row.Clicks = m.Clicks
-			row.SpendUSD = m.SpendUSD
+			row.Spend = m.Spend
 			row.Conversions = m.Conversions
 			row.FetchFailed = row.FetchFailed || m.FetchFailed
 			if row.Impressions > 0 {
@@ -115,16 +150,21 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	return out, budgetCurrency.code(), nil
 }
 
 // fetchAccountCampaignList walks GET /adAccounts/{id}/adCampaigns?q=search over
 // ACTIVE/PAUSED campaigns, decoding the budget/schedule fields the shared responseElement
 // type does not carry — this uses its own response shape rather than doRequest's
 // linkedInResponse for that reason.
-func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string) ([]AccountCampaignRow, error) {
+//
+// It also returns what the budgets said about the account's currency: every dailyBudget and
+// totalBudget object carries a currencyCode, which is the account's (see
+// ListAccountCampaignsWithCurrency for what the monitor makes of it).
+func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string) ([]AccountCampaignRow, budgetCurrencies, error) {
 	nestedPath := "adAccounts/" + accountID + "/adCampaigns"
 	var out []AccountCampaignRow
+	var currencies budgetCurrencies
 	pageToken := ""
 	for page := 0; page < monitorMaxPages; page++ {
 		// Rest.li 2.0 nested literal, mirroring findByName's
@@ -139,32 +179,50 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			params["pageToken"] = pageToken
 		}
 		var resp struct {
-			Elements *[]struct {
-				ID          flexibleID `json:"id"`
-				Name        string     `json:"name"`
-				Status      string     `json:"status"`
-				DailyBudget *struct {
-					Amount string `json:"amount"`
-				} `json:"dailyBudget"`
-				TotalBudget *struct {
-					Amount string `json:"amount"`
-				} `json:"totalBudget"`
-				RunSchedule *struct {
-					Start int64 `json:"start"`
-					End   int64 `json:"end"`
-				} `json:"runSchedule"`
-			} `json:"elements"`
-			Metadata *linkedInMetadata `json:"metadata"`
+			// Elements stay RAW so each can be checked with identityjson and decoded on its own.
+			Elements *[]json.RawMessage `json:"elements"`
+			Metadata *linkedInMetadata  `json:"metadata"`
 		}
-		if err := c.doMonitorGET(ctx, nestedPath, params, &resp); err != nil {
-			return nil, fmt.Errorf("list account campaigns: %w", err)
+		// The page is fetched RAW and checked with identityjson before it is decoded, as the
+		// Meta audience read's pages are: encoding/json resolves a repeated key — exact or
+		// case-folded — in favour of the last value with no error, so a budget carrying
+		// `"currencyCode":"USD","CurrencyCode":"EUR"` would read as EUR. An untrusted page does
+		// not fail the monitor (its rows were read this way before the currency existed); it
+		// withholds the account currency, and an untrusted ELEMENT also withholds that
+		// campaign's pacing, since its budget's currency is ambiguous.
+		var page json.RawMessage
+		if err := c.doMonitorGET(ctx, nestedPath, params, &page); err != nil {
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: %w", err)
+		}
+		pageTrusted := identityjson.Check(page) == nil
+		if !pageTrusted {
+			currencies.unusable = true
+		}
+		if err := json.Unmarshal(page, &resp); err != nil {
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response is not a campaign page of the expected shape")
 		}
 		if resp.Elements == nil {
-			return nil, fmt.Errorf("list account campaigns: response has no elements field")
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response has no elements field")
 		}
-		for _, el := range *resp.Elements {
+		for _, raw := range *resp.Elements {
+			var el monitorCampaignElement
+			if err := json.Unmarshal(raw, &el); err != nil {
+				return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: an element is not a campaign of the expected shape")
+			}
 			row := AccountCampaignRow{CampaignID: el.ID.String(), Name: el.Name, Status: el.Status}
+			// An element identityjson refuses has no currency this read can believe — the decoded
+			// one is merely the last of a repeated key — so it is not folded into the account's
+			// set, which is withheld anyway (pageTrusted is false), and its pacing is withheld.
+			elTrusted := pageTrusted || identityjson.Check(raw) == nil
+			if !elTrusted && (el.DailyBudget != nil || el.TotalBudget != nil) {
+				row.budgetCurrencyAmbiguous = true
+			}
 			if el.DailyBudget != nil {
+				if elTrusted {
+					named, usable := currencies.observe(el.DailyBudget.CurrencyCode)
+					row.budgetCurrencyNamed = row.budgetCurrencyNamed || named
+					row.budgetCurrencyAmbiguous = row.budgetCurrencyAmbiguous || !usable
+				}
 				if v, ok := parseUSDAmount(el.DailyBudget.Amount); ok {
 					row.DailyBudget = v
 				} else {
@@ -172,6 +230,11 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				}
 			}
 			if el.TotalBudget != nil {
+				if elTrusted {
+					named, usable := currencies.observe(el.TotalBudget.CurrencyCode)
+					row.budgetCurrencyNamed = row.budgetCurrencyNamed || named
+					row.budgetCurrencyAmbiguous = row.budgetCurrencyAmbiguous || !usable
+				}
 				if v, ok := parseUSDAmount(el.TotalBudget.Amount); ok {
 					row.TotalBudget = v
 				} else {
@@ -195,22 +258,90 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 		// metadata check, a malformed or truncated intermediate page reads as "no more pages" and
 		// silently returns a partial campaign list as a complete one (round-24 review).
 		if resp.Metadata == nil {
-			return nil, fmt.Errorf("list account campaigns: response has no metadata; cannot confirm all campaigns were enumerated")
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response has no metadata; cannot confirm all campaigns were enumerated")
 		}
 		if resp.Metadata.NextPageToken == "" {
-			return out, nil
+			return out, currencies, nil
 		}
 		pageToken = resp.Metadata.NextPageToken
 	}
-	return nil, fmt.Errorf("list account campaigns: exceeded %d pages", monitorMaxPages)
+	return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: exceeded %d pages", monitorMaxPages)
+}
+
+// monitorCampaignElement is one element of the campaign list, decoded only after the element
+// has been checked. Each budget's currencyCode is RAW and decoded on its own
+// (budgetCurrencies.observe), so a value of the wrong JSON type costs only the currency and that
+// campaign's pacing — never the element, the page or the read.
+type monitorCampaignElement struct {
+	ID          flexibleID      `json:"id"`
+	Name        string          `json:"name"`
+	Status      string          `json:"status"`
+	DailyBudget *monitorBudget  `json:"dailyBudget"`
+	TotalBudget *monitorBudget  `json:"totalBudget"`
+	RunSchedule *monitorRunTime `json:"runSchedule"`
+}
+
+type monitorBudget struct {
+	Amount       string          `json:"amount"`
+	CurrencyCode json.RawMessage `json:"currencyCode"`
+}
+
+type monitorRunTime struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+}
+
+// budgetCurrencies folds the currencyCode of every budget object the campaign list carried. One
+// account has one currency, so the set yields a code only when every budget named the same
+// well-formed one; a budget with no code leaves it unconfirmed, two different codes (a malformed
+// one included) are a disagreement, and a code that is null or not a JSON string — or a page
+// identityjson would not trust — makes the set unusable.
+type budgetCurrencies struct {
+	codes    map[string]struct{}
+	missing  bool
+	unusable bool
+}
+
+// observe folds one budget's raw currencyCode. named reports that the budget carried the field at
+// all; usable is false when it was null or not a JSON string, which leaves that budget's currency
+// unknown.
+func (b *budgetCurrencies) observe(raw json.RawMessage) (named, usable bool) {
+	if len(raw) == 0 {
+		b.missing = true
+		return false, true
+	}
+	var code string
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &code) != nil {
+		b.unusable = true
+		return true, false
+	}
+	if b.codes == nil {
+		b.codes = map[string]struct{}{}
+	}
+	b.codes[code] = struct{}{}
+	return true, true
+}
+
+// disagree reports whether two budgets named different currencies.
+func (b budgetCurrencies) disagree() bool { return len(b.codes) > 1 }
+
+// code is the one well-formed currency every budget named, or "".
+func (b budgetCurrencies) code() string {
+	if b.missing || b.unusable || len(b.codes) != 1 {
+		return ""
+	}
+	for c := range b.codes {
+		return model.NormalizeCurrencyCode(c)
+	}
+	return ""
 }
 
 type monitorMetricsRow struct {
 	Impressions int64
 	Clicks      int64
-	SpendUSD    float64
+	Spend       float64
 	Conversions *float64
-	// FetchFailed marks a row whose costInUsd could not be converted — see the round-19-review
+	// FetchFailed marks a row whose costInLocalCurrency could not be converted — see the round-19-review
 	// comment at the parse site in fetchAccountCampaignAnalyticsRaw below.
 	FetchFailed bool
 }
@@ -241,7 +372,7 @@ func (c *Client) fetchAccountCampaignAnalytics(ctx context.Context, accountID st
 		"&timeGranularity=ALL" +
 		"&dateRange=(start:" + restLiDate(start) + ",end:" + restLiDate(end) + ")" +
 		"&accounts=List(" + url.QueryEscape(accountURN) + ")" +
-		"&fields=impressions,clicks,costInUsd,externalWebsiteConversions"
+		"&fields=impressions,clicks,costInLocalCurrency,externalWebsiteConversions"
 
 	// AdAnalyticsElement/AdAnalyticsResponse (decoded by doAdAnalyticsAttempt) carry no
 	// pivotValue field — they were built for the single-campaign path, which filters by a
@@ -310,8 +441,11 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 			PivotValues []string `json:"pivotValues"`
 			Impressions int64    `json:"impressions"`
 			Clicks      int64    `json:"clicks"`
-			CostInUsd   *string  `json:"costInUsd"`
-			Conversions *int64   `json:"externalWebsiteConversions"`
+			// CostInLocalCurrency is spend in the ad account's own currency — the currency its
+			// budgets are in — not costInUsd, which would compare USD spend with a non-USD
+			// account's budgets.
+			CostInLocalCurrency *string `json:"costInLocalCurrency"`
+			Conversions         *int64  `json:"externalWebsiteConversions"`
 		} `json:"elements"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -324,7 +458,7 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 	for _, el := range *parsed.Elements {
 		// A row with no pivot value, or one that doesn't resolve to a campaign id, cannot be
 		// attributed to any campaign — there is no id to key `FetchFailed` on, unlike the
-		// costInUsd case below. Silently dropping it would let ListAccountCampaigns read the
+		// costInLocalCurrency case below. Silently dropping it would let ListAccountCampaigns read the
 		// row's real campaign as a legitimate zero-activity omission (round-31 review), so the
 		// whole read is rejected instead.
 		if len(el.PivotValues) == 0 {
@@ -335,12 +469,14 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 			return nil, &transportError{Method: "GET", Path: "adAnalytics", Err: fmt.Errorf("decode account monitor analytics: pivotValues did not resolve to a campaign id")}
 		}
 		row := monitorMetricsRow{Impressions: el.Impressions, Clicks: el.Clicks}
-		if el.CostInUsd != nil {
-			if micros, err := costInUsdToMicros(*el.CostInUsd); err == nil {
-				row.SpendUSD = float64(micros) / 1_000_000
+		if el.CostInLocalCurrency != nil {
+			// costInUsdToMicros is a plain decimal parser despite its name (the same decimal
+			// form LinkedIn uses for both cost fields).
+			if micros, err := costInUsdToMicros(*el.CostInLocalCurrency); err == nil {
+				row.Spend = float64(micros) / 1_000_000
 			} else {
-				// A non-empty, unparseable costInUsd is an upstream-data failure, not a
-				// legitimate zero: reporting SpendUSD=0 here would read to the rule engine
+				// A non-empty, unparseable costInLocalCurrency is an upstream-data failure, not a
+				// legitimate zero: reporting Spend=0 here would read to the rule engine
 				// as a real "no delivery" measurement instead of unknown (round-19 review,
 				// same class as the sibling Google Ads/Meta fixes in this range).
 				row.FetchFailed = true
@@ -357,7 +493,7 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 
 // parseUSDAmount parses a LinkedIn budget "amount" decimal string (e.g. "150.00") to a
 // float64. ok=false means s was non-empty but failed to parse — an upstream-data failure,
-// not a legitimate zero, mirroring the costInUsd fix above (round-19 review) and the
+// not a legitimate zero, mirroring the costInLocalCurrency fix above (round-19 review) and the
 // Google Ads/Meta budget-parsing siblings. An empty string is a legitimate zero (LinkedIn
 // omits the field rather than sending "0.00" for an unbudgeted campaign) and returns
 // (0, true).
