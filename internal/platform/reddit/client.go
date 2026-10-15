@@ -66,11 +66,21 @@ const (
 	// with margin so a nudged start can't have slipped into the past by the time
 	// either request is finally accepted.
 	//
+	// The window actually covered starts EARLIER than the campaign POST: the horizon
+	// is taken before Step 1's account-verify GET (issue #208 moved the window check
+	// above it), so the buffer must also absorb that GET, Step 1.5's post authoring
+	// (and its ImageURLSource fetch), the campaign POST and up to two ad-group POSTs.
+	// The verify GET goes through the RETRYING request path, so one
+	// redditWorstCaseCreateWait (429 term included) is genuinely spendable there; the
+	// mutating creates each spend at most a request timeout plus a token refresh. That
+	// sum (~420s + 4*60s) stays well inside the 3*redditWorstCaseCreateWait + 60s budget.
+	//
 	// NOTE ON THE 429 TERM BELOW. Creates no longer retry throttles — see
-	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on this
-	// path any more, and the buffer is now larger than the worst case it derives
-	// from. That is left DELIBERATELY: the term is retained rather than removed
-	// because over-sizing this buffer costs a slightly later start time, while
+	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on the
+	// mutating creates any more (only on the retryable verify GET above), and the
+	// buffer is larger than the worst case it derives from. That is left
+	// DELIBERATELY: the term is retained rather than removed because over-sizing
+	// this buffer costs a slightly later start time, while
 	// under-sizing it makes Reddit reject the create outright for a start in the
 	// past. The asymmetry is the whole reason the derivation is conservative, and
 	// a retryable path could return here (a future idempotency key would make
@@ -1796,6 +1806,46 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		return nil, domain.PreflightRefusalf("composed ad group name is too long: %d characters (max %d)", n, redditMaxNameRunes)
 	}
 
+	// The window check runs HERE, before Step 1's account-verify GET (issue #208).
+	//
+	// It used to sit just above the campaign POST, which was correct while the first mutating
+	// call WAS that POST. Step 1.5 moved the first mutating call earlier, so the check moved
+	// above Step 1.5 — with an ImageURL set it could otherwise return (nil, error) with a post
+	// already authored upstream, and RedditDispatcher.Dispatch keys claim release on
+	// `result == nil` alone, so a retry authored a duplicate. It then still ran after the
+	// account-verify GET, so a window Reddit would reject cost a token exchange and a GET to
+	// learn nothing, and its bare fmt.Errorf left the async job reporting the generic string.
+	//
+	// It is purely deterministic: its inputs are the caller's StartDate/EndDate (both already
+	// parsed as YYYY-MM-DD above) and the clock, and it consumes nothing any request returns.
+	// So it runs before ANY request and is a pre-send refusal in the PreflightRefusal sense.
+	// Both instants it quotes are rendered by toRedditTimestamp from a parsed time.Time (the
+	// end from the validated EndDate, the start from the clock), so the message carries no
+	// caller text and is unchanged. The horizon is now taken before the account-verify GET
+	// rather than after it; redditPastStartBuffer is sized with a 429-backoff term no create
+	// can spend any more, which more than covers that one extra (retryable) GET.
+	campaignEndTime := toISOTimestamp(in.EndDate)
+	effectiveStart := toISOTimestamp(in.StartDate)
+	// Nudge the start forward whenever it does not already clear the workflow HORIZON
+	// (now + redditPastStartBuffer), not merely when it is already past: a start only a few
+	// seconds/minutes ahead could slip into the past DURING account verification, the token
+	// exchange, or a 429 retry, since this one timestamp is reused for the campaign and the
+	// (possibly retried) ad-group POST. redditPastStartBuffer is sized (see its definition) to
+	// cover that whole retryable campaign->ad-group workflow, so a start at/after now+buffer is
+	// guaranteed to still be future when every request that reuses it is accepted; anything
+	// earlier is nudged up to now+buffer.
+	horizon := c.now().Add(redditPastStartBuffer)
+	if startMs, ok := parseRedditTimestamp(effectiveStart); !ok || startMs.Before(horizon) {
+		effectiveStart = toRedditTimestamp(horizon)
+	}
+	// After nudging a past start forward, the (unchanged) end could be at/before it; reject
+	// rather than sending an invalid window.
+	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
+		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
+			return nil, domain.PreflightRefusalf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
+		}
+	}
+
 	// Step 1: Verify account (non-fatal, mirrors TS try/catch). A verification
 	// FAILURE is only a warning — but a CALLER context cancellation is fatal:
 	// continuing would run the campaign POST under a dead ctx and then
@@ -1859,44 +1909,6 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// HTTP status, never the error body — a reflective Reddit validation error can
 	// echo the destination_url (which carries the caller's permitted secret-bearing
 	// query params), and persisting it in Steps would leak those.
-	// The window check runs HERE, before Step 1.5 authors anything.
-	//
-	// It used to sit further down, just above the campaign POST, with the two composed-name
-	// checks — which was correct while the first mutating call WAS that POST. Step 1.5 moved
-	// the first mutating call earlier without moving them, so with an ImageURL set they could
-	// return (nil, error) with a post already authored upstream. CreateCampaign's contract
-	// makes (nil, err) mean "nothing was or may have been created", and
-	// RedditDispatcher.Dispatch keys claim release on `result == nil` alone, so the claim was
-	// released on a post that definitely existed and a retry authored a duplicate. (The name
-	// checks have since moved further up, above Step 1's account-verify GET — issue #208.)
-	//
-	// It belongs here rather than being converted to a partial return because it is purely
-	// deterministic: its inputs are the caller's StartDate/EndDate and the clock. It consumes
-	// nothing the post produces, so failing it ahead of any mutating call restores the
-	// invariant Step 1.5's ordering was always meant to have — a bad input costs nothing
-	// upstream. Structural step toward #173.
-	campaignEndTime := toISOTimestamp(in.EndDate)
-	effectiveStart := toISOTimestamp(in.StartDate)
-	// Nudge the start forward whenever it does not already clear the workflow HORIZON
-	// (now + redditPastStartBuffer), not merely when it is already past: a start only a few
-	// seconds/minutes ahead could slip into the past DURING account verification, the token
-	// exchange, or a 429 retry, since this one timestamp is reused for the campaign and the
-	// (possibly retried) ad-group POST. redditPastStartBuffer is sized (see its definition) to
-	// cover that whole retryable campaign->ad-group workflow, so a start at/after now+buffer is
-	// guaranteed to still be future when every request that reuses it is accepted; anything
-	// earlier is nudged up to now+buffer.
-	horizon := c.now().Add(redditPastStartBuffer)
-	if startMs, ok := parseRedditTimestamp(effectiveStart); !ok || startMs.Before(horizon) {
-		effectiveStart = toRedditTimestamp(horizon)
-	}
-	// After nudging a past start forward, the (unchanged) end could be at/before it; reject
-	// rather than sending an invalid window.
-	if sMs, ok1 := parseRedditTimestamp(effectiveStart); ok1 {
-		if eMs, ok2 := parseRedditTimestamp(campaignEndTime); ok2 && !eMs.After(sMs) {
-			return nil, fmt.Errorf("campaign end %s is not after the effective start %s (a past start date was nudged forward)", campaignEndTime, effectiveStart)
-		}
-	}
-
 	if authorPost {
 		// A late image URL is obtained HERE, immediately before the request that hands it to
 		// Reddit, so nothing above (account verification, a Retry-After wait) can spend its
