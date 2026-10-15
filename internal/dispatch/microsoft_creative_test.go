@@ -421,7 +421,7 @@ func TestMicrosoftImage_UpstreamFailureDegrades(t *testing.T) {
 	}{
 		{"media rejected", "Media", 400, `{"Code":3000,"Message":"` + msLeakText + `"}`, "Image extension NOT attached"},
 		{"media ambiguous", "Media", 502, `{"Message":"` + msLeakText + `"}`, "Image extension UNCONFIRMED"},
-		{"extension rejected", "AdExtensions", 200, `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Code":3001,"ErrorCode":"InvalidImage","Message":"` + msLeakText + `"}]}`, "Image extension NOT attached"},
+		{"extension rejected", "AdExtensions", 200, `{"AdExtensionIdentities":[null],"NestedPartialErrors":[{"Index":0,"Code":3001,"ErrorCode":"InvalidImage","Message":"` + msLeakText + `"}]}`, "Image extension NOT attached"},
 		{"association ambiguous", "AdExtensionsAssociations/Set", 500, `{}`, "Image extension UNCONFIRMED"},
 		{"lookup failed", "AdExtensionsAssociations/Query", 503, `{"Message":"` + msLeakText + `"}`, "Image extension NOT attached"},
 	}
