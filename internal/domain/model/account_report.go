@@ -135,4 +135,8 @@ type ReportedAccountRead struct {
 	// MetricsPending is true while a report is building on the platform, so a later request
 	// will see newer (or first) metrics.
 	MetricsPending bool
+	// Currency is the ad account's ISO 4217 code, read best-effort on each request
+	// (service.AccountCurrencyReader) and never persisted with the report; "" when the dispatcher
+	// cannot read it or the read failed. Always passed through NormalizeCurrencyCode.
+	Currency string
 }
