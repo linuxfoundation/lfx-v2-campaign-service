@@ -4,10 +4,12 @@
 account's currency, in which every spend and budget amount in the response is denominated,
 unconverted; absent when the platform didn't report it. The UI could only show monitor amounts
 without a symbol before. Sources: Meta, the insights read's `account_currency` (no extra call);
-LinkedIn, the budgets' `currencyCode` in the campaign list (no extra call), published only as
-`USD` because LinkedIn's spend is `costInUsd`; X, the account read the monitor already makes for
-the timezone (cached, no extra call); Reddit, one `GET /ad_accounts/{id}`; Microsoft, one
-Customer Management `Account/Query` with its `CurrencyCode` name mapped to ISO. Google Ads is
+LinkedIn, the budgets' `currencyCode` in the campaign list (no extra call) — the account's own
+local currency, since the monitor's spend is Ad Analytics `costInLocalCurrency`, and absent when
+the budgets disagree; X, the account read the monitor already makes for the timezone (cached, no
+extra call); Reddit, one `GET /ad_accounts/{id}`; Microsoft, one Customer Management
+`Account/Query`, whose `CurrencyCode` is read directly as a three-letter ISO 4217 code (the
+withdrawn or non-ISO legacy codes in Microsoft's value set are withheld). Google Ads is
 owned separately and leaves it unset. Every currency read is best-effort and identity-checked,
 a malformed or disagreeing code is dropped, and a failed read leaves the field absent rather
 than failing the monitor. New capabilities `service.AccountMonitorReader` (live) and
@@ -40,3 +42,8 @@ into an absent currency and cached that for 6 hours. The returned code is now pu
 a current ISO 4217 code from that set; the withdrawn or non-ISO AZM, BGL, BYB, EEK, LTL, LVL, ROL,
 RUR, SIT, SKK, VEF, YUN and ZWD are withheld, and HRK is kept as the accurate label for an
 unconverted account. An answer with no recognised code is cached for only 5 minutes.
+
+PR #338 review: Reddit's ad-account `currency` is now decoded RAW, on its own
+(`reddit.monitorAccountCurrencyField`), like the other four platforms' currency fields — a number,
+object, array, boolean or `null` there leaves the currency absent without failing the account
+decode, and the answer's account-id check still runs.

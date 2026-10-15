@@ -104,6 +104,39 @@ func TestListAccountCampaignsWithCurrency(t *testing.T) {
 	}
 }
 
+// The currency is decoded on its own: a `currency` of the wrong JSON type costs only the
+// currency — the account answer is still trusted (no error) — and the id check still runs.
+func TestReadMonitorAccountCurrency_CurrencyDecodedOnItsOwn(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		want    string
+		wantErr bool
+	}{
+		{"valid EUR", `{"data":{"id":"t2_test","currency":"EUR"}}`, "EUR", false},
+		{"number", `{"data":{"id":"t2_test","currency":978}}`, "", false},
+		{"object", `{"data":{"id":"t2_test","currency":{"code":"EUR"}}}`, "", false},
+		{"array", `{"data":{"id":"t2_test","currency":["EUR"]}}`, "", false},
+		{"boolean", `{"data":{"id":"t2_test","currency":true}}`, "", false},
+		{"null", `{"data":{"id":"t2_test","currency":null}}`, "", false},
+		{"lower case", `{"data":{"id":"t2_test","currency":"eur"}}`, "", false},
+		{"wrong type, another account", `{"data":{"id":"t2_other","currency":978}}`, "", true},
+		{"wrong type, no id", `{"data":{"currency":{"code":"EUR"}}}`, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &accountStub{monitorStub: &monitorStub{t: t}, status: http.StatusOK, body: tc.body}
+			c := newMonitorClient(t, stub, fixedRedditClock())
+			got, err := c.readMonitorAccountCurrency(context.Background(), testAccount.AccountID)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("currency = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // ListAccountCampaigns (no currency) makes no ad-account read: the extra call is paid only by
 // the caller that asked for the currency.
 func TestListAccountCampaigns_MakesNoAccountRead(t *testing.T) {

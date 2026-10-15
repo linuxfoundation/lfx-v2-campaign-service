@@ -579,11 +579,25 @@ func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, day
 // the report fan-out: it must never be what holds the monitor up.
 const monitorCurrencyTimeout = 3 * time.Second
 
-// monitorAccountWire is the part of GET /ad_accounts/{id} the monitor reads. Pointers, so an
-// absent field is told from an empty one.
+// monitorAccountWire is the part of GET /ad_accounts/{id} the monitor reads. ID is a pointer, so
+// an absent id is told from an empty one. Currency is kept raw and decoded on its own
+// (monitorAccountCurrencyField): it is optional, and a value of the wrong JSON type there must
+// cost only the currency — decoded as a typed field it would fail this whole decode, and with it
+// the id check.
 type monitorAccountWire struct {
-	ID       *string `json:"id"`
-	Currency *string `json:"currency"`
+	ID       *string         `json:"id"`
+	Currency json.RawMessage `json:"currency"`
+}
+
+// monitorAccountCurrencyField is the account's currency when the raw field is a JSON string
+// holding an ISO 4217-shaped code, and "" for anything else: absent, null, a number, an object,
+// an array, a boolean, or a malformed code.
+func monitorAccountCurrencyField(raw json.RawMessage) string {
+	var code string
+	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
+		return "" // json.Unmarshal of null into a string leaves it "", which is dropped too
+	}
+	return model.NormalizeCurrencyCode(code)
 }
 
 // errMonitorAccountUntrusted marks an ad-account answer the monitor will not take a currency
@@ -597,9 +611,10 @@ var errMonitorAccountUntrusted = errors.New("reddit: ad account response could n
 //
 // The answer is held to the identity rules the adoption read uses: identityjson over the raw
 // body (no duplicate keys, no invalid UTF-8 or lone surrogates that would decode silently), and
-// the body must describe accountID itself. A currency that is absent, null or not three
-// upper-case letters is "" with no error — the platform did not report one this service can
-// vouch for. Errors never carry upstream text, and the account id is redacted from them.
+// the body must describe accountID itself. A currency that is absent, null, of the wrong JSON
+// type or not three upper-case letters is "" with no error — the platform did not report one
+// this service can vouch for. Errors never carry upstream text, and the account id is redacted
+// from them.
 func (c *Client) readMonitorAccountCurrency(ctx context.Context, accountID string) (string, error) {
 	if err := ValidateAccountID(accountID); err != nil {
 		return "", err
@@ -624,8 +639,5 @@ func (c *Client) readMonitorAccountCurrency(ctx context.Context, accountID strin
 	if acct.ID == nil || *acct.ID != accountID {
 		return "", fmt.Errorf("%w: it does not describe the requested account", errMonitorAccountUntrusted)
 	}
-	if acct.Currency == nil {
-		return "", nil
-	}
-	return model.NormalizeCurrencyCode(*acct.Currency), nil
+	return monitorAccountCurrencyField(acct.Currency), nil
 }

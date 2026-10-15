@@ -159,10 +159,12 @@ renderer formats with a symbol when it is present and without one otherwise.
 - **Validation.** `model.NormalizeCurrencyCode` keeps a value only if it is exactly three ASCII
   upper-case letters — no trimming, no case folding — and is applied in each client, in the
   orchestrator, and in `buildAccountMonitor`. A malformed code is dropped, not an error.
-- **Decoded on its own, from a trusted page.** Every currency field (X's account `currency`,
-  Meta's `account_currency`, LinkedIn's budget `currencyCode`) is read RAW and decoded as a string
-  separately, so a value of the wrong JSON type (a number, object, array, boolean) or `null` costs
-  only the currency — never the rows, the timezone or the read. Meta's insights pages and
+- **Decoded on its own, from a trusted page.** Every currency field — X's account `currency`,
+  Meta's `account_currency`, LinkedIn's budget `currencyCode`, Reddit's ad-account `currency`
+  (`reddit.monitorAccountCurrencyField`) and Microsoft's `Account/Query` `CurrencyCode` — is read
+  RAW and decoded as a string separately, so a value of the wrong JSON type (a number, object,
+  array, boolean) or `null` costs only the currency — never the rows, the timezone, the read or
+  the account-id check that trusts the answer. Meta's insights pages and
   LinkedIn's campaign-list pages are checked with `identityjson` before decoding, as the Meta
   audience read's pages are; a repeated key (exact or case-folded) would otherwise let
   encoding/json keep the last value and publish it. Unlike the audience read, an untrusted page
