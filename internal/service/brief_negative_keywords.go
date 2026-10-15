@@ -13,9 +13,9 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// AddNegativeKeywords adds negative keywords to one live campaign (LFXV2-2665): Microsoft
-// Advertising at campaign level, Reddit in the ad group's excluded keywords, X as negated line-item
-// keyword criteria. Any other platform is a 400.
+// AddNegativeKeywords adds negative keywords to one live campaign (LFXV2-2665): Google Ads and
+// Microsoft Advertising at campaign level, Reddit in the ad group's excluded keywords, X as negated
+// line-item keyword criteria. Any other platform is a 400.
 //
 // It follows ApplyKeywordActions rather than the toggle or budget write, for the reason that
 // handler documents: it PERSISTS NOTHING. The negatives live upstream and are mirrored in no
@@ -35,10 +35,7 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 	// Refused BEFORE the orchestrator: no dispatcher of another platform is ever asked.
 	// The orchestrator's capability assertion is the second line, for a direct caller.
 	if !negativeKeywordPlatform(existing.Platform) {
-		return nil, &briefs.BadRequestError{
-			Code:    "400",
-			Message: "negative keywords can be added to Microsoft Advertising, Reddit and X campaigns only",
-		}
+		return nil, &briefs.BadRequestError{Code: "400", Message: negativeKeywordUnsupportedMessage}
 	}
 	// Goa enforces MinLength(1) for HTTP callers; repeated for a direct caller.
 	if len(p.NegativeKeywords) == 0 {
@@ -59,7 +56,7 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 	revision := ""
 	if p.Revision != nil {
 		if existing.Platform != model.ProviderRedditAds {
-			return nil, &briefs.BadRequestError{Code: "400", Message: "revision applies to Reddit campaigns only — omit it, even empty, for Microsoft Advertising and X"}
+			return nil, &briefs.BadRequestError{Code: "400", Message: "revision applies to Reddit campaigns only — omit it, even empty, for Google Ads, Microsoft Advertising and X"}
 		}
 		revision = *p.Revision
 	}
@@ -91,10 +88,16 @@ func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNeg
 	return &briefs.NegativeKeywords{CampaignID: p.CampaignID, Results: results, AppliedCount: applied}, nil
 }
 
+// negativeKeywordUnsupportedMessage is the 400 a caller reads when their campaign's platform is
+// not on the allowlist below. It is named rather than inlined so the sentence and the switch can
+// be checked against each other: the two have to be edited together, and nothing else would
+// notice if they were not.
+const negativeKeywordUnsupportedMessage = "negative keywords can be added to Google Ads, Microsoft Advertising, Reddit and X campaigns only"
+
 // negativeKeywordPlatform reports whether add-negative-keywords serves the platform.
 func negativeKeywordPlatform(platform model.Provider) bool {
 	switch platform {
-	case model.ProviderMicrosoftAds, model.ProviderRedditAds, model.ProviderTwitterAds:
+	case model.ProviderMicrosoftAds, model.ProviderRedditAds, model.ProviderTwitterAds, model.ProviderGoogleAds:
 		return true
 	}
 	return false
@@ -132,7 +135,7 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 		return &briefs.BadRequestError{
 			Code: "400",
 			Message: "the negative keywords are not valid: send 1 to 60 (1 to 20 on X), each at most 100 characters of letters, digits, spaces and & ' - . with no two punctuation characters together, each keyword at most once, " +
-				"with a match type the platform offers (Microsoft Advertising: Exact or Phrase; X: Broad, Phrase or Exact; Reddit: Broad) — and on Reddit the revision get-keyword-targeting returned, which the other platforms refuse",
+				"with a match type the platform offers (Google Ads: Broad, Phrase or Exact; Microsoft Advertising: Exact or Phrase; X: Broad, Phrase or Exact; Reddit: Broad) — and on Reddit the revision get-keyword-targeting returned, which the other platforms refuse",
 		}
 	case errors.Is(aerr, domain.ErrKeywordTargetingChanged):
 		return &briefs.ConflictError{Code: "409", Message: "the ad group's targeting changed since it was read — nothing was added; read the keyword targeting again and resend with its revision"}

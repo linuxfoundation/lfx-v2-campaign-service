@@ -414,49 +414,13 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 // Duplicate-criterion classification is unverified for this resource, as it is
 // for the ad-group criteria above: any definite 4xx here is reported as a
 // straightforward failure rather than reconciled by a duplicate predicate.
+// The mutate-and-verify itself lives in mutateCampaignNegativeKeywords
+// (negative_keywords.go), shared with the EDIT path's AddCampaignNegativeKeywords.
+// The request and the acknowledgement checks are identical on both paths; only the
+// sentence describing what a definite failure LEFT BEHIND differs, which is the
+// argument passed below — the create path's "no negative keywords at all" is simply
+// untrue of a campaign that already had some.
 func (c *Client) createCampaignNegativeKeywords(ctx context.Context, campaignResource, campaignID string, negatives []Keyword) ([]string, error) {
-	if len(negatives) == 0 {
-		return nil, nil
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, fmt.Errorf("google-ads negative keywords aborted before any request (context already done; campaign %s has no negative keywords yet): %w", campaignID, ctxErr)
-	}
-
-	ops := make([]mutateOperation, 0, len(negatives))
-	for _, kw := range negatives {
-		ops = append(ops, mutateOperation{Create: campaignNegativeKeywordCreate{
-			Campaign: campaignResource,
-			Negative: true,
-			Keyword:  &keywordInfo{Text: kw.Text, MatchType: kw.MatchType},
-		}})
-	}
-
-	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignCriteria:mutate"), mutateRequest{Operations: ops}, false)
-	if err != nil {
-		if createOutcomeAmbiguous(err) {
-			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; negative keyword criteria may exist — verify in Google Ads before retrying): %w", campaignID, err)
-		}
-		return nil, fmt.Errorf("google-ads negative keywords failed (campaign %s created; it has NO negative keywords and would be eligible for every query its positive keywords match if enabled): %w", campaignID, err)
-	}
-
-	var mr mutateResponse
-	if uErr := json.Unmarshal(resp, &mr); uErr != nil || len(mr.Results) != len(ops) {
-		return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; 2xx with a malformed/short mutate response — negative keyword criteria may exist — verify in Google Ads before retrying)", campaignID)
-	}
-
-	ids := make([]string, 0, len(ops))
-	for i, r := range mr.Results {
-		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
-		if critID == "" || returnedCampaignID == "" {
-			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; malformed/wrong-kind/wrong-account criterion resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
-		}
-		// The campaignCriterion resourceName's campaign-id half must match the campaign
-		// these negatives were created under — a mismatch means the response does not
-		// describe what this call created, so the ids cannot be trusted enough to persist.
-		if returnedCampaignID != campaignID {
-			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
-		}
-		ids = append(ids, critID)
-	}
-	return ids, nil
+	return c.mutateCampaignNegativeKeywords(ctx, campaignResource, campaignID, negatives,
+		"the campaign was created but has NO negative keywords and would be eligible for every query its positive keywords match if enabled")
 }

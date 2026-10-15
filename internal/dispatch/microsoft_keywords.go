@@ -14,9 +14,10 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 )
 
-// unconfirmedKeywordLeverError carries a Microsoft keyword-lever outcome that MAY have been
-// applied to the service's verify-before-retry arm, which detects it by the Unconfirmed()
-// method rather than by a sentinel crossing the package boundary.
+// unconfirmedKeywordLeverError carries a keyword-lever outcome that MAY have been applied to the
+// service's verify-before-retry arm, which detects it by the Unconfirmed() method rather than by
+// a sentinel crossing the package boundary. It is declared here because Microsoft was the first
+// lever to need it, and is shared by every platform's keyword levers — X, Reddit and Google Ads.
 type unconfirmedKeywordLeverError struct{ err error }
 
 func (e *unconfirmedKeywordLeverError) Error() string {

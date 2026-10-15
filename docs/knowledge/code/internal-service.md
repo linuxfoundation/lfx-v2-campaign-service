@@ -604,8 +604,9 @@ unusable-connection 409 messages name the campaign's platform (Google's wording 
 
 `AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
 is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
-persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft Advertising,
-Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler, and a
+persists nothing: no `If-Match`, no write lock, no ETag, no index event. Google Ads, Microsoft
+Advertising, Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler,
+and a
 dispatcher without the capability is 400 via `Orchestrator.AddNegativeKeywords`'s type assertion on
 the optional `NegativeKeywordAdder`. The payload's optional `revision` (Reddit's compare-and-set
 token) is passed through untouched; each adapter validates it. Reddit/X-only refusals map to fixed
@@ -1656,7 +1657,8 @@ What differs:
   lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL
   means "never set through this endpoint", not "no bid" — a create-time bid lives in
   `config_snapshot` under each platform's own key, which this layer deliberately does not patch.
-- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; Google Ads and LinkedIn today),
+- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; the hubspot email channel today —
+  Google Ads and LinkedIn both gained the capability in LFXV2-2665),
   `ErrBidUnwritable` → 409 (automated, unreported or non-per-click bid strategy, or an
   unaddressable ad group, ad set or line item — the message is NEUTRAL across both kinds ("its
   bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service
@@ -1670,9 +1672,11 @@ What differs:
 - **`BidWriter`** (orchestrator.go) carries the budget's three rules plus its own: never write a
   bid the platform will ignore, and never switch strategy — read the governing strategy first and
   refuse an automated or unreported one with `ErrBidUnwritable`; never send a strategy field.
-  The bid goes to the level the create path put it (the one ad group — Microsoft, Reddit — ad set
-  — Meta — or line item — X — this service created); a row recording none is refused rather than
-  resolved upstream.
+  The bid goes to the level the create path put it (the one ad group — Google Ads, Microsoft,
+  Reddit — ad set — Meta — or line item — X — this service created); a row recording none is
+  refused rather than resolved upstream, and so is a row recording SEVERAL: Google Ads is the one
+  platform whose create path can record more than one ad group, and siblings carry independent
+  bids, so no single bid is named.
 
 ## Campaign delete
 

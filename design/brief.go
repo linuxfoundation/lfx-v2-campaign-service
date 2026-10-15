@@ -1088,9 +1088,12 @@ var KeywordActions = Type("keyword-actions", func() {
 
 // ─── Negative keywords on a live campaign (LFXV2-2665) ───
 
-// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry, across the three
+// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry, across the four
 // platforms that take one (LFXV2-2665). Each platform accepts a subset and refuses the rest with
 // 400 before it is contacted:
+//   - Google Ads: Broad, Phrase, Exact — a negative campaign_criterion of type KEYWORD whose
+//     keyword.match_type is BROAD, PHRASE or EXACT
+//     (https://developers.google.com/google-ads/api/reference/rpc/v23/KeywordMatchType).
 //   - Microsoft Advertising: Exact, Phrase — "The supported values for a negative keyword are
 //     Exact and Phrase." (https://learn.microsoft.com/en-us/advertising/campaign-management-service/negativekeyword).
 //   - X: Broad, Phrase, Exact — a targeting criterion of type BROAD_KEYWORD, PHRASE_KEYWORD or
@@ -1104,7 +1107,10 @@ func negativeKeywordMatchTypeEnum() {
 
 // negativeKeywordOutcomeEnum adds ALREADY_PRESENT to the per-item outcomes: Microsoft answers
 // a re-add of a negative the campaign already has with CampaignServiceNegativeKeywordAlreadyExists
-// (4335), and the state the caller asked for then holds.
+// (4335), and the state the caller asked for then holds. Google Ads reaches the same outcome from
+// the other end — its campaignCriteria:mutate is atomic, so a duplicate would fail the whole
+// batch, and the adapter reads the campaign's existing negatives first and withholds the ones
+// already there rather than sending them.
 func negativeKeywordOutcomeEnum() {
 	Enum("APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED")
 }
@@ -1126,7 +1132,7 @@ var NegativeKeywordInput = Type("negative-keyword-input", func() {
 		Pattern(`^[\p{L}\p{M}\p{N} &'.\-]+$`)
 		Example("free download")
 	})
-	Attribute("match_type", String, "How the negative keyword is compared with a search query. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type). Any other value for the platform is 400.", func() {
+	Attribute("match_type", String, "How the negative keyword is compared with a search query. Google Ads: Broad, Phrase or Exact. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type). Any other value for the platform is 400.", func() {
 		negativeKeywordMatchTypeEnum()
 		Example("Phrase")
 	})
@@ -1137,9 +1143,9 @@ var NegativeKeywordInput = Type("negative-keyword-input", func() {
 var NegativeKeywordResult = Type("negative-keyword-result", func() {
 	Attribute("text", String, "The negative keyword text as sent to the platform (trimmed, whitespace collapsed)", func() { Example("free download") })
 	Attribute("match_type", String, "The match type as sent to the platform", negativeKeywordMatchTypeEnum)
-	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft) or ad group / line item (Reddit / X) already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
-	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added: Microsoft's NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where an excluded keyword has no id, and for every outcome other than APPLIED.", func() { Example("8475612390") })
-	Attribute("error_code", String, "Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable error code, when it named one. Reddit and X: NOT_SENT (the request carrying it was never sent) or REJECTED (the platform refused it); their own text is never returned.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
+	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign (Google Ads, Microsoft) or ad group / line item (Reddit / X) already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
+	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added: Google's campaign criterion id, Microsoft's NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where an excluded keyword has no id. Present for ALREADY_PRESENT on Google Ads, which reads the campaign's existing negatives and reports the criterion id it already holds; absent for ALREADY_PRESENT elsewhere, and for FAILED and UNCONFIRMED everywhere.", func() { Example("8475612390") })
+	Attribute("error_code", String, "Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable error code, when it named one. Google Ads, Reddit and X: NOT_SENT (the request carrying it was never sent) or REJECTED (the platform refused it); their own text is never returned.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
 	Required("text", "match_type", "outcome")
 })
 
@@ -2135,6 +2141,11 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"confirms it; once confirmed, a failed row write answers 500 with the platform holding the new " +
 			"bid, logged as a divergence, and re-applying the same bid reconciles it. " +
 			"ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy. " +
+			"Google Ads: the cpc_bid_micros of the ad group this service created for the campaign " +
+			"(keywords are created without their own bids, so they inherit it); it is the one platform whose " +
+			"row can record SEVERAL ad groups, and because siblings carry independent max CPC bids a row " +
+			"recording more than one is refused (409) rather than resolved — set the bid on the ad group you " +
+			"mean in Google Ads. " +
 			"Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the " +
 			"campaign (keywords are created without their own bids, so they inherit it). Reddit: the " +
 			"bid_value of the ONE ad group this service created. Meta: the bid_amount (a bid cap, in the " +
@@ -2145,12 +2156,16 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"(a decimal amount, written in USD at whole cents — a sub-cent amount is refused 400 rather than " +
 			"rounded); an ADOPTED LinkedIn campaign is refused (409). " +
 			"REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does " +
-			"something under a bid strategy that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's " +
+			"something under a bid strategy that reads it — Google's MANUAL_CPC; Microsoft's EnhancedCpc or ManualCpc; Reddit's " +
 			"MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with billing_event AND " +
 			"optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on " +
 			"impressions, per 1,000 impressions — so only that pairing is a max cost per click); X's MAX " +
 			"with pay_by LINK_CLICK; LinkedIn's costType CPC with optimizationTargetType NONE or " +
-			"ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or target strategy (Microsoft MaxClicks, " +
+			"ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or target strategy (Google " +
+			"TARGET_CPA, TARGET_ROAS, TARGET_SPEND, MAXIMIZE_CLICKS, MAXIMIZE_CONVERSIONS, " +
+			"MAXIMIZE_CONVERSION_VALUE, TARGET_IMPRESSION_SHARE, MANUAL_CPM, MANUAL_CPV, or any portfolio " +
+			"strategy — Google offers no portfolio MANUAL_CPC, so a campaign on one never reports MANUAL_CPC " +
+			"and is refused by the same check; Microsoft MaxClicks, " +
 			"MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio " +
 			"strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta " +
 			"LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET; LinkedIn MAX_*, " +
@@ -2164,14 +2179,18 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, " +
 			"and every X campaign AUTO, so those three legs apply only after an operator has moved the " +
 			"Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in " +
-			"the platform's own UI. A LinkedIn campaign this service creates sends no optimizationTargetType, " +
+			"the platform's own UI. GOOGLE ADS IS THE EXCEPTION: a SEARCH campaign this service creates " +
+			"defaults to MANUAL_CPC, so the guard is expected to pass there without any operator change — " +
+			"while a Demand Gen, Performance Max, Video or Display campaign defaults to an automated " +
+			"strategy and is refused. The guard still decides on what Google REPORTS, never on that default. " +
+			"A LinkedIn campaign this service creates sends no optimizationTargetType, " +
 			"which LinkedIn documents as defaulting to NONE (manual), so it is expected to pass — but the " +
 			"guard decides on what LinkedIn REPORTS, never on that expectation. " +
 			"On every adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not USD, and " +
 			"this service neither knows nor converts it; the LinkedIn adapter writes USD and refuses " +
 			"(409) a campaign whose bid is in any other or an unreported currency. " +
-			"Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other platform is " +
-			"refused with 400. " +
+			"Google Ads, Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other " +
+			"platform is refused with 400. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: the " +
 			"campaign is unprovisioned; it belongs to a different ad account than the project's connection " +
 			"now resolves to, or does not record which ad account it was created under; its bid strategy is " +
@@ -2308,13 +2327,15 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("add-negative-keywords", func() {
-		Description("Add negative keywords to one live campaign (LFXV2-2665). Three platforms, each at its own level: " +
+		Description("Add negative keywords to one live campaign (LFXV2-2665). Four platforms, each at its own level: " +
+			"Google Ads at CAMPAIGN level (campaignCriteria:mutate, negative KEYWORD criteria — the same level and " +
+			"resource its create path attaches an exclusion list through); " +
 			"Microsoft Advertising at CAMPAIGN level (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in " +
 			"the excluded_keywords of the ONE ad group this service created (a whole-targeting PATCH, behind " +
 			"REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off is 400 before Reddit is contacted); X as one negated " +
 			"keyword targeting criterion (operator_type NE) per keyword on the ONE line item this service created. " +
 			"A campaign on any other platform is refused with 400 before anything is contacted. " +
-			"Match types per platform: Microsoft Exact or Phrase; X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); " +
+			"Match types per platform: Google Ads Broad, Phrase or Exact (BROAD/PHRASE/EXACT); Microsoft Exact or Phrase; X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); " +
 			"Reddit Broad only, because Reddit's excluded keywords carry no match type. Any other is 400. " +
 			"A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching " +
 			"queries, so it only narrows delivery — and it carries the keyword levers' guard set, all before the " +
@@ -2322,13 +2343,17 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"the project's current connection (a campaign that does not record its ad account is refused, never " +
 			"assumed), and on Reddit and X a READ proving the ad group / line item is live and reported under THIS " +
 			"campaign. Reddit also requires `revision`, the fingerprint get-keyword-targeting returned, and refuses " +
-			"(409) when the ad group's targeting has changed since, and a blank one is 400; Microsoft and X refuse a present " +
-			"revision, even an empty one (400). " +
+			"(409) when the ad group's targeting has changed since, and a blank one is 400; Google Ads, Microsoft and X " +
+			"refuse a present revision, even an empty one (400). " +
 			"Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes " +
 			"no If-Match and returns no ETag. " +
 			"Every write is sent ONCE and never retried on a 429. The 200 carries one result per requested keyword, " +
 			"in request order, each with its own outcome. A negative already there is ALREADY_PRESENT, a success, " +
-			"and is not sent again. Microsoft adds each negative independently; Reddit's one PATCH carries every new " +
+			"and is not sent again. On Google Ads that is established by a READ of the campaign's existing negatives " +
+			"before anything is written, and it is not an optimisation: Google's campaignCriteria:mutate is ATOMIC, so " +
+			"one duplicate would fail the whole batch and take every acceptable keyword with it. For the same atomicity " +
+			"every Google keyword actually SENT shares one outcome — all APPLIED, all FAILED or all UNCONFIRMED; there " +
+			"is no partial result and none is invented. Microsoft adds each negative independently; Reddit's one PATCH carries every new " +
 			"one, so they share its outcome (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch with " +
 			"any ALREADY_PRESENT item always answers per item; X sends one POST per keyword, at most 20 per " +
 			"request (X's one-write-per-second account pacing), each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. " +
@@ -2351,7 +2376,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// One explicit example for the same reason apply-keyword-actions has one: Goa's
 			// fabricated sample repeats the element example, which this endpoint refuses as a
 			// duplicate.
-			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add: at campaign level on Microsoft Advertising, on the campaign's one ad group on Reddit, on its one line item on X.", func() {
+			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add: at campaign level on Google Ads and Microsoft Advertising, on the campaign's one ad group on Reddit, on its one line item on X.", func() {
 				MinLength(1)
 				MaxLength(60)
 				// Broad, because the generated request example also carries `revision`, which only
@@ -2362,7 +2387,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			})
 			// Reddit's compare-and-set token, exactly as get-keyword-targeting returned it. Never sent
 			// upstream; only compared with a fresh read's fingerprint.
-			Attribute("revision", String, "Reddit only, and required there: the revision get-keyword-targeting returned; an empty or blank one is 400. The add is refused (409) when the ad group's targeting no longer has that fingerprint. Microsoft Advertising and X refuse the field (400) whenever it is present, even empty.", func() {
+			Attribute("revision", String, "Reddit only, and required there: the revision get-keyword-targeting returned; an empty or blank one is 400. The add is refused (409) when the ad group's targeting no longer has that fingerprint. Google Ads, Microsoft Advertising and X refuse the field (400) whenever it is present, even empty.", func() {
 				MaxLength(128)
 				Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c")
 			})

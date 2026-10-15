@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/dispatch"
-description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder and the audience EXPLORER an operator drives before a brief commits — discovery, suppression and precedent reads that degrade to a partial answer with the gap named, and the one non-idempotent write that does not."
+description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder and the audience EXPLORER an operator drives before a brief commits — discovery, suppression and precedent reads that degrade to a partial answer with the gap named, and the one non-idempotent write that does not. The google-ads adapter adds the two keyword-and-bid levers: WriteBid, which refuses unless the row records exactly one ad group and Google itself reports MANUAL_CPC, and AddNegativeKeywords, which pre-reads the campaign's negatives because Google's mutate is atomic and so every keyword actually sent shares one outcome (LFXV2-2665)."
 resource: "internal/dispatch"
 ---
 
@@ -1471,10 +1471,10 @@ wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
 
 ## Bid write (optional capability, LFXV2-2665)
 
-`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising,
-Reddit, Meta, X and LinkedIn**; Google Ads and HubSpot are not `BidWriter`s (pinned by
-`TestBidWriter_GoogleAndHubSpotDoNotImplementIt`), so the orchestrator answers
-`ErrBidUnsupported` (400). LinkedIn's leg is described in
+`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Google Ads, Microsoft
+Advertising, Reddit, Meta, X and LinkedIn**; HubSpot is not a `BidWriter` (pinned by
+`TestBidWriter_HubSpotDoesNotImplementIt`), so the orchestrator answers
+`ErrBidUnsupported` (400) — an email channel has no bid at all. LinkedIn's leg is described in
 [LinkedIn settings, bid and adoption](#linkedin-settings-bid-and-adoption-lfxv2-2665). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
 (`Unconfirmed()`) and `rejectedBidAmountError` (`BidAmountReason()`), the bid lever's
 counterparts of the budget types. No env gate, matching the budget writers.
@@ -1485,6 +1485,30 @@ request), then the row/request facts (bid type, recorded ad group id, amount), t
 resolution and the account-match guard, then a READ, then the guards, then the one mutate,
 classified. Nothing is written until every guard has passed.
 
+- **Google Ads** (`googleads_bid.go`): writes `cpc_bid_micros` on the ad group recorded in the
+  row's result blob (`googleAdsCampaignAdGroupIDs`) — where the create path puts the bid, with
+  the keywords created bidless so they inherit it. **Google is the first platform whose row can
+  record MORE THAN ONE ad group**, and more than one is REFUSED (`ErrBidUnwritable`), not
+  resolved: siblings carry INDEPENDENT bids, so writing the first silently leaves the rest and
+  writing the same amount to all flattens a spread nobody asked about — the request names a
+  campaign, not an ad group. A row recording NONE is refused for every sibling's reason (never
+  provisioned, or ADOPTED, which records none). The set is ordered through `sortedKeys` so
+  neither the single-ad-group pick nor the refusal message varies between identical requests.
+  Reads the CAMPAIGN (`GetCampaignSettings`) and writes only under a reported `MANUAL_CPC`; an
+  unreported strategy is refused rather than assumed manual, and because Google offers no
+  PORTFOLIO `MANUAL_CPC` the same guard covers the portfolio case with no second query. An
+  absent campaign → `ErrPlatformCampaignAbsent`. Amount bounds are the create path's
+  (`ValidateMaxCPCBid`: 0.01–100,000 in the account currency) → 400 before any call; unlike
+  `WriteBudget` this leg NEEDS that mapping, because the service layer's own checks (a 1,000,000
+  ceiling, and refusing anything rounding below half a micro) accept a wide band this client
+  refuses, each of which would otherwise be a 503 inviting a retry that can never succeed. There
+  is no amount-rejection arm on the mutate itself: Google states no floor only its mutate can
+  report, so every amount refusal happens before anything is sent. **Unlike Reddit, Meta and X,
+  this leg is expected to PASS on a campaign this service created**: `defaultBiddingStrategy`
+  gives a SEARCH campaign `MANUAL_CPC`, so no operator change is needed there — while Demand Gen,
+  Performance Max, Video and Display default to an automated strategy and are refused. The guard
+  still decides on what Google REPORTS, never on that default. Mutate outcomes:
+  `googleads.IsOutcomeUnconfirmed` → `unconfirmedBidWriteError` (503); anything else definite.
 - **Microsoft** (`microsoft_bid.go`): writes the default `CpcBid` of the ad group recorded in
   the row's result blob (`microsoftChildIDs`) — the field the create path sets; keywords are
   created without bids and inherit it. Reads the CAMPAIGN's bid strategy
@@ -4095,6 +4119,38 @@ here; the operator remedy is to pause the keyword again after activating.
 **Gating.** No `MICROSOFT_*` flag gates either lever: the existing flag
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
 create, toggle, budget — is gated. Both levers follow the writes.
+
+## Google Ads negative keywords (`googleads_negative_keywords.go`, LFXV2-2665)
+
+`GoogleAdsDispatcher` implements `service.NegativeKeywordAdder`, attaching CAMPAIGN-level
+negative KEYWORD criteria — the same level and resource the create path's exclusion list uses,
+so a negative added here behaves exactly like one added at create and keeps applying to any ad
+group added later.
+
+Guard order is the keyword levers': the batch is validated locally first
+(`validateNegativeKeywordBatch`, with Google's three match types — Broad, Phrase, Exact — so a
+permanent input fault masks any contingent one), `revision` is refused (it is Reddit's
+compare-and-set token), the row must record a well-formed platform campaign id, provenance
+FAILS CLOSED, then the account-match guard, all before Google is contacted.
+
+**Then a READ, and it is not an optimisation.** `campaignCriteria:mutate` is ATOMIC, so one
+keyword the campaign already excludes fails the WHOLE batch, taking down the keywords Google
+would have accepted. `ListCampaignNegativeKeywords` therefore runs first and anything already
+present is reported `ALREADY_PRESENT` with its existing criterion id rather than sent. The
+comparison key is `matchType + NUL + textfold.Key(text)` — the Unicode simple-case-fold key every
+negative-keyword comparison in this service uses, which `strings.ToLower` cannot replace (σ/ς).
+The read is a PURE read, so its failure is definite and returned unclassified.
+
+**Every keyword actually SENT shares one outcome**, which is atomicity restated rather than a
+simplification: `APPLIED` with its criterion id, or `FAILED` (`REJECTED`, or `NOT_SENT` when the
+error reports `NotAttempted()`), or `UNCONFIRMED`. A 2xx returning a different number of ids than
+keywords sent is treated as UNCONFIRMED rather than paired positionally — pairing a criterion id
+to a keyword it does not identify would report an id the operator cannot act on.
+
+**503 only when there is nothing definite to report.** An unconfirmed mutate returns
+`unconfirmedKeywordLeverError` (shared with Microsoft, Reddit and X) ONLY if no keyword reached a
+definite outcome; if any was `ALREADY_PRESENT`, the outcome list is returned instead, so the
+caller keeps the facts that were established rather than losing them to a blanket 503.
 
 ## Reddit and X keyword targeting (LFXV2-2665)
 

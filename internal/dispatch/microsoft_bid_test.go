@@ -29,17 +29,19 @@ var (
 	_ service.BidWriter = (*MetaDispatcher)(nil)
 	_ service.BidWriter = (*TwitterDispatcher)(nil)
 	_ service.BidWriter = (*LinkedInDispatcher)(nil)
+	_ service.BidWriter = (*GoogleAdsDispatcher)(nil)
 )
 
-// TestBidWriter_GoogleAndHubSpotDoNotImplementIt pins the other half: Google Ads and HubSpot are
-// NOT BidWriters today, so the orchestrator answers ErrBidUnsupported (400) for them. LinkedIn
-// joined Microsoft, Reddit, Meta and X in LFXV2-2665 (unitCost on the campaign; see
-// linkedin_bid.go). A platform gaining the capability is a deliberate decision about its bid
-// model, and this test is where that decision is made visible.
-func TestBidWriter_GoogleAndHubSpotDoNotImplementIt(t *testing.T) {
+// TestBidWriter_HubSpotDoesNotImplementIt pins the other half: HubSpot is NOT a BidWriter, so the
+// orchestrator answers ErrBidUnsupported (400) for it — an email channel has no bid at all.
+// LinkedIn joined Microsoft, Reddit, Meta and X in LFXV2-2665 (unitCost on the campaign; see
+// linkedin_bid.go), and Google Ads joined them in the same ticket (the ad group's
+// cpc_bid_micros, under a reported MANUAL_CPC; see googleads_bid.go). A platform gaining the
+// capability is a deliberate decision about its bid model, and this test is where that decision
+// is made visible.
+func TestBidWriter_HubSpotDoesNotImplementIt(t *testing.T) {
 	for name, d := range map[string]any{
-		"google-ads": (*GoogleAdsDispatcher)(nil),
-		"hubspot":    (*HubSpotDispatcher)(nil),
+		"hubspot": (*HubSpotDispatcher)(nil),
 	} {
 		if _, ok := d.(service.BidWriter); ok {
 			t.Errorf("%s implements BidWriter; update the docs, the design description and this test together", name)
