@@ -227,9 +227,12 @@ type Client struct {
 	audiencePollInterval time.Duration
 
 	// tzMu guards the account timezone AccountTimezone caches for accountTimezoneCacheFor.
-	tzMu  sync.Mutex
-	tzLoc *time.Location
-	tzAt  time.Time
+	// tzCurrency is the account currency read by the same GET, cached with it ("" when that read
+	// did not yield a trusted one — see readAccountTimezone).
+	tzMu       sync.Mutex
+	tzLoc      *time.Location
+	tzCurrency string
+	tzAt       time.Time
 
 	// Creative image upload (media.go). uploadBaseURL is the X API v2 origin that serves media
 	// upload (WithMediaUploadBaseURL); mediaChunkSize and mediaPollCap are production constants

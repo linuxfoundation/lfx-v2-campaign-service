@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // monitorReportConcurrency bounds how many per-campaign report calls ListAccountCampaigns
@@ -415,13 +416,29 @@ func ValidateAccountID(accountID string) error {
 // this service sums the rows it returns, on every platform — see
 // service.monitorTotals and model.AccountMonitorTotals' doc comment.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
+	rows, _, err := c.listAccountCampaigns(ctx, accountID, days, false)
+	return rows, err
+}
+
+// ListAccountCampaignsWithCurrency is ListAccountCampaigns plus the ad account's ISO 4217
+// currency, for the account monitor's response. Neither the campaign list nor the reports carry a
+// currency, so it costs ONE more call, made only once the campaign list has been read: GET
+// /ad_accounts/{id} (readMonitorAccountCurrency). That read is best-effort — a failed, untrusted
+// or currency-less answer leaves the currency "" and the rows are returned as ListAccountCampaigns
+// would return them.
+func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
+	return c.listAccountCampaigns(ctx, accountID, days, true)
+}
+
+// listAccountCampaigns is the body of both public reads; withCurrency adds the account read.
+func (c *Client) listAccountCampaigns(ctx context.Context, accountID string, days int, withCurrency bool) ([]AccountCampaignRow, string, error) {
 	if err := ValidateAccountID(accountID); err != nil {
-		return nil, fmt.Errorf("list account campaigns: %w", err)
+		return nil, "", fmt.Errorf("list account campaigns: %w", err)
 	}
 	if days < 1 {
 		// The dispatcher validates days first (validateMonitorDays); this keeps a direct
 		// caller from rendering a range whose start is after its end.
-		return nil, fmt.Errorf("list account campaigns: days must be at least 1, got %d", days)
+		return nil, "", fmt.Errorf("list account campaigns: days must be at least 1, got %d", days)
 	}
 
 	end := c.now().UTC()
@@ -429,7 +446,13 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 
 	elements, err := c.listMonitorCampaigns(ctx, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("list account campaigns: %w", redactReportPath(err, accountID))
+		return nil, "", fmt.Errorf("list account campaigns: %w", redactReportPath(err, accountID))
+	}
+	currency := ""
+	if withCurrency {
+		// After the list (the read's required half) and before the report fan-out, which can
+		// spend the request's budget; the error is dropped: the currency is only a label.
+		currency, _ = c.readMonitorAccountCurrency(ctx, accountID)
 	}
 
 	// activeCampaigns: filter to configured_status ACTIVE or PAUSED, matching
@@ -523,7 +546,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	// Cannot return non-nil: every g.Go returns nil above. Checked anyway so a later edit
 	// that starts propagating an error cannot silently drop it.
 	if werr := g.Wait(); werr != nil {
-		return nil, fmt.Errorf("list account campaigns: %w", werr)
+		return nil, "", fmt.Errorf("list account campaigns: %w", werr)
 	}
 	// The caller's deadline or cancellation fails every report still in flight, and each of
 	// those rows would read as one campaign's failure. When the caller's context is done and a
@@ -534,9 +557,57 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	if cerr := ctx.Err(); cerr != nil {
 		for _, failed := range ctxFailed {
 			if failed {
-				return nil, fmt.Errorf("list account campaigns: %w", cerr)
+				return nil, "", fmt.Errorf("list account campaigns: %w", cerr)
 			}
 		}
 	}
-	return rows, nil
+	return rows, currency, nil
+}
+
+// monitorAccountWire is the part of GET /ad_accounts/{id} the monitor reads. Pointers, so an
+// absent field is told from an empty one.
+type monitorAccountWire struct {
+	ID       *string `json:"id"`
+	Currency *string `json:"currency"`
+}
+
+// errMonitorAccountUntrusted marks an ad-account answer the monitor will not take a currency
+// from. It carries no upstream text.
+var errMonitorAccountUntrusted = errors.New("reddit: ad account response could not be trusted")
+
+// readMonitorAccountCurrency reads the ad account's currency: GET /ad_accounts/{id}, Reddit Ads
+// API v3's ad-account read, whose element carries `currency` — the same field name the discovery
+// read (accounts.go) takes from the business's ad-account list. UNVERIFIED LIVE, like discovery:
+// this repository holds no Reddit credentials.
+//
+// The answer is held to the identity rules the adoption read uses: identityjson over the raw
+// body (no duplicate keys, no invalid UTF-8 or lone surrogates that would decode silently), and
+// the body must describe accountID itself. A currency that is absent, null or not three
+// upper-case letters is "" with no error — the platform did not report one this service can
+// vouch for. Errors never carry upstream text, and the account id is redacted from them.
+func (c *Client) readMonitorAccountCurrency(ctx context.Context, accountID string) (string, error) {
+	if err := ValidateAccountID(accountID); err != nil {
+		return "", err
+	}
+	resp, err := c.request(ctx, http.MethodGet, "/ad_accounts/"+accountID, nil)
+	if err != nil {
+		return "", fmt.Errorf("read reddit ad account: %w", redactReportPath(err, accountID))
+	}
+	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
+		return "", fmt.Errorf("%w: no account object", errMonitorAccountUntrusted)
+	}
+	if err := identityjson.Check(resp.raw); err != nil {
+		return "", fmt.Errorf("%w: %w", errMonitorAccountUntrusted, err)
+	}
+	var acct monitorAccountWire
+	if err := json.Unmarshal(resp.Data, &acct); err != nil {
+		return "", fmt.Errorf("%w: not an account object", errMonitorAccountUntrusted)
+	}
+	if acct.ID == nil || *acct.ID != accountID {
+		return "", fmt.Errorf("%w: it does not describe the requested account", errMonitorAccountUntrusted)
+	}
+	if acct.Currency == nil {
+		return "", nil
+	}
+	return model.NormalizeCurrencyCode(*acct.Currency), nil
 }

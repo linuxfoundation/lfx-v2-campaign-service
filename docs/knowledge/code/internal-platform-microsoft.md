@@ -993,6 +993,15 @@ orchestrator saves the state between requests instead (see
   Incomplete Data" is reported as `Partial` rather than refused, unlike the per-campaign read,
   because the monitor's window always includes today.
 
+`account_currency.go`'s `AccountCurrency` reads the account's currency for the monitor's
+`currency` field — the campaign list and the report carry none — with ONE Customer Management
+`Account/Query` (`GetAccount`, `doCustomerRequest`, idempotent). The body must pass
+`identityjson` and its `Account.Id` (bare or quoted) must be the client's account, else
+`errAccountCurrencyUntrusted`; errors carry no upstream text. `CurrencyCode` is a value-set NAME
+(`USDollar`, `Euro`, …), mapped to ISO 4217 by `currencyCodeISO`; an absent, null or unmapped name
+is `""` with no error. Unverified against a live account, like the rest of the monitor. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 `ValidateMonitorAccountID` is the strict, Pattern-identical account-id check for this path.
 
 ## Keyword report (report-backed, default-OFF, LFXV2-2665)

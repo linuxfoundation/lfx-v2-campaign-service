@@ -723,6 +723,14 @@ client's injected clock, rather than the BFF's hardcoded `date_preset=last_30d`.
 departures, the credential-scoping (`resolveOwned`, no system-account fallback), and
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
 
+`ListAccountCampaignsWithCurrency` is the same read plus the account's currency for the
+monitor's `currency` field: the insights call also requests `account_currency`, and
+`metaAccountInsights.observeCurrency` keeps it only when every row names the same
+three-upper-case-letter code — absent, malformed or disagreeing rows leave it `""` without
+failing the read. No extra request; an account with no insights rows in the window has no
+currency. `ListAccountCampaigns` wraps it and drops the currency. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 See [internal/platform/meta](../../../internal/platform/meta).
 
 ## Connection-probe predicates (LFXV2-2665)

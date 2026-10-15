@@ -6292,6 +6292,13 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
+	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
+	// in the account's currency, so a non-USD LinkedIn account has no single
+	// currency to name.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // AccountMonitorCampaignResponseBody is used to define fields on response body
@@ -6447,6 +6454,13 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
+	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
+	// in the account's currency, so a non-USD LinkedIn account has no single
+	// currency to name.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // MetaAdsAccountMonitorResponseBody is used to define fields on response body
@@ -6493,6 +6507,13 @@ type MetaAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
+	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
+	// in the account's currency, so a non-USD LinkedIn account has no single
+	// currency to name.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // RedditAdsAccountMonitorResponseBody is used to define fields on response
@@ -6539,6 +6560,13 @@ type RedditAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
+	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
+	// in the account's currency, so a non-USD LinkedIn account has no single
+	// currency to name.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // MicrosoftAdsAccountMonitorResponseBody is used to define fields on response
@@ -6585,6 +6613,13 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
+	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
+	// in the account's currency, so a non-USD LinkedIn account has no single
+	// currency to name.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // TwitterAdsAccountMonitorResponseBody is used to define fields on response
@@ -6631,6 +6666,13 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
+	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
+	// in the account's currency, so a non-USD LinkedIn account has no single
+	// currency to name.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // HubspotEmailMonitorEmailResponseBody is used to define fields on response
@@ -7876,6 +7918,7 @@ func NewMonitorGoogleAdsAccountResponseBody(res *lfxv2campaignserviceconnections
 		MetricsWindowStart: res.MetricsWindowStart,
 		MetricsWindowEnd:   res.MetricsWindowEnd,
 		MetricsPending:     res.MetricsPending,
+		Currency:           res.Currency,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -7918,6 +7961,7 @@ func NewMonitorLinkedinAdsAccountResponseBody(res *lfxv2campaignserviceconnectio
 		MetricsWindowStart: res.MetricsWindowStart,
 		MetricsWindowEnd:   res.MetricsWindowEnd,
 		MetricsPending:     res.MetricsPending,
+		Currency:           res.Currency,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -7960,6 +8004,7 @@ func NewMonitorMetaAdsAccountResponseBody(res *lfxv2campaignserviceconnections.A
 		MetricsWindowStart: res.MetricsWindowStart,
 		MetricsWindowEnd:   res.MetricsWindowEnd,
 		MetricsPending:     res.MetricsPending,
+		Currency:           res.Currency,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -8002,6 +8047,7 @@ func NewMonitorRedditAdsAccountResponseBody(res *lfxv2campaignserviceconnections
 		MetricsWindowStart: res.MetricsWindowStart,
 		MetricsWindowEnd:   res.MetricsWindowEnd,
 		MetricsPending:     res.MetricsPending,
+		Currency:           res.Currency,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -8044,6 +8090,7 @@ func NewMonitorMicrosoftAdsAccountResponseBody(res *lfxv2campaignserviceconnecti
 		MetricsWindowStart: res.MetricsWindowStart,
 		MetricsWindowEnd:   res.MetricsWindowEnd,
 		MetricsPending:     res.MetricsPending,
+		Currency:           res.Currency,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))
@@ -8086,6 +8133,7 @@ func NewMonitorTwitterAdsAccountResponseBody(res *lfxv2campaignserviceconnection
 		MetricsWindowStart: res.MetricsWindowStart,
 		MetricsWindowEnd:   res.MetricsWindowEnd,
 		MetricsPending:     res.MetricsPending,
+		Currency:           res.Currency,
 	}
 	if res.Campaigns != nil {
 		body.Campaigns = make([]*AccountMonitorCampaignResponseBody, len(res.Campaigns))

@@ -17,6 +17,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
 
 // campaignStatusGroupCreated marks a LinkedIn dispatch where the campaign GROUP was
@@ -788,6 +789,20 @@ func requireLinkedInManagedAccount(res *resolved, projectID, accountID string) (
 // resolver's doc comment, and GoogleAdsDispatcher.ListAccountCampaignMetrics
 // (internal/dispatch/googleads.go) for the shared rationale.
 func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	read, err := d.ReadAccountMonitor(ctx, projectID, platform, accountID, days)
+	if err != nil {
+		return nil, err
+	}
+	return read.Rows, nil
+}
+
+var _ service.AccountMonitorReader = (*LinkedInDispatcher)(nil)
+
+// ReadAccountMonitor implements service.AccountMonitorReader: ListAccountCampaignMetrics' read
+// (the body of both, with every guard described above), plus the currency the amounts are in,
+// from the budgets' currencyCode in the same campaign list — no extra call. Only ever "USD" or
+// absent: see linkedin.Client.ListAccountCampaignsWithCurrency.
+func (d *LinkedInDispatcher) ReadAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
 	// cost a credential decrypt. The Goa design layer's Pattern already rejects a malformed id at
@@ -816,7 +831,7 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 	// RuntimeConfig is left ZERO, same rationale as ListAccounts: the monitor read is scoped
 	// to accountID by the platform-client call itself, not by the client's own AccountConfig.
 	client := linkedin.NewClient(linkedinCredentials(creds, linkedinConnectionLabel(res), linkedinConnID(res)), linkedin.RuntimeConfig{}, d.opts...)
-	rows, lerr := client.ListAccountCampaigns(ctx, scopedAccountID, days)
+	rows, currency, lerr := client.ListAccountCampaignsWithCurrency(ctx, scopedAccountID, days)
 	if lerr != nil {
 		// Defense in depth only, mirroring reddit.go's equivalent remap: reachable if
 		// ListAccountCampaigns' own shape check ever diverges from ValidateAccountID's above it.
@@ -844,7 +859,7 @@ func (d *LinkedInDispatcher) ListAccountCampaignMetrics(ctx context.Context, pro
 			FailureClass:       r.FailureClass,
 		})
 	}
-	return out, nil
+	return &model.AccountMonitorRead{Rows: out, Currency: currency}, nil
 }
 
 // VerifyAccountOrg cross-checks a project's stored LinkedIn connection against LinkedIn's own

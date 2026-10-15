@@ -126,6 +126,52 @@ reaches), not project-scoped ones.
   post-`evaluate` rows on every platform, so the aggregate always describes
   exactly the campaigns array returned beside it.
 
+## Currency
+
+`AccountMonitor.currency` (optional, `Pattern ^[A-Z]{3}$`) is the ad account's ISO 4217 code:
+every `spend`, `budget_day` and `total_budget` in the response is in it, unconverted. Absent
+means the platform did not report one this service can vouch for — never a default — so a
+renderer formats with a symbol when it is present and without one otherwise.
+
+| Platform | Source | Extra call? |
+| -------- | ------ | ----------- |
+| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree | No |
+| LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); published only when it is `USD` | No |
+| Reddit | `GET /ad_accounts/{id}` after the campaign list (`reddit.Client.readMonitorAccountCurrency`) | One |
+| X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
+| Microsoft | Customer Management `Account/Query` (`microsoft.Client.AccountCurrency`), `CurrencyCode` enum name mapped to ISO by `currencyCodeISO` | One |
+| Google Ads | not set (Google Ads is owned separately) | — |
+
+- **Plumbing.** The live reads go through a new optional capability, `AccountMonitorReader`
+  (`ReadAccountMonitor` → `model.AccountMonitorRead{Rows, Currency}`), which
+  `Orchestrator.ReadAccountCampaignMetrics` prefers over `AccountMetricsReader`; LinkedIn, Meta
+  and Reddit implement it, and their `ListAccountCampaignMetrics` is now a wrapper returning its
+  rows. Google keeps only `AccountMetricsReader`, so its currency is absent. The report-backed
+  read calls the optional `AccountCurrencyReader` (`ReadAccountCurrency`) LAST in
+  `ReadReportedAccountCampaigns`, on what is left of the shared budget, instrumented as
+  `read_account_currency`; the currency is never saved with a report
+  (`ReportedAccountRead.Currency`).
+- **Validation.** `model.NormalizeCurrencyCode` keeps a value only if it is exactly three ASCII
+  upper-case letters — no trimming, no case folding — and is applied in each client, in the
+  orchestrator, and in `buildAccountMonitor`. A malformed code is dropped, not an error.
+- **Agreement.** Meta and LinkedIn read the code off many elements; a missing code (LinkedIn), a
+  malformed one (Meta) or two that disagree makes the whole set unusable rather than picking one,
+  since one account has one currency.
+- **LinkedIn is USD or nothing.** Its spend is Ad Analytics' `costInUsd` while its budgets are in
+  the account's currency, so only a USD account has one currency for every amount. A EUR account
+  gets no `currency` — naming EUR would mislabel the spend, naming USD the budgets. (The pacing
+  comparison of USD spend against a non-USD budget is a pre-existing limitation this field does
+  not fix.)
+- **Identity and failure.** The two new reads (Reddit, Microsoft) and X's currency are taken only
+  from a body `identityjson` trusts that names the requested account. Any failure — transport,
+  status, untrusted body, another account's id — leaves `currency` absent and never fails the
+  monitor; errors carry no upstream text (Reddit's also redact the account id). On X, the
+  timezone's own rules are unchanged: a currency problem cannot fail the timezone read. The
+  Microsoft read is unverified against a live account, like the rest of that monitor; a value-set
+  name `currencyCodeISO` does not list leaves the currency absent rather than guessed.
+- **Published examples.** Every body type but Google's carries a `currency` example (`USD`), and
+  both example tests check `currency` is present exactly on the non-Google operations.
+
 ## Ported BFF quirks, and where each one now stands
 
 Five threshold/labeling bugs from the BFF were carried over on purpose, so the
@@ -779,7 +825,8 @@ with `TwitterDispatcher` as a second implementation. Nothing was forked.
   days (the sum of `FlightRanges`, gaps excluded); otherwise unknown. The zero-delivery HIGH
   needs at least one scheduled day in the window. Amounts in item text are printed as
   "12.50 in account currency" — no currency symbol, since X's `*_local_micro` figures are in the
-  account's own currency, which the account resource does not carry. The window is the SAVED REPORT's own — its first and last day in the account's
+  account's own currency and the rule text is built without it; the response's `currency`
+  field names it when X reported one (see [Currency](#currency)). The window is the SAVED REPORT's own — its first and last day in the account's
   timezone, carried to the service as `ReportedAccountRead.MetricsWindowStart/End` — so the
   rules, the stats jobs and the line items' flight dates all count the account's calendar
   days. (An earlier draft derived "today" from the service's UTC clock: on a US/Pacific

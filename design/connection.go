@@ -1283,6 +1283,13 @@ var AccountMonitor = Type("account-monitor", func() {
 		Meta("openapi:example", "false")
 	})
 	Attribute("metrics_pending", Boolean, "Report-backed platforms (Microsoft Ads, X) only: true while a newer report is building on the platform, so a later read will return newer metrics (or the first ones, when metrics_as_of is absent). Omitted on every other platform.", func() { Meta("openapi:example", "false") })
+	// Optional: absent is the honest answer when the platform did not report a currency this
+	// service can vouch for — never a default. Google Ads leaves it unset. No example here: it is
+	// absent on Google, so each body type sets its own (design/account_monitor_examples.go).
+	Attribute("currency", String, "The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads, set only when the account's currency is USD: LinkedIn's spend is read as costInUsd while its budgets are in the account's currency, so a non-USD LinkedIn account has no single currency to name.", func() {
+		Pattern(`^[A-Z]{3}$`)
+		Meta("openapi:example", "false")
+	})
 	Required("account_id", "days", "campaigns", "action_items", "totals")
 	// Shared by six platforms whose responses differ, so no example here: one would describe five
 	// of them wrongly. Each method's 200 body carries its own (design/account_monitor_examples.go).

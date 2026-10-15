@@ -16,6 +16,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -619,6 +620,19 @@ func (d *RedditDispatcher) ReadMetrics(ctx context.Context, projectID string, pl
 // the resolved connection's own account rather than used to build an account-agnostic client
 // the way Meta/GoogleAds/LinkedIn's monitor methods do.
 func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+	read, err := d.ReadAccountMonitor(ctx, projectID, platform, accountID, days)
+	if err != nil {
+		return nil, err
+	}
+	return read.Rows, nil
+}
+
+var _ service.AccountMonitorReader = (*RedditDispatcher)(nil)
+
+// ReadAccountMonitor implements service.AccountMonitorReader: ListAccountCampaignMetrics' read
+// (the body of both, with every guard described above), plus the ad account's currency from one
+// identity-checked account read (reddit.Client.ListAccountCampaignsWithCurrency), best-effort.
+func (d *RedditDispatcher) ReadAccountMonitor(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
 	// Validated up front, before any credential is resolved — mirrors googleads.ValidateCustomerID's
 	// ordering (internal/dispatch/googleads.go): an unauthenticated malformed-id caller should never
 	// cost a credential decrypt.
@@ -632,7 +646,7 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 	if err != nil {
 		return nil, err
 	}
-	rows, lerr := client.ListAccountCampaigns(ctx, accountID, days)
+	rows, currency, lerr := client.ListAccountCampaignsWithCurrency(ctx, accountID, days)
 	if lerr != nil {
 		// Defense in depth only: reachable if ListAccountCampaigns' own shape check ever
 		// diverges from ValidateAccountID's above it.
@@ -674,7 +688,7 @@ func (d *RedditDispatcher) ListAccountCampaignMetrics(ctx context.Context, proje
 			FailureClass: r.FailureClass,
 		})
 	}
-	return out, nil
+	return &model.AccountMonitorRead{Rows: out, Currency: currency}, nil
 }
 
 // resolveMonitorClient resolves the project's OWN Reddit connection and its client — never the

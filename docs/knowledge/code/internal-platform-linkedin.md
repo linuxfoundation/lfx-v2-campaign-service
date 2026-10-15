@@ -817,6 +817,14 @@ CTR, the worst case of the very condition it detects, now that an impressions fl
 separates that from an unserved campaign), and the days-1-ending-today window
 convention this dispatcher shares with Google/Reddit/Meta's monitor reads.
 
+`ListAccountCampaignsWithCurrency` is the same read plus the currency for the monitor's
+`currency` field, from the `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign
+list (`budgetCurrencies`: a budget with no code, or two codes that differ, make it unusable).
+It answers only `"USD"` (`monitorCurrencyUSD`) or `""`: spend is `costInUsd`, so a non-USD
+account's spend and budgets are in two currencies and the monitor names neither. No extra
+request. `ListAccountCampaigns` wraps it and drops the currency. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
 adapter that does, since it is the only platform with an upstream signal to check (see "Org/account

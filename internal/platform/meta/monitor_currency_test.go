@@ -1,0 +1,57 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package meta
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+// The account monitor's currency is the insights rows' own account_currency: present when every
+// row names one well-formed code, absent ("") when no row carried one, when one is malformed, or
+// when two disagree. None of those fails the read, and the field is requested on the existing
+// insights call — no extra request.
+func TestListAccountCampaignsWithCurrency(t *testing.T) {
+	row := func(id, currencyField string) string {
+		return `{"campaign_id":"` + id + `","impressions":"10","clicks":"1","spend":"1.50"` + currencyField + `}`
+	}
+	campaigns := `{"data":[` +
+		`{"id":"111","name":"One","status":"ACTIVE","daily_budget":"1000"},` +
+		`{"id":"222","name":"Two","status":"ACTIVE","daily_budget":"1000"}],"paging":{}}`
+	for _, tc := range []struct {
+		name     string
+		insights string
+		want     string
+	}{
+		{"present on every row", `{"data":[` + row("111", `,"account_currency":"EUR"`) + `,` + row("222", `,"account_currency":"EUR"`) + `],"paging":{}}`, "EUR"},
+		{"absent from the rows", `{"data":[` + row("111", ``) + `],"paging":{}}`, ""},
+		{"no insights rows at all", `{"data":[],"paging":{}}`, ""},
+		{"malformed (lower case) dropped", `{"data":[` + row("111", `,"account_currency":"eur"`) + `],"paging":{}}`, ""},
+		{"malformed (four letters) dropped", `{"data":[` + row("111", `,"account_currency":"EURO"`) + `],"paging":{}}`, ""},
+		{"rows disagree", `{"data":[` + row("111", `,"account_currency":"EUR"`) + `,` + row("222", `,"account_currency":"USD"`) + `],"paging":{}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, rec := monitorPageResponses(t, []string{campaigns}, []string{tc.insights})
+			rows, currency, err := newMonitorClient(srv).ListAccountCampaignsWithCurrency(context.Background(), "act_123", 30)
+			if err != nil {
+				t.Fatalf("ListAccountCampaignsWithCurrency: %v", err)
+			}
+			if currency != tc.want {
+				t.Errorf("currency = %q, want %q", currency, tc.want)
+			}
+			if len(rows) != 2 {
+				t.Errorf("got %d rows, want both campaigns whatever the currency: %+v", len(rows), rows)
+			}
+			if rec.count() != 2 {
+				t.Errorf("made %d requests, want the campaign list and insights only: %v", rec.count(), rec.all())
+			}
+			for _, u := range rec.all() {
+				if strings.Contains(u, "/insights") && !strings.Contains(u, "account_currency") {
+					t.Errorf("insights request does not ask for account_currency: %s", u)
+				}
+			}
+		})
+	}
+}

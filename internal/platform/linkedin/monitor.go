@@ -67,23 +67,43 @@ const monitorMaxPages = 50
 // arithmetic. That is a deliberate asymmetry, not an oversight — today's only caller is that
 // service layer; a future non-HTTP caller of this package directly would need its own bound.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
+	rows, _, err := c.ListAccountCampaignsWithCurrency(ctx, accountID, days)
+	return rows, err
+}
+
+// monitorCurrencyUSD is the only currency the LinkedIn account monitor ever names. Its spend is
+// Ad Analytics' costInUsd — USD whatever the account's currency — while its budgets are in the
+// account's own currency (each budget object's currencyCode). Only when that currency is USD are
+// both in one currency, so only then can the response name one.
+const monitorCurrencyUSD = "USD"
+
+// ListAccountCampaignsWithCurrency is ListAccountCampaigns plus the currency the monitor's amounts
+// are in, at no extra call: it is the currencyCode LinkedIn puts on every campaign's dailyBudget
+// and totalBudget in the campaign list this read already walks.
+//
+// The answer is "USD" only when every budget the list carried named USD (see monitorCurrencyUSD).
+// It is "" when the list carried no budget currency at all, when any was not three upper-case
+// letters, when two disagreed, and when they agreed on any currency other than USD — for such an
+// account the spend (USD) and the budgets (its own currency) are in two currencies, and naming
+// either would mislabel the other. None of these fails the read.
+func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
 	// Same guard client.go:654 and targeting.go apply before interpolating an account/campaign
 	// id into a URN or path: the Goa design layer's Pattern(`^[0-9]+$`) already rejects a
 	// malformed id at the HTTP boundary, but this dispatcher method is also reachable directly
 	// (e.g. from tests or a future non-HTTP caller), so it re-checks rather than trusting the
 	// caller.
 	if err := ValidateAccountID(accountID); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	campaigns, err := c.fetchAccountCampaignList(ctx, accountID)
+	campaigns, budgetCurrency, err := c.fetchAccountCampaignList(ctx, accountID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	end := c.now().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	metricsByID, err := c.fetchAccountCampaignAnalytics(ctx, accountID, start, end)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	out := make([]AccountCampaignRow, 0, len(campaigns))
@@ -115,16 +135,25 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	currency := ""
+	if budgetCurrency.code() == monitorCurrencyUSD {
+		currency = monitorCurrencyUSD
+	}
+	return out, currency, nil
 }
 
 // fetchAccountCampaignList walks GET /adAccounts/{id}/adCampaigns?q=search over
 // ACTIVE/PAUSED campaigns, decoding the budget/schedule fields the shared responseElement
 // type does not carry — this uses its own response shape rather than doRequest's
 // linkedInResponse for that reason.
-func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string) ([]AccountCampaignRow, error) {
+//
+// It also returns what the budgets said about the account's currency: every dailyBudget and
+// totalBudget object carries a currencyCode, which is the account's (see
+// ListAccountCampaignsWithCurrency for what the monitor makes of it).
+func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string) ([]AccountCampaignRow, budgetCurrencies, error) {
 	nestedPath := "adAccounts/" + accountID + "/adCampaigns"
 	var out []AccountCampaignRow
+	var currencies budgetCurrencies
 	pageToken := ""
 	for page := 0; page < monitorMaxPages; page++ {
 		// Rest.li 2.0 nested literal, mirroring findByName's
@@ -144,10 +173,12 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				Name        string     `json:"name"`
 				Status      string     `json:"status"`
 				DailyBudget *struct {
-					Amount string `json:"amount"`
+					Amount       string  `json:"amount"`
+					CurrencyCode *string `json:"currencyCode"`
 				} `json:"dailyBudget"`
 				TotalBudget *struct {
-					Amount string `json:"amount"`
+					Amount       string  `json:"amount"`
+					CurrencyCode *string `json:"currencyCode"`
 				} `json:"totalBudget"`
 				RunSchedule *struct {
 					Start int64 `json:"start"`
@@ -157,14 +188,15 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 			Metadata *linkedInMetadata `json:"metadata"`
 		}
 		if err := c.doMonitorGET(ctx, nestedPath, params, &resp); err != nil {
-			return nil, fmt.Errorf("list account campaigns: %w", err)
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: %w", err)
 		}
 		if resp.Elements == nil {
-			return nil, fmt.Errorf("list account campaigns: response has no elements field")
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response has no elements field")
 		}
 		for _, el := range *resp.Elements {
 			row := AccountCampaignRow{CampaignID: el.ID.String(), Name: el.Name, Status: el.Status}
 			if el.DailyBudget != nil {
+				currencies.observe(el.DailyBudget.CurrencyCode)
 				if v, ok := parseUSDAmount(el.DailyBudget.Amount); ok {
 					row.DailyBudget = v
 				} else {
@@ -172,6 +204,7 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 				}
 			}
 			if el.TotalBudget != nil {
+				currencies.observe(el.TotalBudget.CurrencyCode)
 				if v, ok := parseUSDAmount(el.TotalBudget.Amount); ok {
 					row.TotalBudget = v
 				} else {
@@ -195,14 +228,43 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 		// metadata check, a malformed or truncated intermediate page reads as "no more pages" and
 		// silently returns a partial campaign list as a complete one (round-24 review).
 		if resp.Metadata == nil {
-			return nil, fmt.Errorf("list account campaigns: response has no metadata; cannot confirm all campaigns were enumerated")
+			return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: response has no metadata; cannot confirm all campaigns were enumerated")
 		}
 		if resp.Metadata.NextPageToken == "" {
-			return out, nil
+			return out, currencies, nil
 		}
 		pageToken = resp.Metadata.NextPageToken
 	}
-	return nil, fmt.Errorf("list account campaigns: exceeded %d pages", monitorMaxPages)
+	return nil, budgetCurrencies{}, fmt.Errorf("list account campaigns: exceeded %d pages", monitorMaxPages)
+}
+
+// budgetCurrencies folds the currencyCode of every budget object the campaign list carried. One
+// account has one currency, so a code that is absent or different from another makes the whole
+// set unusable rather than picking one. The codes are not shape-checked here: the only value the
+// monitor ever publishes is an exact match for monitorCurrencyUSD, which no malformed code can be.
+type budgetCurrencies struct {
+	seen     string
+	unusable bool
+}
+
+func (b *budgetCurrencies) observe(code *string) {
+	switch {
+	case b.unusable:
+	case code == nil:
+		b.unusable = true
+	case b.seen == "":
+		b.seen = *code
+	case b.seen != *code:
+		b.unusable = true
+	}
+}
+
+// code is the one currency every budget named, or "" when none did or they could not be trusted.
+func (b budgetCurrencies) code() string {
+	if b.unusable {
+		return ""
+	}
+	return b.seen
 }
 
 type monitorMetricsRow struct {

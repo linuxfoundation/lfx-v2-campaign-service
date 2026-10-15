@@ -702,6 +702,13 @@ type AccountMonitor struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads, set only when the account's
+	// currency is USD: LinkedIn's spend is read as costInUsd while its budgets are
+	// in the account's currency, so a non-USD LinkedIn account has no single
+	// currency to name.
+	Currency *string
 }
 
 type AccountMonitorActionItem struct {
