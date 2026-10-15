@@ -113,3 +113,7 @@
   into the prompt and the known-editions check as this edition's name, so the exact filter missed
   registrations stored as "Synthetic Summit 2026". `customEventContext` now names it with
   `WithEventYear`.
+- **A brand inside the event title still counts** (Copilot). `DominantBrand` dropped any brand-slot
+  segment sharing a word with the event name, so "PyTorch" lost every vote for "PyTorch Conference
+  2026". `isEventSegment` now treats a segment as the event's own name only when it shares two or
+  more event words, or every word of a one-word event; the AGNTCon exclusion still holds.

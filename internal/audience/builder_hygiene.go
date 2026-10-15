@@ -81,7 +81,7 @@ func DominantBrand(names []string, eventName string) string {
 		}
 		seg := strings.TrimSpace(m[1])
 		key := strings.ToLower(seg)
-		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") || SharesKeyword(seg, eventWords) {
+		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") || isEventSegment(seg, eventWords) {
 			continue
 		}
 		counts[key]++
@@ -105,6 +105,21 @@ func DominantBrand(names []string, eventName string) string {
 		return ""
 	}
 	return display[ranked[0].k]
+}
+
+// isEventSegment reports whether a brand-slot segment is the event's own name
+// rather than a brand. It is when it shares two or more of the event's words
+// ("AGNTCon + MCPCon Japan"), or every word of a one-word event. A brand that
+// merely appears in the title ("PyTorch" in "PyTorch Conference") shares one
+// word of several and is still a brand.
+func isEventSegment(seg string, eventWords map[string]struct{}) bool {
+	shared := 0
+	for w := range EventKeywords(seg) {
+		if _, ok := eventWords[w]; ok {
+			shared++
+		}
+	}
+	return shared >= 2 || (shared > 0 && shared == len(eventWords))
 }
 
 // audienceWords mark a list that is an audience in its own right rather than one

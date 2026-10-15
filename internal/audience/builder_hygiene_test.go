@@ -45,6 +45,14 @@ func TestDominantBrand(t *testing.T) {
 		"26Q3 - AGNTCon + MCPCon Japan - Web Visitors",
 		"26Q3 - AGNTCon + MCPCon Japan - Speakers",
 	}, "AGNTCon + MCPCon Japan"), "the event's own name in the brand slot is not its brand (seen live)")
+	assert.Equal(t, "PyTorch", DominantBrand([]string{
+		"26Q3 - PyTorch - PyTorch Conference 2026 - Registrants",
+		"26Q3 - PyTorch - PyTorch Conference 2026 - Speakers",
+	}, "PyTorch Conference 2026"), "a brand that also appears in the event title is still the brand")
+	assert.Empty(t, DominantBrand([]string{
+		"26Q3 - KubeCon - Registrants",
+		"26Q3 - KubeCon - Speakers",
+	}, "KubeCon"), "a one-word event's own name in the brand slot is not a brand")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y", "26Q3 - CNCF - X - y"}, ""), "a tie is not a brand")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y"}, ""), "one name is not agreement")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - LF Events - A - b", "26Q3 - LF Events - C - d"}, ""), "a generic segment is not a brand")
