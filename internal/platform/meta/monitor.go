@@ -412,6 +412,29 @@ func (c *Client) fetchAccountCampaignList(ctx context.Context, accountID string)
 	return nil, fmt.Errorf("list account campaigns exceeded %d pages; too many campaigns to enumerate", monitorMaxPages)
 }
 
+// rawMonitorSpend reads one campaign-level Insights `spend`: ABSENT (or an empty string) is 0 —
+// Meta omits spend for a zero-delivery campaign — while an explicit null or a non-string value
+// is unreadable, never a measured zero: a null read as 0 used to pace a campaign with a usable
+// budget at 0% and raise a false underspend (PR #316 review). A present string must pass
+// parseMonitorSpend. The error never echoes the value.
+func rawMonitorSpend(raw json.RawMessage) (float64, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return 0, nil
+	}
+	if bytes.Equal(raw, []byte("null")) {
+		return 0, errors.New("spend is an explicit null")
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, fmt.Errorf("spend is not a JSON string (%d bytes)", len(raw))
+	}
+	if s == "" {
+		return 0, nil
+	}
+	return parseMonitorSpend(s)
+}
+
 // monitorSpendRE is the only shape an Insights `spend` takes: a plain decimal string ("12.34",
 // "0"). Meta sends no sign, exponent, hex or digit separators, so none is accepted.
 var monitorSpendRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
@@ -489,10 +512,14 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 		}
 		var resp struct {
 			Data *[]struct {
-				CampaignID  string `json:"campaign_id"`
-				Impressions string `json:"impressions"`
-				Clicks      string `json:"clicks"`
-				Spend       string `json:"spend"`
+				CampaignID string `json:"campaign_id"`
+				// The metrics are raw, not string: an explicit `null` decoded into a string
+				// field reads as "" — indistinguishable from an omitted field, so an unreadable
+				// value was accepted as a measured zero (PR #316 review). rawCounter and
+				// rawMonitorSpend keep absent and null apart, as the ad-set Insights read does.
+				Impressions json.RawMessage `json:"impressions"`
+				Clicks      json.RawMessage `json:"clicks"`
+				Spend       json.RawMessage `json:"spend"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -525,16 +552,13 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 					Err:    fmt.Errorf("account insights returned a row with no campaign_id"),
 				}
 			}
-			impressions, errI := parseMetricInt(row.Impressions)
-			clicks, errC := parseMetricInt(row.Clicks)
-			// Meta omits spend entirely for a zero-delivery campaign rather than sending "0",
-			// so an empty string is a legitimate zero here, exactly like parseMetricInt treats
-			// empty impressions/clicks above — only a NON-empty unparseable value is a failure.
-			var spend float64
-			var errS error
-			if row.Spend != "" {
-				spend, errS = parseMonitorSpend(row.Spend)
-			}
+			// Meta omits a zero-valued metric entirely (spend for a zero-delivery campaign is
+			// absent rather than "0"), so an ABSENT field — or an empty string — is a
+			// legitimate zero. An explicit null, a non-string value, or a non-empty
+			// unparseable string is a failure.
+			impressions, errI := rawCounter(row.Impressions, parseMetricInt)
+			clicks, errC := rawCounter(row.Clicks, parseMetricInt)
+			spend, errS := rawMonitorSpend(row.Spend)
 			if errI != nil || errC != nil || errS != nil {
 				// Per-row parse failure: skip this row rather than fail the whole read, but
 				// never fabricate a zero — the caller sees no insights entry for this

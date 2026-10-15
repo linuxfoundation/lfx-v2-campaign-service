@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service/rules"
 )
 
 // Ad-set budget pacing and account-currency scaling for the account monitor (LFXV2-2665).
@@ -574,6 +575,94 @@ func TestListAccountCampaigns_InsightsSpendMustBeFiniteNonNegative(t *testing.T)
 	if v, err := parseMonitorSpend("12.34"); err != nil || v != 12.34 {
 		t.Errorf("parseMonitorSpend(\"12.34\") = %v, %v; want 12.34", v, err)
 	}
+}
+
+// An explicit null Insights metric is unreadable, not a measured zero (PR #316 review). Decoded
+// into a string field, `"spend": null` read as "" — the same as an omitted spend — so with the
+// ad-set fallback supplying a usable budget the campaign paced at 0% and raised a false
+// Underspending alert. Now the null marks only that campaign FetchFailed: the rules give it no
+// pacing verdict and no action item, and the clean campaign beside it is untouched. An omitted
+// (or empty) spend is still Meta's zero-delivery zero.
+func TestListAccountCampaigns_NullInsightsMetricIsFetchFailed(t *testing.T) {
+	fixedNow := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	read := func(t *testing.T, badRow string) map[string]AccountCampaignRow {
+		t.Helper()
+		srv, _ := monitorServer(t, monitorFixture{
+			campaigns: []string{monitorList(monitorCampaign("111", StatusActive, ""), monitorCampaign("222", StatusActive, ""))},
+			// 222 paces normally: 105 against 10/day over the 15 days of the window the flight
+			// ran (70%) — no pacing item of its own.
+			insights: []string{`{"data":[` + badRow + `,{"campaign_id":"222","impressions":"1000","clicks":"10","spend":"105.00"}],"paging":{}}`},
+			currency: usdAccount,
+			adSets: []string{monitorList(
+				monitorAdSetRow("9001", "111", "ACTIVE", `"daily_budget":"1000"`),
+				monitorAdSetRow("9002", "222", "ACTIVE", `"daily_budget":"1000"`),
+			)},
+		})
+		c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, AccountConfig{}, WithBaseURL(srv.URL), WithClock(func() time.Time { return fixedNow }))
+		rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
+		if err != nil {
+			t.Fatalf("ListAccountCampaigns: %v", err)
+		}
+		byID := make(map[string]AccountCampaignRow, len(rows))
+		for _, r := range rows {
+			byID[r.CampaignID] = r
+		}
+		return byID
+	}
+
+	for _, tc := range []struct{ name, row string }{
+		{"null spend", `{"campaign_id":"111","impressions":"1000","clicks":"10","spend":null}`},
+		{"null impressions", `{"campaign_id":"111","impressions":null,"clicks":"10","spend":"5"}`},
+		{"null clicks", `{"campaign_id":"111","impressions":"1000","clicks":null,"spend":"5"}`},
+		{"non-string spend", `{"campaign_id":"111","impressions":"1000","clicks":"10","spend":5}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := read(t, tc.row)
+			if r := rows["111"]; !r.FetchFailed || r.FailureClass != model.MonitorFailureDecode || r.SpendUSD != 0 {
+				t.Errorf("row 111 = %+v, want FetchFailed (decode) with no spend", r)
+			}
+			if r := rows["222"]; r.FetchFailed || r.SpendUSD != 105 || r.DailyBudget != 10 {
+				t.Errorf("row 222 = %+v, want an untouched clean row", r)
+			}
+			out, items := rules.EvaluateMetaMonitor(toMonitorMetrics(rows))
+			for _, r := range out {
+				if r.Metrics.PlatformCampaignID == "111" && !r.Metrics.PacingUnknown {
+					t.Errorf("row 111 got a pacing verdict %v%% (%s), want unknown", r.PacingPct, r.PacingLabel)
+				}
+			}
+			if len(items) != 0 {
+				t.Errorf("action items = %+v, want none (no pacing alert for the unreadable row, none for the normally paced one)", items)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, row string }{
+		{"omitted spend", `{"campaign_id":"111","impressions":"1000","clicks":"10"}`},
+		{"empty spend", `{"campaign_id":"111","impressions":"1000","clicks":"10","spend":""}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if r := read(t, tc.row)["111"]; r.FetchFailed || r.SpendUSD != 0 || r.Impressions != 1000 {
+				t.Errorf("row 111 = %+v, want a clean row with a zero spend", r)
+			}
+		})
+	}
+}
+
+// toMonitorMetrics maps platform rows to the rules' input as dispatch.ReadMetaAccountCampaigns
+// does, for the fields pacing and the action items read.
+func toMonitorMetrics(rows map[string]AccountCampaignRow) []model.AccountCampaignMetrics {
+	out := make([]model.AccountCampaignMetrics, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, model.AccountCampaignMetrics{
+			PlatformCampaignID: r.CampaignID, Name: r.Name, Status: r.Status,
+			Spend: r.SpendUSD, Impressions: r.Impressions, Clicks: r.Clicks, Ctr: r.Ctr,
+			BudgetDay: r.DailyBudget, TotalBudget: r.LifetimeBudget,
+			StartDate: r.StartDate, EndDate: r.EndDate,
+			MetricsWindowStart: r.MetricsSince, MetricsWindowEnd: r.MetricsUntil,
+			FetchFailed: r.FetchFailed, FailureClass: r.FailureClass,
+		})
+	}
+	return out
 }
 
 // Meta documents daily_budget and lifetime_budget as mutually exclusive. A campaign reporting

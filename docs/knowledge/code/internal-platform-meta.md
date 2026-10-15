@@ -548,7 +548,11 @@ values are validated BEFORE they reach the request string, but by DIFFERENT mean
 is checked against an allow-list of supported presets (`supportedMetricsWindows`), since Meta's
 insights endpoint has a fixed preset vocabulary, while the campaign id is checked against a
 numeric pattern (`numericIDRE`) — there is no enumerable set of valid ids to allow-list.
-Numeric metric fields arrive as JSON strings. `impressions` and `clicks` (integers) are
+Numeric metric fields arrive as JSON strings, but are decoded as `json.RawMessage` and read
+through `rawCounter` (shared with the ad-set Insights read): an ABSENT field is 0 (Meta omits
+zero-valued fields), while an explicit `null` or a non-string value is an error — decoded
+straight into a string field, `null` read as `""` and was reported as a measured zero (PR #316
+review). `impressions` and `clicks` (integers) are then
 parsed via `parseMetricInt`, which treats empty strings (Meta omits zero-valued optional
 fields) as zeros rather than parse errors, and rejects both unparseable and negative values.
 `spend` (decimal) is parsed separately via `strconv.ParseFloat`, then scaled to micros (cost
@@ -811,7 +815,12 @@ The window is the read's own: `fetchAccountCampaignInsights` returns the `since`
 `ListAccountCampaigns` stamps them on every row (`MetricsSince`/`MetricsUntil`, carried to
 `model.AccountCampaignMetrics.MetricsWindowStart`/`End`), and `EvaluateMetaMonitor(rows)` takes no
 clock — so a request crossing UTC midnight cannot pace against different days than its spend.
-The monitor's Insights `spend` goes through `parseMonitorSpend`, which accepts only a plain
+The monitor's Insights `impressions`, `clicks` and `spend` are decoded as `json.RawMessage`:
+an ABSENT field (or an empty string) is Meta's zero-delivery zero, but an explicit `null` or a
+non-string value marks that campaign `FetchFailed` — decoded into a string field, `null` read as
+`""`, so with the ad-set fallback supplying a budget a null spend paced at 0% and raised a false
+underspend (PR #316 review). Counters go through `rawCounter`; spend through `rawMonitorSpend`,
+then `parseMonitorSpend`, which accepts only a plain
 decimal string (`^[0-9]+(\.[0-9]+)?$` — what Meta sends) that parses to a finite value;
 `strconv.ParseFloat` alone admits `NaN`, `Inf`, negatives, exponents (`1e2`), hex floats
 (`0x1p+2`) and underscores. Anything else is a per-row parse failure and the row is `FetchFailed`,
