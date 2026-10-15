@@ -45,6 +45,9 @@ const leaseReleaseDeadline = 5 * time.Second
 func waitForLeaseRelease(ctx context.Context, t *testing.T, pool *pgxpool.Pool, accountID string, pid int32) {
 	t.Helper()
 	deadline := time.Now().Add(leaseReleaseDeadline)
+	// Bound each read too, so a stalled query fails at the deadline rather than at go test's timeout.
+	ctx, cancel := context.WithDeadline(ctx, deadline.Add(time.Second))
+	defer cancel()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {
