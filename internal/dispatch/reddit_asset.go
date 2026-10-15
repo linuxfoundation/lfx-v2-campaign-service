@@ -78,7 +78,7 @@ func (d *RedditDispatcher) checkRedditAssetChoice(cfg redditConfig) (string, err
 	}
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("%w: redditConfig: imageAssetId %s is not a valid asset id", domain.ErrCreateConfigInvalid, safeAssetIDForError(raw))
+		return "", fmt.Errorf("%w: redditConfig: imageAssetId %s is not a valid asset id", domain.ErrCreateConfigInvalid, domain.CallerValue(raw))
 	}
 	return parsed.String(), nil
 }
@@ -105,17 +105,17 @@ func (d *RedditDispatcher) PreflightCreate(_ context.Context, _ string, _ model.
 // failure is pre-create: the caller wraps it in notCreated so the claim is released.
 func (d *RedditDispatcher) checkRedditAsset(ctx context.Context, brief *model.CampaignBrief, assetID string) error {
 	if d.assets == nil {
-		return fmt.Errorf("reddit config references creative asset %s but the creative-asset store is not configured", assetID)
+		return domain.PreflightRefusalf("reddit config references creative asset %s but the creative-asset store is not configured", assetID)
 	}
 	size, err := d.assets.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return fmt.Errorf("reddit config references creative asset %s, which does not exist for this brief", assetID)
+			return domain.PreflightRefusalf("reddit config references creative asset %s, which does not exist for this brief", assetID)
 		}
 		return fmt.Errorf("reddit: size creative asset %s: %w", assetID, err)
 	}
 	if size <= 0 {
-		return fmt.Errorf("reddit config references creative asset %s, which has no stored image bytes", assetID)
+		return domain.PreflightRefusalf("reddit config references creative asset %s, which has no stored image bytes", assetID)
 	}
 	if err := assetsign.ValidateIDs(brief.ProjectID, brief.ID, assetID); err != nil {
 		return fmt.Errorf("reddit: creative asset %s cannot be served at a signed URL: %w", assetID, err)

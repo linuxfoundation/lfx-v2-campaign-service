@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -251,8 +253,8 @@ func validateGeoTargets(geoTargets []string) ([]string, error) {
 			return nil, fmt.Errorf("microsoft-ads: geo target must not be empty")
 		}
 		if _, ok := isoCountryNames[code]; !ok {
-			return nil, fmt.Errorf("microsoft-ads: geo target %q is not a Microsoft-supported ISO 3166-1 alpha-2 country code (e.g. US, GB, DE)",
-				truncate(code, maxErrorBodyChars))
+			return nil, fmt.Errorf("microsoft-ads: geo target %s is not a Microsoft-supported ISO 3166-1 alpha-2 country code (e.g. US, GB, DE)",
+				domain.CallerValue(code))
 		}
 		if _, dup := seen[code]; dup {
 			continue

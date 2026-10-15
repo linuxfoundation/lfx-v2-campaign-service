@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ErrCredentialsExpired marks a LinkedIn connection whose access token is no
@@ -390,6 +392,9 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, requestTimeout)
 			token, err := c.fetchToken(fetchCtx)
 			cancel()
+			// Tagged so the async create job can report "the token refresh failed" without
+			// rendering this error's text (issue #208). Error() and errors.Is are unchanged.
+			err = domain.MarkTokenRefreshFailure(err)
 
 			c.tokenMu.Lock()
 			inflight.token = token
