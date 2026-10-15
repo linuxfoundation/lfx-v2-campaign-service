@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"regexp"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"github.com/exaring/otelpgx"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	// pgxv5 is aliased because golang-migrate's driver above already occupies the
 	// identifier `pgx` (see the pgx.Postgres reference at the foot of this file).
@@ -120,6 +122,10 @@ func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error)
 // IsPermanentMigrationErr) and refuses to proceed until an operator forces the
 // version, since partial migration SQL is not assumed idempotent.
 //
+// A CLEAN schema recorded at a version newer than any this image embeds (an image-only
+// rollback after a later release migrated forward) is not migrated and its version is not
+// rewritten; startup goes straight to the index checks below. See schemaIsNewerThanImage.
+//
 // On success it verifies the schema carries no INVALID index (checkNoInvalidIndexes) —
 // the one failure a migration can leave behind that a re-run reports as success.
 func Migrate(dsn string) error {
@@ -141,6 +147,24 @@ func Migrate(dsn string) error {
 	}
 	defer func() { _, _ = m.Close() }()
 
+	// A CLEAN schema recorded at a version this image does not embed is the image-only
+	// rollback case: a newer release migrated forward, then the image was reverted and the
+	// schema was not. Up() cannot run there — golang-migrate's readUp checks that the
+	// recorded version exists in THIS binary's source and fails with "no migration found
+	// for version N" — so it is skipped, the recorded version is left exactly as it is, and
+	// startup falls through to the index validation below. See schemaIsNewerThanImage for
+	// the compatibility assumption this rests on. Every other state takes Up() unchanged,
+	// a DIRTY newer schema included: Up() re-reads the version under its lock and refuses
+	// it with ErrDirty exactly as before.
+	newer, err := schemaIsNewerThanImage(m, src)
+	if err != nil {
+		return err
+	}
+	if newer {
+		// dsn, NOT migrateURL — see the note at the foot of this function.
+		return checkNoInvalidIndexes(dsn)
+	}
+
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		// golang-migrate marks the schema version dirty (SetVersion(target, true))
 		// BEFORE running a migration's SQL, then returns the raw SQL/driver error if
@@ -161,6 +185,62 @@ func Migrate(dsn string) error {
 	// dsn, NOT migrateURL: pgxURL rewrites the scheme to golang-migrate's INTERNAL
 	// pgx5://, which pgx itself cannot parse.
 	return checkNoInvalidIndexes(dsn)
+}
+
+// schemaIsNewerThanImage reports whether the database records a CLEAN migration version
+// above the highest one embedded in this image, logging the fact when it does.
+//
+// The highest embedded version is read from the migration source itself rather than kept as
+// a constant, so it cannot drift from the files when the next migration is added.
+//
+// The assumption it rests on is expand/contract, one release apart
+// (internal/infrastructure/postgres/migrations/README.md): a release's schema changes must
+// stay compatible with the PREVIOUS release's binary, because that binary is both what a
+// rolling deploy still runs and what an image-only rollback returns to. Nothing in the
+// migration chain marks a version as compatible or not, so this does not — and cannot —
+// verify that the newer migrations kept that rule; it trusts it. What it does keep is the
+// part that IS checkable: the newer schema must be clean, and checkNoInvalidIndexes still
+// runs, so a newer release that dropped an index this image REQUIRES still refuses boot with
+// ErrMissingRequiredIndex.
+//
+// Errors reading the recorded version are not reported here: the caller falls through to
+// Up(), which reads it again under its lock and reports them as it always has. Only a
+// failure to enumerate this image's own migrations is returned.
+func schemaIsNewerThanImage(m *migrate.Migrate, src source.Driver) (bool, error) {
+	recorded, dirty, err := m.Version()
+	if err != nil || dirty {
+		return false, nil
+	}
+	latest, err := highestEmbeddedVersion(src)
+	if err != nil {
+		return false, fmt.Errorf("read the embedded migration versions: %w", err)
+	}
+	if recorded <= latest {
+		return false, nil
+	}
+	slog.Warn("database schema is newer than this image; skipping migrations and validating "+
+		"indexes only, on the expand/contract assumption that a release stays compatible with "+
+		"the next release's schema",
+		"recorded_version", recorded, "image_latest_version", latest)
+	return true, nil
+}
+
+// highestEmbeddedVersion walks the migration source to its last version.
+func highestEmbeddedVersion(src source.Driver) (uint, error) {
+	v, err := src.First()
+	if err != nil {
+		return 0, err
+	}
+	for {
+		next, err := src.Next(v)
+		if errors.Is(err, fs.ErrNotExist) {
+			return v, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		v = next
+	}
 }
 
 // invalidIndexCheckTimeout bounds the post-migration catalog read. It is a single
@@ -542,6 +622,19 @@ func RequiredIndexNames() []string {
 		out = append(out, r.name)
 	}
 	return out
+}
+
+// LatestMigrationVersion returns the highest migration version embedded in this image — the
+// boundary above which Migrate treats a clean recorded version as a newer release's schema.
+// Exported so the dbtest rollback test can record a version just past it rather than a
+// hard-coded number that the next migration would silently turn into an embedded one.
+func LatestMigrationVersion() (uint, error) {
+	src, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		return 0, fmt.Errorf("open migration source: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	return highestEmbeddedVersion(src)
 }
 
 // RequiredIndexRebuildSQL returns the statement that recreates the named required index,

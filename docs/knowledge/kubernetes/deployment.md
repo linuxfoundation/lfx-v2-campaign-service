@@ -237,5 +237,12 @@ The four-column `uq_campaigns_brief_platform_variant_slot_version_live` stays re
 and its absence still fails startup with `ErrMissingRequiredIndex`. Pinned live by
 `TestMigrateRefusesADroppedDispatchIndex`. Rolling back `000047` itself (its down re-creates the
 index) fails once any slot holds two live campaigns; resolve the extra versions by hand first.
+The lock release reaches that check at all only because `postgres.Migrate` starts on a CLEAN
+schema recorded at a version newer than the image (here `000047`) without migrating it or
+rewriting its version — golang-migrate's `Up()` would otherwise refuse the unknown version first —
+while still running the invalid- and required-index checks; a DIRTY newer schema is still refused.
+That leans on expand/contract — every release must stay compatible with the next release's schema
+— since nothing marks a newer migration as compatible. Pinned live by
+`TestMigrateStartsOnACleanSchemaNewerThanThisImage`.
 
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

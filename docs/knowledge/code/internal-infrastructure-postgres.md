@@ -191,6 +191,23 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   (scratch database: after `Migrate` the legacy index is absent and a re-run boots; drop the
   slot-version index and `Migrate` is `ErrMissingRequiredIndex` naming only it, with its rebuild
   statement).
+  Rolling the image back past `000047` still boots: the release before it recorded no version
+  above `000046`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
+  not contain ("no migration found for version N") before any index check runs. So `Migrate` first
+  reads the recorded version (`schemaIsNewerThanImage`, from #260): when it is CLEAN and above the
+  highest embedded version (read from the migration source, exported as `LatestMigrationVersion`,
+  never hard-coded) it skips `Up()`, leaves the recorded version untouched, logs a warning, and
+  runs `checkNoInvalidIndexes` as usual — so an invalid index, an impostor, or a missing REQUIRED
+  index on the newer schema still refuses boot. A DIRTY newer version, and every other state,
+  takes `Up()` exactly as before (a dirty one is still `migrate.ErrDirty`). The assumption is
+  expand/contract, one release apart (`migrations/README.md`): a release's schema stays compatible
+  with the previous release's binary. Nothing in the chain marks a version as compatible, so the
+  tolerance is not bounded to known versions — it trusts that discipline, and the required-index
+  check is the part of it that is verified. This release keeps the tolerance too, as the rollback
+  target for whatever ships after it. Pinned live by
+  `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (version set to latest+1 clean → boot
+  succeeds and the version is unchanged; dirty → `ErrDirty`; slot-version index dropped →
+  `ErrMissingRequiredIndex`).
 
   **Per-slot advisory lock, staged one release BEFORE the index drop.** With the three-column
   index gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
