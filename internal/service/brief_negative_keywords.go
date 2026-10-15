@@ -134,7 +134,7 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 			append(logFields, "error", safeErrSummary(aerr))...)
 		return &briefs.BadRequestError{
 			Code: "400",
-			Message: "the negative keywords are not valid: send 1 to 60 (1 to 20 on X), each at most 100 characters of letters, digits, spaces and & ' - . with no two punctuation characters together, each keyword at most once, " +
+			Message: "the negative keywords are not valid: send 1 to 60 (1 to 20 on X), each at most 100 characters (80 on Google Ads) of letters, digits, spaces and & ' - . with no two punctuation characters together, each keyword at most once, " +
 				"with a match type the platform offers (Google Ads: Broad, Phrase or Exact; Microsoft Advertising: Exact or Phrase; X: Broad, Phrase or Exact; Reddit: Broad) — and on Reddit the revision get-keyword-targeting returned, which the other platforms refuse",
 		}
 	case errors.Is(aerr, domain.ErrKeywordTargetingChanged):

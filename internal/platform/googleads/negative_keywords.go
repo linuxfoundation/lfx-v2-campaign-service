@@ -82,8 +82,13 @@ const campaignNegativeQueryFields = "campaign.id, campaign_criterion.criterion_i
 //
 // The second case folds "no criteria" together with "no such campaign" because this query cannot
 // tell them apart — a campaign with no negatives and a campaign id that matches nothing both
-// return zero rows. The caller must NOT read an empty result as proof the campaign exists;
-// establishing that is GetCampaignSettings' job, and the dispatcher does it separately.
+// return zero rows. The caller must NOT read an empty result as proof the campaign exists, and
+// NO CALLER DOES establish existence on this path: the add-negative-keywords lever runs no
+// GetCampaignSettings read, as no platform's negative-keyword lever does — unlike the bid and
+// budget levers, which do and answer 404. So a campaign id recorded in the row but absent
+// upstream withholds nothing here and surfaces as a DEFINITE mutate failure, not as
+// ErrPlatformCampaignAbsent. That is the sibling-consistent answer, and it costs the common path
+// no extra round trip; it is written down here because the opposite is easy to assume.
 func (c *Client) ListCampaignNegativeKeywords(ctx context.Context, campaignID string) ([]CampaignNegativeKeyword, error) {
 	if err := c.validateAccountIDs(); err != nil {
 		return nil, err
@@ -134,6 +139,18 @@ func (c *Client) ListCampaignNegativeKeywords(ctx context.Context, campaignID st
 		// new one read as present (silently dropped).
 		if !utf8.ValidString(row.CampaignCriterion.Keyword.Text) {
 			return nil, fmt.Errorf("google-ads: campaign %s negative keyword row at index %d carries a keyword text that is not valid UTF-8; refusing to trust this response", campaignID, i)
+		}
+		// The match type is HALF the comparison key, so it is checked like the text rather than
+		// passed through. An unrecognised one (UNSPECIFIED, UNKNOWN, a new enum member) cannot
+		// match any key the caller builds, so the exclusion it names would read as ABSENT, be
+		// sent again, and fail the entire atomic batch — the exact outcome this read exists to
+		// prevent, and one that would present as a platform rejection of keywords that were
+		// perfectly acceptable. Refusing the response says what actually happened.
+		switch row.CampaignCriterion.Keyword.MatchType {
+		case MatchTypeExact, MatchTypePhrase, MatchTypeBroad:
+		default:
+			return nil, fmt.Errorf("google-ads: campaign %s negative keyword row at index %d reports the match type %q, which is not one of %s, %s, %s; refusing to trust this response",
+				campaignID, i, row.CampaignCriterion.Keyword.MatchType, MatchTypeExact, MatchTypePhrase, MatchTypeBroad)
 		}
 		out = append(out, CampaignNegativeKeyword{
 			CriterionID: row.CampaignCriterion.CriterionID,

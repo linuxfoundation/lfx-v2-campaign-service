@@ -120,6 +120,12 @@ func TestListCampaignNegativeKeywords_RefusesUntrustworthyRows(t *testing.T) {
 		// Invalid bytes fold unpredictably, so an existing exclusion could read as absent
 		// (sent again, failing the whole atomic batch) or a new one as present (dropped).
 		{"keyword text that is not valid UTF-8", "{\"results\":[{\"campaign\":{\"id\":\"777\"},\"campaignCriterion\":{\"criterionId\":\"11\",\"negative\":true,\"type\":\"KEYWORD\",\"keyword\":{\"text\":\"fr\xed\xa0\x80ee\",\"matchType\":\"BROAD\"}}}]}"},
+		// The match type is half the comparison key, so an unrecognised or absent one cannot
+		// match any key the caller builds: the exclusion would read as ABSENT, be sent again,
+		// and fail the entire atomic batch — presenting as a platform rejection of keywords
+		// that were perfectly acceptable.
+		{"an unrecognised match type", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"UNKNOWN"}}}]}`},
+		{"no match type at all", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free"}}}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := negativeKeywordServers(t, func(string) string { return tc.body })
@@ -234,7 +240,7 @@ func TestAddCampaignNegativeKeywords_RevalidatesAtTheBoundary(t *testing.T) {
 		negatives []Keyword
 	}{
 		{"empty text", []Keyword{{Text: "   ", MatchType: MatchTypeBroad}}},
-		{"text past the rune limit", []Keyword{{Text: strings.Repeat("k", maxKeywordTextRunes+1), MatchType: MatchTypeBroad}}},
+		{"text past the rune limit", []Keyword{{Text: strings.Repeat("k", MaxKeywordTextRunes+1), MatchType: MatchTypeBroad}}},
 		{"unsupported match type", []Keyword{{Text: "free", MatchType: "NEAR"}}},
 		{"more than the batch maximum", manyNegatives(maxNegativeKeywords + 1)},
 	} {

@@ -1126,7 +1126,7 @@ func negativeKeywordOutcomeEnum() {
 // most once per request. MaxLength is Microsoft's: "The text can contain a maximum of 100
 // characters." Goa counts runes, as Microsoft counts characters.
 var NegativeKeywordInput = Type("negative-keyword-input", func() {
-	Attribute("text", String, "The negative keyword text. Letters, digits, spaces and & ' - . only; at most 100 characters.", func() {
+	Attribute("text", String, "The negative keyword text. Letters, digits, spaces and & ' - . only; at most 100 characters — at most 80 on Google Ads, its own keyword text limit.", func() {
 		MinLength(1)
 		MaxLength(100)
 		Pattern(`^[\p{L}\p{M}\p{N} &'.\-]+$`)
@@ -2357,7 +2357,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"one, so they share its outcome (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch with " +
 			"any ALREADY_PRESENT item always answers per item; X sends one POST per keyword, at most 20 per " +
 			"request (X's one-write-per-second account pacing), each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. " +
-			"**400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters or outside " +
+			"**400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters — over 80 on Google Ads — or outside " +
 			"the allowed characters, consecutive punctuation, a match type the platform does not offer, the same " +
 			"keyword twice, a missing or misplaced revision), an unsupported platform, or Reddit writes switched off. " +
 			"A malformed batch is 400 even when the campaign is also unprovisioned. " +

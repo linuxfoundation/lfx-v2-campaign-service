@@ -23,9 +23,18 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	// maxKeywordTextRunes is Google Ads v23's KeywordInfo.text limit (System
+	// MaxKeywordTextRunes is Google Ads v23's KeywordInfo.text limit (System
 	// Limits table: 80 characters).
-	maxKeywordTextRunes = 80
+	//
+	// EXPORTED because the dispatcher must apply it BEFORE calling this package. The
+	// shared negative-keyword batch validator admits 100 runes — Microsoft's
+	// NegativeKeyword.Text limit, which is the endpoint's published one — so an 81..100
+	// rune text clears every dispatcher guard and is refused here instead, with a plain
+	// error that carries neither Unconfirmed() nor NotAttempted(). The dispatcher would
+	// then classify it as a platform REJECTION of every keyword in the batch: false twice
+	// over, since Google was never contacted and the fault is the caller's to fix. The
+	// endpoint's text limit is therefore per-platform, and this is the Google half of it.
+	MaxKeywordTextRunes = 80
 	// maxKeywords/maxAudienceSegments bound caller input to keep one
 	// adGroupCriteria:mutate call (and its log/error output) a sane size. Not a
 	// Google Ads platform limit — a sanity cap on this broker's input; Google's own
@@ -141,8 +150,8 @@ func validateKeywordList(noun string, keywords []Keyword, max int) ([]Keyword, e
 		if text == "" {
 			return nil, fmt.Errorf("google-ads: %s text must not be empty", noun)
 		}
-		if utf8.RuneCountInString(text) > maxKeywordTextRunes {
-			return nil, fmt.Errorf("google-ads: %s %q exceeds the %d-character limit", noun, text, maxKeywordTextRunes)
+		if utf8.RuneCountInString(text) > MaxKeywordTextRunes {
+			return nil, fmt.Errorf("google-ads: %s %q exceeds the %d-character limit", noun, text, MaxKeywordTextRunes)
 		}
 		matchType := strings.ToUpper(strings.TrimSpace(kw.MatchType))
 		switch matchType {

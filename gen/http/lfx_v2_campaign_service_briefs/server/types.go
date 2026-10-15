@@ -4239,7 +4239,7 @@ type KeywordActionInputRequestBody struct {
 // types.
 type NegativeKeywordInputRequestBody struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
-	// 100 characters.
+	// 100 characters — at most 80 on Google Ads, its own keyword text limit.
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
 	// How the negative keyword is compared with a search query. Google Ads: Broad,
 	// Phrase or Exact. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or

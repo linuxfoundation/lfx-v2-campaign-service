@@ -409,6 +409,16 @@ func TestGoogleAds_AddNegativeKeywords_RefusesBeforeTouchingThePlatform(t *testi
 			want:     domain.ErrNegativeKeywordInvalid,
 		},
 		{
+			// 81 runes: inside the endpoint's published 100 (Microsoft's NegativeKeyword.Text
+			// limit, which the shared batch validator applies) and outside Google's own 80. The
+			// client refuses it too, but with a plain error that the classification arm would
+			// report as a platform REJECTION of every keyword in the batch — a claim that Google
+			// refused them, when Google was never contacted. It belongs here, as a 400.
+			name: "a text inside the shared limit but past Google's", campaign: negCampaign,
+			keywords: []model.NegativeKeyword{{Text: strings.Repeat("k", googleads.MaxKeywordTextRunes+1), MatchType: "Exact"}},
+			want:     domain.ErrNegativeKeywordInvalid,
+		},
+		{
 			name: "an unprovisioned campaign", keywords: good,
 			campaign: func() *model.Campaign {
 				c := negCampaign()

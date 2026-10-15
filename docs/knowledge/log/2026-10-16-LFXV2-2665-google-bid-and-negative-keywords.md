@@ -75,6 +75,24 @@ now names all three refusal kinds rather than only the adopted-campaign one, and
 `docs/api-catalog.md` dropped the claim that the several-ad-groups 409 names the ad groups to the
 caller — the ids go to the service log.
 
+**Review round.** Three findings landed. **The endpoint's negative-keyword text limit is now
+per-platform:** `validateNegativeKeywordBatch` admits 100 runes (Microsoft's
+`NegativeKeyword.Text` limit, the published one), while Google Ads' `KeywordInfo.text` limit is
+**80**. An 81..100 rune text therefore cleared every dispatcher guard and was refused inside
+`AddCampaignNegativeKeywords` with a plain error — neither `Unconfirmed()` nor `NotAttempted()` —
+which the classification arm reported as a platform `REJECTED` for *every* keyword in the batch:
+a claim that Google refused them, when Google was never contacted, for a fault the caller can
+fix. The dispatcher now applies `googleads.MaxKeywordTextRunes` (exported for exactly this) ahead
+of the client and answers 400, and `design/brief.go`, the service's 400 sentence and
+`docs/api-catalog.md` all state the split. Second, `ListCampaignNegativeKeywords` now checks each
+row's **match type** against the three known values, like the text: the match type is half the
+comparison key, so an unrecognised one cannot match, the exclusion would read as absent, be sent
+again, and fail the whole atomic batch. Third, the pre-read's contract comment claimed the
+dispatcher establishes campaign existence separately; it does not, and no platform's
+negative-keyword lever does — the comment now says so, and that an absent campaign surfaces here
+as a definite mutate failure rather than `ErrPlatformCampaignAbsent` (which the bid and budget
+levers do answer).
+
 The allowlist's 400 sentence is now the named constant `negativeKeywordUnsupportedMessage`, so
 the switch and the sentence can be checked against each other — adding a platform to one and not
 the other tells every other platform's caller that the new one is unsupported, which is exactly

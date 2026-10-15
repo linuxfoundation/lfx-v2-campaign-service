@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -45,9 +46,9 @@ func googleAdsNegativeKey(matchType, text string) string {
 // exclusion list through.
 //
 // Guard order — every refusal before the mutate changes nothing: the batch (1..60, the shared
-// text rules, match type Broad / Phrase / Exact → BROAD / PHRASE / EXACT, no duplicates, no
-// revision); provisioning; provenance FAILS CLOSED; the account; then the campaign's existing
-// negatives are read.
+// text rules NARROWED to Google's own 80-rune text limit, match type Broad / Phrase / Exact →
+// BROAD / PHRASE / EXACT, no duplicates, no revision); provisioning; provenance FAILS CLOSED;
+// the account; then the campaign's existing negatives are read.
 //
 // THE PRE-READ IS NOT AN OPTIMISATION, which is the one structural difference from the Microsoft
 // path. campaignCriteria:mutate is ATOMIC here — partialFailure is never set, in this client or
@@ -66,6 +67,22 @@ func (d *GoogleAdsDispatcher) AddNegativeKeywords(ctx context.Context, projectID
 	validated, err := validateNegativeKeywordBatch("google", keywords, maxNegativeKeywordsPerRequest, negativeMatchBroad, negativeMatchPhrase, negativeMatchExact)
 	if err != nil {
 		return nil, err
+	}
+	// GOOGLE'S TEXT LIMIT IS SHORTER THAN THE SHARED ONE, and it has to be applied HERE.
+	// validateNegativeKeywordBatch admits 100 runes (Microsoft's NegativeKeyword.Text limit,
+	// which is the endpoint's published one); Google Ads' KeywordInfo.text limit is 80. Without
+	// this check an 81..100 rune text clears every guard above and is refused inside
+	// AddCampaignNegativeKeywords, which returns a plain error — neither Unconfirmed() nor
+	// NotAttempted() — so the classification arm below would report every keyword in the batch
+	// as REJECTED: a claim that Google refused them, when Google was never contacted. It is a
+	// permanent, caller-fixable request fault, so it is ErrNegativeKeywordInvalid's 400, and it
+	// refuses the request rather than dropping the one keyword, because the client refuses the
+	// whole list anyway and a silently shortened exclusion list is worse than a loud refusal.
+	for i, k := range validated {
+		if n := utf8.RuneCountInString(k.Text); n > googleads.MaxKeywordTextRunes {
+			return nil, fmt.Errorf("%w: google: negative keyword %d is %d characters, exceeding Google Ads' %d-character keyword limit",
+				domain.ErrNegativeKeywordInvalid, i, n, googleads.MaxKeywordTextRunes)
+		}
 	}
 	if revision != "" {
 		return nil, fmt.Errorf("%w: revision applies to reddit only", domain.ErrNegativeKeywordInvalid)
