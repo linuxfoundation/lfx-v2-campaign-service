@@ -794,6 +794,13 @@ var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
 	Required("access_token")
 })
 
+// keepOnUpdate is appended to the description of every OPTIONAL provider-config attribute
+// whose omission on PUT is refused (issue #300), so the rule reaches the generated OpenAPI
+// rather than living only in Go comments. PUT stays a full replace for every field a caller
+// sends; what is refused is clearing a stored value by leaving the key out. Google Ads'
+// login_customer_id does not carry it: that provider has not opted in to the guard.
+const keepOnUpdate = ` On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.`
+
 var LinkedInAdsConnectionConfig = Type("linkedin-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
 	// Both ids are interpolated into LinkedIn request paths / URNs
@@ -871,7 +878,7 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 		// Bound the stored size (see account_id); real Facebook page ids are far shorter.
 		MaxLength(64)
 	})
-	Attribute("app_id", String, "Meta app ID")
+	Attribute("app_id", String, "Meta app ID."+keepOnUpdate)
 	// page_id is required at connection time: the Meta dispatcher needs it to attach
 	// the promoted-object page, so an active connection without it would always fail
 	// dispatch. Requiring it here surfaces the error as a 4xx at connection creation
@@ -926,17 +933,16 @@ var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
 	// unreadable. What it would break is the caller — every existing integration that PUTs a
 	// Reddit connection without this newly-added field would start getting a 400.
 	//
-	// The cost of leaving it optional is real and must be stated rather than discovered: PUT
-	// is a FULL REPLACE on every provider in this API, so omitting this field CLEARS a
-	// configured pixel, and the next Reddit dispatch is then refused. That is the same
-	// semantic account_id and label have always had here — consistency across seven providers
-	// is worth more than special-casing one field — but it is sharper for a field a caller may
-	// not know exists yet. Send it on every update, or read the current value first.
+	// PUT is a FULL REPLACE on every provider in this API, and leaving this field optional
+	// used to mean that omitting it CLEARED a configured pixel, after which every Reddit
+	// dispatch was refused. Issue #300 keeps the full replace for every field a caller sends
+	// but refuses the omission when a pixel is stored (keepOnUpdate, enforced by
+	// updateConnGuarded): clearing the pixel now takes an explicit "".
 	// The example is deliberately DIFFERENT from account_id's above. On the LF account the
 	// two happen to share a value, and copying it here published a schema in which the
 	// advertiser id is offered as the pixel id — a UI developer wiring the connection form
 	// reads the generated OpenAPI, not this account's coincidence.
-	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID (Reddit Ads → Events Manager)", func() {
+	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID (Reddit Ads → Events Manager)."+keepOnUpdate, func() {
 		Example("a2_1b3c5d7e9f")
 	})
 	Required("account_id")
@@ -997,9 +1003,14 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 	// Numeric, unlike account_id and funding_instrument_id: X user ids are snowflake ids
 	// and the client reads them from id_str. Pattern-checking here rejects a malformed one
 	// as a 4xx at connection time rather than as a pre-create dispatch refusal.
-	Attribute("as_user_id", String, "X/Twitter user id authorized to author this connection's tweets (numeric)", func() {
+	//
+	// The Pattern admits "" (issue #300): an omitted as_user_id on PUT is refused while one is
+	// stored, so an explicit "" is the only way to clear a declared identity, and a pattern
+	// that refused "" would leave no way to clear it at all. "" stores the same value an
+	// omitted key on create always stored: "this connection declares no identity".
+	Attribute("as_user_id", String, "X/Twitter user id authorized to author this connection's tweets (numeric, or \"\" for none)."+keepOnUpdate, func() {
 		Example("1234567890123456789")
-		Pattern(`^[0-9]+$`)
+		Pattern(`^([0-9]+)?$`)
 		MaxLength(32)
 	})
 	// An explicit JSON `null` decodes identically to an ABSENT key (both yield a nil *string,
@@ -1009,9 +1020,10 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 	// exactly that) — there is no separate "not chosen yet" intent for null to collide with, and
 	// a create has no prior selection to lose. Google Ads and Meta have behaved this way since
 	// LFXV2-3061/3062 and X now matches them rather than inventing a third convention. Note
-	// what is NOT relaxed: an explicit "" is a PRESENT value, so it still fails the Pattern
-	// below — only the missing/null key is accepted, which is why the apivalidation table keeps
-	// its empty-string case as a rejection.
+	// what is NOT relaxed for account_id: an explicit "" is a PRESENT value, so it still fails
+	// account_id's Pattern below — only the missing/null key is accepted, which is why the
+	// apivalidation table keeps "empty account_id" as a rejection. (as_user_id, above, is the
+	// exception: its Pattern admits "" as the deliberate clear, issue #300.)
 	//
 	// account_id is deliberately NOT required (LFXV2-3319), making X credentials-first:
 	// a connection may be created with credentials only and pointed at an account after
@@ -1099,7 +1111,7 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	// customer is configured, and discoveryCustomerIDs then walks every customer the
 	// credential reaches. ValidateCustomerID accepts it for the same reason, so the two
 	// layers agree on the empty case rather than one tolerating it.
-	Attribute("customer_id", String, "Microsoft Advertising customer ID (a positive integer, digits only). Optional: omit it to let the credential's own customers be discovered.", func() {
+	Attribute("customer_id", String, "Microsoft Advertising customer ID (a positive integer, digits only). Optional: leave it empty to let the credential's own customers be discovered."+keepOnUpdate, func() {
 		Example("9999999")
 		Pattern(`^([1-9][0-9]{0,17})?$`)
 		MaxLength(18)
@@ -1133,10 +1145,10 @@ var HubSpotConnectionConfig = Type("hubspot-connection-config", func() {
 	// value to reach, so a bound here would assert a shape this service has no way to know.
 	// Give it one only alongside a caller that puts it in a request.
 	Attribute("account_id", String, "HubSpot list/audience ID")
-	Attribute("portal_id", String, "HubSpot portal/account ID")
-	Attribute("sender_email", String, "Default sender address")
-	Attribute("sender_name", String, "Default sender name")
-	Attribute("brand_kit", String, "Per-project brand kit selector")
+	Attribute("portal_id", String, "HubSpot portal/account ID."+keepOnUpdate)
+	Attribute("sender_email", String, "Default sender address."+keepOnUpdate)
+	Attribute("sender_name", String, "Default sender name."+keepOnUpdate)
+	Attribute("brand_kit", String, "Per-project brand kit selector."+keepOnUpdate)
 	Required("account_id")
 })
 
