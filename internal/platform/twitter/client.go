@@ -238,6 +238,8 @@ type Client struct {
 	uploadBaseURL  string
 	mediaChunkSize int
 	mediaPollCap   time.Duration
+	// mediaLocks serializes ensureImageMedia per (account, image); see pacer.go.
+	mediaLocks *mediaLocks
 }
 
 // Option customizes a Client at construction time.
@@ -333,6 +335,13 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 		c.pacer = c.pacers.forAccount(c.baseURL + "\x00" + c.account.AccountID)
 	} else {
 		c.pacer = &writePacer{}
+	}
+	// The Media Library find-or-upload locks follow the pacer: shared through the registry, so
+	// every client for the account serializes on them, else private (media.go).
+	if c.pacers != nil {
+		c.mediaLocks = c.pacers.forMedia()
+	} else {
+		c.mediaLocks = newMediaLocks()
 	}
 	// Enforce the no-follow redirect policy UNCONDITIONALLY on whatever client ended
 	// up on c.httpClient — INCLUDING one supplied via WithHTTPClient. Following a

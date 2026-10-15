@@ -66,6 +66,10 @@ func NewSignedAssetService(signer *assetsign.Signer, budget signedAssetBudget) *
 	return &SignedAssetService{signer: signer, budget: budget}
 }
 
+// UsesBudget reports whether the route charges exactly budget b — the container's wiring test
+// asserts the route and the asset-holding dispatchers share ONE budget instance.
+func (s *SignedAssetService) UsesBudget(b signedAssetBudget) bool { return b != nil && s.budget == b }
+
 // SetCreativeAssetRepo late-binds the store, on the fast path and on the cold-start retry.
 // Guard the concrete pointer at the call site: a typed nil would read as bound.
 func (s *SignedAssetService) SetCreativeAssetRepo(r signedAssetReader) {
