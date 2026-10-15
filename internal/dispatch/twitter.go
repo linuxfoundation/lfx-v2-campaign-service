@@ -768,8 +768,8 @@ func (d *TwitterDispatcher) ReadMetrics(ctx context.Context, projectID string, p
 // X is the strongest form of that guarantee available, and it is worth stating precisely
 // because it differs by provider: validateTwitterConnection is called by Dispatch ITSELF
 // (not only by the toggle and metrics paths), so discovery and create genuinely cannot
-// diverge. That matches Microsoft; LinkedIn's equivalent is shared by toggle and metrics
-// but NOT by Dispatch, which validates inline, and it has already drifted once in practice.
+// diverge. That matches Microsoft and LinkedIn; LinkedIn's Dispatch validated inline until
+// it joined resolveLinkedInCredentials, and drifted once in practice while it did.
 //
 // The funding instrument is NOT required. It is a create-only field that
 // validateTwitterConnection already declines to check, and an account-less connection has

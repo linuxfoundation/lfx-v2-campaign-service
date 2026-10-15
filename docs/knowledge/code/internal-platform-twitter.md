@@ -1386,8 +1386,11 @@ endpoints on `WithMediaUploadBaseURL` (default `https://api.x.com`) and adds it 
 The key goes out as `media_keys` and is recorded in `CampaignResult.MediaKey`. `doBodyRequest`
 is the one body-carrying, never-retrying sender. It classifies outcomes the way `doRequestAbs`
 does. `ensureImageMedia` holds a per-(account, image) `mediaLocks` entry from the
-`AccountPacers` registry (pacer.go) across lookup, upload and library add. `decodeMediaState`
-rejects a missing or null `data` body, and only an explicit `succeeded` state ends processing.
+`AccountPacers` registry (pacer.go) across lookup, upload and library add; a client shares
+the registry's locks under the pacer's own gate (a registry AND an account id). `decodeMediaState`
+runs `identityjson.Check` on the raw body, so a duplicated `data` key cannot resolve last-wins
+into a ready state, and it rejects a missing or null `data`. A STATUS answer that drops
+`processing_info` is refused, and only an explicit `succeeded` state ends processing.
 See [X Ads Creative Image Assets](../architecture/x-creative-assets.md).
 
 ## Create-time bidding (`CampaignInput.MaxBid`, LFXV2-2665)

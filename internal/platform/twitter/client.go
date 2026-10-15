@@ -339,9 +339,10 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 	} else {
 		c.pacer = &writePacer{}
 	}
-	// The Media Library find-or-upload locks follow the pacer: shared through the registry, so
-	// every client for the account serializes on them, else private (media.go).
-	if c.pacers != nil {
+	// The Media Library find-or-upload locks follow the pacer, under the same gate: shared
+	// through the registry when the client has one AND an account id, so every client for the
+	// account serializes on them, else private (media.go).
+	if c.pacers != nil && c.account.AccountID != "" {
 		c.mediaLocks = c.pacers.forMedia()
 	} else {
 		c.mediaLocks = newMediaLocks()

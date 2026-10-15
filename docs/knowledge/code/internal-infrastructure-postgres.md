@@ -2016,10 +2016,17 @@ in-flight `Own`'s database step), and closes the session if it gets the slot wit
 deadline (it runs inside the container's shared shutdown budget, `statsLeaseCloseTimeout`; only a
 context with no deadline gets `lockReleaseTimeout`). If it does not, it returns anyway, and the
 `Own` still holding the slot closes the session on its way out — only the slot holder touches the
-session, so it is closed exactly once. The request-path drop stays detached. `StatsJobLeaseLockKeys`
+session, so it is closed exactly once. **The release is prompt but not synchronous with
+`Close`:** pgx sends `Terminate` and closes the socket without waiting for the server, and
+Postgres drops the session's advisory locks only as that backend exits, a few milliseconds later.
+In that window the lock is still held, so another pod's try-lock answers `ErrStatsJobLeaseNotHeld`
+— the safe direction; the single-owner guarantee is unaffected, because the closed lease refuses
+every `Own` from the moment `Close` marks it closed. The request-path drop stays detached. `StatsJobLeaseLockKeys`
 exposes the keys as they appear in `pg_locks` (`objsubid` 2). Live tests:
 `dbtest/stats_job_lease_live_test.go` (two leases cannot both own one account; Close hands it
-over; a terminated owner session loses every lease, another pod takes one and the former owner
+over — the test polls `pg_locks`, bounded at 5s, until no backend holds the lock on two
+consecutive reads, rather than reading `pg_locks` once right after `Close` (not the closed pid in
+`pg_stat_activity`, which Postgres may reuse); a terminated owner session loses every lease, another pod takes one and the former owner
 refuses it but re-acquires the other on a new session; a cancelled or expired check keeps the
 lock in `pg_locks` and the next live check still owns it; no database is Unavailable; with a
 ONE-connection business pool, three accounts' leases sit on one session and an ordinary

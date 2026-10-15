@@ -183,6 +183,12 @@ func TestValidateTwitterAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
 		{name: "funding_instrument_id with slash", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("ly/gyi")}, wantErr: true, errSubstr: "funding_instrument_id"},
 		{name: "overlong account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("a", 65)), FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
 		{name: "overlong funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp(strings.Repeat("a", 65))}, wantErr: true, errSubstr: "funding_instrument_id"},
+		{name: "numeric as_user_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp("1234567890123456789")}},
+		// Issue #300: an omitted as_user_id is refused on PUT while one is stored, so "" is the
+		// only way to clear a declared identity and the transport must let it through.
+		{name: `empty as_user_id (deliberate clear)`, body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp("")}},
+		{name: "non-numeric as_user_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp("abc")}, wantErr: true, errSubstr: "as_user_id"},
+		{name: "overlong as_user_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp(strings.Repeat("9", 33))}, wantErr: true, errSubstr: "as_user_id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
