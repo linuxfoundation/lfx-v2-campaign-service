@@ -22,5 +22,6 @@
   now derives its candidates from `model.AllProviders()` filtered by `IsPaidAds()`.
 - Concepts updated: `code/internal-bootstrap.md`, `code/internal-service.md`,
   `code/internal-dispatch.md`. Rosters in `README.md` and `docs/api-catalog.md` updated to match.
-- Still outside the map: Reddit (eligible, held back by sequencing) and LinkedIn (its create path
-  does not name the missing choice).
+- Still outside the map: Reddit and LinkedIn. Both are eligible (LinkedIn's create path names a
+  missing account through `resolveLinkedInCredentials` since #352) and are deliberately not
+  admitted, a sequencing decision.
