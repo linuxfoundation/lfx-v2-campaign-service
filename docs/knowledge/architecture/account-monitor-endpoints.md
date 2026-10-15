@@ -60,7 +60,8 @@ reaches), not project-scoped ones.
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
-- Each dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit}.go`)
+- Each monitor dispatcher (`internal/dispatch/{googleads,linkedin,meta,reddit}.go`,
+  `microsoft_monitor.go`, `twitter_monitor.go`)
   resolves its monitor read's credential via `credsSource.resolveOwned` —
   the project's own connection only, never the LF system-account fallback
   chain (`resolve` → `resolveWithFallback` → `systemConn` → forced-system)
@@ -94,9 +95,10 @@ reaches), not project-scoped ones.
   reachable request. Meta, Reddit and X share a single account across
   foundations today, so their stored `account_id` IS the shared account and a
   legitimate request matches it — the guard is carried there against a future
-  split, and never fires meanwhile. Microsoft Ads' LF account is not yet
-  recorded in either table, so whether its guard is live or defensive is not
-  asserted; it refuses a mismatch either way. `docs/architecture.md`'s "Account Tenancy" and "Current
+  split, and never fires meanwhile. Microsoft Ads' tenancy is "not yet
+  recorded" in the Account Tenancy table and it has no row in Current Platform
+  Accounts, so whether its guard is live or defensive is not asserted; it
+  refuses a mismatch either way. `docs/architecture.md`'s "Account Tenancy" and "Current
   Platform Accounts" tables are the authority for which platforms are shared
   and which run an account per foundation; issue #243 corrected both
   (2026-10-13), which had listed Meta/Reddit/X as per-foundation.

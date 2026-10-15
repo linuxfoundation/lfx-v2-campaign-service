@@ -442,7 +442,7 @@ erDiagram
 
 ## Platform Connection Management
 
-Campaign managers can create, read, update, and remove connections to ad platforms for a given project. For the paid ad platforms in scope of this service, a connection is **singleton per provider per project** — a project holds at most one Google Ads / LinkedIn / Meta / Reddit / X connection (enforced by `UNIQUE (project_id)` on each provider table). Where the LF runs several accounts on one provider, those accounts belong to *different projects* (e.g. TLF vs LF Events), each with its own singleton connection; there is never more than one connection of a provider on a single project. See [channel-connections-schema.md](channel-connections-schema.md#account-multiplicity-lives-at-the-project-level).
+Campaign managers can create, read, update, and remove connections to ad platforms for a given project. For the paid ad platforms in scope of this service, a connection is **singleton per provider per project** — a project holds at most one Google Ads / LinkedIn / Meta / Reddit / X / Microsoft Ads connection (enforced by `UNIQUE (project_id)` on each provider table). Where the LF runs several accounts on one provider, those accounts belong to *different projects* (e.g. TLF vs LF Events), each with its own singleton connection; there is never more than one connection of a provider on a single project. See [channel-connections-schema.md](channel-connections-schema.md#account-multiplicity-lives-at-the-project-level).
 
 ### Account Tenancy
 
@@ -470,7 +470,7 @@ or Microsoft's account is recorded, update both tables here in the same change.
 
 ## Current Platform Accounts
 
-Each platform has a different tenancy model. Most platforms use a single shared account across all foundations (campaigns separated by naming convention). LinkedIn alone runs separate accounts per foundation, meaning each of those projects connects to its own ad account. Microsoft Ads appears in neither table: its LF account is not yet recorded here (see [Account Tenancy](#account-tenancy)).
+Each platform has a different tenancy model. Most platforms use a single shared account across all foundations (campaigns separated by naming convention). Of the recorded platforms, LinkedIn alone runs separate accounts per foundation, meaning each of those projects connects to its own ad account. Microsoft Ads appears in neither table: its LF account is not yet recorded here (see [Account Tenancy](#account-tenancy)).
 
 **Single shared account:**
 
