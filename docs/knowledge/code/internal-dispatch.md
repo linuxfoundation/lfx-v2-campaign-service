@@ -355,8 +355,12 @@ guess, so it keeps nothing.
 
 **Which fields each adapter scrubs.** Per adapter snapshot builder, as of LFXV2-2665:
 
-- `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`).
-- `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`, on a copied slice).
+- `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`); each variant's `headline`/`body`,
+  every `keywords`, `geoTargets`, `subreddits` and `interests` entry, and `callToAction`,
+  `conversionPixelId`, `videoGoal` (`sanitizeSnapshotText`) — `redditSnapshotConfig`, #245.
+- `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`) and `PrimaryText`/`Headline`/
+  `Description`, every `geoTargets` entry, `pixelId`, `dsaBeneficiary`, `dsaPayor`
+  (`sanitizeSnapshotText`) — `metaSnapshotConfig`, #245.
 - `googleads.go` — each sitelink's `finalUrl` (`googleAdsSnapshotConfig`); keyword and ad text
   are kept VERBATIM by design.
 - `twitter.go` — `tweetText` (`sanitizeSnapshotText`).
@@ -364,9 +368,25 @@ guess, so it keeps nothing.
   (`microsoftSnapshotConfig`); the snapshot is a redacted record, not a verbatim one.
 - `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
   body HTML are never stored.
-- `linkedin.go` — passes the raw `linkedinConfig`; NOTHING is scrubbed. It has no dedicated URL
-  field (the registration URL comes from the brief), but variant `introText`/`headline` are
-  caller free text stored verbatim. Not changed here; LinkedIn is owned by another engineer.
+- `linkedin.go` — each variant's `IntroText`/`Headline`, every `geoTargets[].label`,
+  `targetingProfile` and every `targetingProfiles[].id`/`label` (`sanitizeSnapshotText`) —
+  `linkedinSnapshotConfig`, #245. Before #245 it persisted the raw `linkedinConfig`.
+
+**#245: LinkedIn, Meta and Reddit free text.** The rule the three builders share is the one
+`microsoftSnapshotConfig` set: every caller string the client does not shape-check before a
+campaign exists goes through `sanitizeSnapshotText`, and the ad copy is the field that matters —
+a password-reset link pasted into an intro text, primary text or body keeps its secret in the
+PATH, which a query strip never touches. A field the client REFUSES unless it is a URN, an enum
+or a numeric id stays verbatim, and each builder's doc comment names which those are (for
+example LinkedIn `imageUrn` and the facet URNs, Meta `objective` and `instagramUserId`, Reddit
+`objective`). A field validated only when it is used — Reddit `callToAction` once `postUrl` is
+set, `videoGoal` outside `video_views`, Meta `pixelId` outside a pixel objective, Meta
+`geoTargets` that `validateGeoTargets` filters — is redacted, because the unused value still
+reaches the column as typed. `sanitizeSnapshotTexts` (`creds.go`) is the list form; it keeps nil
+as nil and empty as empty so the stored JSON says what the caller sent. Every rewritten slice is
+reallocated first, so the platform still receives the full text.
+`snapshot_free_text_test.go` builds each snapshot through the adapter's `campaignFrom*` mapper,
+gives every field its own marker, and asserts both halves per field.
 
 **The redactors live in `pkg/redact`, and the update path uses them generically.** The pure
 string sanitizers (`SnapshotURL`, `SnapshotText` and the run patterns behind them) moved
@@ -379,7 +399,7 @@ the service needs the same rules: `UpdateCampaign` (`PUT .../campaigns/{id}`) ac
 into `config_snapshot`, bypassing every per-adapter scrub listed above. It now walks the
 value and runs EVERY string value and object key through `SnapshotText` before persisting (see
 [internal/service](internal-service.md), "Campaign config update"). The per-adapter list
-above is the CREATE/adoption path only; the LinkedIn create-path gap is unchanged.
+above is the CREATE/adoption path only.
 
 **Microsoft scrubs `timeZone` and the links inside keywords.** `campaignFromMicrosoft` persists
 `microsoftSnapshotConfig(cfg)`, never the caller's raw `microsoftConfig`. The struct carries no

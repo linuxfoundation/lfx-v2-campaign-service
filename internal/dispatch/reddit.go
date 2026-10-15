@@ -909,6 +909,52 @@ func redditRunStatus(status string) (string, error) {
 	}
 }
 
+// redditSnapshotConfig returns the copy of cfg that is persisted to config_snapshot (stored
+// UNENCRYPTED and indexed).
+//
+// PostURL and ImageURL go through sanitizeSnapshotURL: either may carry secrets (a post URL,
+// or a signed image URL — the client's step log redacts them via redactURL for exactly this
+// reason).
+//
+// Every other caller string the client does not shape-check goes through
+// sanitizeSnapshotText — the helper X's tweetText and Microsoft's keywords use — which
+// reduces any link-shaped run to scheme+host and drops one carrying userinfo. The fields that
+// matter are Variants[].Headline and Body: operator-authored ad copy where a link gets pasted,
+// and a password-reset URL keeps its secret in the PATH as readily as in the query. Keywords
+// (caller-typed targeting terms, exactly as Microsoft's are), GeoTargets, Subreddits,
+// Interests, ConversionPixelID, and CallToAction and VideoGoal (each validated only when it is
+// USED — CallToAction is ignored once PostURL is set, VideoGoal unless the objective is
+// video_views — so an unused one reaches the snapshot as typed) get the same treatment; an
+// ordinary term, name, id or enum value passes through unchanged.
+//
+// Kept verbatim: Objective (refused by the client unless it names a known objective),
+// ImageAssetID (a stored asset key), numbers and dates.
+//
+// cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
+// so every slice that is rewritten is REALLOCATED first: the FULL url and text must still
+// reach Reddit, and only the stored copy is redacted.
+func redditSnapshotConfig(cfg redditConfig) redditConfig {
+	snapshot := cfg
+	snapshot.PostURL = sanitizeSnapshotURL(cfg.PostURL)
+	snapshot.ImageURL = sanitizeSnapshotURL(cfg.ImageURL)
+	snapshot.GeoTargets = sanitizeSnapshotTexts(cfg.GeoTargets)
+	snapshot.Subreddits = sanitizeSnapshotTexts(cfg.Subreddits)
+	snapshot.Interests = sanitizeSnapshotTexts(cfg.Interests)
+	snapshot.Keywords = sanitizeSnapshotTexts(cfg.Keywords)
+	snapshot.CallToAction = sanitizeSnapshotText(cfg.CallToAction)
+	snapshot.ConversionPixelID = sanitizeSnapshotText(cfg.ConversionPixelID)
+	snapshot.VideoGoal = sanitizeSnapshotText(cfg.VideoGoal)
+	if cfg.Variants != nil {
+		snapshot.Variants = make([]reddit.AdVariant, len(cfg.Variants))
+		copy(snapshot.Variants, cfg.Variants)
+		for i := range snapshot.Variants {
+			snapshot.Variants[i].Headline = sanitizeSnapshotText(cfg.Variants[i].Headline)
+			snapshot.Variants[i].Body = sanitizeSnapshotText(cfg.Variants[i].Body)
+		}
+	}
+	return snapshot
+}
+
 // campaignFromReddit maps the client result to the persistence model. The
 // orchestrator fills project/brief/job/platform (and, for a retained ambiguous
 // orphan, status); this sets what only the dispatcher knows — upstream id, name, the
@@ -923,15 +969,9 @@ func campaignFromReddit(ctx context.Context, r *reddit.CampaignResult, cfg reddi
 	// Persist the budget/schedule/config the caller supplied. The Reddit client always
 	// creates campaigns with goal_type LIFETIME_SPEND (client.go) — budgetUsd is a
 	// LIFETIME spend cap, not a daily one — so the persisted budget_type is lifetime.
-	// ConfigSnapshot captures the validated config for reconciliation, but with the
-	// PostURL and ImageURL SANITIZED: either may carry secrets in its query/fragment
-	// (a post URL, or a signed image URL — the client's step log redacts them via
-	// redactURL for exactly this reason), and config_snapshot is stored UNENCRYPTED
-	// in Postgres — so we strip the query/fragment before snapshotting.
-	snapshot := cfg
-	snapshot.PostURL = sanitizeSnapshotURL(cfg.PostURL)
-	snapshot.ImageURL = sanitizeSnapshotURL(cfg.ImageURL)
-	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, snapshot)
+	// ConfigSnapshot captures the validated config for reconciliation, with its caller
+	// URLs and free text redacted — see redditSnapshotConfig.
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, true, cfg.StartDate, cfg.EndDate, redditSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err == nil {
 		c.Result = raw
 	}

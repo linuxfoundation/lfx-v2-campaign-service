@@ -298,9 +298,11 @@ claim is already known, not from where it is convenient to write.**
     `createOutcomeAmbiguous` before it lands here.
 
 The dispatch adapter SANITIZES
-both `PostURL` and `ImageURL` (query/fragment stripped) before snapshotting the
+both `PostURL` and `ImageURL` (reduced to scheme+host) before snapshotting the
 config, since a signed image URL can carry a secret and `config_snapshot` is
-stored unencrypted.
+stored unencrypted. Since #245 it also runs the variants' `Headline`/`Body` and the
+other caller strings through `sanitizeSnapshotText` (`redditSnapshotConfig`, see
+[internal/dispatch](internal-dispatch.md)); the client receives the full values.
 
 ## Campaign status toggle
 
