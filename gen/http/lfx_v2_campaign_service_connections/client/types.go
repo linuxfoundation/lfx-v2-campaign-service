@@ -6292,6 +6292,17 @@ type GoogleAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly. On Microsoft Ads, absent for a code in Microsoft's value
+	// set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // AccountMonitorCampaignResponseBody is used to define fields on response body
@@ -6447,6 +6458,17 @@ type LinkedinAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly. On Microsoft Ads, absent for a code in Microsoft's value
+	// set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // MetaAdsAccountMonitorResponseBody is used to define fields on response body
@@ -6493,6 +6515,17 @@ type MetaAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly. On Microsoft Ads, absent for a code in Microsoft's value
+	// set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // RedditAdsAccountMonitorResponseBody is used to define fields on response
@@ -6539,6 +6572,17 @@ type RedditAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly. On Microsoft Ads, absent for a code in Microsoft's value
+	// set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // MicrosoftAdsAccountMonitorResponseBody is used to define fields on response
@@ -6585,6 +6629,17 @@ type MicrosoftAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly. On Microsoft Ads, absent for a code in Microsoft's value
+	// set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // TwitterAdsAccountMonitorResponseBody is used to define fields on response
@@ -6631,6 +6686,17 @@ type TwitterAdsAccountMonitorResponseBody struct {
 	// the first ones, when metrics_as_of is absent). Omitted on every other
 	// platform.
 	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+	// The ad account's currency, as an ISO 4217 code; spend and budget amounts are
+	// in this currency, unconverted. Absent when the platform didn't report it.
+	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
+	// currency (costInLocalCurrency), the currency its budgets are in; absent when
+	// the campaigns' budgets disagree about the currency, in which case those
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
+	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
+	// convert correctly. On Microsoft Ads, absent for a code in Microsoft's value
+	// set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
+	// ambiguous.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
 }
 
 // HubspotEmailMonitorEmailResponseBody is used to define fields on response
@@ -13096,6 +13162,7 @@ func NewMonitorGoogleAdsAccountAccountMonitorOK(body *MonitorGoogleAdsAccountRes
 		MetricsWindowStart: body.MetricsWindowStart,
 		MetricsWindowEnd:   body.MetricsWindowEnd,
 		MetricsPending:     body.MetricsPending,
+		Currency:           body.Currency,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -13202,6 +13269,7 @@ func NewMonitorLinkedinAdsAccountAccountMonitorOK(body *MonitorLinkedinAdsAccoun
 		MetricsWindowStart: body.MetricsWindowStart,
 		MetricsWindowEnd:   body.MetricsWindowEnd,
 		MetricsPending:     body.MetricsPending,
+		Currency:           body.Currency,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -13308,6 +13376,7 @@ func NewMonitorMetaAdsAccountAccountMonitorOK(body *MonitorMetaAdsAccountRespons
 		MetricsWindowStart: body.MetricsWindowStart,
 		MetricsWindowEnd:   body.MetricsWindowEnd,
 		MetricsPending:     body.MetricsPending,
+		Currency:           body.Currency,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -13414,6 +13483,7 @@ func NewMonitorRedditAdsAccountAccountMonitorOK(body *MonitorRedditAdsAccountRes
 		MetricsWindowStart: body.MetricsWindowStart,
 		MetricsWindowEnd:   body.MetricsWindowEnd,
 		MetricsPending:     body.MetricsPending,
+		Currency:           body.Currency,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -13520,6 +13590,7 @@ func NewMonitorMicrosoftAdsAccountAccountMonitorOK(body *MonitorMicrosoftAdsAcco
 		MetricsWindowStart: body.MetricsWindowStart,
 		MetricsWindowEnd:   body.MetricsWindowEnd,
 		MetricsPending:     body.MetricsPending,
+		Currency:           body.Currency,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -13626,6 +13697,7 @@ func NewMonitorTwitterAdsAccountAccountMonitorOK(body *MonitorTwitterAdsAccountR
 		MetricsWindowStart: body.MetricsWindowStart,
 		MetricsWindowEnd:   body.MetricsWindowEnd,
 		MetricsPending:     body.MetricsPending,
+		Currency:           body.Currency,
 	}
 	v.Campaigns = make([]*lfxv2campaignserviceconnections.AccountMonitorCampaign, len(body.Campaigns))
 	for i, val := range body.Campaigns {
@@ -15120,6 +15192,9 @@ func ValidateMonitorGoogleAdsAccountResponseBody(body *MonitorGoogleAdsAccountRe
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -15168,6 +15243,9 @@ func ValidateMonitorLinkedinAdsAccountResponseBody(body *MonitorLinkedinAdsAccou
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -15218,6 +15296,9 @@ func ValidateMonitorMetaAdsAccountResponseBody(body *MonitorMetaAdsAccountRespon
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -15266,6 +15347,9 @@ func ValidateMonitorRedditAdsAccountResponseBody(body *MonitorRedditAdsAccountRe
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -15316,6 +15400,9 @@ func ValidateMonitorMicrosoftAdsAccountResponseBody(body *MonitorMicrosoftAdsAcc
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -15364,6 +15451,9 @@ func ValidateMonitorTwitterAdsAccountResponseBody(body *MonitorTwitterAdsAccount
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -21749,6 +21839,9 @@ func ValidateGoogleAdsAccountMonitorResponseBody(body *GoogleAdsAccountMonitorRe
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -21798,6 +21891,9 @@ func validateGoogleAdsAccountMonitorResponseBody(body *GoogleAdsAccountMonitorRe
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -22059,6 +22155,9 @@ func ValidateLinkedinAdsAccountMonitorResponseBody(body *LinkedinAdsAccountMonit
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -22109,6 +22208,9 @@ func validateLinkedinAdsAccountMonitorResponseBody(body *LinkedinAdsAccountMonit
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -22157,6 +22259,9 @@ func ValidateMetaAdsAccountMonitorResponseBody(body *MetaAdsAccountMonitorRespon
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -22207,6 +22312,9 @@ func validateMetaAdsAccountMonitorResponseBody(body *MetaAdsAccountMonitorRespon
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -22255,6 +22363,9 @@ func ValidateRedditAdsAccountMonitorResponseBody(body *RedditAdsAccountMonitorRe
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -22306,6 +22417,9 @@ func validateRedditAdsAccountMonitorResponseBody(body *RedditAdsAccountMonitorRe
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -22354,6 +22468,9 @@ func ValidateMicrosoftAdsAccountMonitorResponseBody(body *MicrosoftAdsAccountMon
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -22405,6 +22522,9 @@ func validateMicrosoftAdsAccountMonitorResponseBody(body *MicrosoftAdsAccountMon
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".currency", *body.Currency, "^[A-Z]{3}$"))
+	}
 	return
 }
 
@@ -22453,6 +22573,9 @@ func ValidateTwitterAdsAccountMonitorResponseBody(body *TwitterAdsAccountMonitor
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }
@@ -22503,6 +22626,9 @@ func validateTwitterAdsAccountMonitorResponseBody(body *TwitterAdsAccountMonitor
 	}
 	if body.MetricsWindowEnd != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	if body.Currency != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".currency", *body.Currency, "^[A-Z]{3}$"))
 	}
 	return
 }

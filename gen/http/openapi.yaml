@@ -13730,6 +13730,10 @@ definitions:
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            currency:
+                type: string
+                description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                pattern: ^[A-Z]{3}$
             days:
                 type: integer
                 description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
@@ -16946,6 +16950,11 @@ definitions:
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            currency:
+                type: string
+                description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                example: USD
+                pattern: ^[A-Z]{3}$
             days:
                 type: integer
                 description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
@@ -17519,6 +17528,11 @@ definitions:
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            currency:
+                type: string
+                description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                example: USD
+                pattern: ^[A-Z]{3}$
             days:
                 type: integer
                 description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
@@ -17812,6 +17826,11 @@ definitions:
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            currency:
+                type: string
+                description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                example: USD
+                pattern: ^[A-Z]{3}$
             days:
                 type: integer
                 description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
@@ -18652,6 +18671,11 @@ definitions:
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            currency:
+                type: string
+                description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                example: USD
+                pattern: ^[A-Z]{3}$
             days:
                 type: integer
                 description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'
@@ -19025,6 +19049,11 @@ definitions:
                 items:
                     $ref: '#/definitions/AccountMonitorCampaign'
                 description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
+            currency:
+                type: string
+                description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                example: USD
+                pattern: ^[A-Z]{3}$
             days:
                 type: integer
                 description: 'The REQUESTED trailing-days window (today inclusive), echoed back from the request. The live-read platforms cover exactly these days. Report-backed platforms (Microsoft Ads, X) report the exact days their metrics cover in metrics_window_start / metrics_window_end, which can differ: on X a 90-day window that crosses a DST fall-back covers 89 days, because 90 such days exceed X''s 90-day cap by an hour.'

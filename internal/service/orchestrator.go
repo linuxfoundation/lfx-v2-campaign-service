@@ -421,6 +421,24 @@ type AccountMetricsReader interface {
 		accountID string, days int) ([]model.AccountCampaignMetrics, error)
 }
 
+// AccountMonitorReader is AccountMetricsReader's read plus the ad account's currency, which the
+// account-monitor response reports beside the amounts so a renderer can format them. An OPTIONAL
+// capability, discovered by type assertion: ReadAccountCampaignMetrics prefers it when the
+// dispatcher implements it and falls back to AccountMetricsReader (currency absent) when not.
+//
+// A separate interface rather than a change to ListAccountCampaignMetrics' result so a platform
+// that cannot (or does not yet) report its currency keeps its reader unchanged.
+//
+// The trust boundary and row contract are AccountMetricsReader's exactly. The currency is
+// best-effort on top of them: it comes from data the read already fetches (or one
+// identity-checked account read), and a currency the platform did not report, or reported in a
+// shape that is not an ISO 4217 code, leaves AccountMonitorRead.Currency "" — it never fails
+// the read. A successful call MUST return a non-nil result with non-nil Rows.
+type AccountMonitorReader interface {
+	ReadAccountMonitor(ctx context.Context, projectID string, platform model.Provider,
+		accountID string, days int) (*model.AccountMonitorRead, error)
+}
+
 // EmailSearcher is an OPTIONAL dispatcher capability: search the marketing emails reachable
 // through a project's stored connection. Discovered by type assertion like StatusToggler,
 // MetricsReader and AccountLister; a dispatcher that doesn't implement it yields a clean
@@ -865,6 +883,7 @@ const (
 	opListAccountCampaigns       = "list_account_campaigns"
 	opSubmitAccountReport        = "submit_account_report"
 	opCheckAccountReport         = "check_account_report"
+	opReadAccountCurrency        = "read_account_currency"
 )
 
 // recordUpstream times one upstream platform call. It is called ONLY after the
@@ -2843,34 +2862,50 @@ func (o *Orchestrator) ReadAccounts(ctx context.Context, projectID string, platf
 }
 
 // ReadAccountCampaignMetrics reads every campaign visible on accountID over the trailing
-// `days` days, for the account-scoped monitor endpoints. Modeled directly on ReadAccounts
-// above: type-assert for AccountMetricsReader, bound the call, record it through
-// recordUpstream, and treat (nil, nil) as a contract violation rather than an authoritative
-// empty answer.
-func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) ([]model.AccountCampaignMetrics, error) {
+// `days` days, for the account-scoped monitor endpoints, with the account's currency when the
+// dispatcher reports it. Modeled directly on ReadAccounts above: type-assert for the reader
+// (AccountMonitorReader first, then AccountMetricsReader), bound the call, record it through
+// recordUpstream, and treat a nil result with no error as a contract violation rather than an
+// authoritative empty answer.
+func (o *Orchestrator) ReadAccountCampaignMetrics(ctx context.Context, projectID string, platform model.Provider, accountID string, days int) (*model.AccountMonitorRead, error) {
 	d, ok := o.dispatchers[platform]
 	if !ok {
 		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", ErrAccountMetricsUnsupported, platform)
 	}
-	reader, ok := d.(AccountMetricsReader)
-	if !ok {
+	monitorReader, withCurrency := d.(AccountMonitorReader)
+	reader, rowsOnly := d.(AccountMetricsReader)
+	if !withCurrency && !rowsOnly {
 		return nil, fmt.Errorf("%w: %s", ErrAccountMetricsUnsupported, platform)
 	}
 	callCtx, cancel := context.WithTimeout(ctx, accountsCallTimeout)
 	defer cancel()
 	start := time.Now()
-	rows, rerr := reader.ListAccountCampaignMetrics(callCtx, projectID, platform, accountID, days)
+	var read *model.AccountMonitorRead
+	var rerr error
+	if withCurrency {
+		read, rerr = monitorReader.ReadAccountMonitor(callCtx, projectID, platform, accountID, days)
+	} else {
+		var rows []model.AccountCampaignMetrics
+		rows, rerr = reader.ListAccountCampaignMetrics(callCtx, projectID, platform, accountID, days)
+		if rows != nil {
+			read = &model.AccountMonitorRead{Rows: rows}
+		}
+	}
 	o.recordUpstream(ctx, platform, opListAccountCampaignMetrics, start, rerr)
 	if rerr != nil {
 		return nil, rerr
 	}
-	if rows == nil {
-		// Same contract-violation guard as ReadAccounts: an AccountMetricsReader returning
-		// (nil, nil) must not be forwarded as an authoritative empty account, or a caller
-		// would render "no campaigns" with no error for what is actually a broken adapter.
+	if read == nil || read.Rows == nil {
+		// Same contract-violation guard as ReadAccounts: a reader returning (nil, nil) must not
+		// be forwarded as an authoritative empty account, or a caller would render "no
+		// campaigns" with no error for what is actually a broken adapter.
 		return nil, fmt.Errorf("%s account campaign metrics reader returned a nil result with no error", platform)
 	}
-	return rows, nil
+	// Normalized here as well as in each platform client: this is the last point before the
+	// value reaches the response, and a dispatcher that forgot would otherwise publish whatever
+	// the platform sent.
+	read.Currency = model.NormalizeCurrencyCode(read.Currency)
+	return read, nil
 }
 
 // ProbeConnection verifies a project's own stored connection against the platform, for the
