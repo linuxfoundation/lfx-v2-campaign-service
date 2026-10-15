@@ -25,7 +25,9 @@ variables or touches the database.
 `CreateCampaign` is only PARTIALLY idempotent: it reuses existing campaigns and
 line items by name (paged cursor lookups via `findByName`) before creating new
 ones, and a lookup that fails transiently propagates an error so the caller
-aborts rather than creating a duplicate. Reuse is NOT a silent no-op: when a
+aborts rather than creating a duplicate. On a reused line item it also reuses the
+promoted tweet an earlier attempt attached (see "Create idempotency on retry"
+below). Reuse is NOT a silent no-op: when a
 campaign or line item is reused, the client does NOT re-apply this request's
 budget/config/flight-dates to it, so the reused resource may be serving under a
 DIFFERENT budget/config or an already-ENABLED line item with different dates. This
@@ -34,8 +36,8 @@ structured `CampaignResult.Reused` flag (set on both the success and partial-res
 paths). Consumers that need to know whether the returned campaign matches the
 request MUST inspect `Reused` (the dispatch adapter maps a reused result to the
 `created_degraded` status, and an authoritative reconcile is the orchestrator's
-job, LFXV2-2665). The promoted-tweet association, however,
-is always re-POSTed on a repeat call. A recognizable duplicate response
+job, LFXV2-2665). The promoted-tweet association is re-POSTed only when the
+reused line item's association read finds none for the tweet. A recognizable duplicate response
 (`DUPLICATE_PROMOTABLE_ENTITY`) is NOT treated as idempotent success: X returns
 that code even when the tweet is already promoted by a DIFFERENT line item, so it
 is surfaced as a warning (on `PromotedTweetWarning` and in the step log) to be
@@ -769,8 +771,9 @@ tweet as PUBLISHED-but-unpromoted, instead of reporting `""` for a tweet that
 provably exists and leaving the prose Steps entry as its only trace.
 
 `authoredTweetStatus` names the id AND what to do with it, and the second half is
-not decoration. Authoring is unconditional — Step 4 says so in its own comment, and
-the guard is deferred to the LFXV2-2665 idempotency work — so the retry the operator
+not decoration. Authoring is skipped only when a REUSED line item already carries a
+promoted tweet (see "Create idempotency on retry"); a tweet that was published but never
+promoted has no parent to be found through, so the retry the operator
 chooses decides between two very different outcomes: passing this id back as
 `tweetId` skips authoring entirely and promotes the tweet that is already live,
 while retrying without it publishes a SECOND tweet under the LF handle. The message
@@ -1392,3 +1395,55 @@ runs `identityjson.Check` on the raw body, so a duplicated `data` key cannot res
 into a ready state, and it rejects a missing or null `data`. A STATUS answer that drops
 `processing_info` is refused, and only an explicit `succeeded` state ends processing.
 See [X Ads Creative Image Assets](../architecture/x-creative-assets.md).
+
+## Create idempotency on retry (LFXV2-2665)
+
+A retried dispatch whose first attempt's outcome was UNCONFIRMED must find what that attempt
+left upstream instead of creating a second spending entity. X has no create-idempotency key,
+so every level is found through something deterministic:
+
+| Entity | Found by | Rule |
+| --- | --- | --- |
+| Media Library image | `lfxasset<sha256>` name (`findMediaByName`) | unchanged |
+| Campaign | deterministic name (`findCampaignByName`) | exact name, live, ONE match, same funding instrument |
+| Line item | deterministic name under the campaign (`findLineItemByName`) | exact name, live, ONE match, parent is that campaign |
+| Promoted tweet | the reused line item (`listPromotedTweets`) | live, parent is that line item, see below |
+| Authored tweet | through its promoted tweet only | a published-but-unpromoted tweet is NOT found |
+
+`findByNameChecked` now walks every page and refuses when two or more live elements carry
+the exact name (X does not enforce uniqueness, and reusing whichever is listed first could
+adopt someone else's campaign), skips elements X reports `deleted`, and runs a provenance
+check on each match: a campaign whose `funding_instrument_id` differs from the connection's,
+or a line item whose `campaign_id` is not the one filtered on, is refused. Each refusal is a
+lookup error, so the campaign level returns `(nil, err)` before any write and the line-item
+level returns the partial carrying the campaign.
+
+`listPromotedTweets` (`promoted_tweet_lookup.go`) reads `GET promoted_tweets?line_item_ids=
+<id>&with_deleted=false&count=200` and fails closed exactly as `findByName` does (no data
+field, a full page with no usable cursor, a repeated cursor, the page cap), plus on any element
+whose `line_item_id` is not this line item or whose id / `tweet_id` has the wrong shape. It runs
+ONLY when the line item was reused — a line item created moments ago cannot hold one — so a
+first create is unchanged. What Step 4 does with the answer:
+
+- tweet text, exactly one live association: that tweet and association are reused; nothing is
+  authored, and a warning step says its copy/image were NOT compared with this request (X
+  re-wraps links, so text equality proves nothing). `AuthoredTweetID` stays empty.
+- tweet text, two or more: nothing is authored or promoted; `PromotedTweetWarning` asks the
+  operator to verify.
+- explicit `TweetID` already associated once: reused, not re-POSTed (the re-POST would answer
+  `DUPLICATE_PROMOTABLE_ENTITY`, which cannot be read as this line item's). Twice: refused.
+- the read fails: nothing is authored or promoted, with a warning — an existing association
+  cannot be ruled out.
+
+Every reuse path is already `Reused`, so the dispatcher records `created_degraded`. The gap
+that remains is a tweet PUBLISHED but never PROMOTED (authoring outcome lost, or an abort
+between authoring and promotion): the partial carries its id in `AuthoredTweetID` with the
+instruction to pass it back as `tweetId`. Finding such a tweet would need a tweet-level name or
+lookup on `GET accounts/:id/tweets`, which this client does not use.
+
+Tests: `create_idempotency_test.go`, against a stateful fake X server — a retry after a 502
+that committed the promoted tweet creates nothing new (tweet text and explicit-id flows); two
+associations refuse; a failed association read blocks writes; a fresh create makes no
+association read; duplicate campaign or line-item names refuse; a foreign funding instrument
+or parent refuses; a deleted twin is skipped. Mutation-checked: twelve mutations of the new
+rules, each killed.
