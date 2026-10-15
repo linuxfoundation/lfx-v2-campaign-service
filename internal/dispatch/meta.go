@@ -612,10 +612,8 @@ func requireMetaAccountID(res *resolved, projectID string) (string, error) {
 // DEFENSIVE, not a live exposure. Meta is one shared ad account across foundations today,
 // so there is no second account for a project to cross into and no caller this refuses that
 // would otherwise have succeeded: a project's stored account_id IS the shared account, so a
-// legitimate request matches it. (docs/architecture.md lists Meta as per-foundation in BOTH
-// its "Account Tenancy" table and its "Current Platform Accounts" table, the latter with a
-// concrete account id; both are stale against how the accounts are actually run and are being
-// corrected separately — do not use either as the authority here.)
+// legitimate request matches it. (docs/architecture.md's "Account Tenancy" and "Current
+// Platform Accounts" tables are the authority for this and list Meta as shared.)
 //
 // It is carried anyway because the check costs one comparison and is the only thing standing
 // between a shared-account read and a per-project one if Meta ever moves to an account per
@@ -853,7 +851,34 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 	if metaStatus == meta.StatusActive && strings.TrimSpace(adSetID) == "" {
 		return fmt.Errorf("%w: meta campaign %s cannot be activated because this service has no record of its ad set — either it was never provisioned, or the campaign was ADOPTED, which records no serving resources and leaves un-pausing to Meta Ads Manager", domain.ErrCampaignNotProvisioned, campaign.PlatformCampaignID)
 	}
-	if uerr := client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus); uerr != nil {
+	// A DELIBERATE pause of the recorded ad set, made through toggle-meta-ad-set-status and still
+	// on record in the row (LFXV2-2665, product decision 2026-10-13), survives a campaign
+	// pause/resume: ACTIVATE then flips the ads and the campaign but leaves the ad set PAUSED.
+	// Only resuming the ad set through that lever clears the record. A PAUSE cascades as always.
+	var uerr error
+	if metaStatus == meta.StatusActive && model.MetaAdSetHeldPaused(campaign.Result, adSetID) {
+		// The record is the row's, not Meta's: an UNCONFIRMED pause that never applied, or an ad
+		// set re-activated in Ads Manager, leaves it over an ACTIVE ad set, and holding activation
+		// would then switch on the ads and the campaign over a serving ad set. So Meta is READ
+		// first, before anything is written (fail closed).
+		// The account the held ad set must be reported under: the connection's selection, or —
+		// when that selection was cleared after the pause — the account the campaign was CREATED
+		// under, exactly as the toggle itself supports a cleared selection (verifyMetaAccountMatch
+		// above already proved the two agree whenever both are present).
+		heldAccount := strings.TrimSpace(res.accountID)
+		if heldAccount == "" {
+			heldAccount = metaCreationAccountID(campaign)
+		}
+		if herr := verifyMetaHeldAdSetPaused(ctx, client, campaign, adSetID, heldAccount); herr != nil {
+			return herr
+		}
+		slog.InfoContext(ctx, "meta campaign activate leaves its deliberately paused ad set paused",
+			"platform_campaign_id", campaign.PlatformCampaignID, "ad_set_id", adSetID)
+		uerr = client.ActivateCampaignHoldingAdSet(ctx, campaign.PlatformCampaignID, adSetID)
+	} else {
+		uerr = client.UpdateCampaignAndChildrenStatus(ctx, campaign.PlatformCampaignID, adSetID, metaStatus)
+	}
+	if uerr != nil {
 		// An activate refused up front because the ad set has zero ads is a local/state error
 		// (the platform mutation never ran), so classify it as ErrCampaignNotProvisioned → 409,
 		// not the default 503 — deterministic "reprovision", not a transient "verify/retry".
@@ -867,6 +892,45 @@ func (d *MetaDispatcher) ToggleStatus(ctx context.Context, projectID string, pla
 		return uerr
 	}
 	return nil
+}
+
+// verifyMetaHeldAdSetPaused reads the held ad set (GET /{id}?fields=id,campaign_id,account_id,
+// status) before a holding ACTIVATE. Its CONFIGURED status decides — the effective status of an
+// ad set under a paused campaign is CAMPAIGN_PAUSED whatever it is configured to, and it is the
+// configured status that serves once the campaign is ACTIVE:
+//
+//   - PAUSED, or DELETED/ARCHIVED (which cannot serve) → nil: the activation may hold it.
+//   - ACTIVE → domain.ErrMetaHeldAdSetActive (409), nothing written. Refusing rather than
+//     pausing it here keeps the campaign toggle's contract — it never writes an ad set's status
+//     the operator did not ask for in this call — and the remedy is explicit: pause the ad set,
+//     or clear the record by resuming it, through toggle-meta-ad-set-status.
+//   - The read fails, reports another campaign or account, or an unrecognised status → an
+//     ordinary error (the campaign toggle's 503 "the campaign was not modified"): a pure read
+//     preceded it, so nothing was written, and nothing is activated.
+func verifyMetaHeldAdSetPaused(ctx context.Context, client *meta.Client, campaign *model.Campaign, adSetID, accountID string) error {
+	const op = "verify the held meta ad set before activating its campaign"
+	if normalizeMetaAccountID(accountID) == "" {
+		// Neither the connection nor the row names the account, so the ad set's identity cannot
+		// be proven: fail closed (nothing written, nothing activated).
+		return fmt.Errorf("%s: neither the connection nor the campaign records an ad account to check ad set %s against; nothing was changed", op, adSetID)
+	}
+	state, err := client.GetAdSetState(ctx, adSetID)
+	if err != nil {
+		return fmt.Errorf("%s: %v (nothing was changed)", op, err)
+	}
+	if state.CampaignID != campaign.PlatformCampaignID || normalizeMetaAccountID(state.AccountID) != normalizeMetaAccountID(accountID) {
+		return fmt.Errorf("%s: ad set %s is reported under campaign %s / account %s, not %s / %s; nothing was changed",
+			op, adSetID, state.CampaignID, state.AccountID, campaign.PlatformCampaignID, accountID)
+	}
+	switch state.Status {
+	case meta.StatusPaused, meta.StatusDeleted, meta.StatusArchived:
+		return nil
+	case meta.StatusActive:
+		return fmt.Errorf("%s: ad set %s is ACTIVE on Meta although this service holds it as deliberately paused: %w",
+			op, adSetID, domain.ErrMetaHeldAdSetActive)
+	default:
+		return fmt.Errorf("%s: ad set %s reports a status this service does not recognise (%d bytes); nothing was changed", op, adSetID, len(state.Status))
+	}
 }
 
 // metaMetricsWindow maps the platform-agnostic model.MetricsWindow vocabulary to Meta's
@@ -1377,6 +1441,7 @@ func (d *MetaDispatcher) ListAccountCampaignMetrics(ctx context.Context, project
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
 			FetchFailed:        r.FetchFailed,
+			FailureClass:       r.FailureClass,
 		})
 	}
 	return out, nil

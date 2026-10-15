@@ -288,7 +288,7 @@ func TestMicrosoft_AddNegativeKeywords_HappyPath(t *testing.T) {
 	})
 	out, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.NegativeKeyword{
 		{Text: "free", MatchType: "Exact"}, {Text: "cheap", MatchType: "Phrase"},
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("AddNegativeKeywords: %v", err)
 	}
@@ -313,18 +313,21 @@ func TestMicrosoft_AddNegativeKeywords_RefusedBeforeAnyCall(t *testing.T) {
 		name     string
 		campaign *model.Campaign
 		keywords []model.NegativeKeyword
+		revision string
 		want     error
 	}{
-		{"broad match", msKeywordCampaign(), []model.NegativeKeyword{{Text: "free", MatchType: "Broad"}}, domain.ErrNegativeKeywordInvalid},
-		{"over 100 characters", msKeywordCampaign(), []model.NegativeKeyword{{Text: strings.Repeat("a", 101), MatchType: "Exact"}}, domain.ErrNegativeKeywordInvalid},
-		{"malformed batch beats unprovisioned", unprovisioned, []model.NegativeKeyword{{Text: "a@b", MatchType: "Exact"}}, domain.ErrNegativeKeywordInvalid},
-		{"unprovisioned", unprovisioned, good, domain.ErrCampaignNotProvisioned},
-		{"provenance unknown fails closed", unknown, good, domain.ErrCampaignProvenanceUnknown},
-		{"account mismatch", foreign, good, domain.ErrCampaignAccountMismatch},
+		{"broad match", msKeywordCampaign(), []model.NegativeKeyword{{Text: "free", MatchType: "Broad"}}, "", domain.ErrNegativeKeywordInvalid},
+		{"over 100 characters", msKeywordCampaign(), []model.NegativeKeyword{{Text: strings.Repeat("a", 101), MatchType: "Exact"}}, "", domain.ErrNegativeKeywordInvalid},
+		{"malformed batch beats unprovisioned", unprovisioned, []model.NegativeKeyword{{Text: "a@b", MatchType: "Exact"}}, "", domain.ErrNegativeKeywordInvalid},
+		{"a reddit revision is refused", msKeywordCampaign(), good, "sha256:abc", domain.ErrNegativeKeywordInvalid},
+		{"duplicate under unicode simple folding", msKeywordCampaign(), []model.NegativeKeyword{{Text: "ΟΣ", MatchType: "Exact"}, {Text: "ος", MatchType: "Exact"}}, "", domain.ErrNegativeKeywordInvalid},
+		{"unprovisioned", unprovisioned, good, "", domain.ErrCampaignNotProvisioned},
+		{"provenance unknown fails closed", unknown, good, "", domain.ErrCampaignProvenanceUnknown},
+		{"account mismatch", foreign, good, "", domain.ErrCampaignAccountMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d, calls, _ := msLeverDispatcher(t, func(string, string) (int, string) { return http.StatusOK, `{}` })
-			_, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, tc.campaign, tc.keywords)
+			_, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, tc.campaign, tc.keywords, tc.revision)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -337,7 +340,7 @@ func TestMicrosoft_AddNegativeKeywords_RefusedBeforeAnyCall(t *testing.T) {
 
 func TestMicrosoft_AddNegativeKeywords_AmbiguityIsUnconfirmed(t *testing.T) {
 	d, calls, _ := msLeverDispatcher(t, func(string, string) (int, string) { return http.StatusTooManyRequests, `{}` })
-	_, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}})
+	_, err := d.AddNegativeKeywords(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.NegativeKeyword{{Text: "free", MatchType: "Exact"}}, "")
 	var u interface{ Unconfirmed() bool }
 	if !errors.As(err, &u) || !u.Unconfirmed() {
 		t.Fatalf("a 429 on the add must be Unconfirmed(), got %T: %v", err, err)

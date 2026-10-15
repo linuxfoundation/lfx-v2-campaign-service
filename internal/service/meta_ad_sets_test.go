@@ -28,6 +28,12 @@ type adSetDispatcher struct {
 	gotStatus string
 	gotAdSet  string
 	gotWindow model.MetricsWindow
+	// sends makes the fake behave as if its one write were about to be sent: it runs the
+	// beforeWrite hook first and, if the hook fails, returns that failure without "sending".
+	sends     bool
+	hookCalls int
+	// sent counts writes the fake treated as sent: the hook (if any) passed and toggle answered.
+	sent int
 }
 
 func (d *adSetDispatcher) Dispatch(context.Context, *model.CampaignBrief, model.Provider, json.RawMessage) (*model.Campaign, error) {
@@ -40,9 +46,16 @@ func (d *adSetDispatcher) ReadMetaAdSets(_ context.Context, _ string, _ model.Pr
 	return d.read, d.readErr
 }
 
-func (d *adSetDispatcher) ToggleMetaAdSetStatus(_ context.Context, _ string, _ model.Provider, _ *model.Campaign, adSetID, status string) (*model.MetaAdSetStatusResult, error) {
+func (d *adSetDispatcher) ToggleMetaAdSetStatus(ctx context.Context, _ string, _ model.Provider, _ *model.Campaign, adSetID, status string, beforeWrite MetaAdSetBeforeWrite) (*model.MetaAdSetStatusResult, error) {
 	d.reached++
 	d.gotAdSet, d.gotStatus = adSetID, status
+	if d.sends && beforeWrite != nil {
+		d.hookCalls++
+		if err := beforeWrite(ctx); err != nil {
+			return nil, fmt.Errorf("nothing was sent: %w", err)
+		}
+		d.sent++
+	}
 	return d.toggle, d.toggleErr
 }
 
@@ -60,9 +73,87 @@ type adSetRepo struct {
 	cooldowns int
 	// verifyErr, when set, is what VerifyClaimedVersion returns after the write.
 	verifyErr error
+	// replaceErrs, when non-empty, fails the next ReplaceCampaign calls in order (a nil entry lets
+	// that call through).
+	replaceErrs []error
+	replaces    int
+	// reclaimErr, when set, refuses every claim after the request's first — the reconciliation's
+	// attempt to re-take the claim.
+	reclaimErr error
+	claims     int
+	onRelease  func()
+	verifies   int
+	// replaceTokens records the claim token each ReplaceCampaign was made under.
+	replaceTokens []domain.CampaignLockToken
+}
+
+// errLandedButAmbiguous, as a replaceErrs entry, APPLIES that write and then reports its commit
+// as ambiguous — the case where Postgres committed but the acknowledgement was lost.
+var errLandedButAmbiguous = errors.New("test: landed, then an ambiguous commit")
+
+// ambiguousCommit is what the repo returns for a commit error that did NOT land.
+func ambiguousCommit() error {
+	return fmt.Errorf("replace campaign: commit: %w: connection reset", domain.ErrWriteOutcomeUnknown)
+}
+
+// ReleaseCampaignLock treats the zero token as a no-op, as the real repository does: a
+// reconciliation that had to give its claim up and could not re-take it leaves a zero token for
+// the deferred release. onRelease, when set, runs once just AFTER a real release — the gap in
+// which another writer can take the claim.
+func (r *adSetRepo) ReleaseCampaignLock(ctx context.Context, tok domain.CampaignLockToken) error {
+	if tok.CampaignID == "" {
+		return nil
+	}
+	err := r.toggleCampaignRepo.ReleaseCampaignLock(ctx, tok)
+	if f := r.onRelease; f != nil {
+		r.onRelease = nil
+		f()
+	}
+	return err
+}
+
+func (r *adSetRepo) ClaimCampaignVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64) (*model.Campaign, domain.CampaignLockToken, error) {
+	r.claims++
+	if r.claims > 1 && r.reclaimErr != nil {
+		return nil, domain.CampaignLockToken{}, r.reclaimErr
+	}
+	return r.toggleCampaignRepo.ClaimCampaignVersion(ctx, projectID, briefID, campaignID, expectedVersion)
+}
+
+// ReplaceCampaign also carries the written Result into the stored row, so a test can read the
+// deliberate-pause record back the way the next request would.
+func (r *adSetRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, expectedVersion int64, tok domain.CampaignLockToken, idx domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	r.replaces++
+	r.replaceTokens = append(r.replaceTokens, tok)
+	if len(r.replaceErrs) > 0 {
+		err := r.replaceErrs[0]
+		r.replaceErrs = r.replaceErrs[1:]
+		if err != nil && !errors.Is(err, errLandedButAmbiguous) {
+			return nil, err
+		}
+		if err != nil {
+			if _, aerr := r.apply(ctx, c, expectedVersion, tok, idx); aerr != nil {
+				return nil, aerr
+			}
+			return nil, ambiguousCommit()
+		}
+	}
+	return r.apply(ctx, c, expectedVersion, tok, idx)
+}
+
+func (r *adSetRepo) apply(ctx context.Context, c *model.Campaign, expectedVersion int64, tok domain.CampaignLockToken, idx domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	out, err := r.toggleCampaignRepo.ReplaceCampaign(ctx, c, expectedVersion, tok, idx)
+	if err != nil {
+		return nil, err
+	}
+	r.dataMu.Lock()
+	r.got.Result = append(json.RawMessage(nil), c.Result...)
+	r.dataMu.Unlock()
+	return out, nil
 }
 
 func (r *adSetRepo) VerifyClaimedVersion(ctx context.Context, projectID, briefID, campaignID string, expectedVersion int64, tok domain.CampaignLockToken) (*model.Campaign, error) {
+	r.verifies++
 	if r.verifyErr != nil {
 		return nil, r.verifyErr
 	}
@@ -71,6 +162,9 @@ func (r *adSetRepo) VerifyClaimedVersion(ctx context.Context, projectID, briefID
 
 func (r *adSetRepo) ReleaseCampaignLockAfterCooldown(tok domain.CampaignLockToken, d time.Duration) {
 	r.cooldowns++
+	if tok.CampaignID == "" {
+		return // the zero token releases nothing, as in the real repository
+	}
 	r.toggleCampaignRepo.ReleaseCampaignLockAfterCooldown(tok, d)
 }
 
@@ -113,7 +207,7 @@ func TestListMetaAdSets_RendersTheWireBody(t *testing.T) {
 		PlatformCampaignID: "555", Window: model.MetricsWindowLast7Days, Currency: "USD",
 		ReadAt: time.Date(2026, 10, 8, 9, 30, 0, 0, time.UTC),
 		AdSets: []model.MetaAdSet{
-			{ID: "888", Listed: true, Name: &name, BudgetType: &daily, BudgetAmount: strp("50.00"), Impressions: 1000, Clicks: 20, CostMicros: 7250000, Ctr: 0.02, Recorded: true},
+			{ID: "888", Listed: true, Name: &name, BudgetType: &daily, BudgetAmount: strp("50.00"), Impressions: 1000, Clicks: 20, CostMicros: 7250000, Ctr: 0.02, Recorded: true, DeliberatelyPaused: true},
 			{ID: "890", Impressions: 10, Clicks: 1, CostMicros: 500000, Ctr: 0.1},
 		},
 	}}
@@ -127,8 +221,8 @@ func TestListMetaAdSets_RendersTheWireBody(t *testing.T) {
 	}
 	body, _ := json.Marshal(briefsserver.NewListMetaAdSetsResponseBody(res))
 	want := `{"campaign_id":"c1","platform_campaign_id":"555","window":"last_7_days","currency":"USD","read_at":"2026-10-08T09:30:00Z","ad_sets":[` +
-		`{"id":"888","listed":true,"name":"Leads US","budget_type":"daily","budget_amount":"50.00","impressions":1000,"clicks":20,"cost_micros":7250000,"ctr":0.02,"recorded":true},` +
-		`{"id":"890","listed":false,"impressions":10,"clicks":1,"cost_micros":500000,"ctr":0.1,"recorded":false}],"ad_set_count":2}`
+		`{"id":"888","listed":true,"name":"Leads US","budget_type":"daily","budget_amount":"50.00","impressions":1000,"clicks":20,"cost_micros":7250000,"ctr":0.02,"recorded":true,"deliberately_paused":true},` +
+		`{"id":"890","listed":false,"impressions":10,"clicks":1,"cost_micros":500000,"ctr":0.1,"recorded":false,"deliberately_paused":false}],"ad_set_count":2}`
 	if string(body) != want {
 		t.Errorf("wire body = %s\nwant        %s", body, want)
 	}

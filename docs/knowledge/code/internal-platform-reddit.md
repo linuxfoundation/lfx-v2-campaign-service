@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/reddit"
-description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run), and ad-account discovery (businesses, then each business's ad accounts)."
+description: "Reddit Ads API v3 client: OAuth2 token refresh, Campaign -> Ad Group -> Ad creation (can AUTHOR a promoted image post from an image URL, or promote a supplied post URL), the campaign status toggle, campaign-level budget (goal_value) write and ad-group manual bid (bid_value) write, campaign metrics reads built to Reddit's public OpenAPI spec (gated pending a live-account run), the project-scoped audience and keyword performance reads (GENDER, COUNTRY, COMMUNITY and KEYWORD report breakdowns through one shared reader, same gate), and ad-account discovery (businesses, then each business's ad accounts)."
 resource: "internal/platform/reddit"
 tags:
   - platform-client
@@ -709,3 +709,80 @@ path the budget read, adoption read and toggle use — name, `configured_status`
 is read: the create path puts everything the readback compares on the campaign. A 404 is
 `(nil, nil)`; a non-integer `goal_value` is an error; DELETED/ARCHIVED is returned with its
 status rather than as absent.
+
+## Audience read (`audience.go`, LFXV2-2665)
+
+`Client.GetAudienceInsights(ctx, window, campaignIDs)` serves `get-reddit-ads-audience` (see
+[Reddit Audience Insights](../architecture/audience-insights-reddit.md)). Per (campaign, breakdown)
+it POSTs the verified reports operation on the client's bound account with
+`filter: campaign:id==<id>`, `breakdowns: [GENDER|COUNTRY|COMMUNITY]` and
+`fields: [CAMPAIGN_ID, IMPRESSIONS, CLICKS, SPEND, <DIM>]`, walking pagination with
+`walkPagesCapped` (10 pages, `errBreakdownPageCap`), at most `reportBreakdownConcurrency` (3) in
+flight, failing fast. Refused before any request: an unmapped window (`dateRangeForWindow`), an
+unaddressable bound account, an empty or invalid scope (`ErrReportScopeInvalid`) and more than
+`MaxReportCampaigns` (8) distinct campaigns (`ErrReportScopeTooLarge`). Each page's RAW body
+(`apiResponse.raw`) goes through `identityjson.Check` before decoding; rows embed `reportRow`, so
+`reportRow.validate` refuses a missing or explicit-null counter, a foreign or missing campaign id,
+a negative counter and clicks without impressions. The breakdown value is kept raw: absent → error,
+`null` → the unattributed bucket `""`, otherwise it must match `audienceValueRE`. A repeated value
+within one report, a missing/null `data` or `metrics`, and int64 overflow when summing across
+campaigns all fail the read; decode failures are `transportError`s with the literal path `reports`,
+and request errors go through `redactReportPath`. Buckets are ordered gender, country, community,
+then impressions descending, then value (unattributed last). AGE is not requested: the spec's
+`breakdowns` enum has no AGE. Tests: `audience_test.go` (request shape, aggregation, empty report,
+eighteen fail-closed bodies with no upstream text or account id in the error, upstream 403
+redaction, page cap, pre-request refusals, concurrency bound).
+
+Since the keyword performance read, the request, refusal and decoding steps above live in
+`report_breakdown.go` (`prepareBreakdownRead`, `readBreakdownReports`, `readBreakdownReport`,
+`breakdownValue`, `breakdownDecodeError`), parameterised by `reportBreakdown` (breakdown enum, row
+key, value check); `audience.go` keeps only its three breakdowns, its charset and the cross-campaign
+sum.
+
+## Keyword performance read (`keyword_performance.go`, LFXV2-2665)
+
+`Client.GetKeywordPerformance(ctx, window, campaignIDs)` serves `get-reddit-ads-keywords` (see
+[Reddit Keyword Performance](../architecture/keyword-performance-reddit.md)): the shared reader with
+the single `KEYWORD` breakdown — one report per campaign — then one `KeywordRow` per (campaign,
+keyword), ranked by impressions, campaign id, text (unattributed last), capped at `MaxKeywordRows`
+(50) with `Truncated`. `keywordTextErr` keeps text verbatim but refuses blank, over-200-character
+(runes, as the removal's Goa `MaxLength(200)` counts), invalid-UTF-8, control-character, Unicode
+`Cf` (zero-width, bidi), `Zl`/`Zp` (U+2028/U+2029) and `<`/`>` values. The breakdown value's row key
+is matched case-insensitively (`rowKeyFold`), like the counters `encoding/json` decodes from the
+same row. Tests: `keyword_performance_test.go`.
+
+### Reporting budget (`report_budget.go`, PR #306)
+
+`requestWithThrottleRetryCounted` calls `acquireReportSlot` on EVERY attempt — after the token
+refresh and the request build, immediately before `Do` and before the per-attempt deadline starts,
+so an attempt that fails before it could be sent (a failed refresh, a cancelled context) takes no
+slot, and a wait for a slot does not eat the attempt's timeout. `acquire` also checks `ctx.Err()`
+before every take (the first, and again after each wait). When the
+path is the reports operation (`reportPathRE`, `/ad_accounts/{id}/reports`), the attempt takes a
+slot from the account's ledger in the process-wide `defaultReportBudgets` (sliding 60 s; 45 in all,
+24 for attempts whose context carries `withInsightsReports` — the audience and keyword reads, set once in `readBreakdownReports`). So each page and
+each 429 retry of the audience read, the campaign metrics read and the account monitor is counted.
+A slot that will not free before the context's deadline fails at once with
+`ErrReportBudgetExhausted`, nothing sent. `WithReportBudgets` / `NewReportBudgets` let tests use a
+ledger of their own; the package's tests run on an unlimited default ledger
+(`report_budget_main_test.go`) and `report_budget_test.go` exercises the real limits
+(`TestReportBudgets_UnsentAttemptsSpendNothing`: cancelled before the take, cancelled during a
+wait, a cancelled client read and a failing token refresh all leave `used` at zero). The ledger is
+per process and the ungated account monitor spends it too, so the chart refuses more than one
+replica unconditionally (see [Deployment](../kubernetes/deployment.md)).
+
+`acquireReportSlot` returns a release func (`ReportBudgets.reserve`; `acquire` is `reserve`
+without it). The request loop calls it on exactly one branch: a `Do` error that
+`isPreSendDialError` proves was never sent, so a DNS or connect outage does not burn the budget.
+Every other `Do` error may have been sent and keeps its slot. Release removes exactly the
+recorded slot, once (`TestReportBudgets_PreSendDialFailureReleasesTheSlot`,
+`TestReportBudgets_ReleaseIsExactAndIdempotent`).
+
+The ledger map (`byAccount`) is bounded: a ledger left empty by a release is deleted, and at most
+once per window `tryTake` runs `sweepLocked`, which prunes EVERY account and deletes the empty
+ledgers. Without it only the account taking a slot was pruned, so every ad account ever seen kept
+an entry and account churn grew the map without bound. Cleanup is demand-driven: it runs on the
+next eligible `tryTake`, so while reporting traffic continues the map holds only accounts read in
+the last two windows; if report requests stop, expired ledgers stay until the next request sweeps
+them (`TestReportBudgets_InactiveLedgersAreDropped`: after the window an inactive account's
+ledger is gone, and releasing the last slot returns the map to 0).

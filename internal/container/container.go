@@ -18,6 +18,7 @@ import (
 	briefsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
 	connsvc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	svc "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_svc"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/assetsign"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/dispatch"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -270,6 +271,10 @@ type Container struct {
 	// routes are mounted on every path; it answers the contract's typed 503 while the
 	// explorer behind it is unset, which is the same degradation Audiences uses.
 	Explore exploresvc.Service
+	// SignedAssets serves stored creative assets at short-lived signed URLs for Reddit
+	// (LFXV2-2665). Always non-nil so the route is mounted on every path; with the feature off
+	// it answers the generic 404, and until a repository is bound a verified request gets 503.
+	SignedAssets *service.SignedAssetService
 
 	// Metrics owns the Prometheus registry served at /metrics. It is built FIRST in
 	// NewContainer, before any wiring branch, so the endpoint exists on every path —
@@ -303,6 +308,14 @@ type Container struct {
 	// REJECTS every request, so a missed injection is an outage rather than a quiet
 	// return to trusting unverified claims.
 	tokenVerifier service.TokenVerifier
+
+	// assetReserver is the ONE process-wide creative-asset memory budget, shared by the Meta
+	// dispatch (bytes uploaded to /adimages) and the signed-asset route (bytes served to
+	// Reddit), so the two together can never hold more than it admits. Built once, before any
+	// wiring branch, and bound on both live paths by bindCreativeAssetSharing.
+	assetReserver *dispatch.AssetReserver
+	// assetSigner mints/verifies signed creative-asset URLs; nil is the feature OFF.
+	assetSigner *assetsign.Signer
 
 	// indexPublisher is built ONCE in NewContainer, before the fast-path/503-mode
 	// branch, and injected into every BriefService constructed on either path.
@@ -418,6 +431,24 @@ func NewContainer(cfg *config.Config) (container *Container, err error) {
 	}
 	c.tokenVerifier = verifier
 
+	// Signed creative-asset URLs (LFXV2-2665). Optional as a pair — unset is the feature off —
+	// but a value that is SET and unusable fails startup: a security control that silently
+	// degrades to "off" on a typo is worse than one that refuses to start.
+	signer, serr := assetsign.New(cfg.CreativeAssetURLSigningKey, cfg.CreativeAssetPublicBaseURL, cfg.CreativeAssetURLTTL)
+	if serr != nil {
+		return nil, fmt.Errorf("signed creative-asset URL configuration: %w", serr)
+	}
+	if signer == nil {
+		slog.Info("signed creative-asset URLs not configured; Reddit dispatches must use imageUrl",
+			"key_set", strings.TrimSpace(cfg.CreativeAssetURLSigningKey) != "",
+			"base_url_set", strings.TrimSpace(cfg.CreativeAssetPublicBaseURL) != "")
+	} else {
+		slog.Info("signed creative-asset URLs enabled", "ttl", signer.TTL().String())
+	}
+	c.assetSigner = signer
+	c.assetReserver = dispatch.NewAssetReserver(dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait)
+	c.SignedAssets = service.NewSignedAssetService(signer, c.assetReserver)
+
 	if cfg.DatabaseURL == "" {
 		slog.Warn("database URL not set; connection and brief/campaign endpoints will return 503 Service Unavailable")
 		c.Service = service.NewCampaignService(nil)
@@ -530,8 +561,15 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	// asset-backed variant would nil-panic mid-dispatch instead of failing cleanly
 	// pre-spend. The no-database tests call registerDispatchers with all-nil args, so this
 	// is a reachable path, not a hypothetical.
+	// The Microsoft dispatcher reads stored assets too (microsoftConfig.imageAssetId, a
+	// campaign image extension — LFXV2-2665), under the same concrete-pointer guard.
+	microsoftDispatcher := dispatch.NewMicrosoftDispatcher(repo, enc)
+	// LinkedIn too (linkedInConfig.variants[].imageAssetId, Images API thumbnails).
+	linkedinDispatcher := dispatch.NewLinkedInDispatcher(repo, enc)
 	if creatives != nil {
 		metaDispatcher.SetCreativeAssetRepo(creatives)
+		microsoftDispatcher.SetCreativeAssetRepo(creatives)
+		linkedinDispatcher.SetCreativeAssetRepo(creatives)
 	}
 	// The AGGREGATE asset budget is bound unconditionally, not under the `creatives != nil`
 	// guard above. The two are independent: that guard exists because a nil concrete pointer
@@ -539,16 +577,28 @@ func registerDispatchers(repo *postgres.ConnectionRepo, enc domain.Encryptor, au
 	// whose nil case is already a documented no-op. Binding it here means every dispatcher the
 	// live and cold-start paths build shares ONE budget — which is the point, since the bound
 	// is across concurrent dispatches rather than within one.
-	metaDispatcher.SetAssetReserver(dispatch.NewAssetReserver(
-		dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait))
+	//
+	// ONE reserver, handed to every dispatcher that holds asset bytes: two would be two
+	// budgets, and the bound is only a bound if it is shared.
+	assets := dispatch.NewAssetReserver(dispatch.MaxConcurrentVariantAssetBytes, dispatch.VariantAssetReserveWait)
+	metaDispatcher.SetAssetReserver(assets)
+	microsoftDispatcher.SetAssetReserver(assets)
+	// X attaches a stored creative asset to an authored tweet (LFXV2-2665): the same concrete-
+	// pointer guard, and the SAME budget, since the bound is across all concurrent dispatches.
+	twitterDispatcher := dispatch.NewTwitterDispatcher(repo, enc)
+	if creatives != nil {
+		twitterDispatcher.SetCreativeAssetRepo(creatives)
+	}
+	twitterDispatcher.SetAssetReserver(assets)
+	linkedinDispatcher.SetAssetReserver(assets)
 	return map[model.Provider]service.PlatformDispatcher{
 		model.ProviderRedditAds:    dispatch.NewRedditDispatcher(repo, enc),
-		model.ProviderLinkedInAds:  dispatch.NewLinkedInDispatcher(repo, enc),
+		model.ProviderLinkedInAds:  linkedinDispatcher,
 		model.ProviderMetaAds:      metaDispatcher,
-		model.ProviderTwitterAds:   dispatch.NewTwitterDispatcher(repo, enc),
+		model.ProviderTwitterAds:   twitterDispatcher,
 		model.ProviderGoogleAds:    dispatch.NewGoogleAdsDispatcher(repo, enc, googleads.WithNAT64Prefixes(nat64...)),
 		model.ProviderHubSpot:      dispatch.NewHubSpotDispatcher(repo, enc, audiences, hubspot.WithNAT64Prefixes(nat64...)),
-		model.ProviderMicrosoftAds: dispatch.NewMicrosoftDispatcher(repo, enc),
+		model.ProviderMicrosoftAds: microsoftDispatcher,
 	}
 }
 
@@ -565,6 +615,38 @@ func (c *Container) bindStatsJobLease(dispatchers map[model.Provider]service.Pla
 	c.mu.Lock()
 	c.statsJobLease = lease
 	c.mu.Unlock()
+}
+
+// bindCreativeAssetSharing wires the stored-creative-asset paths that span more than one
+// component (LFXV2-2665), on BOTH live paths: the Meta, Microsoft and LinkedIn dispatchers and the
+// signed-asset route share the container's single AssetReserver (registerDispatchers' own
+// reserver is replaced, so the bound is one budget rather than two), the Reddit dispatcher gets the store and the
+// signer behind redditConfig.imageAssetId, and the signed-asset route gets the store.
+// creatives is guarded as a CONCRETE pointer: a typed nil in an interface reads as bound.
+func (c *Container) bindCreativeAssetSharing(dispatchers map[model.Provider]service.PlatformDispatcher, creatives *postgres.CreativeAssetRepo) {
+	// Every dispatcher that holds asset bytes is re-pointed at the container's reserver, which
+	// the signed-asset route also charges: registerDispatchers' own reserver would otherwise
+	// leave the dispatchers and the route on two budgets.
+	if c.assetReserver != nil {
+		if md, ok := dispatchers[model.ProviderMetaAds].(*dispatch.MetaDispatcher); ok {
+			md.SetAssetReserver(c.assetReserver)
+		}
+		if msd, ok := dispatchers[model.ProviderMicrosoftAds].(*dispatch.MicrosoftDispatcher); ok {
+			msd.SetAssetReserver(c.assetReserver)
+		}
+		if ld, ok := dispatchers[model.ProviderLinkedInAds].(*dispatch.LinkedInDispatcher); ok {
+			ld.SetAssetReserver(c.assetReserver)
+		}
+	}
+	if creatives == nil {
+		return
+	}
+	if rd, ok := dispatchers[model.ProviderRedditAds].(*dispatch.RedditDispatcher); ok {
+		rd.SetCreativeAssetURLs(creatives, c.assetSigner)
+	}
+	if c.SignedAssets != nil {
+		c.SignedAssets.SetCreativeAssetRepo(creatives)
+	}
 }
 
 // dispatchableProviders is the full set of providers a brief can select (per the
@@ -947,6 +1029,7 @@ func (c *Container) wireLiveBackends(pool *postgres.Pool, enc domain.Encryptor, 
 	c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(repo, enc, cfg)
 	dispatchers := registerDispatchers(repo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 	c.bindStatsJobLease(dispatchers, pool)
+	c.bindCreativeAssetSharing(dispatchers, postgres.NewCreativeAssetRepo(pool))
 	logMissingDispatchers(dispatchers)
 	// Surface claims stranded by a previous process (crash/eviction mid-dispatch) — they
 	// silently block future dispatches for their (brief, platform) until a human acts.
@@ -1026,6 +1109,7 @@ func (c *Container) retryDatabaseInit(ctx context.Context, cfg *config.Config, e
 			c.audienceBuilder, c.snowflakeClient = newAudienceBuilder(connRepo, enc, cfg)
 			dispatchers := registerDispatchers(connRepo, enc, audienceRepo, postgres.NewCreativeAssetRepo(pool), nat64Prefixes(c))
 			c.bindStatsJobLease(dispatchers, pool)
+			c.bindCreativeAssetSharing(dispatchers, postgres.NewCreativeAssetRepo(pool))
 			logMissingDispatchers(dispatchers)
 			// Same stuck-claim scan as the fast path: the DB only just became reachable, so
 			// this is the first opportunity to see claims stranded by a previous process.

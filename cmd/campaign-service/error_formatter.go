@@ -78,7 +78,10 @@ var echoingPartFormats = []struct {
 	re       *regexp.Regexp
 	sentence string
 }{
-	{regexp.MustCompile(`^length of ` + fieldName + ` must be (?:greater|lesser) or equal than `), valueEchoingValidationMessages[goa.InvalidLength]},
+	// Since goa v3.31 the length message carries the rejected value's LENGTH, not the value
+	// ("length of %s must be at least|at most %d but got %d"). It is still rewritten whole, so
+	// the 400 does not disclose how long the rejected input was either.
+	{regexp.MustCompile(`^length of ` + fieldName + ` must be at (?:least|most) `), valueEchoingValidationMessages[goa.InvalidLength]},
 	{regexp.MustCompile(`^value of ` + fieldName + ` must be one of `), valueEchoingValidationMessages[goa.InvalidEnumValue]},
 	{formatPart, valueEchoingValidationMessages[goa.InvalidFormat]},
 	{regexp.MustCompile(`^` + fieldName + ` must match the regexp `), valueEchoingValidationMessages[goa.InvalidPattern]},
@@ -91,8 +94,11 @@ var (
 	fieldTypeTail     = regexp.MustCompile(`^ for "` + fieldName + `", must be a `)
 	fieldTypeBareTail = regexp.MustCompile(`^invalid value [^\s"]* for "` + fieldName + `", must be a `)
 	// "%q is missing from %s" and "missing required payload" carry no value; they are kept
-	// verbatim only when the WHOLE part has exactly that shape.
-	missingFieldPart = regexp.MustCompile(`^"` + fieldName + `" is missing from [a-z ]+$`)
+	// verbatim only when the WHOLE part has exactly that shape. The context is a request
+	// location ("path", "query string", "body", ...) or, since goa v3.31 reports nested
+	// required fields under the path of the object that lacks them, a design-derived body path
+	// ("body.credentials", "body.keywords[*]"). Neither carries a client-supplied value.
+	missingFieldPart = regexp.MustCompile(`^"` + fieldName + `" is missing from (?:[a-z ]+|body(?:\.[A-Za-z0-9_]+(?:\[\*\])?)+)$`)
 )
 
 // nonEchoingResponseEncoder is the response encoder every generated HTTP server in this service is

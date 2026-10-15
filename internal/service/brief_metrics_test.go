@@ -519,12 +519,15 @@ func TestGetBriefMetrics_PacingIsProratedAcrossTheFlight(t *testing.T) {
 	if math.Abs(*row.Pacing.Pct-100) > 5 {
 		t.Errorf("pacing = %.1f%%, want ~100%% (half the budget, half way through)", *row.Pacing.Pct)
 	}
-	if row.Pacing.Label != "normal" {
-		t.Errorf("label = %q, want normal", row.Pacing.Label)
+	// Exactly on plan is constrained on the one 50/90/100 ladder (D2, 2026-10-13); before D2 the
+	// brief view ran 50/100/130 and called it normal.
+	if row.Pacing.Label != "constrained" {
+		t.Errorf("label = %q, want constrained", row.Pacing.Label)
 	}
-	// On plan, healthy CTR, spending: nothing to flag.
-	if len(res.ActionItems) != 0 {
-		t.Errorf("a healthy campaign raised %d action items", len(res.ActionItems))
+	// Healthy CTR, spending, on plan: the only item is the constrained band's budget item.
+	if len(res.ActionItems) != 1 || res.ActionItems[0].Rule != "budget_constrained" ||
+		!strings.HasPrefix(res.ActionItems[0].Issue, "Budget constrained") {
+		t.Errorf("action items = %+v, want exactly one budget_constrained \"Budget constrained\" item", res.ActionItems)
 	}
 }
 

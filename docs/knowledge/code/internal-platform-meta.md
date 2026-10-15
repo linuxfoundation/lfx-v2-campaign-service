@@ -483,6 +483,12 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
 
 ## Campaign status toggle
 
+`ActivateCampaignHoldingAdSet(ctx, campaignID, adSetID)` is the ACTIVATE cascade below with the
+ad set's own POST skipped (its ads and the campaign are still activated, campaign last; every
+other rule shared through `updateCampaignTree`). The dispatcher uses it when the campaign row
+holds a deliberate pause of that ad set (LFXV2-2665, see
+[Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md)).
+
 `UpdateCampaignAndChildrenStatus(ctx, campaignID, adSetID, status)` pauses/resumes a campaign
 AND cascades to its ad set + ads, because Meta's create PAUSES all three — toggling only the
 campaign to ACTIVE would leave the ad set/ads PAUSED and the campaign would not serve. Each

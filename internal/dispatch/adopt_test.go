@@ -15,6 +15,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/microsoft"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
@@ -30,6 +31,7 @@ var (
 	_ service.CampaignAdopter = (*MetaDispatcher)(nil)
 	_ service.CampaignAdopter = (*RedditDispatcher)(nil)
 	_ service.CampaignAdopter = (*TwitterDispatcher)(nil)
+	_ service.CampaignAdopter = (*LinkedInDispatcher)(nil)
 )
 
 // adopterUnderTest is what each platform's dispatcher must be for these tests: an adopter, and
@@ -120,7 +122,8 @@ func adopterCases() []adopterCase {
 	metaConn := activeMetaConn(goodMetaCreds)
 	redditConn := activeRedditConn(goodRedditCreds)
 	xConn := activeTwitterConn(goodTwitterCreds)
-	for _, c := range []*model.Connection{msConn, metaConn, redditConn, xConn} {
+	liConn := activeLinkedInConn(goodLinkedInCreds)
+	for _, c := range []*model.Connection{msConn, metaConn, redditConn, xConn, liConn} {
 		c.ID, c.Version = "conn-"+string(c.Provider), 1
 	}
 	return []adopterCase{
@@ -186,6 +189,24 @@ func adopterCases() []adopterCase {
 			account:         `{"data":{"id":"acc1"}}`,
 			creationAccount: twitterCreationAccountID, wantAccount: "acc1", wantName: "KubeCon — Awareness",
 		},
+		{
+			// LinkedIn (LFXV2-2665): the read is account-scoped, but the campaign also echoes its
+			// `account` URN, so a foreign one is checked; a 404 is confirmed by the account read.
+			provider: model.ProviderLinkedInAds, conn: liConn,
+			build: func(repo connReader, base string) adopterUnderTest {
+				return NewLinkedInDispatcher(repo, identityEncryptor{}, linkedin.WithBaseURL(base))
+			},
+			isLookup: func(r *http.Request) bool {
+				return r.Method == http.MethodGet && r.URL.Path == "/adAccounts/123456789/adCampaigns/777"
+			},
+			validID:         "777",
+			malformed:       []string{"0", "0777", "abc", " 777", "urn:li:sponsoredCampaign:777", "12345678901234567890", "9223372036854775808"},
+			found:           `{"id":777,"account":"urn:li:sponsoredAccount:123456789","name":"KubeCon — Conversions","status":"PAUSED","costType":"CPC","optimizationTargetType":"NONE"}`,
+			foreign:         `{"id":777,"account":"urn:li:sponsoredAccount:999","name":"KubeCon — Conversions","status":"PAUSED"}`,
+			absent:          [2]any{http.StatusNotFound, `{"status":404}`},
+			account:         `{"id":123456789}`,
+			creationAccount: linkedInCreationAccountID, wantAccount: "123456789", wantName: "KubeCon — Conversions",
+		},
 	}
 }
 
@@ -250,9 +271,10 @@ func TestAdopters_FoundCampaignIsBoundWithProvenanceOnly(t *testing.T) {
 				t.Errorf("PAUSE sent %q, want exactly one campaign-level mutation", mutations)
 			}
 
-			// The BID lever lives on a child entity on all four platforms (ad group, ad set,
-			// line item), which an adopted row never records: refused before any request, and
-			// the refusal names adoption.
+			// The BID lever lives on a child entity on four platforms (ad group, ad set, line
+			// item), which an adopted row never records; LinkedIn's lives on the campaign, and an
+			// adopted LinkedIn row is refused because adoption verified identity, not bidding.
+			// Either way: refused before any request, and the refusal names adoption.
 			before = len(stub.apiRequests())
 			berr := d.(service.BidWriter).WriteBid(context.Background(), "cncf", tc.provider, row, model.BidChange{Amount: 1, Type: model.BidTypeCPC})
 			if !errors.Is(berr, domain.ErrBidUnwritable) || !strings.Contains(berr.Error(), "ADOPTED") {
@@ -441,5 +463,56 @@ func TestAdopters_AreReachableThroughTheOrchestrator(t *testing.T) {
 				t.Errorf("err = %v, want ErrInvalidPlatformCampaignID from the adapter", err)
 			}
 		})
+	}
+}
+
+// LinkedIn's `account` is a required campaign field, so an answer that omits it cannot confirm the
+// campaign is the connection's: refused like a foreign account (409), never bound — the bid
+// lever's rule for the same field.
+func TestLinkedInAdopter_UnreportedAccountIsAMismatchNotABinding(t *testing.T) {
+	var tc adopterCase
+	for _, c := range adopterCases() {
+		if c.provider == model.ProviderLinkedInAds {
+			tc = c
+		}
+	}
+	d, stub, _ := newAdopter(t, tc)
+	stub.set(http.StatusOK, strings.Replace(tc.found, `"account":"urn:li:sponsoredAccount:123456789",`, ``, 1))
+	ref, err := d.LookupCampaign(context.Background(), "cncf", tc.provider, tc.validID)
+	if !errors.Is(err, domain.ErrCampaignAccountMismatch) || ref != nil {
+		t.Fatalf("got %+v, %v; want ErrCampaignAccountMismatch and no binding", ref, err)
+	}
+	if errors.Is(err, domain.ErrPlatformCampaignAbsent) {
+		t.Error("an unreported account must not read as absent")
+	}
+}
+
+// IDENTITY BEFORE STATE: a LinkedIn answer naming a foreign (or no) account is the 409 mismatch
+// even when it also reports a terminal status — never an "absent" read off another account's record.
+func TestLinkedInAdopter_ForeignTerminalCampaignIsAMismatchNotAnAbsence(t *testing.T) {
+	var tc adopterCase
+	for _, c := range adopterCases() {
+		if c.provider == model.ProviderLinkedInAds {
+			tc = c
+		}
+	}
+	for name, body := range map[string]string{
+		"foreign":    strings.Replace(tc.foreign, `"PAUSED"`, `"REMOVED"`, 1),
+		"unreported": strings.Replace(strings.Replace(tc.found, `"account":"urn:li:sponsoredAccount:123456789",`, ``, 1), `"PAUSED"`, `"CANCELED"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, stub, _ := newAdopter(t, tc)
+			stub.set(http.StatusOK, body)
+			ref, err := d.LookupCampaign(context.Background(), "cncf", tc.provider, tc.validID)
+			if !errors.Is(err, domain.ErrCampaignAccountMismatch) || ref != nil {
+				t.Fatalf("got %+v, %v; want ErrCampaignAccountMismatch", ref, err)
+			}
+		})
+	}
+	// A terminal campaign that IS the connection's stays an answered absence.
+	d, stub, _ := newAdopter(t, tc)
+	stub.set(http.StatusOK, strings.Replace(tc.found, `"PAUSED"`, `"REMOVED"`, 1))
+	if ref, err := d.LookupCampaign(context.Background(), "cncf", tc.provider, tc.validID); err != nil || ref != nil {
+		t.Fatalf("own terminal campaign: got %+v, %v; want (nil, nil)", ref, err)
 	}
 }

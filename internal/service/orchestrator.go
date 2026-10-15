@@ -683,6 +683,9 @@ var (
 	// ErrPreflightNotApplicable: a CreatePreflighter had nothing to check and made no platform call.
 	// PreflightCreate skips it silently and records no upstream call for it.
 	ErrPreflightNotApplicable = domain.ErrPreflightNotApplicable
+	// ErrCreateConfigInvalid: a CreatePreflighter refused the config locally (no platform call).
+	// PreflightCreate returns it unrecorded; mapBriefErr answers 400.
+	ErrCreateConfigInvalid = domain.ErrCreateConfigInvalid
 
 	// ErrAdoptionUnsupported: the platform has no campaign-adoption capability wired.
 	ErrAdoptionUnsupported = domain.ErrAdoptionUnsupported
@@ -718,6 +721,9 @@ type DispatchMetrics interface {
 	RecordDispatch(ctx context.Context, platform model.Provider, outcome string)
 	RecordJobTransition(ctx context.Context, status model.JobStatus)
 	RecordUpstreamCall(ctx context.Context, platform model.Provider, operation, outcome string, seconds float64)
+	// RecordMonitorUnmeasuredRows counts n account-monitor rows returned FetchFailed with one
+	// failure class (a model.MonitorFailureClass value) — see reportUnmeasuredRows.
+	RecordMonitorUnmeasuredRows(ctx context.Context, platform model.Provider, class string, n int)
 }
 
 // Dispatch outcome tokens. These MIRROR the constants in
@@ -889,6 +895,8 @@ type noopDispatchMetrics struct{}
 func (noopDispatchMetrics) RecordDispatch(context.Context, model.Provider, string) {}
 func (noopDispatchMetrics) RecordJobTransition(context.Context, model.JobStatus)   {}
 func (noopDispatchMetrics) RecordUpstreamCall(context.Context, model.Provider, string, string, float64) {
+}
+func (noopDispatchMetrics) RecordMonitorUnmeasuredRows(context.Context, model.Provider, string, int) {
 }
 
 // SetMetrics late-binds the metrics recorder from the container. Passing nil
@@ -2098,6 +2106,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
 		// and the orphaned upstream id; keep the id in the result.
+		if errors.Is(uerr, domain.ErrPlatformCampaignAlreadyBound) {
+			// A GENUINE duplicate, not an unknown outcome: the platform resolved this dispatch
+			// to an upstream campaign another live brief already binds (LinkedIn reuses a
+			// same-name campaign in its group). The claim stays held — a retry would resolve
+			// to the same campaign again — and the job names the conflict instead of claiming
+			// a creation it cannot vouch for.
+			slog.ErrorContext(ctx, "dispatch resolved to an upstream campaign already bound to another brief — pending claim retained",
+				"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID)
+			res.Error = "the upstream campaign this dispatch resolved to is already bound to another brief; rename the campaign or unbind the other brief, then clear the pending claim"
+			res.CampaignID = campaign.PlatformCampaignID
+			return res
+		}
 		slog.ErrorContext(ctx, "persist campaign failed after upstream create — pending claim retained",
 			"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "error", uerr)
 		res.Error = "created upstream campaign but failed to record it; see logs"
@@ -2834,6 +2854,11 @@ func (o *Orchestrator) PreflightCreate(ctx context.Context, projectID string, pl
 			// test and bury the quantiles and error rate of the lookups that really happen.
 			continue
 		}
+		if errors.Is(perr, ErrCreateConfigInvalid) {
+			// Refused on the config alone: nothing left the process, so — like
+			// ErrPreflightNotApplicable — there is no upstream call to record.
+			return perr
+		}
 		// A refusal is a read that SUCCEEDED and gave an answer we act on -- the platform replied
 		// and said the email sends by time zone -- so it is recorded as a successful upstream call.
 		// Counting it as an error would put a caller choosing an unsupported template on the same
@@ -2928,6 +2953,33 @@ type TwitterAudienceReader interface {
 	ReadTwitterAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.TwitterAudienceInsights, error)
 }
 
+// RedditAudienceReader is an OPTIONAL dispatcher capability: Reddit's GENDER, COUNTRY and
+// COMMUNITY report breakdowns for the campaigns a project OWNS. Type-asserted like
+// TwitterAudienceReader, so a dispatcher without it — every platform but Reddit — yields
+// ErrKeywordInsightsUnsupported → 400. Separate from TwitterAudienceReader because the dimensions
+// and result type differ. scope carries KeywordInsightsReader's contract: never empty from the
+// orchestrator, and the adapter refuses the whole read on any provenance mismatch rather than
+// dropping entries.
+//
+// AudienceEnabled is TwitterAudienceReader's gate, for its reason: asked BEFORE the scope lookup,
+// so a disabled read is the documented 400 for a project with no Reddit campaigns too, not a 200
+// with empty buckets.
+type RedditAudienceReader interface {
+	AudienceEnabled() error
+	ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error)
+}
+
+// RedditKeywordReader is an OPTIONAL dispatcher capability: Reddit's KEYWORD report breakdown for
+// the campaigns a project OWNS. RedditAudienceReader's contract for a second breakdown read —
+// type-asserted, so every other platform is ErrKeywordInsightsUnsupported → 400; KeywordsEnabled
+// asked BEFORE the scope lookup; scope never empty from the orchestrator, and any provenance
+// mismatch refuses the whole read. Separate from KeywordInsightsReader because Reddit has no
+// criterion handles, so its row shape differs.
+type RedditKeywordReader interface {
+	KeywordsEnabled() error
+	ReadRedditKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow, scope []model.ProjectCampaignScope) (*model.RedditKeywordPerformance, error)
+}
+
 // KeywordActioner is an OPTIONAL dispatcher capability: pause or remove keywords on an
 // existing campaign. Type-asserted like StatusToggler, so a dispatcher without it yields a
 // clean ErrKeywordActionsUnsupported → 400.
@@ -2956,8 +3008,10 @@ type NegativeKeywordAdder interface {
 	// AddNegativeKeywords returns exactly one outcome per requested keyword, in request
 	// order, or an error when the platform answered nothing per keyword. campaign is the
 	// persisted row, so the adapter can enforce provisioning and the account-identity
-	// invariant BEFORE the platform is contacted.
-	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error)
+	// invariant BEFORE the platform is contacted. revision is Reddit's compare-and-set token
+	// (the fingerprint get-keyword-targeting returned) and must be empty for every other
+	// platform; each adapter validates it.
+	AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error)
 }
 
 // KeywordTargetingReader is an OPTIONAL dispatcher capability (LFXV2-2665, Reddit and X): read the
@@ -3144,6 +3198,75 @@ func (o *Orchestrator) ReadTwitterAudienceInsights(ctx context.Context, projectI
 		})
 }
 
+// ReadRedditAudienceInsights reads Reddit audience breakdowns across the project's OWN campaigns.
+// ReadTwitterAudienceInsights' shape exactly — capability check, gate, then readScopedAudience
+// (empty scope answers empty WITHOUT contacting Reddit) — only the capability and result type differ.
+func (o *Orchestrator) ReadRedditAudienceInsights(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.RedditAudienceInsights, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(RedditAudienceReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	if err := reader.AudienceEnabled(); err != nil {
+		return nil, err
+	}
+	return readScopedAudience(ctx, o, projectID, platform,
+		func(callCtx context.Context, scope []model.ProjectCampaignScope) (*model.RedditAudienceInsights, error) {
+			return reader.ReadRedditAudienceInsights(callCtx, projectID, platform, window, scope)
+		},
+		func() *model.RedditAudienceInsights {
+			return &model.RedditAudienceInsights{Window: window, Buckets: []model.RedditAudienceBucket{}}
+		},
+		func(ai *model.RedditAudienceInsights) {
+			if ai.Buckets == nil {
+				ai.Buckets = []model.RedditAudienceBucket{}
+			}
+		})
+}
+
+// ReadRedditKeywordPerformance reads Reddit keyword performance across the project's OWN campaigns:
+// capability check, gate, then ReadKeywordPerformance's sequence — the scope from this service's
+// rows, an EMPTY scope answered empty WITHOUT contacting Reddit, the read under metricsCallTimeout
+// recorded as read_keywords, and a nil result or nil slice refused or normalised.
+func (o *Orchestrator) ReadRedditKeywordPerformance(ctx context.Context, projectID string, platform model.Provider, window model.MetricsWindow) (*model.RedditKeywordPerformance, error) {
+	d, ok := o.dispatchers[platform]
+	if !ok {
+		return nil, fmt.Errorf("%w: no dispatcher registered for platform %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	reader, ok := d.(RedditKeywordReader)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrKeywordInsightsUnsupported, platform)
+	}
+	if err := reader.KeywordsEnabled(); err != nil {
+		return nil, err
+	}
+	scope, err := o.projectCampaignScope(ctx, projectID, platform)
+	if err != nil {
+		return nil, err
+	}
+	if len(scope) == 0 {
+		return &model.RedditKeywordPerformance{Window: window, Rows: []model.RedditKeywordRow{}}, nil
+	}
+	callCtx, cancel := context.WithTimeout(ctx, metricsCallTimeout)
+	defer cancel()
+	start := time.Now()
+	kp, rerr := reader.ReadRedditKeywordPerformance(callCtx, projectID, platform, window, scope)
+	o.recordUpstream(ctx, platform, opReadKeywords, start, rerr)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if kp == nil {
+		return nil, fmt.Errorf("%s keyword reader returned a nil result with no error", platform)
+	}
+	if kp.Rows == nil {
+		kp.Rows = []model.RedditKeywordRow{}
+	}
+	return kp, nil
+}
+
 // readScopedAudience is the scope-then-read sequence every audience read shares, after its
 // capability check:
 //
@@ -3281,7 +3404,7 @@ func (e *unconfirmedOutcomeCountError) Unconfirmed() bool { return true }
 // order, and the call gets the mutation timeout. The outcome-count check is the same contract:
 // one outcome per requested keyword, or the response cannot be zipped back onto the request.
 // A short slice is UNCONFIRMED, because the add was already issued when it is detected.
-func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword) ([]model.NegativeKeywordOutcome, error) {
+func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
 	if campaign == nil {
 		return nil, ErrCampaignNotProvisioned
 	}
@@ -3296,7 +3419,7 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
 	start := time.Now()
-	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords)
+	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords, revision)
 	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
 	if aerr != nil {
 		return nil, aerr

@@ -183,7 +183,14 @@ would make it credentials-first for the CLI and not over HTTP. X was ADMITTED in
 same change that dropped its `Required("account_id")`. Microsoft remains the standing exception
 and the distinction is worth keeping: it has both halves, so its absence from the map is a
 SEQUENCING decision rather than a missing capability — admitting it changes what the CLI accepts
-and belongs in its own change. Note also that this map is a different gate from
+and belongs in its own change. That change is tracked by issue #181 and was deliberately NOT made
+in the 2026-10-13 drift fix: X's admission (LFXV2-3319) shows it is not a map entry alone but
+both gates at once — the map AND dropping `Required("account_id")` from
+`MicrosoftAdsConnectionConfig` (a `design/` change, a Goa regeneration and the matching
+`apivalidation` relaxation) — which makes Microsoft credentials-first on the public connection
+API as well as the CLI. #181 asks for a decision that the flow is ready to be OFFERED before
+that, and the subset test in `account_discovery_subset_test.go` re-derived rather than edited.
+Adding only the map entry would be the half-flow X's admission was careful to avoid. Note also that this map is a different gate from
 `design/connection.go`'s `Required("account_id")`, which governs the public connection APIs; a
 provider can be behaviourally eligible for one and not yet admitted to the other. The two gates
 are per-provider and must be relaxed TOGETHER to make a provider credentials-first — relaxing one

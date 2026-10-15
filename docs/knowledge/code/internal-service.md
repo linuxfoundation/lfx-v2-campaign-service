@@ -604,9 +604,15 @@ unusable-connection 409 messages name the campaign's platform (Google's wording 
 
 `AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
 is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
-persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft only; any other
-platform is 400 at the handler, and a Microsoft dispatcher without the capability is 400 via
-`Orchestrator.AddNegativeKeywords`'s type assertion on the new optional `NegativeKeywordAdder`.
+persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft Advertising,
+Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler, and a
+dispatcher without the capability is 400 via `Orchestrator.AddNegativeKeywords`'s type assertion on
+the optional `NegativeKeywordAdder`. The payload's optional `revision` (Reddit's compare-and-set
+token) is passed through untouched; each adapter validates it. Reddit/X-only refusals map to fixed
+messages: a stale revision (`ErrKeywordTargetingChanged`), the excluded-keyword cap
+(`ErrNegativeKeywordLimit`) and an unaddressable ad group / line item
+(`ErrKeywordTargetingUnaddressable`) are 409, and the 404 / unusable-connection 409 name the
+campaign's own platform.
 The orchestrator applies the same mutation timeout and the same outcome-count check
 (`unconfirmedOutcomeCountError`, whose message no longer claims every batch is atomic), and
 records the `negative_keywords` upstream op. `classifyNegativeKeywordError` mirrors the keyword
@@ -2058,16 +2064,52 @@ days here, UTC days there), so the two reads' totals are not directly comparable
 `twitter_audience_wire_example_test.go` (`TestPublishedTwitterAudienceExamplesArePossible`) walks
 every generated OpenAPI document and fails on an X audience example no response could contain.
 
-## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X)
+## Reddit audience read (`connection_reddit_audience.go`, LFXV2-2665)
+
+`GetRedditAdsAudience` (`GET .../reddit-ads/audience`) is the Reddit sibling: system scope refused
+(404); `resolveRedditAudienceWindow` accepts `today`, `last_7_days`, `last_30_days` (default),
+`this_month`, `last_month` — the Reddit report client's mapped windows — and answers anything else
+with the fixed 400 `redditAudienceWindowMessage` (derived from the map; the design enum declares
+the same subset); then `Orchestrator.ReadRedditAudienceInsights`, which type-asserts
+`RedditAudienceReader`, asks its `AudienceEnabled()` BEFORE the scope lookup (so
+`REDDIT_METRICS_ENABLED` off is 400 even with no Reddit campaigns), and runs the shared
+`readScopedAudience`. Errors go through `classifyInsightsErrorFor` with the
+`redditAdsAudienceInsights` descriptor. Two arms were added there, ahead of the mismatch arm: `domain.ErrCampaignProvenanceMixed` first → 409 naming BOTH remedies (re-dispatch the unrecorded campaigns, re-dispatch/reconcile or reconnect for the foreign ones; the Reddit read joins it with both other sentinels when a scope has both faults, `TestGetRedditAdsAudience_MixedProvenanceNamesBothRemedies`), then `domain.ErrCampaignProvenanceUnknown` → 409 with the re-dispatch remedy (the Reddit read joins it with the mismatch sentinel for rows that record no creation account). Buckets are `dimension`
+(`gender` | `country` | `community`) + optional `value` (absent for Reddit's explicit null); no
+`account_currency`. Tests: `reddit_audience_test.go`, including
+`TestPublishedRedditAudienceExamplesArePossible` over every generated OpenAPI document.
+
+## Reddit keyword performance read (`connection_reddit_keywords.go`, LFXV2-2665)
+
+`GetRedditAdsKeywords` (`GET .../reddit-ads/keywords`): system scope refused (404), the audience
+read's window subset and message (`resolveRedditAudienceWindow`), then
+`Orchestrator.ReadRedditKeywordPerformance` — `RedditKeywordReader` type-asserted, `KeywordsEnabled()`
+before the scope lookup, empty scope → 200 empty without a read, `metricsCallTimeout`,
+`read_keywords`, nil result refused and nil rows normalised. Errors go through
+`classifyInsightsErrorFor` with `redditAdsKeywordInsights`; the existing
+`ErrKeywordReportScope*` arms give the scope 409s, and the provenance arms the audience read uses
+give its provenance 409s — `ErrCampaignProvenanceMixed` first (both remedies), then
+`ErrCampaignProvenanceUnknown`, then `ErrCampaignAccountMismatch`. Rows are `campaign_id`, optional `text`, counters and
+`ctr`, plus `row_count` and `truncated`. Tests: `reddit_keywords_test.go` (including
+`TestGetRedditAdsKeywords_MixedProvenanceNamesBothRemedies`).
+
+## Campaign-ref lookups (Google, Microsoft, Meta, Reddit, X, LinkedIn)
 
 `ResolveGoogleAdsCampaign`, `ResolveMicrosoftAdsCampaign`, `ResolveMetaAdsCampaign`,
-`ResolveRedditAdsCampaign` and `ResolveTwitterAdsCampaign` (`GET .../{platform}/campaign-ref`)
-map one platform campaign id to this service's own campaign + brief. All five are one helper,
+`ResolveRedditAdsCampaign`, `ResolveTwitterAdsCampaign` and `ResolveLinkedinAdsCampaign`
+(`GET .../{platform}/campaign-ref`; LinkedIn's id rule is `linkedin.ValidateCampaignID`, a positive
+int64 with no leading zero — stricter than the decoder's Pattern, which cannot state the range) map one platform campaign id to this service's own campaign + brief.
+All six are one helper,
 `resolvePlatformCampaignRef(ctx, projectID, platform, id, validateID)` in
 `connection_keywords.go`: system-scope refusal (404) first, then the id rule (400, before any
 lookup), then the backend check (503 when not wired), then the project-scoped DB read (500 on a
 storage fault; 200 with an empty `matches` for an unowned id; every live match returned, never
-one picked). The platform and the id rule are fixed by the method, never by the request. Google
+one picked). How many can match is the platform's binding index, and each method's published
+description says so separately (`localCampaignRefMethod` takes the sentence per call): at most
+one in a valid database on Google Ads, LinkedIn and Meta (global indexes 000020/000042/000043);
+more than one on Microsoft, Reddit and X, whose indexes (000044-000046) allow one live row per
+(id, ad account), so a re-pointed connection leaves one row per account for the same id, plus
+legacy rows that record no account. The platform and the id rule are fixed by the method, never by the request. Google
 and Microsoft keep `validatePlatformCampaignID` (canonical positive int64); Meta, Reddit and X
 (LFXV2-2665) adapt each platform package's `ValidateCampaignID` through
 `platformCampaignIDRule`, which returns a fixed per-platform 400 message and never echoes the
@@ -2113,9 +2155,17 @@ and `toggle_meta_ad_set_status`). The orchestrator checks the capability before 
 a non-Meta row is 400 whatever its state. The toggle follows `ToggleCampaignStatus`'s
 concurrency contract — If-Match (428/412 against the loaded row), validation and
 `SupportsMetaAdSetToggle` before `ClaimCampaignVersion`, an UNCONFIRMED outcome holding the lock
-for `unconfirmedLockCooldown` and answering a 503 with fixed text, as every money lever does — but
-persists nothing: a 200's ETag is the unchanged version, checked with `VerifyClaimedVersion` after
-an APPLIED write. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
+for `unconfirmedLockCooldown` and answering a 503 with fixed text, as every money lever does. It
+persists one thing: the deliberate-pause record of the campaign's RECORDED ad set
+(`model.WithMetaUserPausedAdSet` on the row's `Result`, via `persistMetaAdSetRecord` →
+`ReplaceCampaign` on the claim holder's connection). A PAUSE records it through the dispatcher's
+`beforeWrite` hook before the write is sent (so an UNCONFIRMED pause stays on record) or after
+`ALREADY_IN_STATE`, and withdraws it if the write definitely changed nothing; only a CONFIRMED
+resume clears it. Every record write goes through `writeMetaAdSetRecord`, which reconciles a
+commit marked `domain.ErrWriteOutcomeUnknown` (the guarded write redone and re-read on the
+CLAIMED connection; if that connection is unusable, the claim is released and re-taken first) and, while a pause record may have landed, always lets the pause be sent. When it is written the ETag is the new version; otherwise a 200's ETag is the
+unchanged version, checked with `VerifyClaimedVersion` after an APPLIED write. Hand-added ad sets
+and adopted rows record nothing. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 
@@ -2125,3 +2175,19 @@ SPECIFIC reason (unknown property names, the criteria rule broken) instead of th
 "check the event URL or list reference" text, which names neither thing a custom request has; a
 missing model is a 503 that points the operator at the criteria form. Property types are never
 read from the caller — `Enumeration` is set by the orchestration from the portal.
+
+## LinkedIn audience read (`connection_linkedin_audience.go`, LFXV2-2665)
+
+`GetLinkedinAdsAudience` (`GET .../linkedin-ads/audience`) is the LinkedIn sibling, kept in its own
+file together with its capability (`LinkedInAudienceReader`) and
+`Orchestrator.ReadLinkedInAudienceInsights`, so `orchestrator.go` is untouched. Same order as the
+Meta read: system scope refused (404); `resolveLinkedInAudienceWindow` accepts only the LinkedIn
+metrics read's five windows (`today`, `last_7_days`, `last_30_days`, `this_month`, `last_month`),
+defaults to `last_30_days` and answers anything else with the fixed 400
+`linkedInAudienceWindowMessage`; backend check; then the capability assertion (absent →
+`ErrKeywordInsightsUnsupported`, 400) and the shared `readScopedAudience` (empty scope → 200 empty,
+LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics flag. Errors go through
+`classifyInsightsErrorFor` with the `linkedInAdsAudienceInsights` descriptor; no new arm was needed
+(the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
+`true` on the wire. Tests: `linkedin_audience_test.go`. See
+[LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).

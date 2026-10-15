@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
 // AccountCampaignRow is one campaign read live from an ad account for the account-monitor
@@ -41,6 +43,10 @@ type AccountCampaignRow struct {
 	// LinkedIn omits campaigns with no activity in the window, and the zero-value fields left
 	// in place are the honest "no delivery" reading (see ListAccountCampaigns).
 	FetchFailed bool
+	// FailureClass is why FetchFailed is set. Every LinkedIn row failure is a value LinkedIn
+	// returned that would not parse (a budget amount or costInUsd) — the analytics read is one
+	// account-level call that fails the whole read rather than one row — so it is always decode.
+	FailureClass model.MonitorFailureClass
 }
 
 // monitorPageSize is the finder page size for the account-scoped campaign list, the
@@ -103,6 +109,9 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			if row.Impressions > 0 {
 				row.Ctr = float64(row.Clicks) / float64(row.Impressions) * 100
 			}
+		}
+		if row.FetchFailed {
+			row.FailureClass = model.MonitorFailureDecode
 		}
 		out = append(out, row)
 	}
@@ -221,10 +230,12 @@ func (c *Client) fetchAccountCampaignAnalytics(ctx context.Context, accountID st
 	if err != nil {
 		return nil, fmt.Errorf("parse url: %w", err)
 	}
-	// pivotValue/pivotValues is NOT a projectable field on this schema (LinkedIn rejects it
-	// with a 400 "Projected field \"pivotValue\" not present in schema ...AdAnalyticsV8" the
-	// moment it's listed here) — it's returned automatically because `pivot=CAMPAIGN` is set,
-	// the same way the BFF's fields list (linkedin-ads.service.ts:894) never requests it either.
+	// The legacy SINGULAR `pivotValue` is NOT a projectable field on this schema (LinkedIn
+	// rejects it with a 400 "Projected field \"pivotValue\" not present in schema
+	// ...AdAnalyticsV8"), so it is not listed here; this read relies on pivotValues arriving with
+	// `pivot=CAMPAIGN`, the same way the BFF's fields list (linkedin-ads.service.ts:894) never
+	// requests it. The PLURAL `pivotValues` is a documented projectable field (ads-reporting,
+	// "Requesting specific metrics in the Analytics Finder"), which the audience read projects.
 	u.RawQuery = "q=analytics" +
 		"&pivot=CAMPAIGN" +
 		"&timeGranularity=ALL" +
@@ -292,9 +303,10 @@ func (c *Client) fetchAccountCampaignAnalyticsRaw(ctx context.Context, rawURL st
 		// (ListAccountCampaigns) would then read as "every listed campaign had zero activity"
 		// instead of "the analytics read failed" (round-24 review).
 		Elements *[]struct {
-			// PivotValues arrives automatically once `pivot=CAMPAIGN` is set — it is not, and
-			// cannot be, requested via `fields` (see the RawQuery comment above). Mirrors the
-			// BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
+			// PivotValues is not named in this read's `fields`; it relies on the field arriving
+			// with `pivot=CAMPAIGN`, as the BFF's does. Only the legacy SINGULAR `pivotValue` is
+			// unprojectable — the plural is a documented `fields` value (see the RawQuery comment
+			// above). Mirrors the BFF's `pivotValues?: string[]` (linkedin-ads.service.ts:907).
 			PivotValues []string `json:"pivotValues"`
 			Impressions int64    `json:"impressions"`
 			Clicks      int64    `json:"clicks"`

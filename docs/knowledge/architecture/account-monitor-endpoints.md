@@ -37,6 +37,26 @@ reaches), not project-scoped ones.
   nesting; removed (2026-09-18) once the BFF source showed no ad-group/keyword
   data exists anywhere in the monitor response being ported — only in a
   wholly separate `getKeywords` endpoint.
+- **Published examples are per operation** (`design/account_monitor_examples.go`). The six
+  platforms' rows differ (status literals, `campaign_url`, search channel, flight dates, lifetime
+  budget, conversions, pacing formula, the report-window fields), so `AccountMonitor` and
+  `AccountMonitorCampaign` carry no example and each monitor method's 200 body is a type of its
+  own that takes `AccountMonitor`'s fields — same fields and wire tags, so the service still returns
+  the shared result — published as `GoogleAdsAccountMonitor`, `LinkedinAdsAccountMonitor`, … with
+  an example in that platform's shape. The body types take the fields by `Reference`, so the
+  property examples that differ by platform are set per type: `account_id` in that platform's id
+  format, and the four report-window fields only on Microsoft and X (the shared type carries
+  none). Each needs an explicit `openapi:typename` (type and body),
+  because OpenAPI 3 deduplicates identical shapes and would otherwise point all six operations at
+  Google's. OpenAPI 2 has no per-operation response example, so there the six definitions carry
+  none. `TestPublishedAccountMonitorExamplesMatchTheirOperation` maps each operation id to its
+  handler's evaluator (live platforms read at the examples' `2026-10-05T14:30:00Z`, X on its
+  report window), recomputes pacing and action items, checks the platform's row shape and the
+  totals, and fails on an unmapped monitor operation or an account-monitor example not attached
+  to one. `TestPublishedAccountMonitorSchemaExamplesMatchTheirPlatform` checks the 200 schema's
+  property examples in all four specs: `account_id` must match that operation's own `account_id`
+  parameter pattern, `days` its bounds, and report-window examples appear only where the
+  platform sets the fields.
 - `internal/service/orchestrator.go`'s `AccountMetricsReader` capability +
   `Orchestrator.ReadAccountCampaignMetrics` follow the same optional-capability,
   type-assertion pattern as `AccountLister`/`MetricsReader`.
@@ -73,10 +93,10 @@ reaches), not project-scoped ones.
   reachable request. The other ad platforms share a single account today, so
   their stored `account_id` IS the shared account and a legitimate request
   matches it — the guard is carried there against a future split, and never
-  fires meanwhile. `docs/architecture.md` still lists Meta/Reddit/X as
-  per-foundation in BOTH its "Account Tenancy" and "Current Platform
-  Accounts" tables; both are stale against how the accounts are actually run
-  and neither is the authority for this.
+  fires meanwhile. `docs/architecture.md`'s "Account Tenancy" and "Current
+  Platform Accounts" tables are the authority for which platforms are shared
+  and which run an account per foundation; issue #243 corrected both
+  (2026-10-13), which had listed Meta/Reddit/X as per-foundation.
 
   LinkedIn keeps the empty stored account DISTINCT from a mismatch
   (`ErrAccountNotSelected` vs `ErrAccountNotManagedByConnection`) because its
@@ -94,12 +114,12 @@ reaches), not project-scoped ones.
   whether a campaign has a pacing figure worth placing at all, because the
   platforms report budget differently. The ladder's arithmetic is now one
   implementation for both read paths, `PacingLadder.Label` in
-  `internal/service/rules/ladder.go`: `pacingLabelFor` places on
-  `AccountMonitorLadder` (50/90/100), while `pacing.go`/`actions.go` place on
-  `BriefViewLadder` (50/100/130) for the single-campaign brief path. Which
-  ladder is correct is open product decision **D2**; switching a caller's
-  ladder would move operator-facing alerting bands and remains its own
-  decision.
+  `internal/service/rules/ladder.go`, and so are its numbers: product
+  decision **D2** (2026-10-13) set the pacing ladder to 50/90/100 everywhere,
+  so `pacingLabelFor` and the single-campaign brief path
+  (`pacing.go`/`actions.go`) both place on `StandardLadder` (50/90/100). The
+  brief path's former 50/100/130 ladder is gone; the monitors' bands did not
+  move.
 - `internal/service/connection_monitor.go`'s `monitorAccount` is the shared
   handler body: validate → resolve backend → `ReadAccountCampaignMetrics` →
   per-platform `evaluate` closure → `monitorTotals`, which sums the
@@ -203,8 +223,13 @@ defects, since fixed:
    already `Float64` — the totals field is now `Float64` too, matching the
    BFF's plain float sum in `aggregateTotals`.
 
-LinkedIn has not yet had the same class of check (missing platform-query
-scope filters) run against it.
+**LinkedIn does not have the Google-class defect.** Its campaign list,
+`fetchAccountCampaignList` in `internal/platform/linkedin/monitor.go`, already
+scopes the finder to `search=(status:(values:List(ACTIVE,PAUSED)))`, so it
+never returns the account's archived or removed history. What has NOT been
+done for LinkedIn is a full Reddit-style audit (below) of the rest of the read
+against the BFF — window, endpoint and rule-input classes — so treat that as
+outstanding rather than as a clean bill.
 
 **Reddit has (2026-10-05, LFXV2-2665 Track M3).** Outcome: no Google-class
 scope defect. The read's only campaign filter — `configured_status` ACTIVE
@@ -560,6 +585,48 @@ differential diff, since fixed:
     so both fixes reject the whole analytics/insights read instead of
     dropping just the one row. See
     [2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md](../log/2026-09-21-215-monitor-account-endpoints-round32-unattributable-rows.md).
+
+## Unmeasured rows: the totals signal and the failure-class summary
+
+`totals.unmeasured_campaigns` (required, `Int`, minimum 0; #218) is how many of the
+`campaign_count` rows carry `fetch_failed=true`, counted in `monitorTotals` over the same
+post-`evaluate` rows the sums cover. The sums still include those rows at whatever they carry —
+zero for a row whose metrics could not be read — so a non-zero count means the totals may
+UNDERSTATE the account by up to that many campaigns' delivery. Decisions:
+
+- **An upper bound, not an exact count.** `fetch_failed` also marks a row whose budget or flight
+  alone was unreadable while its metrics were read and summed (Google, LinkedIn, Meta, Microsoft,
+  X). Splitting that out would need a second row flag on every platform, Google's included, whose
+  client is owned elsewhere; the count is documented as an upper bound instead.
+- **`pacing_unknown` alone does not count.** Every `fetch_failed` row also carries it
+  (`fetchFailedRow`), but most `pacing_unknown` rows — no budget, no flight — were read in full,
+  and the totals sum no pacing input.
+- **Report-backed platforms**: before the first report finishes every row counts.
+
+Why a row failed (#220) is carried as `model.MonitorFailureClass` on
+`AccountCampaignMetrics.FailureClass` — a closed set, never upstream text, and NOT in the response:
+
+| Class | Set by |
+|---|---|
+| `auth` | Reddit: 401/403 on the report, or `ErrCredentialRejected` from the token refresh |
+| `throttle` | Reddit: 429 after the bounded retry (an over-cap `Retry-After` abort is a `transportError` → `other`) |
+| `upstream_5xx` | Reddit: 5xx, or the token endpoint unavailable |
+| `decode` | Reddit: a 2xx body that is not valid JSON (`errUndecodable2xxResponse`, inside the `transportError` `request()` returns), an undecodable/misattributed report, page cap, an id it will not interpolate; LinkedIn and Meta: every failed row (unparseable budget, `costInUsd`, insights counter); Microsoft/X dispatchers: unparseable budget or flight |
+| `no_report` | `mergeAccountReport`, when no report has finished (a dispatcher's class is kept) |
+| `other` | anything else, and every Google row (its client sets no class; `NormalizeMonitorFailureClass`) |
+| `unknown` | never set by a client: `NormalizeMonitorFailureClass` maps a NON-EMPTY class outside this set to it, so a client emitting a new or misspelled class shows up as drift instead of inside `other` |
+
+`reportUnmeasuredRows` (service layer) then emits, per request: ONE `WARN`
+"account monitor: some campaigns could not be measured; totals may understate the account" with
+`project_id`, `platform`, `campaign_count`, `unmeasured_campaigns` and an `unmeasured_by_class`
+group (every class, zeros included), and one `campaign_monitor_unmeasured_rows_total{platform,class}`
+Add per class present. The account id is not logged, matching the report-backed monitor's logs
+and the clients' own redaction of it. The warning is skipped when every failed row is `no_report`
+(the expected first read); the metric still counts them.
+
+Reddit's fan-out also checks the caller's context after `g.Wait()`: if it is done and a row
+failed on a context error, the read fails (503) instead of returning rows the deadline made
+unmeasured. A row that failed on its own while the context was live keeps `fetch_failed`.
 
 ## Microsoft: a report-backed monitor
 
