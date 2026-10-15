@@ -153,6 +153,13 @@ func (d *MetaDispatcher) AssetReserverIsSet() bool {
 	return d.assets != nil
 }
 
+// SharesAssetReserver reports whether this dispatcher charges exactly a. Exported for the
+// container test that proves Meta is on the container's ONE budget rather than a second one:
+// a dispatcher left on a second reserver still reads as AssetReserverIsSet.
+func (d *MetaDispatcher) SharesAssetReserver(a *AssetReserver) bool {
+	return a != nil && d.assets == a
+}
+
 // CreativeAssetRepoIsSet reports whether the creative-asset read path was bound.
 // Exported ONLY so the container's wiring tests can assert the binding directly, for
 // exactly the reason BriefService.CreativeAssetRepoIsSet is (see
