@@ -59,9 +59,10 @@ run the campaign without the image the caller asked for.
   remains the backstop.
 - **Readiness.** Media is used only when X has said it is ready. That means a finalize
   `data` object with no `processing_info`, which is the normal answer for an image, or a
-  `succeeded` state. A finalize or STATUS body with no `data` or `"data":null`, or a STATUS
-  answer that drops `processing_info` after X reported processing, is reported UNCONFIRMED
-  as an unreadable 2xx. An empty or unknown state is polled like `pending` and refused at the
+  `succeeded` state. A finalize or STATUS body with no `data` or `"data":null`, a raw body
+  `identityjson.Check` refuses (such as a duplicated `data` key, which the envelope decode
+  would otherwise resolve last-wins), or a STATUS answer that drops `processing_info` after X
+  reported processing, is reported UNCONFIRMED as an unreadable 2xx. An empty or unknown state is polled like `pending` and refused at the
   poll bound.
 - **Outcome classes.** These match the client's existing writes. A definite 4xx or pre-send
   failure reads "failed before any campaign was created". A transport error, 5xx, mutating 3xx

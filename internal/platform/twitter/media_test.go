@@ -492,7 +492,8 @@ func TestCreateCampaign_NoImageMakesNoMediaRequests(t *testing.T) {
 // TestCreateCampaign_ImageMediaStateMustBeReported: a finalize or STATUS body that does not
 // say what state the media is in, or a state that never becomes "succeeded", is never read as
 // ready. The create fails before the library add and the campaign; where the body is
-// unreadable the outcome is UNCONFIRMED, as for any unreadable 2xx.
+// unreadable — including a raw body identityjson refuses, such as a duplicated "data" key the
+// envelope decode resolved last-wins — the outcome is UNCONFIRMED, as for any unreadable 2xx.
 func TestCreateCampaign_ImageMediaStateMustBeReported(t *testing.T) {
 	const pending = `{"data":{"id":"777","media_key":"3_777","processing_info":{"state":"pending","check_after_secs":1}}}`
 	cases := []struct {
@@ -504,6 +505,8 @@ func TestCreateCampaign_ImageMediaStateMustBeReported(t *testing.T) {
 		{"finalize with null data", `{"data":null}`, "", true, 0},
 		{"status without data", pending, `{}`, true, 1},
 		{"status with null data", pending, `{"data":null}`, true, 1},
+		{"finalize with a duplicated data key", `{"data":null,"data":{"id":"777","media_key":"3_777"}}`, "", true, 0},
+		{"status with a duplicated data key", pending, `{"data":{"processing_info":{"state":"failed"}},"data":{"id":"777","media_key":"3_777","processing_info":{"state":"succeeded"}}}`, true, 1},
 		{"status without processing_info", pending, `{"data":{"id":"777","media_key":"3_777"}}`, true, 1},
 		{"empty processing state", `{"data":{"id":"777","media_key":"3_777","processing_info":{"state":""}}}`, `{"data":{"processing_info":{"state":""}}}`, false, maxMediaStatusPolls},
 	}
