@@ -49,8 +49,9 @@ type mediaFakeX struct {
 	libraryStatus  int
 	libraryBody    string
 	lookupBody     string // overrides the computed lookup page when set
-	// initWaitsForLookups, when > 0, holds each initialize until that many lookups have
-	// arrived (or initWaitMax passes), so an unserialized pair of uploads is caught every time.
+	// initWaitsForLookups, when > 0, holds each initialize AND each library add until that many
+	// lookups have arrived (or initWaitMax passes), so an unserialized pair of uploads, or a lock
+	// released before the library add, is caught every time.
 	initWaitsForLookups int
 	initWaitMax         time.Duration
 }
@@ -82,7 +83,9 @@ func (f *mediaFakeX) uploaded() []byte {
 
 func (f *mediaFakeX) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/2/media/upload/initialize" && f.initWaitsForLookups > 0 {
+		held := r.URL.Path == "/2/media/upload/initialize" ||
+			(r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media_library"))
+		if held && f.initWaitsForLookups > 0 {
 			deadline := time.Now().Add(f.initWaitMax)
 			for f.count("lookup") < f.initWaitsForLookups && time.Now().Before(deadline) {
 				time.Sleep(2 * time.Millisecond)
@@ -535,8 +538,9 @@ func TestCreateCampaign_ImageMediaStateMustBeReported(t *testing.T) {
 // TestCreateCampaign_ConcurrentSameImageUploadsOnce: two clients for ONE account (sharing the
 // dispatcher's AccountPacers registry, as two projects on the shared LF connection do) create
 // with identical image bytes at the same time. Exactly one upload and one library add happen;
-// the other create reuses the entry. The fake holds the first initialize until a second lookup
-// arrives, so an unserialized pair is caught deterministically.
+// the other create reuses the entry. The fake holds the first initialize and the first library
+// add until a second lookup arrives, so an unserialized pair, or a lock released before the
+// library add, is caught deterministically.
 func TestCreateCampaign_ConcurrentSameImageUploadsOnce(t *testing.T) {
 	f := newMediaFakeX()
 	f.initWaitsForLookups = 2
@@ -583,8 +587,24 @@ func TestCreateCampaign_ConcurrentSameImageUploadsOnce(t *testing.T) {
 	}
 }
 
+// TestNewClient_MediaLocksFollowThePacerGate: the media locks are shared through the registry
+// under exactly the pacer's gate. A client with an account id shares the registry's locks; one
+// without (account discovery) keeps private locks, as it keeps a private pacer.
+func TestNewClient_MediaLocksFollowThePacerGate(t *testing.T) {
+	reg := NewAccountPacers()
+	withAccount := NewClient(Credentials{}, AccountConfig{AccountID: "acc1"}, WithAccountPacers(reg))
+	noAccount := NewClient(Credentials{}, AccountConfig{}, WithAccountPacers(reg))
+	if withAccount.mediaLocks != reg.forMedia() {
+		t.Error("a client with an account id must share the registry's media locks")
+	}
+	if noAccount.mediaLocks == nil || noAccount.mediaLocks == reg.forMedia() {
+		t.Error("a client without an account id must keep private media locks, as it keeps a private pacer")
+	}
+}
+
 // TestMediaLocks_ContextBoundsTheWaitAndEntriesAreDropped: a waiter whose context ends gives
-// up without the lock, and the map is empty once every holder and waiter has left.
+// up without the lock, a waiter leaving does not drop the entry its holder still holds (the
+// refcount), and the map is empty once every holder and waiter has left.
 func TestMediaLocks_ContextBoundsTheWaitAndEntriesAreDropped(t *testing.T) {
 	l := newMediaLocks()
 	rel, err := l.acquire(context.Background(), "k")
@@ -595,6 +615,11 @@ func TestMediaLocks_ContextBoundsTheWaitAndEntriesAreDropped(t *testing.T) {
 	defer cancel()
 	if _, err := l.acquire(ctx, "k"); err == nil {
 		t.Fatal("a waiter whose context ends must not get the lock")
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel2()
+	if _, err := l.acquire(ctx2, "k"); err == nil {
+		t.Fatal("a waiter leaving must not drop the entry its holder still holds")
 	}
 	rel()
 	l.mu.Lock()

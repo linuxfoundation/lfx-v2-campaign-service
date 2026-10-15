@@ -442,7 +442,7 @@ erDiagram
 
 ## Platform Connection Management
 
-Campaign managers can create, read, update, and remove connections to ad platforms for a given project. For the paid ad platforms in scope of this service, a connection is **singleton per provider per project** — a project holds at most one Google Ads / LinkedIn / Meta / Reddit / X connection (enforced by `UNIQUE (project_id)` on each provider table). Where the LF runs several accounts on one provider, those accounts belong to *different projects* (e.g. TLF vs LF Events), each with its own singleton connection; there is never more than one connection of a provider on a single project. See [channel-connections-schema.md](channel-connections-schema.md#account-multiplicity-lives-at-the-project-level).
+Campaign managers can create, read, update, and remove connections to ad platforms for a given project. For the paid ad platforms in scope of this service, a connection is **singleton per provider per project** — a project holds at most one Google Ads / LinkedIn / Meta / Reddit / X / Microsoft Ads connection (enforced by `UNIQUE (project_id)` on each provider table). Where the LF runs several accounts on one provider, those accounts belong to *different projects* (e.g. TLF vs LF Events), each with its own singleton connection; there is never more than one connection of a provider on a single project. See [channel-connections-schema.md](channel-connections-schema.md#account-multiplicity-lives-at-the-project-level).
 
 ### Account Tenancy
 
@@ -450,22 +450,27 @@ Campaign managers can create, read, update, and remove connections to ad platfor
 |---------|-----------|---------|
 | Shared across foundations | Google Ads, Meta Ads, Reddit, X/Twitter, HubSpot | One upstream account used by every foundation; each using project stores its own singleton connection row pointing at the shared upstream account, or resolves to the LF system connection (`model.SystemProjectID`, installed by `bootstrap-system-account`) when it has none |
 | Per-foundation | LinkedIn Ads | Several ad accounts, one per foundation (e.g. TLF, LF Events); one singleton connection per project |
+| Not yet recorded | Microsoft Ads | No LF account is listed in [Current Platform Accounts](#current-platform-accounts), so neither grouping is asserted for it; one singleton connection per project, with an installable LF system row like every other provider |
 
 **Where the authority lives.** Tenancy is an operational fact about how the LF runs its ad
 accounts; it is not encoded in the migrations (which only enforce one live connection per provider
 per project), so the "migrations are the sole authority" rule does not cover it. This section and
 [Current Platform Accounts](#current-platform-accounts) below are the authority for tenancy. The
-account-scope guards in `internal/dispatch` (LinkedIn's managed-account check and Meta's
-`requireMetaManagedAccount`) cite them: the check is LIVE on LinkedIn, where a project can name
-another foundation's account, and DEFENSIVE on the shared platforms, where every project's stored
-account is the same one. If a platform moves to an account per foundation, update both tables here
-in the same change.
+account-monitor scope guards in `internal/dispatch` cite them. Five platforms carry one —
+`requireLinkedInManagedAccount`, `requireMetaManagedAccount`, Reddit's `resolveMonitorClient`,
+`requireTwitterManagedAccount` and `requireMicrosoftManagedAccount` — each refusing a requested
+`account_id` other than the one the project's own connection stores
+(`domain.ErrAccountNotManagedByConnection`, 400). The check is LIVE on LinkedIn, where a project can
+name another foundation's account, and DEFENSIVE on Meta, Reddit and X, where every project's stored
+account is the same shared one. Google Ads, one shared customer, has no such guard. Microsoft's
+guard runs regardless of its unrecorded tenancy. If a platform moves to an account per foundation,
+or Microsoft's account is recorded, update both tables here in the same change.
 
 > **Future organic/communication channels** (Slack workspaces, Discord servers, social accounts) may legitimately need *multiple instances per project* — a shape the current singleton `UNIQUE (project_id)` per-provider tables do **not** accommodate. Those channels are out of scope for this paid-platform migration; when they land, their tables will drop the `UNIQUE (project_id)` constraint and their API will use a collection shape (`/projects/{id}/slack-connections/{id}`). This is called out so the singleton decision here is understood as scoped to paid ad platforms, not a claim about every future channel.
 
 ## Current Platform Accounts
 
-Each platform has a different tenancy model. Most platforms use a single shared account across all foundations (campaigns separated by naming convention). LinkedIn alone runs separate accounts per foundation, meaning each of those projects connects to its own ad account.
+Each platform has a different tenancy model. Most platforms use a single shared account across all foundations (campaigns separated by naming convention). Of the recorded platforms, LinkedIn alone runs separate accounts per foundation, meaning each of those projects connects to its own ad account. Microsoft Ads appears in neither table: its LF account is not yet recorded here (see [Account Tenancy](#account-tenancy)).
 
 **Single shared account:**
 

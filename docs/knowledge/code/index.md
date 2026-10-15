@@ -30,5 +30,6 @@
 * [pkg/constants](pkg-constants.md) - Application-wide constants, including PG*, DATABASE_URL and AI_* environment variable names.
 * [pkg/log](pkg-log.md) - Package log provides structured logging utilities for context-aware logging.
 * [pkg/redact](pkg-redact.md) - Renders credential-bearing values into log-safe forms; strips URL userinfo entirely, unlike url.URL.Redacted().
+* [pkg/uploadclient](pkg-uploadclient.md) - Request encoder for the generated Goa clients that declares the encoded Content-Length, so creative-asset uploads are priced by size instead of serialized as chunked (#183).
 * [pkg/utils](pkg-utils.md) - Package utils provides OpenTelemetry SDK setup utilities.
 * [design](design.md) - Package design contains the DSL for the campaign service Goa API generation.
