@@ -572,7 +572,7 @@ Which adapters honour it today:
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
 | Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle, metrics (async Reporting API; default-OFF) |
 | Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
-| LinkedIn | yes | `resolveLinkedInCredentials` — toggle, metrics (LFXV2-3196); Dispatch keeps its own inline checks, which wrap in `notCreated()` to release the claim |
+| LinkedIn | yes | `resolveLinkedInCredentials` — dispatch, toggle, metrics (LFXV2-3196 for toggle and metrics; dispatch joined 2026-10-15 and wraps the result in `notCreated()` to release the claim) |
 | HubSpot (email) | **n/a** | out of scope — see below |
 
 HubSpot is listed for completeness, not as a gap. Its checks in `internal/dispatch/hubspot.go`
@@ -589,12 +589,18 @@ so tagging it was an extraction rather than an annotation — Meta was in the sa
 LFXV2-3061 performed exactly that extraction. LFXV2-3196 did the same for LinkedIn's toggle and
 metrics paths.
 
-Its `Dispatch` deliberately keeps its own inline checks: they wrap in `notCreated()` to release
-the dispatch claim, which is a different contract from returning a classified error to a
-synchronous handler, and folding the two would mean the helper had to know which caller it had.
+Its `Dispatch` validated inline until 2026-10-15, which meant an empty account id failed with a
+bare `notCreated` that never named the missing choice. It now calls `resolveLinkedInCredentials`
+(bound to `d.creds.resolve`, so creation stays governed by the forced-system flag) and wraps the
+helper's plain classified error in `notCreated()` ITSELF — the Meta, X and Microsoft split. The
+helper never needs to know which caller it has, and the claim is still released. Only the org id,
+which is creation-only, stays an inline check in `Dispatch`. An account-less connection therefore
+reaches the polled job result as `this project's linkedin-ads connection cannot be used as
+configured (reason: account_not_selected); nothing was sent` (issue #208's connection-class
+sentence), or the LF-system variant when the row is the fallback.
 
-One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics where
-Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
+One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics (as
+well as create) where Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
 empty account id cannot reach the platform at all; Meta targets the campaign node by platform id
 and never reads the account, so an account cleared after creation must not block pausing.
 

@@ -622,3 +622,65 @@ func TestDispatch_MicrosoftInvalidStoredImageReachesTheJobResult(t *testing.T) {
 		t.Errorf("%d request(s) reached Microsoft before the image refusal", n)
 	}
 }
+
+// TestDispatch_LinkedInUnselectedAccountNamesTheMissingChoice pins the create path's answer to a
+// connection that has credentials but no ad account chosen. Dispatch resolves through
+// resolveLinkedInCredentials, which tags that state ErrAccountNotSelected, so the job result is
+// the fixed connection-class sentence with reason account_not_selected — the token that tells an
+// operator to use account discovery. Before, Dispatch validated inline and answered with a
+// refusal that never named the choice.
+//
+// The claim contract is unchanged (NoUpstreamCreate, nil campaign) and nothing is sent. Both
+// scopes are covered because the deferred systemScoped in the helper is what decides between
+// "this project's connection" and "the LF system connection".
+func TestDispatch_LinkedInUnselectedAccountNamesTheMissingChoice(t *testing.T) {
+	cfg := json.RawMessage(`{"linkedInConfig":{
+		"budgetUsd":100,"startDate":"2099-01-01","endDate":"2099-02-01",
+		"geoTargets":[{"label":"United States","urn":"urn:li:geo:103644278"}],
+		"targetingProfile":"cloud-native",
+		"targetingProfiles":[{"id":"cloud-native","label":"Cloud Native","skills":["urn:li:skill:1"]}],
+		"variants":[{"introText":"Join us — it's great and long enough","headline":"KubeCon 2099"}]
+	}}`)
+	for _, tc := range []struct {
+		name string
+		repo func(*model.Connection) connReader
+		want string
+	}{
+		{
+			name: "project-owned row",
+			repo: func(c *model.Connection) connReader { return fakeConnReader{conn: c} },
+			want: "this project's linkedin-ads connection cannot be used as configured (reason: account_not_selected); nothing was sent",
+		},
+		{
+			name: "lf system fallback",
+			repo: func(c *model.Connection) connReader {
+				return &scopedConnReader{rows: map[string]*model.Connection{model.SystemProjectID: c}}
+			},
+			want: "the LF system linkedin-ads connection is not usable as configured (reason: account_not_selected); nothing was sent",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := activeLinkedInConn(goodLinkedInCreds)
+			conn.AccountID = "  " // whitespace-only is unselected too: the helper trims before testing
+			tr := &noSendTransport{}
+			d := NewLinkedInDispatcher(tc.repo(conn), identityEncryptor{}, linkedin.WithHTTPClient(&http.Client{Transport: tr}))
+
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, cfg)
+			if camp != nil {
+				t.Errorf("want no campaign for an unselected account, got %+v", camp)
+			}
+			if !errors.Is(err, domain.ErrAccountNotSelected) || !errors.Is(err, domain.ErrConnectionNotUsable) {
+				t.Fatalf("error = %v, want ErrConnectionNotUsable + ErrAccountNotSelected", err)
+			}
+			if !isNoUpstreamCreate(err) {
+				t.Errorf("error %v is not NoUpstreamCreate, so the dispatch claim would be retained", err)
+			}
+			if got := service.DispatchFailureMessage(model.ProviderLinkedInAds, err, true); got != tc.want {
+				t.Errorf("job result error = %q\nwant               %q", got, tc.want)
+			}
+			if n := tr.sent.Load(); n != 0 {
+				t.Errorf("%d request(s) sent for an account-less connection", n)
+			}
+		})
+	}
+}
