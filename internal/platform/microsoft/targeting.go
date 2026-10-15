@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -193,20 +195,20 @@ func validateKeywords(keywords []Keyword) ([]Keyword, error) {
 		// Measured in RUNES, matching Microsoft's character-based limit and every other length
 		// check in this client — a byte count would reject a valid CJK keyword.
 		if n := utf8.RuneCountInString(text); n > maxKeywordTextRunes {
-			return nil, fmt.Errorf("microsoft-ads: keyword %q is %d characters, exceeding the %d limit",
-				truncate(text, maxErrorBodyChars), n, maxKeywordTextRunes)
+			return nil, fmt.Errorf("microsoft-ads: keyword %s is %d characters, exceeding the %d limit",
+				domain.CallerValue(text), n, maxKeywordTextRunes)
 		}
 		// Reject ANY control rune (not just \n/\r): a \t, \v, \f or NUL would otherwise reach
 		// POST /Keywords verbatim and be rejected by Microsoft only AFTER the campaign, ad group
 		// and ad exist. Checks kw.Text (PRE-trim) so a leading/trailing control char is caught
 		// too, exactly as checkAdCopyList does.
 		if strings.IndexFunc(kw.Text, unicode.IsControl) >= 0 {
-			return nil, fmt.Errorf("microsoft-ads: keyword %q contains a control character", truncate(text, maxErrorBodyChars))
+			return nil, fmt.Errorf("microsoft-ads: keyword %s contains a control character", domain.CallerValue(text))
 		}
 		matchType, ok := canonicalMatchType(kw.MatchType)
 		if !ok {
-			return nil, fmt.Errorf("microsoft-ads: keyword %q has unsupported match type %q (want %s, %s, or %s)",
-				truncate(text, maxErrorBodyChars), truncate(kw.MatchType, maxErrorBodyChars),
+			return nil, fmt.Errorf("microsoft-ads: keyword %s has unsupported match type %s (want %s, %s, or %s)",
+				domain.CallerValue(text), domain.CallerValue(kw.MatchType),
 				MatchTypeExact, MatchTypePhrase, MatchTypeBroad)
 		}
 		// Microsoft treats keyword text case-insensitively for uniqueness within an ad group, so

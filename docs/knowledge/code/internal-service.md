@@ -823,14 +823,17 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   (`internal/service/brief.go`) are synchronous, so they answer a **409** off this same sentinel.
   **Campaign create is not**: it answers `202`, so the same failure can only surface later, in
   the polled job result, never as a 409 — see `docs/api-catalog.md`. Be precise about what
-  reaches that result, because it is less than the sentinel carries:
-  `Orchestrator.dispatchPlatform` collapses every dispatcher error into one generic string, so
-  the job result says the platform dispatch failed and does NOT say which of the classified
-  reasons it was. The reason token survives only in that path's log line, via
-  `unusableConnectionReason`. Do not describe "campaign dispatch" as receiving a 409; the
-  dispatch layer produces the error, only the two synchronous readers turn it into a status
-  code, and the async path turns it into a log attribute rather than into anything the caller
-  polling the job can read.
+  reaches that result: since issue #208 `Orchestrator.dispatchPlatform` sets the platform's
+  `error` from `DispatchFailureMessage` (see "Dispatch failure reasons in the job result"
+  below), which never renders the error's text. A pre-create connection fault becomes a fixed
+  sentence per class, completed with the `unusableConnectionReason` token (for example
+  `(reason: account_not_selected)`); a `domain.PreflightRefusal` is echoed verbatim; a token
+  refresh failure and an upstream status get their own fixed sentences; anything else is the
+  generic `platform campaign creation failed`. Google Ads clients mark none of their errors
+  yet, so a Google Ads failure reaches only the connection, unconfirmed and generic classes.
+  Do not describe "campaign dispatch" as receiving a 409; the dispatch layer produces the
+  error, only the two synchronous readers turn it into a status code, and the async path turns
+  it into a fixed job-result sentence (plus the log line) rather than into a status code.
   `platformResult` also carries `HubspotURL string \`json:"hubspot_url,omitempty"\``, populated only
   for the HubSpot email channel via `hubspotURLFromResult(result json.RawMessage) string`. It reads
   back the `hubspotUrl` key that `campaignFromHubSpot` (`internal/dispatch/hubspot.go`) stashed into
@@ -2236,3 +2239,33 @@ explicit `""` can clear it; with the old `^[0-9]+$` a declared identity could no
 once omission was refused. The rule is in each guarded attribute's description (`keepOnUpdate` in
 the design), so it reaches the generated OpenAPI. `account_id` and `label` are not
 provider-config keys and keep the plain full-replace behaviour.
+
+## Dispatch failure reasons in the job result (`dispatch_failure.go`, issue #208)
+
+`dispatchPlatform` used to set every failed platform's `PlatformResult.error` to
+`"platform campaign creation failed"`, logging the real cause and then dropping it. It now
+calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoting the error:
+
+- `preCreate` is the orchestrator's own claim verdict (`dispatchErrIsPreCreate(derr) &&
+  campaign == nil`), computed once and shared by the claim and the message, so the two cannot
+  disagree. A retained failure (something may exist) is always reported as **could not be
+  confirmed**, with the upstream HTTP status when the chain carries one — never a refusal or a
+  connection class, even if the chain has one.
+- On the pre-create path the arms follow `classifyDiscoveryError`'s order: service defect → LF
+  system connection missing → no connection (`ErrConnectionAbsent`) → decrypt fault → LF
+  system / own connection unusable (with the `unusableConnectionReason` token) → a
+  `domain.PreflightRefusal`, **echoed verbatim** → token refresh failed
+  (`domain.TokenRefreshFailure`, unless the chain is `context.Canceled`/`DeadlineExceeded`:
+  a cancelled refresh says nothing about the credential and falls through) → an upstream
+  status (`domain.UpstreamStatusCarrier`, status only): "refused the request (HTTP n) before
+  anything was created" for a 4xx, or "answered HTTP n before anything was created (a retry
+  may succeed)" for a 5xx or 429. The status may come from a read that preceded the create,
+  so neither sentence says the create was refused → the generic string.
+- The connection arms precede the refusal arm so that a chain carrying credential-derived text
+  can never be echoed, even if someone wraps it as a refusal.
+
+The message is the only change. Claim release/retention, the retained row's status and the
+job's aggregate status are decided before it runs. `TestOrchestrator_PreCreateFailureLogsAClassifiedReason`
+now asserts that the job result carries `(reason: account_not_selected)` and not the error text.
+Google Ads reaches the generic classes only (connection, unconfirmed, fallback); its client
+errors are not marked yet.
