@@ -182,10 +182,12 @@ renderer formats with a symbol when it is present and without one otherwise.
   `PacingUnknown` (`linkedin.AccountCampaignRow.PacingUnknown`, honoured by
   `rules.EvaluateLinkedInMonitor`): which budgets are in the spend's currency cannot be told. The
   single-campaign metrics read and the audience read still report `costInUsd`.
-- **Meta withholds zero-decimal currencies.** The Meta monitor converts budgets from minor units by
-  dividing by 100 (`minorUnitsToWhole`), so a JPY/KRW/… account's budgets are wrong by that factor;
-  `monitorPublishableCurrency` publishes the code only when `currencyOffsetFor` gives 100, and logs
-  the rest. #316 makes the conversion currency-aware; the restriction goes when it merges.
+- **Meta withholds zero-decimal currencies.** `monitorPublishableCurrency` publishes the code only
+  when `currencyOffsetFor` gives 100, and logs the rest. The restriction dates from when the Meta
+  monitor divided every budget by 100 (`minorUnitsToWhole`), making a JPY/KRW/… account's budgets
+  wrong by that factor; budgets are now converted with the account currency's own offset (one
+  `?fields=currency` read per request, `minorToWhole`), and the restriction is kept until a
+  separate change lifts it.
 - **Identity and failure.** The two new reads (Reddit, Microsoft) and X's currency are taken only
   from a body `identityjson` trusts that names the requested account. Any failure — transport,
   status, untrusted body, another account's id — leaves `currency` absent and never fails the
