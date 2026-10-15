@@ -139,6 +139,7 @@ func TestListMetaAds_StatusMapping(t *testing.T) {
 		{"another not-found source is not the connection answer", fmt.Errorf("%s: %w", secret, domain.ErrNotFound), 503},
 		{"invalid stored platform id", fmt.Errorf("%s: %w", secret, domain.ErrStoredPlatformIDInvalid), 409},
 		{"invalid ad set id", fmt.Errorf("%s: %w", secret, domain.ErrMetaAdSetInvalid), 400},
+		{"unsupported window", fmt.Errorf("%s: %w", secret, domain.ErrMetricsWindowUnsupported), 400},
 		{"connection not usable", fmt.Errorf("%s: %w", secret, domain.ErrConnectionNotUsable), 409},
 		{"system connection not usable", fmt.Errorf("%w: %w: %s", domain.ErrSystemConnectionNotUsable, domain.ErrConnectionNotUsable, secret), 500},
 		{"decryption", fmt.Errorf("%s: %w", secret, domain.ErrCredentialDecryptionFailed), 500},
@@ -153,6 +154,12 @@ func TestListMetaAds_StatusMapping(t *testing.T) {
 			}
 			if strings.Contains(errMessage(err), secret) {
 				t.Fatalf("client message leaks upstream text: %q", errMessage(err))
+			}
+			if tc.name == "unsupported window" && !strings.Contains(errMessage(err), "Meta ads") {
+				t.Fatalf("window wording = %q, want the ad read's own", errMessage(err))
+			}
+			if tc.name == "upstream identity mismatch" && !strings.Contains(errMessage(err), "an ad of this ad set") {
+				t.Fatalf("identity-mismatch wording = %q, want the ad read's own", errMessage(err))
 			}
 			if tc.want == 503 && !strings.Contains(errMessage(err), "ads could not be read") {
 				t.Fatalf("503 wording = %q, want the ad read's own", errMessage(err))

@@ -53,6 +53,10 @@ const adInsightsFields = "ad_id,adset_id,campaign_id,impressions,clicks,spend,ac
 // provenance proof.
 var ErrAdAccountMismatch = errors.New("meta: the ad is reported under a different ad account")
 
+// validateGraphObjectID reports whether id is a canonical Meta Graph object id (an ad or creative
+// id): the same digit rule as a campaign id, which ValidateCampaignID implements.
+func validateGraphObjectID(id string) error { return ValidateCampaignID(id) }
+
 // maxAdNameBytes bounds an ad or creative name returned verbatim. Meta's own limit is far below it.
 const maxAdNameBytes = 1024
 
@@ -246,7 +250,7 @@ func decodeListedAd(raw json.RawMessage, adSetID, campaignID, accountID string) 
 	if err := json.Unmarshal(raw, &w); err != nil {
 		return AdSummary{}, errors.New("row is not an ad object of the expected shape")
 	}
-	if w.ID == nil || ValidateCampaignID(*w.ID) != nil {
+	if w.ID == nil || validateGraphObjectID(*w.ID) != nil {
 		return AdSummary{}, errors.New("row has no canonical ad id")
 	}
 	if w.AdSetID == nil || *w.AdSetID != adSetID {
@@ -271,7 +275,7 @@ func decodeListedAd(raw json.RawMessage, adSetID, campaignID, accountID string) 
 	}
 	ad := AdSummary{ID: *w.ID, Listed: true, Name: w.Name, Status: w.Status, EffectiveStatus: w.EffectiveStatus}
 	if w.Creative != nil {
-		if w.Creative.ID == nil || ValidateCampaignID(*w.Creative.ID) != nil {
+		if w.Creative.ID == nil || validateGraphObjectID(*w.Creative.ID) != nil {
 			return AdSummary{}, errors.New("creative has no canonical id")
 		}
 		if w.Creative.Name != nil && len(*w.Creative.Name) > maxAdNameBytes {
@@ -322,7 +326,7 @@ func (c *Client) adInsights(ctx context.Context, adSetID, campaignID, accountID,
 			if row.CampaignID == nil || *row.CampaignID != campaignID {
 				return nil, malformed("page %d row %d: row names a campaign other than the ad set's", page, i)
 			}
-			if row.AdID == nil || ValidateCampaignID(*row.AdID) != nil {
+			if row.AdID == nil || validateGraphObjectID(*row.AdID) != nil {
 				return nil, malformed("page %d row %d: row has no canonical ad_id", page, i)
 			}
 			if row.AccountCurrency == nil || *row.AccountCurrency != currency {

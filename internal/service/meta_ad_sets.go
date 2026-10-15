@@ -718,6 +718,9 @@ func (s *BriefService) classifyMetaAdSetError(ctx context.Context, verb, project
 	case errors.Is(aerr, domain.ErrMetaAdSetInvalid):
 		return &briefs.BadRequestError{Code: "400", Message: "ad_set_id must be a Meta ad set id: 1-32 digits without a leading zero"}
 	case errors.Is(aerr, domain.ErrMetricsWindowUnsupported):
+		if verb == "read_ads" {
+			return &briefs.BadRequestError{Code: "400", Message: "this window is not supported for Meta ads"}
+		}
 		return &briefs.BadRequestError{Code: "400", Message: "this window is not supported for Meta ad sets"}
 	case errors.Is(aerr, ErrCampaignNotProvisioned):
 		if verb == "toggle" {
@@ -748,6 +751,9 @@ func (s *BriefService) classifyMetaAdSetError(ctx context.Context, verb, project
 	case errors.Is(aerr, domain.ErrCampaignUpstreamIdentityMismatch):
 		slog.WarnContext(ctx, "meta ad sets blocked: Meta's record of the campaign no longer matches the recorded identity",
 			append(logFields, "error", safeErrSummary(aerr))...)
+		if verb == "read_ads" {
+			return &briefs.ConflictError{Code: "409", Message: "Meta reports an ad of this ad set under a different ad account than the one this service recorded, so its ads cannot be read safely"}
+		}
 		return &briefs.ConflictError{Code: "409", Message: "Meta reports this campaign's ad sets under a different ad account than the one this service recorded, so they cannot be addressed safely — re-dispatch the campaign" + nothing}
 	case errors.Is(aerr, ErrCampaignAccountMismatch):
 		slog.WarnContext(ctx, "meta ad sets blocked: campaign belongs to a different ad account than the current connection",

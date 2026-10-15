@@ -15,7 +15,7 @@ decision (D7) and is not implemented. It mirrors the ad-set read in
 spelled out here.
 
 It is a capability only `MetaDispatcher` implements (`service.MetaAdReader`); every other
-platform is `400` before anything is contacted. No chart edit: the route nests under
+platform is `400` before anything is contacted. No rule or route change (chart comments only): the route nests under
 `/briefs/**` (RuleSet) and `briefs(/.*)?` (HTTPRoute); `parity_test.go` pins the path.
 
 ## Order
@@ -59,7 +59,8 @@ Paging follows the opaque `after` cursor, never Meta's token-bearing `paging.nex
 `classifyMetaAdSetError` with verb `read_ads` (log op `read_meta_ads`, upstream metric op
 `read_meta_ads`): the ad-set read's table, with its own 503 text ("the ad set's ads could not be
 read from Meta"). Foreign ad set, provenance unknown, account mismatch, upstream identity mismatch,
-invalid stored id, unusable connection or no ad account: 409. No Meta connection or no campaign
+invalid stored id, unusable connection or no ad account: 409. The identity-mismatch 409 and the
+unsupported-window 400 carry the ad read's own wording (an ad of this ad set; Meta ads). No Meta connection or no campaign
 row: 404. LF system connection, decryption, service defect: 500. Anything unverifiable — Graph
 100/33 on the ad set or its ads included — 503, never 404.
 
