@@ -80,17 +80,17 @@ func (d *MicrosoftDispatcher) resolveMicrosoftImage(ctx context.Context, brief *
 	raw := strings.TrimSpace(cfg.ImageAssetID)
 	if raw == "" {
 		if strings.TrimSpace(cfg.ImageAltText) != "" {
-			return nil, noop, errors.New("microsoftConfig.imageAltText was supplied without imageAssetId; supply the image it describes or omit it")
+			return nil, noop, domain.PreflightRefusalf("microsoftConfig.imageAltText was supplied without imageAssetId; supply the image it describes or omit it")
 		}
 		return nil, noop, nil
 	}
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		return nil, noop, fmt.Errorf("microsoftConfig.imageAssetId %s is not a valid asset id", safeAssetIDForError(raw))
+		return nil, noop, domain.PreflightRefusalf("microsoftConfig.imageAssetId %s is not a valid asset id", domain.CallerValue(raw))
 	}
 	assetID := parsed.String()
 	if d.creatives == nil {
-		return nil, noop, fmt.Errorf("microsoftConfig.imageAssetId references creative asset %s but the creative-asset store is not configured", assetID)
+		return nil, noop, domain.PreflightRefusalf("microsoftConfig.imageAssetId references creative asset %s but the creative-asset store is not configured", assetID)
 	}
 
 	release := noop
@@ -107,30 +107,30 @@ func (d *MicrosoftDispatcher) resolveMicrosoftImage(ctx context.Context, brief *
 	size, err := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, noop, fmt.Errorf("microsoftConfig.imageAssetId references creative asset %s, which does not exist for this brief", assetID)
+			return nil, noop, domain.PreflightRefusalf("microsoftConfig.imageAssetId references creative asset %s, which does not exist for this brief", assetID)
 		}
 		return nil, noop, fmt.Errorf("size creative asset %s: %w", assetID, err)
 	}
 	if size > microsoft.MaxImageBytes {
-		return nil, noop, fmt.Errorf("creative asset %s is %d bytes; Microsoft Advertising image extensions accept at most %d bytes", assetID, size, microsoft.MaxImageBytes)
+		return nil, noop, domain.PreflightRefusalf("creative asset %s is %d bytes; Microsoft Advertising image extensions accept at most %d bytes", assetID, size, microsoft.MaxImageBytes)
 	}
 	rel, ok := d.assets.reserve(ctx, size)
 	if !ok {
-		return nil, noop, fmt.Errorf("creative asset %s (%d bytes) exceeds the memory concurrently available for dispatch; retry when other dispatches finish", assetID, size)
+		return nil, noop, domain.PreflightRefusalf("creative asset %s (%d bytes) exceeds the memory concurrently available for dispatch; retry when other dispatches finish", assetID, size)
 	}
 	release = rel
 
 	asset, err := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, noop, fmt.Errorf("microsoftConfig.imageAssetId references creative asset %s, which does not exist for this brief", assetID)
+			return nil, noop, domain.PreflightRefusalf("microsoftConfig.imageAssetId references creative asset %s, which does not exist for this brief", assetID)
 		}
 		return nil, noop, fmt.Errorf("load creative asset %s: %w", assetID, err)
 	}
 	if asset == nil || len(asset.Bytes) == 0 {
 		// Refused rather than skipped: the caller asked for an image, and silently creating
 		// an image-less campaign would spend on a creative nobody approved.
-		return nil, noop, fmt.Errorf("creative asset %s has no stored image bytes", assetID)
+		return nil, noop, domain.PreflightRefusalf("creative asset %s has no stored image bytes", assetID)
 	}
 	alt := strings.TrimSpace(cfg.ImageAltText)
 	if alt == "" {
@@ -138,7 +138,8 @@ func (d *MicrosoftDispatcher) resolveMicrosoftImage(ctx context.Context, brief *
 	}
 	in := &microsoft.ImageInput{Data: asset.Bytes, MimeType: asset.MimeType, AltText: alt}
 	if err := microsoft.ValidateImage(*in); err != nil {
-		return nil, noop, fmt.Errorf("creative asset %s: %w", assetID, err)
+		// Size, shape, format and alt-text presence only: operator-safe, pre-send.
+		return nil, noop, domain.WrapPreflightRefusal(fmt.Errorf("creative asset %s: %w", assetID, err))
 	}
 	cfg.ImageAssetID = assetID
 	succeeded = true

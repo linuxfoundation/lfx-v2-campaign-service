@@ -87,10 +87,10 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		}
 		parsed, err := uuid.Parse(raw)
 		if err != nil {
-			return nil, noop, fmt.Errorf("linkedInConfig.variants[%d].imageAssetId %s is not a valid asset id", i, safeAssetIDForError(raw))
+			return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants[%d].imageAssetId %s is not a valid asset id", i, domain.CallerValue(raw))
 		}
 		if strings.TrimSpace(v.ImageURN) != "" {
-			return nil, noop, fmt.Errorf("linkedInConfig.variants[%d] supplies both imageUrn and imageAssetId; supply one", i)
+			return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants[%d] supplies both imageUrn and imageAssetId; supply one", i)
 		}
 		v.ImageAssetID = parsed.String()
 		if !seen[v.ImageAssetID] {
@@ -102,7 +102,7 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		return nil, noop, nil
 	}
 	if d.creatives == nil {
-		return nil, noop, fmt.Errorf("linkedInConfig.variants reference creative asset %s but the creative-asset store is not configured", order[0])
+		return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference creative asset %s but the creative-asset store is not configured", order[0])
 	}
 
 	// PRICE BEFORE LOADING: one BIGINT per asset, so an oversized asset is refused on its
@@ -112,17 +112,17 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		size, err := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
-				return nil, noop, fmt.Errorf("linkedInConfig.variants reference creative asset %s, which does not exist for this brief", assetID)
+				return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference creative asset %s, which does not exist for this brief", assetID)
 			}
 			return nil, noop, fmt.Errorf("size creative asset %s: %w", assetID, err)
 		}
 		if size > linkedin.MaxImageBytes {
-			return nil, noop, fmt.Errorf("creative asset %s is %d bytes; LinkedIn single image ads accept at most %d bytes", assetID, size, linkedin.MaxImageBytes)
+			return nil, noop, domain.PreflightRefusalf("creative asset %s is %d bytes; LinkedIn single image ads accept at most %d bytes", assetID, size, linkedin.MaxImageBytes)
 		}
 		total += size
 	}
 	if total > maxVariantAssetBytes {
-		return nil, noop, fmt.Errorf("linkedInConfig.variants reference %d bytes of distinct creative assets; at most %d may be used in one dispatch", total, maxVariantAssetBytes)
+		return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference %d bytes of distinct creative assets; at most %d may be used in one dispatch", total, maxVariantAssetBytes)
 	}
 
 	release := noop
@@ -134,7 +134,7 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 	}()
 	rel, ok := d.assets.reserve(ctx, total)
 	if !ok {
-		return nil, noop, fmt.Errorf("creative assets (%d bytes) exceed the memory concurrently available for dispatch; retry when other dispatches finish", total)
+		return nil, noop, domain.PreflightRefusalf("creative assets (%d bytes) exceed the memory concurrently available for dispatch; retry when other dispatches finish", total)
 	}
 	release = rel
 
@@ -143,18 +143,20 @@ func (d *LinkedInDispatcher) resolveLinkedInImages(ctx context.Context, brief *m
 		asset, err := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
-				return nil, noop, fmt.Errorf("linkedInConfig.variants reference creative asset %s, which does not exist for this brief", assetID)
+				return nil, noop, domain.PreflightRefusalf("linkedInConfig.variants reference creative asset %s, which does not exist for this brief", assetID)
 			}
 			return nil, noop, fmt.Errorf("load creative asset %s: %w", assetID, err)
 		}
 		if asset == nil || len(asset.Bytes) == 0 {
 			// Refused rather than skipped: the caller asked for an image, and silently creating
 			// an image-less ad would spend on a creative nobody approved.
-			return nil, noop, fmt.Errorf("creative asset %s has no stored image bytes", assetID)
+			return nil, noop, domain.PreflightRefusalf("creative asset %s has no stored image bytes", assetID)
 		}
 		img := linkedin.ImageUpload{Data: asset.Bytes, MimeType: asset.MimeType}
 		if err := linkedin.ValidateImage(img); err != nil {
-			return nil, noop, fmt.Errorf("creative asset %s: %w", assetID, err)
+			// Size, shape and format only (ValidateImage renders the recorded MIME through
+			// domain.CallerValue): operator-safe, and raised before any LinkedIn request.
+			return nil, noop, domain.WrapPreflightRefusal(fmt.Errorf("creative asset %s: %w", assetID, err))
 		}
 		images[assetID] = img
 	}
