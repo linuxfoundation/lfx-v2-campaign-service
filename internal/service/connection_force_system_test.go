@@ -432,6 +432,53 @@ func TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate(t *testing.T) 
 				"replace, so an absent account_id must CLEAR the selection", got)
 		}
 	})
+
+	// Microsoft joined this group in issue #181 and gets both arms for the same reason X did:
+	// dropping Required("account_id") made the omitted-id body expressible for it too.
+	msRow := func() *model.Connection {
+		return &model.Connection{
+			Version: 1, AccountID: "1234567",
+			ProviderConfig: map[string]string{"customer_id": "9999999"},
+		}
+	}
+	t.Run("microsoft-ads-resend-preserves", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderMicrosoftAds)] = msRow()
+		s := newTestService(t, repo)
+
+		if _, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.MicrosoftAdsConnectionConfig{
+				Label: strPtr("CNCF bing"), AccountID: strPtr("1234567"), CustomerID: strPtr("9999999"),
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("a Microsoft label edit must not require clearing the account id: %v", err)
+		}
+		if got := repo.store[repoKey("cncf", model.ProviderMicrosoftAds)].AccountID; got != "1234567" {
+			t.Fatalf("account id on the row after a label-only update = %q, want %q", got, "1234567")
+		}
+	})
+
+	t.Run("microsoft-ads-omitted-id-clears", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderMicrosoftAds)] = msRow()
+		s := newTestService(t, repo)
+
+		if _, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.MicrosoftAdsConnectionConfig{
+				Label: strPtr("CNCF bing"), AccountID: nil, CustomerID: strPtr("9999999"),
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("clearing a Microsoft selection must stay allowed while the flag is on: %v", err)
+		}
+		if got := repo.store[repoKey("cncf", model.ProviderMicrosoftAds)].AccountID; got != "" {
+			t.Fatalf("account id after an omitted-id PUT = %q, want \"\" — PUT is a full "+
+				"replace, so an absent account_id must CLEAR the selection", got)
+		}
+	})
 }
 
 // TestForceSystem_AChangedAccountIDIsStillRefused is the half that must NOT relax, and it is
