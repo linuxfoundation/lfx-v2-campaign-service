@@ -135,7 +135,7 @@ renderer formats with a symbol when it is present and without one otherwise.
 
 | Platform | Source | Extra call? |
 | -------- | ------ | ----------- |
-| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless it is the ad account's currency the budgets were converted in, with a known minor-unit offset | No |
+| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless it is the ad account's currency the budgets were converted in, with a known minor-unit offset. With no insights rows in the window (no delivery yet) the budgets' own `?fields=currency` read is published, under the same offset rule | No |
 | LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); spend is `costInLocalCurrency`, in the same currency | No |
 | Reddit | `GET /ad_accounts/{id}` (`reddit.Client.readMonitorAccountCurrency`), beside the report fan-out, 3s budget, no 429 retry | One |
 | X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
