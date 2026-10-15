@@ -125,12 +125,11 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 // disagree — one account has one currency, so a disagreement means the field cannot be trusted.
 // Neither fails the read: the currency labels the amounts, and the rows are still good.
 //
-// It is also "" for any currency whose minor-unit offset is not 100 (JPY, KRW, … — and any code
-// currencyMinorUnitOffset does not list), which is logged. The restriction dates from when every
-// budget was divided by 100 unconditionally (the BFF-ported minorUnitsToWhole), which made such an
-// account's budgets wrong by that factor. Budgets are now converted with the account currency's own
-// offset (minorToWhole, from the separate accountCurrency read); the restriction is kept as it was
-// and lifting it is a separate change (linuxfoundation/lfx-v2-campaign-service#316).
+// It is also "" — and logged — when the code is not one currencyOffsetFor knows (the budgets are
+// then left unconverted), or when it differs from the accountCurrency read (the existing
+// ?fields=currency read) the budgets were converted in (see monitorPublishableCurrency).
+// Offset-1 currencies (JPY, KRW, …) are published like offset-100 ones: budgets are converted with
+// the account currency's own offset (minorToWhole).
 func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
 	if err := ValidateAccountID(accountID); err != nil {
 		return nil, "", fmt.Errorf("list account campaigns: %w", err)
