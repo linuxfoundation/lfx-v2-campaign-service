@@ -46,3 +46,19 @@
   list whose name does not show the restriction to "update".
 - **Previewed names fit create's limit.** `VersionedName` and derived names are cut to the input's
   250-rune `MaxLength`, so a taken 250-character name previews as a `(v2)` create accepts.
+
+**Fix** — the maintainer's second review:
+
+- **The endpoint count is thirteen everywhere.** The API catalog, the HTTPRoute and RuleSet concept
+  pages, `design.md`, `cmd-campaign-service.md`, `internal-service.md`, and the chart and parity-test
+  comments all still said nine (or ten), with only two two-segment leaves. They now name thirteen
+  leaves, five of them two segments deep.
+- **The topic refusal names the real cause.** With string-only candidates, a portal whose only
+  topic property is an enumeration was told it had none. The 400 now says it has no text (string)
+  course or topic property.
+- **The draft caps are pinned against the generated validator.** A new `internal/apivalidation`
+  test parses an oversized model reply, decodes the unedited draft through the generated
+  preview decoder, and checks one item past each cap is refused, so a Go cap drifting from its
+  `MaxLength` fails.
+- **The HubSpot client documents its one body exception in code too**, and the concept page names
+  the shared `customErr` mapper (interpret, preview and create) as `ValidationMessage`'s caller.

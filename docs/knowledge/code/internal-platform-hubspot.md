@@ -737,10 +737,11 @@ audience builder uses it so a property filter is never built on a guessed name, 
 operation type matches the property's type, and so an enumeration `country_dropdown`'s options
 can be checked against the countries asked for. It needs the token's contact-schema read scope.
 
-The custom-audience create that consumes these definitions is also the one caller of
-`ValidationMessage`: when HubSpot refuses a list definition with a `VALIDATION_ERROR` 400, its
-bounded message is the only part of an error body that leaves this client (see "Typed body-free
-errors" above).
+The custom-audience handlers' shared error mapper (`customErr` in
+`internal/service/audience_custom.go`, used by interpret, preview and create) is the one caller of
+`ValidationMessage`: when HubSpot refuses any request on those paths with a `VALIDATION_ERROR` 400
+(preview's property and list reads as well as create's list definition), its bounded message is the
+only part of an error body that leaves this client (see "Typed body-free errors" above).
 
 `EventTypeProperties` pages `/events/v3/event-definitions?includeProperties=true` (50 per page) and
 returns the properties of the definition whose `objectTypeId` matches, or `(nil, nil)` when none

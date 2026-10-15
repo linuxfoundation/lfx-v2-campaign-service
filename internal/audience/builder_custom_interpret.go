@@ -96,13 +96,14 @@ type CustomDraft struct {
 const (
 	customRequestMaxLen = 2000
 	customAnswerMaxLen  = 500
-	customMaxAnswers    = 12
-	customMaxQuestions  = 6
-	customMaxOptions    = 4
-	customMaxValues     = 25
-	customMaxFilters    = 10
-	customMaxPropName   = 100
-	customMaxNotes      = 10
+	// customPropertyNameMaxLen is a property name's MaxLength in the criteria contract.
+	customPropertyNameMaxLen = 100
+	customMaxAnswers         = 12
+	customMaxQuestions       = 6
+	customMaxOptions         = 4
+	customMaxValues          = 25
+	customMaxFilters         = 10
+	customMaxNotes           = 10
 )
 
 // The contract's per-field caps on criteria arrays (design/audience_builder.go).
@@ -257,7 +258,7 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 	for _, f := range c.PropertyFilters {
 		op := CustomPropertyOperator(strings.TrimSpace(f.Operator))
 		prop := field(f.Property)
-		if _, _, ok := op.hubspotOperator(false); !ok || !customPropertyNameRE.MatchString(prop) || len(prop) > customMaxPropName {
+		if _, _, ok := op.hubspotOperator(false); !ok || !customPropertyNameRE.MatchString(prop) || len(prop) > customPropertyNameMaxLen {
 			d.Notes = append(d.Notes, fmt.Sprintf("Dropped a suggested filter on %q: not a usable property/operator.", prop))
 			continue
 		}

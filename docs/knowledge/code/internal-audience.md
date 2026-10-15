@@ -508,9 +508,13 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   `DisplayName` (and collapses aliases of one country) where criteria enter the service —
   `ParseCustomDraft` and the service's `customCriteria` — exactly as the brief path's `BuildPlan`
   does, so "USA" filters on "United States" instead of a literal that matches nobody.
-- **Draft arrays stay inside the contract.** `ParseCustomDraft` caps every array at 25 except
-  `page_view_urls`, capped at `CustomMaxPageViewURLs` (10) to match its `MaxLength`; producers of
-  `registered_for` honour `CustomMaxRegisteredFor` (25), so an unedited draft passes preview.
+- **Draft arrays stay inside the contract.** `ParseCustomDraft` caps value arrays at 25,
+  `property_filters` at 10 (`customMaxFilters`) and `page_view_urls` at `CustomMaxPageViewURLs`
+  (10), each matching its `MaxLength`, and drops, with a note, a suggested property filter whose
+  name is outside the contract's `^[A-Za-z0-9_]+$` or longer than 100 characters. Producers of
+  `registered_for` honour `CustomMaxRegisteredFor` (25), so an unedited draft passes preview. The
+  `internal/apivalidation` drift test decodes a body at and one past each cap through the
+  generated validator, so a Go cap drifting from its `MaxLength` fails there.
 - **Gate resolution.** `BrandMasterProbes`/`MatchesBrandMaster` find the brand's STANDING master
   list (`… - Master-list`), never a per-event `… - Master`, which is one event's audience and the
   wrong gate for a location list. A short brand matches only as a whole token.
@@ -543,10 +547,6 @@ signal:
   property filters, course topics), which narrow the request. `GuardReuse` then holds any "reuse"
   of a list whose name does not show those restrictions to "update": a property filter or topic
   never shows in a name, so with either no list is "reuse" (2026-10-15).
-
-A suggested property filter whose name is outside the contract's `^[A-Za-z0-9_]+$` or longer
-than 100 characters is dropped by `ParseCustomDraft` with a note, like a spaced name: one such row
-would make the whole interpretation invalid (2026-10-15).
 
 **QA and send-time suppression (2026-10-12).** `CheckExclusionCompleteness(filters, sendTime)`
 counts suppression lists the send applies as well as the list's own `NOT_IN_LIST` filters. Custom

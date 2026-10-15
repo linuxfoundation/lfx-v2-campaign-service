@@ -1834,7 +1834,7 @@ platform. See [internal/dispatch](internal-dispatch.md).
 
 ## Audience-builder handlers (LFXV2-2770)
 
-`audience_explore.go` serves the nine `audience-builder` endpoints and does three things and
+`audience_explore.go` serves the thirteen `audience-builder` endpoints and does three things and
 nothing else: it refuses unauthenticated callers, it maps the orchestration's transport-neutral
 results onto the generated Goa types, and it turns failures into the statuses the contract
 declares. Everything about WHICH lists an audience is made of lives in

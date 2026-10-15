@@ -646,6 +646,21 @@ func TestPreviewCustom_OnlyAStringPropertyCarriesTheTopic(t *testing.T) {
 	assert.Equal(t, "course_name", p.Criteria.EducationTopicProperty, "an enumeration the caller picked is replaced")
 }
 
+// A portal whose only topic-named property is not a string is told so: the
+// refusal names the type, not a property that is missing.
+func TestPreviewCustom_ANonStringTopicPropertyIsRefusedForItsType(t *testing.T) {
+	portal := seoulPortal()
+	portal.eventProps = []string{"course_topic"}
+	portal.eventPropTypes = map[string]string{"course_topic": "enumeration"}
+	srv := portal.serve(t)
+	defer srv.Close()
+	c := audience.CustomCriteria{EducationEnrolled: true, EducationTopics: []string{"Kubernetes"}, Label: "KubeCon"}
+
+	_, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", c, "")
+	require.ErrorIs(t, err, audience.ErrInvalidRequest)
+	assert.Contains(t, err.Error(), "no text (string) course or topic property")
+}
+
 // A taken name at the input limit previews as a version create accepts back.
 func TestPreviewCustom_AVersionedNameFitsTheCreateLimit(t *testing.T) {
 	portal := seoulPortal()

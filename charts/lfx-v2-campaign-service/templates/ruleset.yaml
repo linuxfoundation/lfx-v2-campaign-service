@@ -248,9 +248,9 @@ spec:
           - path: /projects/:projectId/hubspot/**
           # Audience builder (LFXV2-2770). Every sub-path is spelled out rather than
           # admitted with **: this family creates REAL contact lists in a production
-          # HubSpot portal (compose-master is not idempotent), so a path the service
-          # does not serve must not be routed, and the two-segment leaves
-          # (lists/search, qa/run) mean a single-segment capture would not cover them
+          # HubSpot portal (compose-master and custom/create are not idempotent), so a
+          # path the service does not serve must not be routed, and the two-segment
+          # leaves (lists/search, qa/run, custom/*) mean a single-segment capture would not cover them
           # either. Adding an endpoint here requires editing the HTTPRoute regex in
           # the same commit or parity fails.
           - path: /projects/:projectId/audience-builder/capabilities

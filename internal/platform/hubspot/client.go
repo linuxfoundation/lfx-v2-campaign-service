@@ -276,7 +276,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 // apiError is a non-2xx HubSpot response. Error() renders only method/path/status
 // — the response body is NOT echoed (a HubSpot error envelope can quote request
 // material), matching the reddit/googleads discipline. No response-body snapshot is
-// retained at all: nothing in this package classifies on the body, and an exported Body
+// retained, with ONE exception: for a 400 HubSpot categorises as VALIDATION_ERROR, the
+// unexported validation field keeps its bounded message (see below). Apart from that
+// category check nothing in this package classifies on the body, and an exported Body
 // field could leak upstream material through reflection/JSON serialization of the error
 // even though Error() omits it. (Google Ads keeps a bounded snapshot because it parses
 // error CODES from it; this client does not.)

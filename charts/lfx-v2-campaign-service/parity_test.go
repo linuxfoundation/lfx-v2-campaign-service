@@ -496,10 +496,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/fetch-event-url", true},
 		// --- accepted: audience builder (LFXV2-2770) ---
 		// Another sibling of /briefs that inherits nothing, and unlike fetch-event-url it is
-		// a family of nine leaves rather than one path. Each leaf is enumerated on BOTH
-		// sides deliberately (no free ** or (/.*)? tail) because compose-master creates real
-		// contact lists in a production portal and is not idempotent. Two of them are two
-		// segments deep, which the rows below pin explicitly.
+		// a family of thirteen leaves rather than one path. Each leaf is enumerated on BOTH
+		// sides deliberately (no free ** or (/.*)? tail) because compose-master and
+		// custom/create create real contact lists in a production portal and are not
+		// idempotent. Five of them are two segments deep, which the rows below pin explicitly.
 		{"/projects/p1/audience-builder/capabilities", true},
 		{"/projects/p1/audience-builder/discover", true},
 		{"/projects/p1/audience-builder/lists/search", true},

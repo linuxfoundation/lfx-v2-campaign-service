@@ -387,7 +387,7 @@ func ValidateCustomCriteria(c CustomCriteria) error {
 		return bad("course topics apply only with education enrolment")
 	}
 	if len(topics) > 0 && strings.TrimSpace(c.EducationTopicProperty) == "" {
-		return bad("this portal's education event has no course or topic property, so courses cannot be filtered by topic; remove the topics")
+		return bad("this portal's education event has no text (string) course or topic property, so courses cannot be filtered by topic; remove the topics")
 	}
 	for _, u := range cleanValues(c.PageViewURLs) {
 		if len(u) < 8 || strings.ContainsAny(u, " \t") {
