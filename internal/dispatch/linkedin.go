@@ -1169,12 +1169,14 @@ func linkedinRunStatus(status string) (string, error) {
 // Variants[].IntroText and Headline: operator-authored ad copy where a link gets pasted, and a
 // password-reset or magic-link URL keeps its secret in the PATH as readily as in the query.
 // GeoTargets[].Label, TargetingProfile and TargetingProfiles[].ID/Label are caller labels and
-// selectors bound for the same column and get the same treatment; an ordinary label or id has
-// no link-shaped run and passes through unchanged.
+// selectors bound for the same column and get the same treatment. So are
+// TargetingProfiles[].Skills/Groups: validFacets checks them only on the profile
+// TargetingProfile SELECTS, so an unselected profile's facets reach the snapshot as typed. An
+// ordinary label, id or facet URN has no link-shaped run and passes through unchanged.
 //
 // Kept verbatim, because the client refuses anything that could carry a URL before a campaign
-// (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only),
-// TargetingProfiles[].Skills/Groups and EmployerExclusions (validFacets: facet URNs only), and
+// (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only), EmployerExclusions
+// (validFacets: facet URNs only, and creation is refused when no profile matches), and
 // AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
 // Variants[].ImageAssetID (a stored asset key), numbers, flags and dates are kept too.
 //
@@ -1200,13 +1202,13 @@ func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
 		}
 	}
 	if cfg.TargetingProfiles != nil {
-		// Skills and Groups are slices too, but they are only copied, never written, so
-		// sharing their backing arrays with the caller's config is safe.
 		snapshot.TargetingProfiles = make([]linkedin.TargetingProfileConfig, len(cfg.TargetingProfiles))
 		copy(snapshot.TargetingProfiles, cfg.TargetingProfiles)
 		for i := range snapshot.TargetingProfiles {
 			snapshot.TargetingProfiles[i].ID = sanitizeSnapshotText(cfg.TargetingProfiles[i].ID)
 			snapshot.TargetingProfiles[i].Label = sanitizeSnapshotText(cfg.TargetingProfiles[i].Label)
+			snapshot.TargetingProfiles[i].Skills = sanitizeSnapshotTexts(cfg.TargetingProfiles[i].Skills)
+			snapshot.TargetingProfiles[i].Groups = sanitizeSnapshotTexts(cfg.TargetingProfiles[i].Groups)
 		}
 	}
 	return snapshot

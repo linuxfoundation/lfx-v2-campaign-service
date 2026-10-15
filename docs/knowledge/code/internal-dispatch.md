@@ -369,7 +369,8 @@ guess, so it keeps nothing.
 - `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
   body HTML are never stored.
 - `linkedin.go` — each variant's `IntroText`/`Headline`, every `geoTargets[].label`,
-  `targetingProfile` and every `targetingProfiles[].id`/`label` (`sanitizeSnapshotText`) —
+  `targetingProfile`, and every `targetingProfiles[].id`/`label`/`skills`/`groups` entry
+  (`sanitizeSnapshotText`) —
   `linkedinSnapshotConfig`, #245. Before #245 it persisted the raw `linkedinConfig`.
 
 **#245: LinkedIn, Meta and Reddit free text.** The rule the three builders share is the one
@@ -378,8 +379,9 @@ campaign exists goes through `sanitizeSnapshotText`, and the ad copy is the fiel
 a password-reset link pasted into an intro text, primary text or body keeps its secret in the
 PATH, which a query strip never touches. A field the client REFUSES unless it is a URN, an enum
 or a numeric id stays verbatim, and each builder's doc comment names which those are (for
-example LinkedIn `imageUrn` and the facet URNs, Meta `objective` and `instagramUserId`, Reddit
-`objective`). A field validated only when it is used — Reddit `callToAction` once `postUrl` is
+example LinkedIn `imageUrn` and `employerExclusions`, Meta `objective` and `instagramUserId`,
+Reddit `objective`). A field validated only when it is used — LinkedIn `skills`/`groups` on a
+profile `targetingProfile` does not select, Reddit `callToAction` once `postUrl` is
 set, `videoGoal` outside `video_views`, Meta `pixelId` outside a pixel objective, Meta
 `geoTargets` that `validateGeoTargets` filters — is redacted, because the unused value still
 reaches the column as typed. `sanitizeSnapshotTexts` (`creds.go`) is the list form; it keeps nil

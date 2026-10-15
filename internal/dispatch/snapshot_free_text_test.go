@@ -73,12 +73,16 @@ func TestLinkedInSnapshot_RedactsFreeTextAndKeepsTheSentConfigWhole(t *testing.T
 		Variants: []linkedin.CreativeVariant{
 			{IntroText: snapText("LIINTRO"), Headline: snapText("LIHEAD"), ImageURN: "urn:li:image:C4E22AQ"},
 		},
-		GeoTargets:        []linkedin.GeoTarget{{Label: snapText("LIGEO"), URN: "urn:li:geo:103644278"}},
-		TargetingProfiles: []linkedin.TargetingProfileConfig{{ID: snapText("LIPID"), Label: snapText("LIPLABEL"), Skills: []string{"urn:li:skill:1"}}},
+		GeoTargets: []linkedin.GeoTarget{{Label: snapText("LIGEO"), URN: "urn:li:geo:103644278"}},
+		TargetingProfiles: []linkedin.TargetingProfileConfig{
+			{ID: snapText("LIPID"), Label: snapText("LIPLABEL"), Skills: []string{"urn:li:skill:1"}},
+			// Not the selected profile, so the client never runs validFacets on its facets.
+			{ID: "unselected", Skills: []string{snapText("LISKILL")}, Groups: []string{snapText("LIGROUP")}},
+		},
 	}
 	c := campaignFromLinkedIn(context.Background(), &linkedin.CampaignResult{CampaignID: "c1", CreativeCount: 1}, 1, cfg)
 
-	assertSnapshotRedacted(t, c.ConfigSnapshot, "LITP", "LIINTRO", "LIHEAD", "LIGEO", "LIPID", "LIPLABEL")
+	assertSnapshotRedacted(t, c.ConfigSnapshot, "LITP", "LIINTRO", "LIHEAD", "LIGEO", "LIPID", "LIPLABEL", "LISKILL", "LIGROUP")
 	s := string(c.ConfigSnapshot)
 	for _, keep := range []string{"Register now https://events.example or visit events.example today", "urn:li:image:C4E22AQ", "urn:li:geo:103644278", "urn:li:skill:1"} {
 		if !strings.Contains(s, keep) {
@@ -91,6 +95,8 @@ func TestLinkedInSnapshot_RedactsFreeTextAndKeepsTheSentConfigWhole(t *testing.T
 	assertSentWhole(t, "GeoTargets[0].Label", cfg.GeoTargets[0].Label, snapText("LIGEO"))
 	assertSentWhole(t, "TargetingProfiles[0].ID", cfg.TargetingProfiles[0].ID, snapText("LIPID"))
 	assertSentWhole(t, "TargetingProfiles[0].Label", cfg.TargetingProfiles[0].Label, snapText("LIPLABEL"))
+	assertSentWhole(t, "TargetingProfiles[1].Skills[0]", cfg.TargetingProfiles[1].Skills[0], snapText("LISKILL"))
+	assertSentWhole(t, "TargetingProfiles[1].Groups[0]", cfg.TargetingProfiles[1].Groups[0], snapText("LIGROUP"))
 }
 
 func TestMetaSnapshot_RedactsFreeTextAndURLsAndKeepsTheSentConfigWhole(t *testing.T) {
