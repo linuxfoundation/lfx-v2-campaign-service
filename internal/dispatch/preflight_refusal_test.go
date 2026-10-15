@@ -83,6 +83,20 @@ func TestDispatch_PreflightRefusalsAreOperatorSafe(t *testing.T) {
 			want:   "composed ad group name is too long: 240 characters (max 200)",
 		},
 		{
+			// A window Reddit would reject: the past start is nudged to now + the workflow
+			// buffer (22 minutes) and the end, midnight of the same day, is not after it. It used
+			// to be decided only AFTER the account-verify GET, as a bare fmt.Errorf. The clock is
+			// pinned so the nudged instant in the sentence is stable.
+			name:     "reddit end not after the nudged start",
+			provider: model.ProviderRedditAds,
+			build: func(hc *http.Client) refusalDispatcher {
+				return NewRedditDispatcher(fakeConnReader{conn: activeRedditConn(goodRedditCreds)}, identityEncryptor{}, reddit.WithHTTPClient(hc),
+					reddit.WithNowFunc(func() time.Time { return time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC) }))
+			},
+			config: `{"redditConfig":{"budgetUsd":500,"geoTargets":["us"],"startDate":"2026-06-01","endDate":"2026-07-01"}}`,
+			want:   "campaign end 2026-07-01T00:00:00+00:00 is not after the effective start 2026-07-01T00:22:00+00:00 (a past start date was nudged forward)",
+		},
+		{
 			// A platform minimum, from the shared create/write validator.
 			name:     "linkedin daily budget under the minimum",
 			provider: model.ProviderLinkedInAds,
@@ -106,6 +120,28 @@ func TestDispatch_PreflightRefusalsAreOperatorSafe(t *testing.T) {
 			},
 			config: `{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["US"]}}`,
 			want:   "at least one ad variant is required for Meta campaign creation",
+		},
+		{
+			// Every supplied geo is ineligible. Decided from the config and static tables alone,
+			// so refused before the account preflight GET (it used to run after it, unmarked).
+			name:     "meta no usable geo targets",
+			provider: model.ProviderMetaAds,
+			build: func(hc *http.Client) refusalDispatcher {
+				return NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithHTTPClient(hc))
+			},
+			config: `{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["IR","KP"],"currencyOffset":100,
+				"variants":[{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native event"}]}}`,
+			want: `no usable geo targets: all supplied geos are invalid or ineligible for Meta ads targeting (dropped: "IR", "KP") — refusing to silently fall back to US`,
+		},
+		{
+			name:     "meta all geos regulated",
+			provider: model.ProviderMetaAds,
+			build: func(hc *http.Client) refusalDispatcher {
+				return NewMetaDispatcher(fakeConnReader{conn: activeMetaConn(goodMetaCreds)}, identityEncryptor{}, meta.WithHTTPClient(hc))
+			},
+			config: `{"metaConfig":{"budget":100,"startDate":"2099-01-01","endDate":"2099-02-01","objective":"traffic","geoTargets":["SG","TW"],"currencyOffset":100,
+				"variants":[{"headline":"KubeCon 2099","primaryText":"Join us","description":"Cloud native event"}]}}`,
+			want: "meta campaign skipped: all selected geo targets (SG, TW) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target",
 		},
 		{
 			name:     "x end date before start date",

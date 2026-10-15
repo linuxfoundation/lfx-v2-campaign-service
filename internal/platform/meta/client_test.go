@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // fixedMetaClock pins the clock so date-based tests (StartDate/EndDate) stay
@@ -1133,6 +1135,63 @@ func TestCreateCampaignAllGeosInvalidNamesThem(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "IR") || !strings.Contains(err.Error(), "ZZ") {
 		t.Errorf("error should name the dropped geos IR and ZZ, got: %v", err)
+	}
+}
+
+// TestCreateCampaign_GeoRefusalsBeforeAnyRequest pins issue #208 for Meta's two geo
+// refusals: both are decided from the caller's GeoTargets and static tables alone, so they run
+// before the account preflight GET — zero requests — and are domain.PreflightRefusal values the
+// async job may report verbatim. A dropped entry is caller text, so it is shown only through
+// domain.CallerValue: an over-long or URL-shaped value is withheld, not echoed.
+func TestCreateCampaign_GeoRefusalsBeforeAnyRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		geos []string
+		want string
+	}{
+		{
+			name: "no usable geo targets",
+			geos: []string{"IR", "zz", "https://evil.example/?token=SECRET"},
+			want: `no usable geo targets: all supplied geos are invalid or ineligible for Meta ads targeting (dropped: "IR", "ZZ", (value withheld)) — refusing to silently fall back to US`,
+		},
+		{
+			name: "all regulated",
+			geos: []string{"SG", "kr"},
+			want: "meta campaign skipped: all selected geo targets (SG, KR) are regulated and excluded from API targeting; supply at least one eligible (non-regulated) geo target",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"name":"x","account_status":1,"currency":"USD"}`)
+			}))
+			defer srv.Close()
+			c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+			res, err := c.CreateCampaign(context.Background(), CampaignInput{
+				EventName: "E", Project: "tlf", Objective: "traffic",
+				RegistrationURL: "https://x.example.org/e", GeoTargets: tc.geos,
+				Budget: 10, StartDate: "2026-08-01", EndDate: "2026-08-31",
+				Variants: []AdVariant{{PrimaryText: "p", Headline: "h"}},
+			})
+			if err == nil {
+				t.Fatalf("CreateCampaign succeeded; want the %s refusal", tc.name)
+			}
+			if res != nil {
+				t.Errorf("a pre-send refusal must return a nil result, got %+v", res)
+			}
+			if n := requests.Load(); n != 0 {
+				t.Errorf("%d upstream request(s) were sent before the geo refusal; want 0", n)
+			}
+			msg, ok := domain.AsPreflightRefusal(err)
+			if !ok {
+				t.Fatalf("the geo refusal is not a domain.PreflightRefusal; err = %v", err)
+			}
+			if msg != tc.want {
+				t.Errorf("refusal = %q\nwant      %q", msg, tc.want)
+			}
+		})
 	}
 }
 

@@ -180,6 +180,49 @@ func TestCreateCampaign_ComposedNameRefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
+// TestCreateCampaign_WindowRefusedBeforeAnyRequest pins issue #208 for the window check: an
+// end date that is not after the nudged start is decided from the caller's dates and the clock
+// alone, so it is refused before the token exchange and the account-verify GET, and the
+// refusal is a domain.PreflightRefusal the async job may report verbatim. It used to run after
+// the GET, as a bare fmt.Errorf.
+func TestCreateCampaign_WindowRefusedBeforeAnyRequest(t *testing.T) {
+	var requests atomic.Int32
+	count := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600, "data": map[string]any{"id": "t2_test"}})
+	})
+	tokenSrv := httptest.NewServer(count)
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(count)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	in := validRedditInput()
+	// The clock reads 2026-07-01T00:00Z: the past start is nudged to now+redditPastStartBuffer,
+	// and an end at midnight on the same day is not after it.
+	in.StartDate, in.EndDate = "2026-06-01", "2026-07-01"
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("CreateCampaign succeeded with an end date that is not after the nudged start")
+	}
+	if res != nil {
+		t.Errorf("a pre-send refusal must return a nil result, got %+v", res)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d upstream request(s) were sent before the window refusal; want 0", n)
+	}
+	msg, ok := domain.AsPreflightRefusal(err)
+	if !ok {
+		t.Fatalf("the window refusal is not a domain.PreflightRefusal; err = %v", err)
+	}
+	wantStart := toRedditTimestamp(fixedRedditClock()().Add(redditPastStartBuffer))
+	want := "campaign end 2026-07-01T00:00:00+00:00 is not after the effective start " + wantStart + " (a past start date was nudged forward)"
+	if msg != want {
+		t.Errorf("refusal = %q, want %q", msg, want)
+	}
+}
+
 // urlWithUserinfo composes a URL with embedded userinfo at runtime, so the test
 // source never contains a literal "user:pass@host" — which secretlint's
 // basic-auth rule (MegaLinter) flags as a credential and fails CI on. The
