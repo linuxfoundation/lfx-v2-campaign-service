@@ -618,7 +618,7 @@ func (c *Container) bindStatsJobLease(dispatchers map[model.Provider]service.Pla
 }
 
 // bindCreativeAssetSharing wires the stored-creative-asset paths that span more than one
-// component (LFXV2-2665), on BOTH live paths: the Meta, Microsoft and LinkedIn dispatchers and the
+// component (LFXV2-2665), on BOTH live paths: the Meta, Microsoft, LinkedIn and X dispatchers and the
 // signed-asset route share the container's single AssetReserver (registerDispatchers' own
 // reserver is replaced, so the bound is one budget rather than two), the Reddit dispatcher gets the store and the
 // signer behind redditConfig.imageAssetId, and the signed-asset route gets the store.
@@ -636,6 +636,12 @@ func (c *Container) bindCreativeAssetSharing(dispatchers map[model.Provider]serv
 		}
 		if ld, ok := dispatchers[model.ProviderLinkedInAds].(*dispatch.LinkedInDispatcher); ok {
 			ld.SetAssetReserver(c.assetReserver)
+		}
+		// X holds asset bytes too (twitterConfig.imageAssetId). Left out, its dispatches charged
+		// registerDispatchers' reserver while Meta, Microsoft and the route charged this one —
+		// two budgets, so the process-wide bound was not a bound (#311 review).
+		if td, ok := dispatchers[model.ProviderTwitterAds].(*dispatch.TwitterDispatcher); ok {
+			td.SetAssetReserver(c.assetReserver)
 		}
 	}
 	if creatives == nil {

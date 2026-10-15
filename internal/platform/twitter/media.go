@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // Creative images for an AUTHORED promoted-only tweet (LFXV2-2665).
@@ -200,6 +202,14 @@ func (c *Client) findMediaByName(ctx context.Context, name string) (string, erro
 // never carry upstream body text (the request layer's errors render method, path and status).
 func (c *Client) ensureImageMedia(ctx context.Context, img *ImageInput, steps *[]string) (string, error) {
 	name := mediaLibraryName(img.Bytes)
+	// Serialize lookup -> upload -> library add per (account, image): without it two concurrent
+	// dispatches of identical bytes both miss the lookup and both upload and add. The key carries
+	// the base URL and account so two endpoints or accounts never share an entry.
+	release, err := c.mediaLocks.acquire(ctx, c.baseURL+"\x00"+c.account.AccountID+"\x00"+name)
+	if err != nil {
+		return "", fmt.Errorf("x creative image upload aborted before any campaign was created: %w", err)
+	}
+	defer release()
 	existing, err := c.findMediaByName(ctx, name)
 	if err != nil {
 		return "", err
@@ -312,7 +322,7 @@ func (c *Client) uploadImageChunked(ctx context.Context, img *ImageInput) (strin
 	}
 	fin, ok := decodeMediaState(resp)
 	if !ok {
-		return "", "", fmt.Errorf("x media upload finalize returned an undecodable body")
+		return "", "", mediaStateUnknown(http.MethodPost, finalizePath)
 	}
 	if err := c.awaitMediaProcessing(ctx, mediaID, fin); err != nil {
 		return "", "", err
@@ -336,19 +346,40 @@ type mediaState struct {
 	} `json:"processing_info"`
 }
 
+// decodeMediaState reads a finalize or STATUS body. A body with no `data`, or `"data":null`,
+// says nothing about the media, so it is NOT read as "no processing_info, therefore ready": ok is
+// false and the caller reports the outcome UNCONFIRMED (errMediaStateUnknown) rather than
+// attaching media X never confirmed. A raw body identityjson refuses is unknown in the same way:
+// the envelope was already decoded last-wins, so a duplicated "data" key (a null or a failed
+// processing_info beside a ready one) is invisible to a check of resp.Data alone.
 func decodeMediaState(resp *apiResponse) (mediaState, bool) {
 	var st mediaState
-	if resp == nil || len(resp.Data) == 0 {
-		return st, true
+	if resp == nil {
+		return st, false
 	}
-	if err := json.Unmarshal(resp.Data, &st); err != nil {
+	if err := identityjson.Check(resp.raw); err != nil {
+		return st, false
+	}
+	data := bytes.TrimSpace(resp.Data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return st, false
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
 		return st, false
 	}
 	return st, true
 }
 
-// awaitMediaProcessing returns once the finalized media is usable. No processing_info — the
-// normal answer for an image — or state "succeeded" is done; "failed" is a definite refusal;
+// mediaStateUnknown is the error for a 2xx finalize/STATUS body that does not say what state
+// the media is in. It is a transportError — the request reached X and its outcome cannot be
+// read — so createOutcomeAmbiguous classifies it UNCONFIRMED, as for any other unreadable 2xx.
+func mediaStateUnknown(method, path string) error {
+	return &transportError{Method: method, Path: path, err: errors.New("media state not reported")}
+}
+
+// awaitMediaProcessing returns once the finalized media is usable. A decoded body with no
+// processing_info — the normal answer for an image — or state "succeeded" is done; an empty or
+// unknown state is polled; "failed" is a definite refusal;
 // "pending"/"in_progress" is re-checked through the read-only STATUS command, a bounded number
 // of times.
 func (c *Client) awaitMediaProcessing(ctx context.Context, mediaID string, st mediaState) error {
@@ -356,8 +387,11 @@ func (c *Client) awaitMediaProcessing(ctx context.Context, mediaID string, st me
 		if st.ProcessingInfo == nil {
 			return nil
 		}
-		switch strings.ToLower(st.ProcessingInfo.State) {
-		case "succeeded", "":
+		// Only an explicit "succeeded" is ready. An EMPTY or unrecognised state while
+		// processing_info is present is not evidence of readiness, so it is polled like
+		// "pending" and, if it never resolves, refused at the poll bound.
+		switch strings.ToLower(strings.TrimSpace(st.ProcessingInfo.State)) {
+		case "succeeded":
 			return nil
 		case "failed":
 			return fmt.Errorf("x rejected the creative image during processing")
@@ -380,7 +414,12 @@ func (c *Client) awaitMediaProcessing(ctx context.Context, mediaID string, st me
 		}
 		next, ok := decodeMediaState(resp)
 		if !ok {
-			return fmt.Errorf("x media processing status returned an undecodable body")
+			return mediaStateUnknown(http.MethodGet, statusPath)
+		}
+		// Once X has said "processing", a STATUS answer that drops processing_info no longer
+		// says the media is ready — STATUS documents the field — so it is not read as success.
+		if next.ProcessingInfo == nil {
+			return mediaStateUnknown(http.MethodGet, statusPath)
 		}
 		if next.MediaKey == "" {
 			next.MediaKey = st.MediaKey
