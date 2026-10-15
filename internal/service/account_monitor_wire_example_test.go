@@ -41,6 +41,8 @@ type accountMonitorExamplePlatform struct {
 	// reported: Microsoft and X are report-backed, so their responses carry metrics_as_of,
 	// metrics_window_start/end and metrics_pending; every other platform omits all four.
 	reported bool
+	// currency: every platform but Google Ads reports the account's currency.
+	currency bool
 }
 
 // accountMonitorExamplePlatforms maps every ad-monitor operation to its handler's evaluator — the
@@ -59,7 +61,7 @@ var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 			r, i := rules.EvaluateLinkedInMonitor(rows, days, accountMonitorExampleNow)
 			return r, i, nil
 		},
-		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, conversions: true,
+		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, conversions: true, currency: true,
 	},
 	"monitor-meta-ads-account": {
 		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
@@ -77,21 +79,21 @@ var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 			r, i := rules.EvaluateMetaMonitor(stamped)
 			return r, i, nil
 		},
-		activeStatus: "ACTIVE", flightDates: true, totalBudget: true,
+		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, currency: true,
 	},
 	"monitor-reddit-ads-account": {
 		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
 			r, i := rules.EvaluateRedditMonitor(rows, days, accountMonitorExampleNow)
 			return r, i, nil
 		},
-		activeStatus: "ACTIVE", flightDates: true, totalBudget: true,
+		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, currency: true,
 	},
 	"monitor-microsoft-ads-account": {
 		evaluate: func(rows []model.AccountCampaignMetrics, days int, _ map[string]any) ([]model.AccountMonitorRow, []model.AccountMonitorActionItem, error) {
 			r, i := rules.EvaluateMicrosoftMonitor(rows, days)
 			return r, i, nil
 		},
-		activeStatus: "Active", searchChannel: true, conversions: true, reported: true,
+		activeStatus: "Active", searchChannel: true, conversions: true, reported: true, currency: true,
 	},
 	"monitor-twitter-ads-account": {
 		// MonitorTwitterAdsAccount evaluates on the saved report's own window, not on days.
@@ -104,9 +106,12 @@ var accountMonitorExamplePlatforms = map[string]accountMonitorExamplePlatform{
 			r, i := rules.EvaluateTwitterMonitor(rows, &ws, &we)
 			return r, i, nil
 		},
-		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, reported: true,
+		activeStatus: "ACTIVE", flightDates: true, totalBudget: true, reported: true, currency: true,
 	},
 }
+
+// accountMonitorCurrencyRE is the shape of the published currency: an ISO 4217 alphabetic code.
+var accountMonitorCurrencyRE = regexp.MustCompile(`^[A-Z]{3}$`)
 
 // accountMonitorOpenAPI3Specs are the OpenAPI 3 documents, which carry a 200 example per
 // operation. OpenAPI 2 (Swagger) has no per-operation response example, so there the shared
@@ -230,6 +235,11 @@ func checkAccountMonitorExample(t *testing.T, where string, p accountMonitorExam
 		if _, has := ex[k]; has != p.reported {
 			t.Errorf("%s: %s present=%v, but this platform sets it=%v", where, k, has, p.reported)
 		}
+	}
+	if c, has := ex["currency"]; has != p.currency {
+		t.Errorf("%s: currency present=%v, but this platform reports it=%v", where, has, p.currency)
+	} else if has && !accountMonitorCurrencyRE.MatchString(fmt.Sprint(c)) {
+		t.Errorf("%s: currency %v is not an ISO 4217 code", where, c)
 	}
 	rawRows, _ := ex["campaigns"].([]any)
 	rows := make([]model.AccountCampaignMetrics, 0, len(rawRows))
@@ -411,6 +421,12 @@ func TestPublishedAccountMonitorSchemaExamplesMatchTheirPlatform(t *testing.T) {
 						if _, has := fp["example"]; has != platform.reported {
 							t.Errorf("%s: %s property example present=%v, but this platform sets the field=%v", where, f, has, platform.reported)
 						}
+					}
+					cp, _ := props["currency"].(map[string]any)
+					if cp == nil {
+						t.Errorf("%s: 200 schema has no currency property", where)
+					} else if ex, has := cp["example"]; has != platform.currency || (has && !accountMonitorCurrencyRE.MatchString(fmt.Sprint(ex))) {
+						t.Errorf("%s: currency property example %v (present=%v), but this platform reports a currency=%v", where, ex, has, platform.currency)
 					}
 					if ex := accountMonitor200Example(op); ex != nil && !idOK(ex["account_id"]) {
 						t.Errorf("%s: response example account_id %v does not match %s", where, ex["account_id"], pattern)

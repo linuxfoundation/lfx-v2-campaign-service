@@ -233,14 +233,14 @@ func (s *ConnectionService) monitorAccount(
 	if err != nil {
 		return nil, err
 	}
-	metricsRows, merr := orch.ReadAccountCampaignMetrics(ctx, projectID, platform, accountID, days)
+	read, merr := orch.ReadAccountCampaignMetrics(ctx, projectID, platform, accountID, days)
 	if merr != nil {
 		return nil, s.classifyDiscoveryError(ctx, projectID, discovery, merr)
 	}
 
-	rows, actionItems := evaluate(metricsRows)
+	rows, actionItems := evaluate(read.Rows)
 	reportUnmeasuredRows(ctx, orch.dispatchMetrics(), projectID, platform, rows)
-	return buildAccountMonitor(accountID, days, rows, actionItems), nil
+	return buildAccountMonitor(accountID, days, rows, actionItems, read.Currency), nil
 }
 
 // monitorFailureClassOrder is every model.MonitorFailureClass, in the order the summary log
@@ -307,7 +307,10 @@ func reportUnmeasuredRows(ctx context.Context, m DispatchMetrics, projectID stri
 // buildAccountMonitor assembles the response from the rule engine's output. Shared by the live
 // read (monitorAccount) and the report-backed one (monitorReportedAccount) so the totals rule —
 // sum of exactly the rows returned — has one implementation whichever way the rows were read.
-func buildAccountMonitor(accountID string, days int, rows []model.AccountMonitorRow, actionItems []model.AccountMonitorActionItem) *conn.AccountMonitor {
+//
+// currency is the account's ISO 4217 code as the read reported it; anything that is not one
+// (including "") leaves the field absent rather than published.
+func buildAccountMonitor(accountID string, days int, rows []model.AccountMonitorRow, actionItems []model.AccountMonitorActionItem, currency string) *conn.AccountMonitor {
 	// Sum the post-rule-engine rows (rows), not the raw dispatcher read (metricsRows):
 	// EvaluateGoogleMonitor drops the operator's scratch campaigns before returning, and the
 	// totals must describe the campaigns array actually returned in this same response rather
@@ -323,13 +326,17 @@ func buildAccountMonitor(accountID string, days int, rows []model.AccountMonitor
 		connCampaigns = append(connCampaigns, toConnAccountMonitorCampaign(r))
 	}
 
-	return &conn.AccountMonitor{
+	out := &conn.AccountMonitor{
 		AccountID:   accountID,
 		Days:        days,
 		Campaigns:   connCampaigns,
 		ActionItems: toConnAccountMonitorActionItems(actionItems),
 		Totals:      toConnAccountMonitorTotals(totals),
 	}
+	if c := model.NormalizeCurrencyCode(currency); c != "" {
+		out.Currency = &c
+	}
+	return out
 }
 
 // monitorReportedAccount is monitorAccount for a platform whose metrics come from a saved
@@ -360,7 +367,7 @@ func (s *ConnectionService) monitorReportedAccount(
 	}
 	rows, actionItems := evaluate(read)
 	reportUnmeasuredRows(ctx, orch.dispatchMetrics(), projectID, platform, rows)
-	out := buildAccountMonitor(accountID, days, rows, actionItems)
+	out := buildAccountMonitor(accountID, days, rows, actionItems, read.Currency)
 	if read.MetricsAsOf != nil {
 		asOf := read.MetricsAsOf.UTC().Format(time.RFC3339)
 		out.MetricsAsOf = &asOf

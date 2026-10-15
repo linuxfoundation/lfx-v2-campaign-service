@@ -146,3 +146,25 @@ func TestLinkedinLowCtr_NeedsVolumeBeforeItMeansAnything(t *testing.T) {
 		}
 	}
 }
+
+// A row the dispatcher marked PacingUnknown (its budget's currency disagrees with another budget
+// on the account) is not paced and raises no pacing item, even though it has a budget and spend.
+func TestEvaluateLinkedInMonitor_CurrencyMismatchIsUnknownPacing(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	m := model.AccountCampaignMetrics{PlatformCampaignID: "1", Name: "c", Status: "ACTIVE",
+		BudgetDay: 100, Spend: 1, Impressions: 10, Clicks: 1, PacingUnknown: true}
+	rows, items := EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 30, now)
+	if len(rows) != 1 || !rows[0].Metrics.PacingUnknown || rows[0].PacingPct != 0 {
+		t.Fatalf("row = %+v, want unknown pacing", rows)
+	}
+	for _, it := range items {
+		if strings.Contains(it.Issue, "pacing") {
+			t.Errorf("pacing item %q raised for a row whose pacing is unknown", it.Issue)
+		}
+	}
+	m.PacingUnknown = false
+	rows, _ = EvaluateLinkedInMonitor([]model.AccountCampaignMetrics{m}, 30, now)
+	if rows[0].Metrics.PacingUnknown || rows[0].PacingPct == 0 {
+		t.Errorf("row = %+v, want it paced once the mismatch flag is clear", rows[0])
+	}
+}

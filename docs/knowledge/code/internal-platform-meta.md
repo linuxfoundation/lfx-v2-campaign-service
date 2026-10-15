@@ -855,6 +855,20 @@ unreadable — the row is `FetchFailed` and never sent to the ad-set fallback, m
 parser's fail-closed nulls. The counters already refuse
 negatives through `parseMetricInt`.
 
+`ListAccountCampaignsWithCurrency` is the same read (the logic above lives in it) plus the account's currency for the
+monitor's `currency` field: the insights call also requests `account_currency`, and
+`metaAccountInsights.observeCurrency` keeps it only when every row names the same
+three-upper-case-letter code — the field read RAW, so `null` or a non-string costs only the
+currency, and each insights page checked with `identityjson`, an untrusted page withholding the
+currency (its rows are kept) — absent, malformed or disagreeing rows leave it `""` without
+failing the read. No extra request for the label (the `?fields=currency` read above serves the budget conversion); an account with no insights rows in the window has no
+currency. `monitorPublishableCurrency` then withholds (and logs) any code whose
+`currencyOffsetFor` offset is not 100. The restriction dates from when `minorUnitsToWhole`
+divided every budget by 100, making a JPY/KRW/… account's budgets wrong by that factor; budgets
+are now converted with the account currency's own offset (the `accountCurrency` read above), and
+the restriction is kept until a separate change lifts it. `ListAccountCampaigns` wraps it and drops the currency. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 See [internal/platform/meta](../../../internal/platform/meta).
 
 ## Connection-probe predicates (LFXV2-2665)

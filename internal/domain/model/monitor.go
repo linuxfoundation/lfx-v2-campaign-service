@@ -278,3 +278,34 @@ type AccountMonitorRow struct {
 	PacingPct   float64
 	PacingLabel MonitorPacingLabel
 }
+
+// AccountMonitorRead is what a live-read platform's dispatcher hands the account monitor: the
+// campaign rows, and the ad account's currency when the platform reported one in the reads the
+// monitor already makes (service.AccountMonitorReader).
+type AccountMonitorRead struct {
+	// Rows carries every campaign the read returned, with the same contract as
+	// AccountMetricsReader.ListAccountCampaignMetrics' result: non-nil, a fetch failure marked
+	// on its row rather than zeroed.
+	Rows []AccountCampaignMetrics
+	// Currency is the ad account's ISO 4217 code — the currency every Spend, BudgetDay and
+	// TotalBudget in Rows is denominated in, unconverted — or "" when the platform did not
+	// report one this service can vouch for. Always passed through NormalizeCurrencyCode.
+	Currency string
+}
+
+// NormalizeCurrencyCode returns code when it is shaped like an ISO 4217 alphabetic code — exactly
+// three ASCII upper-case letters — and "" otherwise. Nothing is trimmed or case-folded: a value a
+// platform sent in any other shape is not a code this service can vouch for, and the account
+// monitor's currency is absent rather than guessed. It does not check the code against the ISO
+// 4217 list: a well-shaped code a platform reports is passed through.
+func NormalizeCurrencyCode(code string) string {
+	if len(code) != 3 {
+		return ""
+	}
+	for i := 0; i < 3; i++ {
+		if code[i] < 'A' || code[i] > 'Z' {
+			return ""
+		}
+	}
+	return code
+}

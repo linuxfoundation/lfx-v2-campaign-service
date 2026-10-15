@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -110,8 +111,29 @@ type AccountCampaignRow struct {
 // oversight — today's only caller is that service layer; a future non-HTTP caller of this
 // package directly would need to add its own bound rather than rely on one here.
 func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, error) {
+	rows, _, err := c.ListAccountCampaignsWithCurrency(ctx, accountID, days)
+	return rows, err
+}
+
+// ListAccountCampaignsWithCurrency is ListAccountCampaigns plus the ad account's ISO 4217
+// currency, for the account monitor's response. The currency costs no extra call: it is the
+// insights read's own account_currency field, which Meta reports on every insights row (the
+// audience read in audience.go relies on the same field). So it is known only when the window
+// has at least one insights row; an account with no delivery in the window answers "".
+//
+// "" too when any row's account_currency is not three upper-case letters, or when two rows
+// disagree — one account has one currency, so a disagreement means the field cannot be trusted.
+// Neither fails the read: the currency labels the amounts, and the rows are still good.
+//
+// It is also "" for any currency whose minor-unit offset is not 100 (JPY, KRW, … — and any code
+// currencyMinorUnitOffset does not list), which is logged. The restriction dates from when every
+// budget was divided by 100 unconditionally (the BFF-ported minorUnitsToWhole), which made such an
+// account's budgets wrong by that factor. Budgets are now converted with the account currency's own
+// offset (minorToWhole, from the separate accountCurrency read); the restriction is kept as it was
+// and lifting it is a separate change (linuxfoundation/lfx-v2-campaign-service#316).
+func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
 	if err := ValidateAccountID(accountID); err != nil {
-		return nil, fmt.Errorf("list account campaigns: %w", err)
+		return nil, "", fmt.Errorf("list account campaigns: %w", err)
 	}
 
 	// Insights FIRST, then the budgets (PR #316 review). The campaign list is the budget and
@@ -121,13 +143,14 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	// is taken shows in that same read's updated_time — as the ad-set fallback, read last,
 	// already did. Nothing needs the campaign ids first: the Insights read is account-level
 	// (level=campaign, unfiltered), and rows are joined by campaign_id afterwards.
-	insightsByID, failedInsightIDs, window, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
+	insights, err := c.fetchAccountCampaignInsights(ctx, accountID, days)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	insightsByID, failedInsightIDs, window := insights.byID, insights.failed, insights.window
 	campaigns, err := c.fetchAccountCampaignList(ctx, accountID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	// One account-currency read per monitor request: every budget Meta reports is in the
 	// account currency's MINOR units, and the scale (100 for USD, 1 for JPY/KRW) is the
@@ -135,7 +158,7 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 	// read as PacingUnknown) rather than guessing a scale 100x wrong.
 	currency, err := c.accountCurrency(ctx, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("list account campaigns: %w", err)
+		return nil, "", fmt.Errorf("list account campaigns: %w", err)
 	}
 	offset, currencyKnown := currencyOffsetFor(currency)
 
@@ -207,26 +230,30 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		}
 	}
 
+	// The published currency is the insights rows' account_currency, withheld unless its offset
+	// is 100 (monitorPublishableCurrency). Taken once, so the withholding is logged once.
+	published := monitorPublishableCurrency(ctx, insights.currency())
+
 	// Ad-set budgets (LFXV2-2665): CreateCampaign puts the budget on the AD SET (ABO), so a
 	// campaign this service created reports no campaign-level budget at all, and pacing used
 	// to be unknown for every one of them. One account-level read covers every such campaign.
 	if len(needAdSetBudget) == 0 {
-		return rows, nil
+		return rows, published, nil
 	}
 	if !cutoffOK {
-		return rows, nil // no window to test edits against: every ad-set budget stays unknown
+		return rows, published, nil // no window to test edits against: every ad-set budget stays unknown
 	}
 	totals, err := c.fetchAccountAdSetBudgets(ctx, accountID, editCutoff)
 	if err != nil {
 		var unreadable *adSetBudgetsUnreadableError
 		if !errors.As(err, &unreadable) {
-			return nil, err
+			return nil, "", err
 		}
 		// The read completed but cannot be trusted whole (page cap, a body that is not valid
 		// JSON or that identityjson refuses, an unattributable row): every campaign that needed it stays at unknown
 		// pacing. Pacing against a partial sum would understate the budget and raise a false
 		// overspend alert.
-		return rows, nil
+		return rows, published, nil
 	}
 	for _, i := range needAdSetBudget {
 		t, ok := totals[rows[i].CampaignID]
@@ -259,7 +286,28 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 			}
 		}
 	}
-	return rows, nil
+	return rows, published, nil
+}
+
+// monitorCurrencyOffset is the minor-unit offset the monitor's currency is published for: the 100
+// the BFF-ported minorUnitsToWhole assumed for every budget before minorToWhole replaced it.
+const monitorCurrencyOffset = 100
+
+// monitorPublishableCurrency is code when its offset is monitorCurrencyOffset and "" otherwise
+// (see ListAccountCampaignsWithCurrency).
+// TODO(#316): publish every recognised currency now that budgets are converted by its offset.
+func monitorPublishableCurrency(ctx context.Context, code string) string {
+	if code == "" {
+		return ""
+	}
+	if off, ok := currencyOffsetFor(code); !ok || off != monitorCurrencyOffset {
+		// The code is three upper-case letters (insights.currency normalized it), so it is safe
+		// to log; no account id is.
+		slog.WarnContext(ctx, "meta account monitor: withholding the account currency; its budgets are not converted for this currency's minor unit",
+			"currency", code, "known_offset", ok, "offset", off)
+		return ""
+	}
+	return code
 }
 
 // positiveMinor reports whether a reported minor-unit budget is a real budget. Meta's floor is
@@ -470,6 +518,46 @@ type metaInsightsRow struct {
 	SpendUSD    float64
 }
 
+// metaAccountInsights is fetchAccountCampaignInsights' result: the parsed rows by campaign id, the
+// ids whose row would not parse, and what the rows said about the account's currency.
+type metaAccountInsights struct {
+	byID   map[string]metaInsightsRow
+	failed map[string]struct{}
+	// window is the Insights time_range the read sent (see AccountCampaignRow.MetricsSince).
+	window insightsWindow
+	// accountCurrency is the one account_currency every row carried so far; currencyUnusable is
+	// set once any row's value was not an ISO 4217 code or disagreed with another row's.
+	accountCurrency  string
+	currencyUnusable bool
+}
+
+// observeCurrency folds one insights row's raw account_currency into the account's. Every row — a
+// row whose counters would not parse included — describes the same account, so every row is
+// evidence. A field that is absent, null or not a JSON string is unusable, like a malformed code.
+func (r *metaAccountInsights) observeCurrency(raw json.RawMessage) {
+	var code string
+	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
+		code = ""
+	}
+	switch {
+	case r.currencyUnusable:
+	case model.NormalizeCurrencyCode(code) == "":
+		r.currencyUnusable = true
+	case r.accountCurrency == "":
+		r.accountCurrency = code
+	case r.accountCurrency != code:
+		r.currencyUnusable = true
+	}
+}
+
+// currency is the account's ISO 4217 code, or "" when no row reported a usable one.
+func (r *metaAccountInsights) currency() string {
+	if r.currencyUnusable {
+		return ""
+	}
+	return r.accountCurrency
+}
+
 // fetchAccountCampaignInsights ports getMetaAnalytics' account-level insights read
 // (level=campaign), following `paging.cursors.after` to exhaustion rather than reading one
 // page — see fetchAccountCampaignList's doc comment for why this departs from the ported
@@ -493,20 +581,27 @@ type metaInsightsRow struct {
 // already changing. See docs/knowledge/architecture/account-monitor-endpoints.md for the same
 // note next to the ticket history.
 //
-// The since/until it sent are returned as an insightsWindow: they are the one clock reading the
+// The since/until it sent are returned as the result's window: they are the one clock reading the
 // whole monitor read is paced against (see AccountCampaignRow.MetricsSince).
-func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (map[string]metaInsightsRow, map[string]struct{}, insightsWindow, error) {
+//
+// Each row also carries account_currency, which the read collects as the account's currency (see
+// ListAccountCampaignsWithCurrency); a row's currency never decides whether the row is used.
+func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID string, days int) (*metaAccountInsights, error) {
 	end := c.timeNow().UTC()
 	start := end.AddDate(0, 0, -(days - 1))
 	window := insightsWindow{since: start.Format("2006-01-02"), until: end.Format("2006-01-02")}
 	timeRange := `{"since":"` + window.since + `","until":"` + window.until + `"}`
 
-	out := make(map[string]metaInsightsRow, monitorPageSize)
-	failed := make(map[string]struct{})
+	res := &metaAccountInsights{
+		byID:   make(map[string]metaInsightsRow, monitorPageSize),
+		failed: make(map[string]struct{}),
+		window: window,
+	}
+	out, failed := res.byID, res.failed
 	after := ""
 	seen := make(map[string]struct{})
 	for page := 0; page < monitorMaxPages; page++ {
-		path := "/" + accountID + "/insights?level=campaign&fields=campaign_id,impressions,clicks,spend&time_range=" + url.QueryEscape(timeRange) + "&limit=" + strconv.Itoa(monitorPageSize)
+		path := "/" + accountID + "/insights?level=campaign&fields=campaign_id,impressions,clicks,spend,account_currency&time_range=" + url.QueryEscape(timeRange) + "&limit=" + strconv.Itoa(monitorPageSize)
 		if after != "" {
 			path += "&after=" + url.QueryEscape(after)
 		}
@@ -520,6 +615,10 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 				Impressions json.RawMessage `json:"impressions"`
 				Clicks      json.RawMessage `json:"clicks"`
 				Spend       json.RawMessage `json:"spend"`
+				// AccountCurrency is the ad account's ISO 4217 currency (Meta's own field name),
+				// RAW and decoded on its own (observeCurrency): a value of the wrong JSON type
+				// costs only the currency, never this row or the read.
+				AccountCurrency json.RawMessage `json:"account_currency"`
 			} `json:"data"`
 			Paging struct {
 				Cursors struct {
@@ -528,11 +627,29 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 				Next string `json:"next"`
 			} `json:"paging"`
 		}
-		if err := c.doRequest(ctx, http.MethodGet, path, nil, &resp); err != nil {
-			return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights: %w", err)
+		// Fetched RAW and checked with identityjson before it is decoded, as the audience read's
+		// pages are (audience.go): encoding/json resolves a repeated key — exact or case-folded —
+		// in favour of the last value with no error, so `"account_currency":"USD",
+		// "Account_Currency":"EUR"` would read as EUR. Unlike the audience read, an untrusted page
+		// does not fail the monitor — the rows were read this way before the currency existed —
+		// but it withholds the currency the page would otherwise vouch for.
+		var body json.RawMessage
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &body); err != nil {
+			return nil, fmt.Errorf("list account campaign insights: %w", err)
+		}
+		if identityjson.Check(body) != nil {
+			res.currencyUnusable = true
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			// The decoder's message can quote a value; report the shape only.
+			return nil, &transportError{
+				Method: http.MethodGet,
+				Path:   path,
+				Err:    fmt.Errorf("list account campaign insights: response is not an insights page of the expected shape"),
+			}
 		}
 		if resp.Data == nil {
-			return nil, nil, insightsWindow{}, &transportError{
+			return nil, &transportError{
 				Method: http.MethodGet,
 				Path:   path,
 				Err:    fmt.Errorf("account insights returned a 2xx response with no data field"),
@@ -546,12 +663,13 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			// row belonged to as a legitimate zero-activity omission, so the whole read is
 			// rejected instead (round-31 review, same class as the LinkedIn pivot-value fix).
 			if row.CampaignID == "" {
-				return nil, nil, insightsWindow{}, &transportError{
+				return nil, &transportError{
 					Method: http.MethodGet,
 					Path:   path,
 					Err:    fmt.Errorf("account insights returned a row with no campaign_id"),
 				}
 			}
+			res.observeCurrency(row.AccountCurrency)
 			// Meta omits a zero-valued metric entirely (spend for a zero-delivery campaign is
 			// absent rather than "0"), so an ABSENT field — or an empty string — is a
 			// legitimate zero. An explicit null, a non-string value, or a non-empty
@@ -574,18 +692,18 @@ func (c *Client) fetchAccountCampaignInsights(ctx context.Context, accountID str
 			out[row.CampaignID] = metaInsightsRow{Impressions: impressions, Clicks: clicks, SpendUSD: spend}
 		}
 		if resp.Paging.Next == "" {
-			return out, failed, window, nil // fully enumerated
+			return res, nil // fully enumerated
 		}
 		after = strings.TrimSpace(resp.Paging.Cursors.After)
 		if after == "" {
-			return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights has more pages but no cursor; cannot guarantee every campaign was enumerated")
+			return nil, fmt.Errorf("list account campaign insights has more pages but no cursor; cannot guarantee every campaign was enumerated")
 		}
 		if _, dup := seen[after]; dup {
-			return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights did not terminate (repeated paging cursor)")
+			return nil, fmt.Errorf("list account campaign insights did not terminate (repeated paging cursor)")
 		}
 		seen[after] = struct{}{}
 	}
-	return nil, nil, insightsWindow{}, fmt.Errorf("list account campaign insights exceeded %d pages; too many rows to enumerate", monitorMaxPages)
+	return nil, fmt.Errorf("list account campaign insights exceeded %d pages; too many rows to enumerate", monitorMaxPages)
 }
 
 // metaTimestampLayouts are the timestamp forms dateOnly accepts: Graph's documented default,
