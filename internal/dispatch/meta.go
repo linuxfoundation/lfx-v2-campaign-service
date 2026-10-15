@@ -1136,6 +1136,54 @@ func metaRunStatus(status string) (string, error) {
 	}
 }
 
+// metaSnapshotConfig returns the copy of cfg that is persisted to config_snapshot (stored
+// UNENCRYPTED and indexed).
+//
+// Every variant's ImageURL goes through sanitizeSnapshotURL: a creative image URL is
+// caller-supplied and may be PRE-SIGNED, whose signature is a bearer credential granting
+// time-boxed read access. This is the SUCCESS path — it runs on every create with an image,
+// not only on failures — so scrubbing the error sinks alone never covered it. Same reason and
+// same helper as redditSnapshotConfig's PostURL.
+//
+// Every other caller string the client does not shape-check goes through
+// sanitizeSnapshotText — the helper X's tweetText and Microsoft's keywords use — which
+// reduces any link-shaped run to scheme+host and drops one carrying userinfo. The fields that
+// matter are Variants[].PrimaryText, Headline and Description: operator-authored ad copy where
+// a link gets pasted, and a password-reset URL keeps its secret in the PATH as readily as in
+// the query. DSABeneficiary/DSAPayor (caller-typed names), PixelID (shape-checked only when
+// the objective promotes a pixel, so an unused one reaches the snapshot as typed) and
+// GeoTargets (validateGeoTargets FILTERS an invalid entry out of what is sent, so the snapshot
+// would otherwise keep it as typed) get the same treatment; an ordinary name, id or country
+// code passes through unchanged.
+//
+// Kept verbatim: Objective (refused by the client unless it names a known objective),
+// InstagramUserID (refused unless numeric), Variants[].ImageAssetID (a stored asset key),
+// numbers, flags and dates. ImageBytes and
+// ImageMIME are json:"-" and never reach the snapshot.
+//
+// cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
+// so every slice that is rewritten is REALLOCATED first: the FULL url and text must still
+// reach Meta, and only the stored copy is redacted.
+func metaSnapshotConfig(cfg metaConfig) metaConfig {
+	snapshot := cfg
+	snapshot.GeoTargets = sanitizeSnapshotTexts(cfg.GeoTargets)
+	snapshot.PixelID = sanitizeSnapshotText(cfg.PixelID)
+	snapshot.DSABeneficiary = sanitizeSnapshotText(cfg.DSABeneficiary)
+	snapshot.DSAPayor = sanitizeSnapshotText(cfg.DSAPayor)
+	if cfg.Variants != nil {
+		snapshot.Variants = make([]meta.AdVariant, len(cfg.Variants))
+		copy(snapshot.Variants, cfg.Variants)
+		for i := range snapshot.Variants {
+			v := &snapshot.Variants[i]
+			v.ImageURL = sanitizeSnapshotURL(cfg.Variants[i].ImageURL)
+			v.PrimaryText = sanitizeSnapshotText(cfg.Variants[i].PrimaryText)
+			v.Headline = sanitizeSnapshotText(cfg.Variants[i].Headline)
+			v.Description = sanitizeSnapshotText(cfg.Variants[i].Description)
+		}
+	}
+	return snapshot
+}
+
 // campaignFromMeta maps the client result to the persistence model.
 func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfig) *model.Campaign {
 	c := &model.Campaign{
@@ -1144,24 +1192,9 @@ func campaignFromMeta(ctx context.Context, r *meta.CampaignResult, cfg metaConfi
 		Status:             campaignStatusCreated,
 	}
 	// Persist the budget/schedule/config the caller supplied (Meta honors a
-	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config,
-	// but with every variant's ImageURL SANITIZED: a creative image URL is
-	// caller-supplied and may be PRE-SIGNED, whose signature is a bearer credential
-	// granting time-boxed read access, and config_snapshot is stored UNENCRYPTED in
-	// Postgres. This is the SUCCESS path — it runs on every create with an image, not
-	// only on failures — so scrubbing the error sinks alone never covered it. Same
-	// reason and same helper as campaignFromReddit's PostURL.
-	snapshot := cfg
-	if len(cfg.Variants) > 0 {
-		// Copy the slice before mutating: cfg is passed by value but Variants shares its
-		// backing array with the caller's config, and the FULL url must still reach Meta.
-		snapshot.Variants = make([]meta.AdVariant, len(cfg.Variants))
-		copy(snapshot.Variants, cfg.Variants)
-		for i := range snapshot.Variants {
-			snapshot.Variants[i].ImageURL = sanitizeSnapshotURL(snapshot.Variants[i].ImageURL)
-		}
-	}
-	applyCampaignConfig(ctx, c, cfg.Budget, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, snapshot)
+	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config with its
+	// caller URLs and free text redacted — see metaSnapshotConfig.
+	applyCampaignConfig(ctx, c, cfg.Budget, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, metaSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: on the degraded/ambiguous-orphan paths Result is the sole carrier
