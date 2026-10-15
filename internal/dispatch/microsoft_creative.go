@@ -66,6 +66,11 @@ func (d *MicrosoftDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives
 // AssetReserverIsSet reports whether the aggregate asset budget was bound.
 func (d *MicrosoftDispatcher) AssetReserverIsSet() bool { return d.assets != nil }
 
+// SharesAssetReserver is MetaDispatcher.SharesAssetReserver for the Microsoft dispatcher.
+func (d *MicrosoftDispatcher) SharesAssetReserver(a *AssetReserver) bool {
+	return a != nil && d.assets == a
+}
+
 // resolveMicrosoftImage loads and validates the campaign image cfg names, returning nil when
 // none is requested. On success cfg.ImageAssetID is replaced with the canonical uuid (so the
 // snapshot never stores a caller spelling) and the returned release func owns the

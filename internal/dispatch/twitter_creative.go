@@ -44,6 +44,11 @@ func (d *TwitterDispatcher) CreativeAssetRepoIsSet() bool { return d.creatives !
 // AssetReserverIsSet reports whether the aggregate asset budget was bound.
 func (d *TwitterDispatcher) AssetReserverIsSet() bool { return d.assets != nil }
 
+// SharesAssetReserver is MetaDispatcher.SharesAssetReserver for the X dispatcher.
+func (d *TwitterDispatcher) SharesAssetReserver(a *AssetReserver) bool {
+	return a != nil && d.assets == a
+}
+
 // resolveTwitterImage loads the creative image an X config references by imageAssetId.
 //
 // Every refusal here precedes any X request, and the caller wraps it in notCreated so the claim
