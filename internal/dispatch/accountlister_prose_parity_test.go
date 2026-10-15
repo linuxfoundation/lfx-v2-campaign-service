@@ -43,8 +43,8 @@ import (
 //     ErrAccountNotSelected", which is a CALL-GRAPH property: every dispatcher including Reddit
 //     mentions that sentinel, so no grep, symbol table or runtime reflection distinguished
 //     LinkedIn before its create path joined the resolver (it tagged it in a resolver Dispatch
-//     did not call) from X (whose Dispatch calls the tagging validator itself). A derived sentence would therefore have to hardcode the very
-//     judgement that keeps going stale.
+//     did not call) from X (whose Dispatch calls the tagging validator itself). A derived
+//     sentence would therefore have to hardcode the very judgement that keeps going stale.
 //
 // So the FIRST half — which is mechanically checkable, and is what LFXV2-3319 actually moved —
 // is pinned here against the interface itself, and the second half stays prose because it is a

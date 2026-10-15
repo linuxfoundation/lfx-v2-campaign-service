@@ -1077,8 +1077,8 @@ func TestLinkedIn_AccessTokenIsTrimmedOnceInTheHelper(t *testing.T) {
 
 // Dispatch must ADOPT the trimmed token, not merely test it. Dispatch now resolves through
 // resolveLinkedInCredentials, so the helper test above covers the value; this pins it on the
-// WIRE for the create path, which once decoded inline. An earlier revision only tested TrimSpace(token) == "" and then sent the raw
-// value, so a padded stored credential listed accounts successfully through discovery (which
+// WIRE for the create path, which once decoded inline. An earlier revision only tested
+// TrimSpace(token) == "" and then sent the raw value, so a padded stored credential listed accounts successfully through discovery (which
 // shares the helper) and was rejected upstream on create: the same connection working on one
 // path and failing on the other, which is the misleading-discovery state the helper exists to
 // prevent.

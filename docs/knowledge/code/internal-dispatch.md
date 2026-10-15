@@ -577,8 +577,8 @@ reaches the polled job result as `this project's linkedin-ads connection cannot 
 configured (reason: account_not_selected); nothing was sent` (issue #208's connection-class
 sentence), or the LF-system variant when the row is the fallback.
 
-One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics (as well as create) where
-Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
+One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics (as
+well as create) where Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
 empty account id cannot reach the platform at all; Meta targets the campaign node by platform id
 and never reads the account, so an account cleared after creation must not block pausing.
 
