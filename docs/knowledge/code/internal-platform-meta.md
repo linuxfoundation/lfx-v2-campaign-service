@@ -862,11 +862,10 @@ three-upper-case-letter code — the field read RAW, so `null` or a non-string c
 currency, and each insights page checked with `identityjson`, an untrusted page withholding the
 currency (its rows are kept) — absent, malformed or disagreeing rows leave it `""` without
 failing the read. No extra request for the label (the `?fields=currency` read above serves the budget conversion); an account with no insights rows in the window has no
-currency. `monitorPublishableCurrency` then withholds (and logs) any code whose
-`currencyOffsetFor` offset is not 100. The restriction dates from when `minorUnitsToWhole`
-divided every budget by 100, making a JPY/KRW/… account's budgets wrong by that factor; budgets
-are now converted with the account currency's own offset (the `accountCurrency` read above), and
-the restriction is kept until a separate change lifts it. `ListAccountCampaigns` wraps it and drops the currency. See
+currency. `monitorPublishableCurrency` then publishes the code only when `currencyOffsetFor` knows its
+offset (1 or 100) and it equals the `accountCurrency` read above, the currency the budgets were
+converted in; it withholds (and logs) an unknown code, whose budgets are left unconverted, and a
+code the two reads disagree on. `ListAccountCampaigns` wraps it and drops the currency. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
 See [internal/platform/meta](../../../internal/platform/meta).

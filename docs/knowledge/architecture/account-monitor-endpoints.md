@@ -135,7 +135,7 @@ renderer formats with a symbol when it is present and without one otherwise.
 
 | Platform | Source | Extra call? |
 | -------- | ------ | ----------- |
-| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless its minor-unit offset is 100 | No |
+| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless it is the ad account's currency the budgets were converted in, with a known minor-unit offset | No |
 | LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); spend is `costInLocalCurrency`, in the same currency | No |
 | Reddit | `GET /ad_accounts/{id}` (`reddit.Client.readMonitorAccountCurrency`), beside the report fan-out, 3s budget, no 429 retry | One |
 | X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
@@ -182,12 +182,13 @@ renderer formats with a symbol when it is present and without one otherwise.
   `PacingUnknown` (`linkedin.AccountCampaignRow.PacingUnknown`, honoured by
   `rules.EvaluateLinkedInMonitor`): which budgets are in the spend's currency cannot be told. The
   single-campaign metrics read and the audience read still report `costInUsd`.
-- **Meta withholds zero-decimal currencies.** `monitorPublishableCurrency` publishes the code only
-  when `currencyOffsetFor` gives 100, and logs the rest. The restriction dates from when the Meta
-  monitor divided every budget by 100 (`minorUnitsToWhole`), making a JPY/KRW/… account's budgets
-  wrong by that factor; budgets are now converted with the account currency's own offset (one
-  `?fields=currency` read per request, `minorToWhole`), and the restriction is kept until a
-  separate change lifts it.
+- **Meta publishes the currency its budgets were converted in.** Budgets are converted with the
+  account currency's own offset (one `?fields=currency` read per request, `minorToWhole`), so
+  `monitorPublishableCurrency` publishes the insights code for every currency `currencyOffsetFor`
+  knows — offset 1 (JPY, KRW, …) as well as 100 — when it equals that read's currency. It
+  withholds, and logs, a code outside `currencyMinorUnitOffset` (budgets left unconverted; no
+  three-decimal currency is in the map) and one the two reads disagree on, which would label
+  budgets converted at another currency's scale. The offset-100-only restriction of #338 is gone.
 - **Identity and failure.** The two new reads (Reddit, Microsoft) and X's currency are taken only
   from a body `identityjson` trusts that names the requested account. Any failure — transport,
   status, untrusted body, another account's id — leaves `currency` absent and never fails the
