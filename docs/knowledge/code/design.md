@@ -240,6 +240,15 @@ validator, asserting they agree except at the named asymmetries.
 PUT is a full replace on every provider, and un-selecting an account is expressed by an ABSENT
 `account_id` — which is why a strict pattern on an optional attribute does not break clearing.
 
+Optional PROVIDER-CONFIG attributes differ (issue #300): omitting one whose stored value is
+non-empty is refused with 400 on PUT, so clearing takes an explicit `""`. Their descriptions end
+with the `keepOnUpdate` text, which is how the rule reaches the generated OpenAPI: Meta `app_id`,
+Reddit `conversion_pixel_id`, X `as_user_id`, Microsoft `customer_id`, and HubSpot `portal_id`,
+`sender_email`, `sender_name` and `brand_kit`. Because an explicit `""` is now the only way to
+clear X's `as_user_id`, its Pattern is `^([0-9]+)?$`. Google Ads' `login_customer_id` does not
+carry the text because Google Ads is not guarded yet. The update methods already declare
+`BadRequest` (400) through `authErrors()`, so no new response was needed.
+
 ## What `ok` on a connection test promises (LFXV2-2665)
 
 `TestResult.ok` is described as "the credential authenticated AND the configured account passed

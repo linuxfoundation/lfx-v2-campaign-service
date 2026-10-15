@@ -51,7 +51,8 @@ run the campaign without the image the caller asked for.
   It applies `findByName`'s pagination rules: a short page settles the lookup, and a full page
   with no usable cursor is an error rather than a not-found. The key is recorded in
   `CampaignResult.MediaKey`. Lookup, upload and library add run under a per-(account, image)
-  lock that every client for the account shares through the `AccountPacers` registry. Two
+  lock that every client for the account shares through the `AccountPacers` registry, under
+  the pacer's own gate (a registry and an account id; a client without one keeps private locks). Two
   concurrent dispatches of the same bytes therefore produce one upload and one library add,
   and the second dispatch reuses the first one's entry. The lock is a channel semaphore, so a
   waiter's context bounds its wait, and an entry is dropped once no dispatch holds or waits on

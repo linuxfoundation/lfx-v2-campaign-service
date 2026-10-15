@@ -813,10 +813,10 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   them in LFXV2-3196 (`resolveLinkedInCredentials`, covering the credential-state three plus the
   missing account, which it needs because its client is constructed with a RuntimeConfig naming
   the account) — for its two synchronous entry points, `ToggleStatus` and `ReadMetrics`.
-  LinkedIn's `Dispatch` deliberately keeps its own inline validation and does NOT route through
-  that helper: it wraps failures in `notCreated()` to release the dispatch claim, a contract the
-  helper does not carry, and it is asynchronous so it never reaches this arm anyway
-  (`internal-dispatch.md` records the same split). In Google Ads the wrap has three owners:
+  LinkedIn's `Dispatch` routes through the same helper too (since 2026-10-15), wrapping its
+  error in `notCreated()` itself to release the dispatch claim; it is asynchronous, so it never
+  reaches this arm and surfaces in the job result instead (`internal-dispatch.md`). In Google
+  Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -966,10 +966,10 @@ That failure mode is specific to an AUTHORIZATION field and worth naming as such
 routing value fails loudly on first use, because something downstream needs it; a dropped
 authorization value fails silently and OPEN, because the code that reads it is written to treat
 absence as "no restriction configured". The same shape applies to the update direction: PUT is a
-full replace on these endpoints, so an omitted `as_user_id` CLEARS the declared identity and
-widens what dispatch will accept. That matches `account_id` and Meta's `app_id` rather than
-inventing a third convention, and `TestUpdateTwitterAds_OmittedAsUserIDClearsIt` states it out
-loud for exactly that reason. The round-trip test asserts the STORED row, not the returned
+full replace on these endpoints, and an omitted `as_user_id` used to CLEAR the declared identity
+and widen what dispatch would accept. Since issue #300 that omission is refused with 400 while an
+identity is stored (see "Omitting a stored config field is refused" below), and clearing takes an
+explicit `""`; `TestUpdateTwitterAds_OmittedAsUserIDIsRefused` pins it. The round-trip test asserts the STORED row, not the returned
 result: a handler that echoed the payload back without persisting it passes any result-only
 assertion, and the stored row is what dispatch resolves.
 
@@ -978,9 +978,11 @@ chosen: AFTER the precondition parse, so a caller who omitted `If-Match` still g
 paying for a read; BEFORE the write, because a rejected update must not reach the database. A read
 FAILURE is returned as-is rather than defaulting the current value to `""` — that default would be
 the reverse of fail-closed, making every resubmission look newly set and reporting a transient
-database fault as a 400 about the caller's body.
+database fault as a 400 about the caller's body. Once the row is read, a version that differs from
+`If-Match` is answered 412 before the guard runs (issue #300), so a stale ETag never earns a 400.
 
-The read is gated on **`forcedSystemGuardApplies`**, the guard's own scope predicate
+The read is gated on **`forcedSystemGuardApplies`** (or, since issue #300, on the payload omitting
+a guarded config key), the guard's own scope predicate
 (`IsPaidAds() && forcedSystemAdsAccount()`), extracted into a named function precisely so the gate
 and the guard cannot be one expression written twice. The gate matters because the flag is
 default-off: without it every connection update on every deployment would pay a round-trip for a
@@ -2210,6 +2212,55 @@ LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics f
 (the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
 `true` on the wire. Tests: `linkedin_audience_test.go`. See
 [LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).
+
+## Omitting a stored config field is refused (issue #300)
+
+PUT on a connection is a full replace, and each `Update<Provider>` adapter rebuilds
+`ProviderConfig` from the payload alone, so an OPTIONAL key the caller left out used to be written
+as `""` over whatever was stored. For Reddit that cleared `conversion_pixel_id`, which Reddit
+requires on every campaign create, so a label-only edit disabled campaign creation for the project
+while answering 200.
+
+`updateConnGuarded` (`connection_handler.go`) keeps the full replace for every field a caller
+SENDS and refuses only clearing by omission. Each adapter passes its optional keys as an
+`optionalConfig` (`map[string]*string`, the payload pointers as decoded: nil means omitted or JSON
+null). When any is nil, the handler reads the current row and:
+
+- answers **412** if the row is not at the `If-Match` version, so neither guard judges a row the
+  caller did not see. This check comes before both the force-system guard and the omission guard,
+  so a stale `If-Match` is 412 whichever guard would otherwise have answered 400. `repo.Update` is itself conditioned on that version, so a writer that moves
+  the row after the read makes the write fail with 412: the guard adds no race window and needs no
+  extra lock;
+- answers **400** naming every omitted key that has a non-empty stored value (`config.<key>`,
+  sorted), telling the caller to resend the value or send `""` to clear it. Nothing is written.
+
+An omitted key with nothing stored passes, since `""` over `""` changes nothing. A body that sends
+every optional key performs no read, so a full body keeps the single-statement path. The read is
+shared with the force-system guard when that applies.
+
+`TestClearGuardProviders_CoverEveryConfigKey` requires every opted-in provider's Required plus
+guarded keys to equal `Provider.ConfigKeys()`, with LinkedIn and Google Ads the only providers
+outside the table, so a new optional key cannot be added without being classified.
+
+Guarded keys, verified against the Required lists in `design/connection.go`:
+
+| Provider | Optional keys guarded | Not guarded (Required) |
+| --- | --- | --- |
+| Meta Ads | `app_id` | `page_id` |
+| Reddit Ads | `conversion_pixel_id` | |
+| X / Twitter Ads | `as_user_id` | `funding_instrument_id` |
+| Microsoft Ads | `customer_id` | |
+| HubSpot | `portal_id`, `sender_email`, `sender_name`, `brand_kit` | |
+| LinkedIn Ads | none | `org_id` |
+| Google Ads | none yet | |
+
+Google Ads is not opted in (`login_customer_id` still clears on omission). Opting it in is one
+line: call `updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{"login_customer_id":
+cfg.LoginCustomerID})` instead of `updateConn`. X's `as_user_id` Pattern became `^([0-9]+)?$` so an
+explicit `""` can clear it; with the old `^[0-9]+$` a declared identity could not be cleared at all
+once omission was refused. The rule is in each guarded attribute's description (`keepOnUpdate` in
+the design), so it reaches the generated OpenAPI. `account_id` and `label` are not
+provider-config keys and keep the plain full-replace behaviour.
 
 ## Dispatch failure reasons in the job result (`dispatch_failure.go`, issue #208)
 

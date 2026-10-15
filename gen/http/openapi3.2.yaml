@@ -21037,7 +21037,7 @@ components:
                     example: Exercitationem maiores quam voluptatem eaque voluptas sed.
                 brand_kit:
                     type: string
-                    description: Per-project brand kit selector
+                    description: 'Per-project brand kit selector. On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: Omnis praesentium sapiente minus sit.
                 label:
                     type: string
@@ -21045,15 +21045,15 @@ components:
                     example: Necessitatibus qui facilis temporibus ab.
                 portal_id:
                     type: string
-                    description: HubSpot portal/account ID
+                    description: 'HubSpot portal/account ID. On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: Molestias nihil vitae officiis voluptate voluptas id.
                 sender_email:
                     type: string
-                    description: Default sender address
+                    description: 'Default sender address. On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: Voluptatem voluptatibus aperiam.
                 sender_name:
                     type: string
-                    description: Default sender name
+                    description: 'Default sender name. On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: Nam et nisi dolores corporis voluptate dolorem.
             example:
                 account_id: Exercitationem maiores quam voluptatem eaque voluptas sed.
@@ -22862,7 +22862,7 @@ components:
                     maxLength: 64
                 app_id:
                     type: string
-                    description: Meta app ID
+                    description: 'Meta app ID. On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: Velit voluptate fugiat.
                 label:
                     type: string
@@ -23143,7 +23143,7 @@ components:
                     maxLength: 18
                 customer_id:
                     type: string
-                    description: 'Microsoft Advertising customer ID (a positive integer, digits only). Optional: omit it to let the credential''s own customers be discovered.'
+                    description: 'Microsoft Advertising customer ID (a positive integer, digits only). Optional: leave it empty to let the credential''s own customers be discovered. On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: "9999999"
                     pattern: ^([1-9][0-9]{0,17})?$
                     maxLength: 18
@@ -23923,7 +23923,7 @@ components:
                     maxLength: 64
                 conversion_pixel_id:
                     type: string
-                    description: Reddit conversion pixel ID (Reddit Ads → Events Manager)
+                    description: 'Reddit conversion pixel ID (Reddit Ads → Events Manager). On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: a2_1b3c5d7e9f
                 label:
                     type: string
@@ -24646,9 +24646,9 @@ components:
                     maxLength: 64
                 as_user_id:
                     type: string
-                    description: X/Twitter user id authorized to author this connection's tweets (numeric)
+                    description: 'X/Twitter user id authorized to author this connection''s tweets (numeric, or "" for none). On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.'
                     example: "1234567890123456789"
-                    pattern: ^[0-9]+$
+                    pattern: ^([0-9]+)?$
                     maxLength: 32
                 funding_instrument_id:
                     type: string
