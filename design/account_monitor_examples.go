@@ -17,9 +17,9 @@ import (
 // AccountMonitor is ONE result type shared by six platforms whose rows differ: Google alone sets
 // campaign_url, only Google and Microsoft can be search campaigns, Google and Microsoft report no
 // flight dates or lifetime budget, Meta/Reddit/X measure no conversions, each platform has its
-// own status literals and pacing formula, and only the report-backed platforms (Microsoft, X)
-// set metrics_as_of / metrics_window_* / metrics_pending. No single example is a response all six
-// handlers could return, so AccountMonitor and AccountMonitorCampaign carry none (Meta
+// own status literals and pacing formula, only the report-backed platforms (Microsoft, X) set
+// metrics_as_of / metrics_window_* / metrics_pending, and Google alone never sets currency. No
+// single example is a response all six handlers could return, so AccountMonitor and AccountMonitorCampaign carry none (Meta
 // "openapi:example" false) and each method declares its own 200 example.
 //
 // How, given what Goa allows. A Result(AccountMonitor, func() { Example(...) }) duplicates the
@@ -41,13 +41,16 @@ const (
 	accountMonitorExampleWindowFrom = "2026-09-06"
 	accountMonitorExampleWindowTo   = "2026-10-05"
 	accountMonitorExampleDays       = 30
+	// accountMonitorExampleCurrency is the currency every non-Google example reports. USD
+	// because the action items' "$" amounts (Meta, Reddit, Microsoft) are printed in it.
+	accountMonitorExampleCurrency = "USD"
 )
 
 // accountMonitorExample assembles one operation's example: it fills each row's ctr from its
 // clicks and impressions (as every platform does, to 2 decimals), and the totals as the sums of
 // the rows — conversions only when some row measured them — so the totals cannot drift from the
 // rows they describe.
-func accountMonitorExample(accountID string, rows, items []map[string]any, reported bool) map[string]any {
+func accountMonitorExample(accountID string, rows, items []map[string]any, reported bool, currency string) map[string]any {
 	var spend, conversions float64
 	var impressions, clicks int
 	measured := false
@@ -76,6 +79,9 @@ func accountMonitorExample(accountID string, rows, items []map[string]any, repor
 	}
 	ex := map[string]any{"account_id": accountID, "days": accountMonitorExampleDays,
 		"campaigns": campaigns, "action_items": items, "totals": totals}
+	if currency != "" {
+		ex["currency"] = currency
+	}
 	if reported {
 		ex["metrics_as_of"] = accountMonitorExampleAsOf
 		ex["metrics_window_start"] = accountMonitorExampleWindowFrom
@@ -101,8 +107,9 @@ func accountMonitorExampleBody(body expr.UserType, example map[string]any) func(
 // Reference, not Extend, so the property examples that differ by platform can be set here rather
 // than inherited from the shared type: account_id carries an id in this platform's format (the
 // shared "8666746580" is impossible on Meta, Reddit and X), and the report-window fields carry
-// examples only on the report-backed platforms, which are the only ones that set them.
-func accountMonitorBodyType(name, platform, accountID string, reported bool) expr.UserType {
+// examples only on the report-backed platforms, which are the only ones that set them. currency
+// is the platform's example currency, "" for Google Ads, whose monitor never sets the field.
+func accountMonitorBodyType(name, platform, accountID string, reported bool, currency string) expr.UserType {
 	return Type(name, func() {
 		Description("The " + platform + " account monitor read. The same fields as every ad-platform account monitor; a schema of its own only so this operation's example can show rows in " + platform + "'s own shape.")
 		Reference(AccountMonitor)
@@ -122,6 +129,11 @@ func accountMonitorBodyType(name, platform, accountID string, reported bool) exp
 		reportField("metrics_window_start", accountMonitorExampleWindowFrom)
 		reportField("metrics_window_end", accountMonitorExampleWindowTo)
 		reportField("metrics_pending", false)
+		if currency == "" {
+			Attribute("currency")
+		} else {
+			Attribute("currency", func() { Example(currency) })
+		}
 		Required("account_id", "days", "campaigns", "action_items", "totals")
 		Meta("openapi:example", "false")
 		Meta("openapi:typename", name)
@@ -129,12 +141,13 @@ func accountMonitorBodyType(name, platform, accountID string, reported bool) exp
 }
 
 var (
-	googleAccountMonitorBody    = accountMonitorBodyType("google-ads-account-monitor", "Google Ads", "8666746580", false)
-	linkedinAccountMonitorBody  = accountMonitorBodyType("linkedin-ads-account-monitor", "LinkedIn Ads", "512345678", false)
-	metaAccountMonitorBody      = accountMonitorBodyType("meta-ads-account-monitor", "Meta Ads", "act_8666746580", false)
-	microsoftAccountMonitorBody = accountMonitorBodyType("microsoft-ads-account-monitor", "Microsoft Ads", "187654321", true)
-	redditAccountMonitorBody    = accountMonitorBodyType("reddit-ads-account-monitor", "Reddit Ads", "t2_gv9wtbfa", false)
-	twitterAccountMonitorBody   = accountMonitorBodyType("twitter-ads-account-monitor", "X Ads", "18ce54d4x5t", true)
+	// Google Ads carries no currency example: its monitor never sets the field.
+	googleAccountMonitorBody    = accountMonitorBodyType("google-ads-account-monitor", "Google Ads", "8666746580", false, "")
+	linkedinAccountMonitorBody  = accountMonitorBodyType("linkedin-ads-account-monitor", "LinkedIn Ads", "512345678", false, accountMonitorExampleCurrency)
+	metaAccountMonitorBody      = accountMonitorBodyType("meta-ads-account-monitor", "Meta Ads", "act_8666746580", false, accountMonitorExampleCurrency)
+	microsoftAccountMonitorBody = accountMonitorBodyType("microsoft-ads-account-monitor", "Microsoft Ads", "187654321", true, accountMonitorExampleCurrency)
+	redditAccountMonitorBody    = accountMonitorBodyType("reddit-ads-account-monitor", "Reddit Ads", "t2_gv9wtbfa", false, accountMonitorExampleCurrency)
+	twitterAccountMonitorBody   = accountMonitorBodyType("twitter-ads-account-monitor", "X Ads", "18ce54d4x5t", true, accountMonitorExampleCurrency)
 )
 
 // Google Ads: daily budgets paced as budget_day*days, no flight dates, campaign_url set.
@@ -157,7 +170,7 @@ func googleAccountMonitorExample() map[string]any {
 		"campaign_id": "24183781329", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
 		"issue":  "Only spending 42% of $150.00/day budget — $1890.00 spent vs $4500.00 expected",
 		"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
-	}}, false)
+	}}, false, "")
 }
 
 // LinkedIn: pacing is UNROUNDED, and a daily budget is expected over the days from 29 days
@@ -182,7 +195,7 @@ func linkedinAccountMonitorExample() map[string]any {
 		"campaign_id": "612345001", "campaign_name": "KubeCon NA 2026 - Sponsored Content", "priority": "HIGH",
 		"issue":  "Underspending — pacing below 50%",
 		"action": "Check targeting breadth, bid strategy, or budget floor",
-	}}, false)
+	}}, false, accountMonitorExampleCurrency)
 }
 
 // Meta: a daily budget is paced as budget_day*days: 960/(80*30) = 40% (underspending). A
@@ -206,7 +219,7 @@ func metaAccountMonitorExample() map[string]any {
 		"campaign_id": "120210000000000001", "campaign_name": "KubeCon NA 2026 - Prospecting", "priority": "MED",
 		"issue":  "Underspending: 40% of budget used ($960.00 of $2400.00)",
 		"action": "Broaden audience targeting or increase bid cap to improve delivery",
-	}}, false)
+	}}, false, accountMonitorExampleCurrency)
 }
 
 // Reddit: a daily budget is expected over the 30 report days its flight covers: 600/(50*30) =
@@ -230,7 +243,7 @@ func redditAccountMonitorExample() map[string]any {
 		"campaign_id": "2045000000000000001", "campaign_name": "KubeCon NA 2026 - r/kubernetes", "priority": "HIGH",
 		"issue":  "Underspending at 40% of budget — $600.00 spent",
 		"action": "Broaden targeting (add subreddits/interests), increase bid, or expand geographic targeting",
-	}}, false)
+	}}, false, accountMonitorExampleCurrency)
 }
 
 // Microsoft Ads: report-backed; daily budgets only, no flight dates, paced as budget_day*days:
@@ -251,7 +264,7 @@ func microsoftAccountMonitorExample() map[string]any {
 		"campaign_id": "516000001", "campaign_name": "KubeCon NA 2026 - Search", "priority": "MED",
 		"issue":  "Only spending 40% of $60.00/day budget — $720.00 spent vs $1800.00 expected",
 		"action": "Broaden targeting (locations, audiences), add broad match keywords, or increase bids to win more auctions",
-	}}, true)
+	}}, true, accountMonitorExampleCurrency)
 }
 
 // X: report-backed; evaluated on the report's own window (Sep 6–Oct 5, 30 days). A daily budget
@@ -276,5 +289,5 @@ func twitterAccountMonitorExample() map[string]any {
 		"campaign_id": "hd8ns", "campaign_name": "KubeCon NA 2026 - Promoted Posts", "priority": "MED",
 		"issue":  "Underspending at 40% of budget — 600.00 in account currency spent in the window",
 		"action": "Broaden targeting (keywords, follower look-alikes, locations) or raise the bid so the line items win more auctions",
-	}}, true)
+	}}, true, accountMonitorExampleCurrency)
 }

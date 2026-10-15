@@ -229,6 +229,11 @@ type Client struct {
 	// makes the single-flight above safe for a client many callers share. See
 	// WithCallerScopedTokenRefresh.
 	callerScopedRefresh bool
+
+	// currency caches the account monitor's successful currency reads (AccountCurrency) for
+	// accountCurrencyCacheFor, keyed by account, so a monitor polled on every page view does
+	// not re-read a setting that does not change. Failures are never cached.
+	currency accountCurrencyCache
 }
 
 // tokenRefresh holds the shared result of one in-flight token refresh. done is
