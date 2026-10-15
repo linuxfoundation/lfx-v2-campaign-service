@@ -1820,7 +1820,13 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		if alreadyExcluded[id] || notSuppression[id] {
 			continue
 		}
-		if _, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr != nil {
+		l, _, rerr := x.listWithFilters(ctx, client, cache, id)
+		if rerr != nil {
+			continue
+		}
+		// A company or deal list cannot exclude a contact, so it is no suppression
+		// (AttachExisting refuses one on the same test).
+		if l != nil && l.ObjectTypeID != "" && l.ObjectTypeID != "0-1" {
 			continue
 		}
 		if _, done := nameByID[id]; !done {

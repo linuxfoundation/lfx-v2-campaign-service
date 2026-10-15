@@ -30,6 +30,7 @@ type fakePortal struct {
 	mu         sync.Mutex
 	lists      map[string]string // name -> id
 	sizes      map[string]int64  // id -> size
+	objTypes   map[string]string // id -> objectTypeId; absent is a contact list ("0-1")
 	properties map[string]string // name -> type
 	creates    []map[string]any
 	createBody string // raw reply to a create; default is a confirmed list
@@ -63,7 +64,11 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 			for name, lid := range p.lists {
 				if lid == id {
 					size, _ := json.Marshal(p.sizes[id])
-					_, _ = io.WriteString(w, `{"list":{"listId":"`+id+`","name":"`+name+`","objectTypeId":"0-1","size":`+string(size)+`}}`)
+					objType := "0-1"
+					if t, ok := p.objTypes[id]; ok {
+						objType = t
+					}
+					_, _ = io.WriteString(w, `{"list":{"listId":"`+id+`","name":"`+name+`","objectTypeId":"`+objType+`","size":`+string(size)+`}}`)
 					return
 				}
 			}
@@ -423,6 +428,83 @@ func TestRunQA_CountsSendTimeSuppression(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, audience.VerdictFail, self.Checks.ExclusionCompleteness.Verdict, "the audited list sent as its own suppression is no exclusion")
 	assert.Zero(t, self.Checks.ExclusionCompleteness.SendTimeCount)
+}
+
+// An existing speakers list replaces the scope and edition filters once filled in, so a
+// past-speakers list is never auto-picked for a current-only request, and a fitting one is.
+func TestInterpretCustom_PicksOnlyASpeakersListThatFitsTheRestriction(t *testing.T) {
+	for name, tc := range map[string]struct {
+		list string
+		want string
+	}{
+		"a past list for a current request": {list: "26Q2 - SYN - Synthetic Summit 2026 Speakers - Past", want: ""},
+		"a test list":                       {list: "26Q2 - SYN - Synthetic Summit 2026 Speakers [psh-test]", want: ""},
+		"the edition's own list":            {list: "26Q2 - SYN - Synthetic Summit 2026 Speakers", want: "901"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists[tc.list] = "901"
+			srv := portal.serve(t)
+			defer srv.Close()
+			llm := &seqLLM{replies: []string{
+				`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":{"scope":"current","event_names":["Synthetic Summit 2026"]},"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":[],"label":"Synthetic Summit"},"questions":[],"notes":[]}`,
+			}}
+
+			out, err := explorerOver(srv, llm).InterpretCustom(context.Background(), "proj-1", "Synthetic Summit 2026 speakers", "", nil)
+			require.NoError(t, err)
+			require.NotNil(t, out.Draft.Criteria.Speakers)
+			assert.Equal(t, tc.want, out.Draft.Criteria.Speakers.ListID)
+		})
+	}
+}
+
+// A company or deal list cannot exclude a contact, so it never counts as a send-time suppression.
+func TestRunQA_ANonContactSendTimeListIsNoSuppression(t *testing.T) {
+	portal := seoulPortal()
+	portal.lists["26Q2 - Synthetic Summit Custom"] = "500"
+	portal.lists["LF Global Opt-Outs (companies)"] = "650"
+	portal.objTypes = map[string]string{"650": "0-2"}
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"650"})
+	require.NoError(t, err)
+	assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a company list excludes no contact")
+	assert.False(t, out.Checks.Suppression.AppliedOptOut, "its name must not satisfy the opt-out check")
+}
+
+// A value comparison the builder cannot express for the property's type fails preview,
+// before create could send a filter HubSpot rejects or that matches nobody.
+func TestPreviewCustom_RefusesAComparisonThePropertyTypeCannotTake(t *testing.T) {
+	cases := map[string]audience.CustomPropertyFilter{
+		"a value on a boolean":   {Property: "hs_is_speaker", Operator: audience.CustomOpEquals, Values: []string{"true"}},
+		"a value on a number":    {Property: "num_events", Operator: audience.CustomOpAnyOf, Values: []string{"3"}},
+		"contains on a picklist": {Property: "industry", Operator: audience.CustomOpContains, Values: []string{"Soft"}},
+	}
+	for name, f := range cases {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.properties["hs_is_speaker"] = "bool"
+			portal.properties["num_events"] = "number"
+			srv := portal.serve(t)
+			defer srv.Close()
+			c := seoulCriteria()
+			c.PropertyFilters = []audience.CustomPropertyFilter{f}
+
+			_, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", c, "")
+			require.ErrorIs(t, err, audience.ErrInvalidRequest)
+			assert.Contains(t, err.Error(), f.Property)
+		})
+	}
+
+	portal := seoulPortal()
+	portal.properties["hs_is_speaker"] = "bool"
+	srv := portal.serve(t)
+	defer srv.Close()
+	c := seoulCriteria()
+	c.PropertyFilters = []audience.CustomPropertyFilter{{Property: "hs_is_speaker", Operator: audience.CustomOpKnown}}
+	_, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", c, "")
+	require.NoError(t, err, "is known works on any property type")
 }
 
 // TestDiscover_HidesWhatMustNotBeIncludedAndInfersTheBrand replays the live AgntCon

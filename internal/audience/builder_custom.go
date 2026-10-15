@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ---------------------------------------------------------------------------
@@ -231,6 +232,66 @@ const (
 	propUserCity        = "user_city"
 	propUserCountry     = "user_country"
 )
+
+// SpeakerListFits reports whether an existing list may stand in for a speaker
+// restriction. Once a list id is filled in it REPLACES the scope and event-name
+// filters, so a list is only accepted when nothing in its name contradicts them:
+// it must be a speakers list discovery would offer (never a test, staff or
+// suppression list), it must not name the other scope ("past" for a current-only
+// restriction, "current" for a past-only one), and it must name every requested
+// edition. Anything else is left for the operator to pick by hand.
+func SpeakerListFits(name string, scope SpeakerScope, eventNames []string) bool {
+	lower := strings.ToLower(name)
+	if !strings.Contains(lower, "speaker") {
+		return false
+	}
+	if _, hidden := DiscoveryHidden(name, false); hidden {
+		return false
+	}
+	tokens := strings.FieldsFunc(lower, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	switch scope {
+	case SpeakerScopeCurrent:
+		if slices.Contains(tokens, "past") || slices.Contains(tokens, "previous") {
+			return false
+		}
+	case SpeakerScopePast:
+		if slices.Contains(tokens, "current") {
+			return false
+		}
+	}
+	for _, edition := range cleanValues(eventNames) {
+		if !strings.Contains(lower, strings.ToLower(edition)) {
+			return false
+		}
+	}
+	return true
+}
+
+// CheckFilterKinds refuses a property filter the builder cannot express for the
+// property's portal type, so preview fails instead of create sending a filter
+// HubSpot rejects or that matches nobody. Every filter is built as a MULTISTRING
+// or ENUMERATION operation, so a value comparison on a bool, number or date
+// property is refused (is_known / is_unknown are ALL_PROPERTY and work on any
+// type), and contains is refused on an enumeration, which has no such operator.
+// kinds maps a property name to its portal type; a property absent from it is
+// not judged here.
+func CheckFilterKinds(filters []CustomPropertyFilter, kinds map[string]string) error {
+	for _, f := range filters {
+		if f.Operator == CustomOpKnown || f.Operator == CustomOpUnknown {
+			continue
+		}
+		prop := strings.TrimSpace(f.Property)
+		switch kind := kinds[prop]; kind {
+		case "bool", "boolean", "number", "date", "datetime":
+			return fmt.Errorf("%w: property %q is a %s property; only is known / is unknown can filter it here", ErrInvalidRequest, prop, kind)
+		case "enumeration":
+			if f.Operator == CustomOpContains {
+				return fmt.Errorf("%w: property %q is a picklist; use is equal to or is any of, not contains", ErrInvalidRequest, prop)
+			}
+		}
+	}
+	return nil
+}
 
 // CustomContactProperties are the contact properties a criteria set reads, so
 // the orchestration can verify each exists in the portal before anything is

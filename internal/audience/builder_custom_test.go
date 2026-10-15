@@ -445,3 +445,48 @@ func TestSpeakerSignals_SkipWhatThePortalLacks(t *testing.T) {
 	_, err = CustomListFilter(c)
 	assert.NoError(t, err, "an existing speakers list needs no event properties")
 }
+
+// Once filled in, a speakers list REPLACES the scope and edition filters, so only a list
+// whose name contradicts neither may be filled in automatically.
+func TestSpeakerListFits(t *testing.T) {
+	editions := []string{"KubeCon Japan 2026"}
+	cases := []struct {
+		name  string
+		scope SpeakerScope
+		want  bool
+	}{
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers", SpeakerScopeCurrent, true},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Past", SpeakerScopeCurrent, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers - Current", SpeakerScopePast, false},
+		{"26Q2 - CNCF - KubeCon Japan 2025 Speakers", SpeakerScopeCurrent, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers [psh-test]", SpeakerScopeCurrent, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Speakers Suppression", SpeakerScopeCurrentPast, false},
+		{"26Q2 - CNCF - KubeCon Japan 2026 Registrants", SpeakerScopeCurrent, false},
+	}
+	for _, tc := range cases {
+		if got := SpeakerListFits(tc.name, tc.scope, editions); got != tc.want {
+			t.Errorf("SpeakerListFits(%q, %s) = %v, want %v", tc.name, tc.scope, got, tc.want)
+		}
+	}
+}
+
+func TestCheckFilterKinds_StringPropertiesTakeEveryOperator(t *testing.T) {
+	kinds := map[string]string{"jobtitle": "string"}
+	for _, op := range []CustomPropertyOperator{CustomOpEquals, CustomOpContains, CustomOpAnyOf, CustomOpNotAnyOf, CustomOpKnown, CustomOpUnknown} {
+		if err := CheckFilterKinds([]CustomPropertyFilter{{Property: "jobtitle", Operator: op, Values: []string{"CTO"}}}, kinds); err != nil {
+			t.Errorf("%s on a string property: %v", op, err)
+		}
+	}
+}
+
+// Reuse adds a list to Include, so nothing discovery keeps out of Include is offered.
+func TestReusableCandidate_HidesWhatDiscoveryHides(t *testing.T) {
+	for _, name := range []string{"Seoul Unsubscribed Contacts", "Seoul Bounced Contacts", "Seoul Staff Contacts", "Seoul Contacts (test)", "Seoul GDPR Suppression"} {
+		if ReusableCandidate(name) {
+			t.Errorf("%q was offered for reuse", name)
+		}
+	}
+	if !ReusableCandidate("26Q3 - Seoul - Mailable Contacts") {
+		t.Error("an ordinary audience list must stay reusable")
+	}
+}

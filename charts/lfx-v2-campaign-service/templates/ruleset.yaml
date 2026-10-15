@@ -263,6 +263,9 @@ spec:
           - path: /projects/:projectId/audience-builder/compose-master
           - path: /projects/:projectId/audience-builder/attach-existing
           - path: /projects/:projectId/audience-builder/qa/run
+          - path: /projects/:projectId/audience-builder/custom/interpret
+          - path: /projects/:projectId/audience-builder/custom/preview
+          - path: /projects/:projectId/audience-builder/custom/create
       execute:
         - authenticator: oidc
         - authenticator: anonymous_authenticator

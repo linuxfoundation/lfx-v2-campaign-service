@@ -108,7 +108,7 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 	if s := out.Draft.Criteria.Speakers; s != nil && strings.TrimSpace(draft.Criteria.Label) != "" {
 		keywords := audience.EventKeywords(draft.Criteria.Label)
 		found, serr := x.bestMatch(ctx, client, []string{draft.Criteria.Label + " Speakers"}, func(name string) bool {
-			return strings.Contains(strings.ToLower(name), "speaker") && audience.SharesKeyword(name, keywords)
+			return audience.SpeakerListFits(name, s.Scope, s.EventNames) && audience.SharesKeyword(name, keywords)
 		})
 		if serr != nil {
 			return nil, serr
@@ -213,6 +213,7 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 	// Every contact property is read from the portal: its existence, and its type,
 	// which decides the operation type. Both are things a guess gets silently wrong.
 	types := map[string]bool{}
+	kinds := map[string]string{}
 	var missing []string
 	for _, prop := range audience.CustomContactProperties(criteria) {
 		def, perr := client.GetContactProperty(ctx, prop)
@@ -224,9 +225,13 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 			continue
 		}
 		types[prop] = def.IsEnumeration()
+		kinds[prop] = strings.ToLower(strings.TrimSpace(def.Type))
 	}
 	if len(missing) > 0 {
 		return nil, &audience.UnknownPropertiesError{Names: missing}
+	}
+	if err := audience.CheckFilterKinds(criteria.PropertyFilters, kinds); err != nil {
+		return nil, err
 	}
 	if len(criteria.Countries) > 0 && criteria.ContactLocation && !types["country_dropdown"] {
 		warnings = append(warnings, "country_dropdown is not an enumeration in this portal; the country branch may match nobody.")

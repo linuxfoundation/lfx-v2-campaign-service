@@ -422,7 +422,13 @@ func CustomReuseProbes(c CustomCriteria) []string {
 // master or suppression list is a composed result, and a test list is not real.
 var reuseExcludedHints = []string{"master", "suppress", "exclusion", "opt-out", "opt out", "[test", "test]", "psh-test"}
 
-// ReusableCandidate reports whether a list name may be offered for reuse.
+// ReusableCandidate reports whether a list name may be offered for reuse. A list
+// discovery hides (suppression, test, staff, master) is never offered either:
+// reuse adds it to Include, exactly where discovery keeps it out.
 func ReusableCandidate(name string) bool {
-	return strings.TrimSpace(name) != "" && !containsAny(name, reuseExcludedHints)
+	if strings.TrimSpace(name) == "" || containsAny(name, reuseExcludedHints) {
+		return false
+	}
+	_, hidden := DiscoveryHidden(name, false)
+	return !hidden
 }

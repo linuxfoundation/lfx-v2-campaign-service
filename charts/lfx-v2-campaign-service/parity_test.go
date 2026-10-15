@@ -509,6 +509,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/audience-builder/preview-count", true},
 		{"/projects/p1/audience-builder/compose-master", true},
 		{"/projects/p1/audience-builder/qa/run", true},
+		{"/projects/p1/audience-builder/custom/interpret", true},
+		{"/projects/p1/audience-builder/custom/preview", true},
+		{"/projects/p1/audience-builder/custom/create", true},
 
 		// --- rejected: another service's project subpaths (project-service owns these) ---
 		{"/projects/p1", false},
@@ -550,6 +553,9 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/audience-builder/", false},
 		{"/projects/p1/audience-builder/signal-list", false},
 		{"/projects/p1/audience-builder/compose-master/anything", false},
+		{"/projects/p1/audience-builder/custom", false},
+		{"/projects/p1/audience-builder/custom/delete", false},
+		{"/projects/p1/audience-builder/custom/create/anything", false},
 		// --- rejected: missing projectId segment / not project-nested ---
 		{"/projects//briefs", false},
 		{"/briefs/b-1", false},

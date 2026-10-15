@@ -83,7 +83,7 @@ spec:
     - matches:
       - path:
           type: RegularExpression
-          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/keywords|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run))$
+          value: ^/projects/[^/]+/(connection-(google-ads|meta-ads|linkedin-ads|microsoft-ads|twitter-ads|reddit-ads)(/(test|set-credential|accounts|account-monitor))?|connection-hubspot(/(test|set-credential|emails|campaigns|account-monitor))?|(briefs|jobs|hubspot)(/.*)?|fetch-event-url|google-ads/(keywords|audience|campaign-ref)|microsoft-ads/(keywords|audience|campaign-ref)|(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience|reddit-ads/keywords|(meta-ads|reddit-ads|twitter-ads|linkedin-ads)/campaign-ref|audience-builder/(capabilities|discover|lists/search|suppression-lists|last-sent|existing-master-lists|preview-count|compose-master|attach-existing|qa/run|custom/(interpret|preview|create)))$
       {{- if .Values.heimdall.enabled }}
       filters:
         - type: ExtensionRef
