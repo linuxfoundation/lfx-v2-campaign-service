@@ -32,6 +32,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
@@ -1019,6 +1020,11 @@ type APIError struct {
 	// createOutcomeAmbiguous treats this as ambiguous for exactly that reason.
 	EnvelopeUnreadable bool
 }
+
+// UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
+// answered with, and nothing else from the response — so the async create job can report it
+// (issue #208) without any path that could reach the body.
+func (e *APIError) UpstreamStatus() int { return e.StatusCode }
 
 func (e *APIError) Error() string {
 	// Mirror the TS behavior of not leaking full bodies to callers while still
@@ -2222,7 +2228,7 @@ func buildPromotedObject(objective, pageID, pixelID string) (map[string]any, err
 		// Defensive: an unknown objective should never reach here (CreateCampaign
 		// validates it up front), but silently treating it as "no promoted object"
 		// would be a subtle mis-config if a future caller/refactor bypasses that.
-		return nil, fmt.Errorf("unknown objective %q", objective)
+		return nil, fmt.Errorf("unknown objective %s", domain.CallerValue(objective))
 	}
 	switch params.PromotedObjectType {
 	case PromotedObjectPageID:
@@ -2230,14 +2236,14 @@ func buildPromotedObject(objective, pageID, pixelID string) (map[string]any, err
 	case PromotedObjectPixelID:
 		trimmed := strings.TrimSpace(pixelID)
 		if trimmed == "" {
-			return nil, fmt.Errorf("pixelID must be a non-empty string for '%s' objective", objective)
+			return nil, fmt.Errorf("pixelID must be a non-empty string for %s objective", domain.CallerValue(objective))
 		}
 		// An empty-only check lets a malformed pixel id (e.g. "PIX9") through; the
 		// campaign would then be created and Meta would reject the promoted object at
 		// ad-set creation, leaving an orphan. Meta Pixel ids are numeric, so validate
 		// the format here — buildPromotedObject runs before any mutating call.
 		if !numericIDRE.MatchString(trimmed) {
-			return nil, fmt.Errorf("pixelID %q is malformed for '%s' objective: Meta Pixel IDs are numeric strings", trimmed, objective)
+			return nil, fmt.Errorf("pixelID %s is malformed for %s objective: Meta Pixel IDs are numeric strings", domain.CallerValue(trimmed), domain.CallerValue(objective))
 		}
 		return map[string]any{"pixel_id": trimmed, "custom_event_type": "PURCHASE"}, nil
 	default:
@@ -2874,7 +2880,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	steps := []string{}
 
 	if len(in.Variants) == 0 {
-		return nil, fmt.Errorf("at least one ad variant is required for Meta campaign creation")
+		return nil, domain.PreflightRefusalf("at least one ad variant is required for Meta campaign creation")
 	}
 
 	// Reject any variant missing primary text or headline by NAMING its index,
@@ -2885,7 +2891,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// caller error, so fail fast (consistent with every other up-front check here).
 	for i, v := range in.Variants {
 		if strings.TrimSpace(v.PrimaryText) == "" || strings.TrimSpace(v.Headline) == "" {
-			return nil, fmt.Errorf("variant %d must have non-empty primary text and headline", i+1)
+			return nil, domain.PreflightRefusalf("variant %d must have non-empty primary text and headline", i+1)
 		}
 	}
 	validVariants := in.Variants
@@ -2896,13 +2902,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// already exist — leaving an orphaned campaign with no ads. Fail fast instead.
 	for i, v := range validVariants {
 		if n := utf8.RuneCountInString(v.PrimaryText); n > maxPrimaryTextChars {
-			return nil, fmt.Errorf("variant %d primary text is %d characters; Meta allows at most %d", i+1, n, maxPrimaryTextChars)
+			return nil, domain.PreflightRefusalf("variant %d primary text is %d characters; Meta allows at most %d", i+1, n, maxPrimaryTextChars)
 		}
 		if n := utf8.RuneCountInString(v.Headline); n > maxHeadlineChars {
-			return nil, fmt.Errorf("variant %d headline is %d characters; Meta allows at most %d", i+1, n, maxHeadlineChars)
+			return nil, domain.PreflightRefusalf("variant %d headline is %d characters; Meta allows at most %d", i+1, n, maxHeadlineChars)
 		}
 		if n := utf8.RuneCountInString(v.Description); n > maxDescriptionChars {
-			return nil, fmt.Errorf("variant %d description is %d characters; Meta allows at most %d", i+1, n, maxDescriptionChars)
+			return nil, domain.PreflightRefusalf("variant %d description is %d characters; Meta allows at most %d", i+1, n, maxDescriptionChars)
 		}
 		// The ad-creative NAME is composed as "<EventName> - Variant N" and Meta caps
 		// ad-creative names at maxCreativeNameChars. Validate the COMPOSED name up
@@ -2910,14 +2916,14 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// the campaign + ad set, then fail at every creative (orphaning both).
 		creativeName := fmt.Sprintf("%s - Variant %d", strings.TrimSpace(in.EventName), i+1)
 		if n := utf8.RuneCountInString(creativeName); n > maxCreativeNameChars {
-			return nil, fmt.Errorf("variant %d ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", i+1, n, maxCreativeNameChars)
+			return nil, domain.PreflightRefusalf("variant %d ad-creative name is %d characters; Meta allows at most %d (shorten the event name)", i+1, n, maxCreativeNameChars)
 		}
 		// The OPTIONAL creative image is validated here, with the rest of the
 		// deterministic per-variant checks, so a malformed URL — or a variant naming
 		// BOTH an image URL and an image asset — fails before any paid resource
 		// exists rather than at the non-fatal per-variant creative create.
 		if err := validateVariantImage(v); err != nil {
-			return nil, fmt.Errorf("variant %d: %w", i+1, err)
+			return nil, domain.WrapPreflightRefusal(fmt.Errorf("variant %d: %w", i+1, err))
 		}
 	}
 
@@ -2926,7 +2932,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	if math.IsNaN(in.Budget) || math.IsInf(in.Budget, 0) || in.Budget <= 0 {
-		return nil, fmt.Errorf("invalid budget: must be a positive number")
+		return nil, domain.PreflightRefusalf("invalid budget: must be a positive number")
 	}
 	// NOTE: no fixed major-unit budget cap is applied here. A hardcoded ceiling (in
 	// whole currency units) wrongly rejected realistic budgets in low-value
@@ -2940,45 +2946,45 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// below (Step 1); the minor-unit conversion happens there, once the offset is
 	// known but still BEFORE any mutating call.
 	if c.account.CurrencyOffset < 0 {
-		return nil, fmt.Errorf("meta: AccountConfig.CurrencyOffset must not be negative (100 for most currencies, 1 for zero-decimal like JPY)")
+		return nil, domain.PreflightRefusalf("meta: AccountConfig.CurrencyOffset must not be negative (100 for most currencies, 1 for zero-decimal like JPY)")
 	}
 
 	if !dateRE.MatchString(in.StartDate) {
-		return nil, fmt.Errorf("invalid start date format: %s — expected YYYY-MM-DD", in.StartDate)
+		return nil, domain.PreflightRefusalf("invalid start date format: %s — expected YYYY-MM-DD", domain.CallerValue(in.StartDate))
 	}
 	if !dateRE.MatchString(in.EndDate) {
-		return nil, fmt.Errorf("invalid end date format: %s — expected YYYY-MM-DD", in.EndDate)
+		return nil, domain.PreflightRefusalf("invalid end date format: %s — expected YYYY-MM-DD", domain.CallerValue(in.EndDate))
 	}
 	// time.Parse with this layout rejects BOTH a malformed string and a
 	// well-formed-but-impossible date (e.g. 2026-13-40), so the error is about an
 	// invalid calendar VALUE, not merely a bad format.
 	startDate, err := time.Parse("2006-01-02", in.StartDate)
 	if err != nil {
-		return nil, fmt.Errorf("invalid start date %q — expected a real calendar date in YYYY-MM-DD format", in.StartDate)
+		return nil, domain.PreflightRefusalf("invalid start date %s — expected a real calendar date in YYYY-MM-DD format", domain.CallerValue(in.StartDate))
 	}
 	endDate, err := time.Parse("2006-01-02", in.EndDate)
 	if err != nil {
-		return nil, fmt.Errorf("invalid end date %q — expected a real calendar date in YYYY-MM-DD format", in.EndDate)
+		return nil, domain.PreflightRefusalf("invalid end date %s — expected a real calendar date in YYYY-MM-DD format", domain.CallerValue(in.EndDate))
 	}
 	// Compare the parsed time.Time values rather than the raw strings: both are
 	// already parsed here, so !endDate.After(startDate) states the intent directly
 	// instead of relying on lexicographic ordering of the date strings.
 	if !endDate.After(startDate) {
-		return nil, fmt.Errorf("end date %s must be after start date %s", in.EndDate, in.StartDate)
+		return nil, domain.PreflightRefusalf("end date %s must be after start date %s", domain.CallerValue(in.EndDate), domain.CallerValue(in.StartDate))
 	}
 	// Reject a start date already in the past (compared by calendar day in UTC):
 	// Meta rejects a past schedule, but only after the campaign is created, so
 	// fail fast here before any mutating call.
 	today := c.timeNow().UTC().Truncate(24 * time.Hour)
 	if startDate.Before(today) {
-		return nil, fmt.Errorf("start date %s is in the past", in.StartDate)
+		return nil, domain.PreflightRefusalf("start date %s is in the past", domain.CallerValue(in.StartDate))
 	}
 
 	// AccountID is required to build every Graph endpoint (/{accountID}/campaigns
 	// etc.). An empty AccountID would produce malformed "//campaigns" requests, so
 	// fail fast before any mutating call rather than issuing a bad request.
 	if strings.TrimSpace(c.account.AccountID) == "" {
-		return nil, fmt.Errorf("AccountID is required to create a Meta campaign; configure an ad account for this client")
+		return nil, domain.PreflightRefusalf("AccountID is required to create a Meta campaign; configure an ad account for this client")
 	}
 	// A non-empty check is not enough: AccountID is interpolated into every Graph
 	// path, so a value with delimiters ('/', '?', '#'), '..', or control chars
@@ -2986,21 +2992,21 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// act_<digits> format before any mutating call. Mirrors twitter/client.go's
 	// anchored accountIDRe check.
 	if !accountIDRE.MatchString(c.account.AccountID) {
-		return nil, fmt.Errorf("AccountID %q is malformed: expected the format act_<digits> (e.g. act_193556282970417)", c.account.AccountID)
+		return nil, domain.PreflightRefusalf("AccountID %s is malformed: expected the format act_<digits> (e.g. act_193556282970417)", domain.CallerValue(c.account.AccountID))
 	}
 
 	// PageID is required for the creative flow (object_story_spec.page_id) and,
 	// for some objectives, the promoted_object. Fail fast before any mutating
 	// call so a missing PageID doesn't create a paid campaign that can't get ads.
 	if strings.TrimSpace(c.account.PageID) == "" {
-		return nil, fmt.Errorf("PageID is required to create Meta creatives; configure a Facebook Page for this account")
+		return nil, domain.PreflightRefusalf("PageID is required to create Meta creatives; configure a Facebook Page for this account")
 	}
 	// A non-empty check is not enough: a malformed Page id would pass, then the
 	// campaign and ad set get created before the creative fails (non-fatally),
 	// leaving orphaned paid resources. Meta Page ids are numeric strings, so
 	// validate the format before the first POST.
 	if !numericIDRE.MatchString(c.account.PageID) {
-		return nil, fmt.Errorf("PageID %q is malformed: Meta Page IDs are numeric strings", c.account.PageID)
+		return nil, domain.PreflightRefusalf("PageID %s is malformed: Meta Page IDs are numeric strings", domain.CallerValue(c.account.PageID))
 	}
 
 	// Project is required: the campaign name's Project segment must be the caller-
@@ -3009,7 +3015,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// substituting a placeholder (e.g. "tlf"), which could mis-attribute a
 	// non-Linux-Foundation campaign to the wrong project.
 	if strings.TrimSpace(in.Project) == "" {
-		return nil, fmt.Errorf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
+		return nil, domain.PreflightRefusalf("project is required: supply the canonical LFX project slug for the campaign name's Project segment")
 	}
 
 	// EventName is required: it is the base-name segment of every generated name
@@ -3018,7 +3024,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// creating paid resources with an empty base-name segment (e.g. " - Traffic"),
 	// which would also break attribution.
 	if strings.TrimSpace(in.EventName) == "" {
-		return nil, fmt.Errorf("event name is required: supply a non-empty base name for the campaign name and attribution segments")
+		return nil, domain.PreflightRefusalf("event name is required: supply a non-empty base name for the campaign name and attribution segments")
 	}
 	// Normalize EventName to its trimmed form for the rest of the flow. Only
 	// buildCampaignName trims internally; the ad-set/creative/ad names and the UTM
@@ -3058,7 +3064,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// bad here, so reject it before the first mutating call, the same gate PageID and
 	// PixelID already get (Meta object ids are decimal strings).
 	if in.InstagramUserID != "" && !numericIDRE.MatchString(in.InstagramUserID) {
-		return nil, fmt.Errorf("instagramUserId %q is malformed: Meta Instagram account IDs (IGSID) are numeric strings", in.InstagramUserID)
+		return nil, domain.PreflightRefusalf("instagramUserId %s is malformed: Meta Instagram account IDs (IGSID) are numeric strings", domain.CallerValue(in.InstagramUserID))
 	}
 
 	// The two EU DSA disclosures are attached to the ad set independently, so exactly
@@ -3073,7 +3079,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		if in.DSABeneficiary == "" {
 			supplied, missing = "dsaPayor", "dsaBeneficiary"
 		}
-		return nil, fmt.Errorf("EU DSA disclosures are incomplete: %s was supplied without %s; Meta requires both to publish a regulated ad set — supply both or omit both", supplied, missing)
+		return nil, domain.PreflightRefusalf("EU DSA disclosures are incomplete: %s was supplied without %s; Meta requires both to publish a regulated ad set — supply both or omit both", supplied, missing)
 	}
 
 	// Resolve the objective and validate deterministic inputs (placements and the
@@ -3082,15 +3088,17 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	objective := defaultObjective(in.Objective)
 	objParams, ok := objectiveParams[objective]
 	if !ok {
-		return nil, fmt.Errorf("unknown Meta objective: '%s'. Valid objectives: %s", objective, strings.Join(objectiveKeys(), ", "))
+		return nil, domain.PreflightRefusalf("unknown Meta objective: %s. Valid objectives: %s", domain.CallerValue(objective), strings.Join(objectiveKeys(), ", "))
 	}
+	// Both are pure, service-authored validations of caller config and the account's Page /
+	// pixel ids, so their refusals are operator-safe (issue #208).
 	placementTargeting, err := buildPlacementTargeting(in.Placements)
 	if err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 	promotedObject, err := buildPromotedObject(objective, c.account.PageID, in.PixelID)
 	if err != nil {
-		return nil, err
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	accountID := c.account.AccountID

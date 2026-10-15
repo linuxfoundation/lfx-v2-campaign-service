@@ -48,6 +48,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -398,6 +400,11 @@ type apiError struct {
 	ErrorCodes []string
 }
 
+// UpstreamStatus implements domain.UpstreamStatusCarrier: the HTTP status the platform
+// answered with, and nothing else from the response — so the async create job can report it
+// (issue #208) without any path that could reach the body.
+func (e *apiError) UpstreamStatus() int { return e.StatusCode }
+
 func (e *apiError) Error() string {
 	return fmt.Sprintf("microsoft-ads %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
@@ -685,6 +692,9 @@ func (c *Client) accessTokenValue(ctx context.Context) (string, error) {
 			fetchCtx, cancel := context.WithTimeout(refreshValuesCtx, msAdsRequestTimeout)
 			token, err := c.fetchToken(fetchCtx)
 			cancel()
+			// Tagged so the async create job can report "the token refresh failed" without
+			// rendering this error's text (issue #208). Error() and errors.Is are unchanged.
+			err = domain.MarkTokenRefreshFailure(err)
 
 			c.tokenMu.Lock()
 			inflight.token = token
@@ -904,14 +914,14 @@ func (c *Client) validateAccountIDs() error {
 	// installer and the connection probe all refused them — the account half of this same
 	// function was already held to both.
 	if !accountIDRE.MatchString(c.account.AccountID) {
-		return fmt.Errorf("invalid Microsoft Advertising account id %q: must be digits only", clipID(c.account.AccountID))
+		return fmt.Errorf("invalid Microsoft Advertising account id %s: must be digits only", domain.CallerValue(c.account.AccountID))
 	}
 	if err := ValidateAccountID(c.account.AccountID); err != nil {
 		return err
 	}
 	if c.account.CustomerID != "" {
 		if !accountIDRE.MatchString(c.account.CustomerID) {
-			return fmt.Errorf("invalid Microsoft Advertising customer id %q: must be digits only", clipID(c.account.CustomerID))
+			return fmt.Errorf("invalid Microsoft Advertising customer id %s: must be digits only", domain.CallerValue(c.account.CustomerID))
 		}
 		if err := ValidateCustomerID(c.account.CustomerID); err != nil {
 			return err

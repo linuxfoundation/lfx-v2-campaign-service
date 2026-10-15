@@ -19,6 +19,8 @@ import (
 
 	"golang.org/x/net/idna"
 	"golang.org/x/text/width"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -1285,7 +1287,7 @@ func checkAdCopyList(kind string, items []string, maxCount, singleLimit, wideLim
 		// linear scan is bounded.
 		for _, k := range seen {
 			if strings.EqualFold(k, s) {
-				return fmt.Errorf("%s %d is a duplicate (case-insensitive): %q", kind, i+1, s)
+				return fmt.Errorf("%s %d is a duplicate (case-insensitive): %s", kind, i+1, domain.CallerValue(s))
 			}
 		}
 		seen = append(seen, s)

@@ -166,8 +166,8 @@ apart — it gained a discovery endpoint in LFXV2-3062 and was still excluded, b
 `Dispatch` returned a generic error for an empty id. LFXV2-3061 added the tagging
 (`requireMetaAccountID` → `domain.ErrAccountNotSelected`, reported by `unusableConnectionReason`
 as `account_not_selected`) and Meta joined the map. That token reaches an operator through the
-dispatch-failure LOG LINE rather than the polled job result, because `dispatchPlatform` collapses
-every dispatcher error into `"platform campaign creation failed"`; Meta's toggle and metrics need
+dispatch-failure LOG LINE and, since issue #208, the polled job result's `(reason: …)` suffix
+(`DispatchFailureMessage` classifies; it never quotes the error); Meta's toggle and metrics need
 no account id, so create — the asynchronous path — is its only account-needing one. Of LinkedIn, Microsoft and Reddit, Microsoft (LFXV2-3064) and Reddit (LFXV2-2665,
 `list-reddit-ads-accounts`) have BOTH halves, and LinkedIn — which gained a discovery endpoint in the
 same ticket — is the one provider missing the OTHER half. X also holds both (LFXV2-3319) and,
