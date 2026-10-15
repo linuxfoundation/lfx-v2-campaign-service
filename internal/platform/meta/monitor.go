@@ -118,8 +118,10 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 // ListAccountCampaignsWithCurrency is ListAccountCampaigns plus the ad account's ISO 4217
 // currency, for the account monitor's response. The currency costs no extra call: it is the
 // insights read's own account_currency field, which Meta reports on every insights row (the
-// audience read in audience.go relies on the same field). So it is known only when the window
-// has at least one insights row; an account with no delivery in the window answers "".
+// audience read in audience.go relies on the same field), checked against the account's
+// ?fields=currency read the budgets are converted in. An account with no insights rows in the
+// window (no delivery yet — a freshly created campaign) has no account_currency to check, so
+// that account read alone names the currency, under the same offset rule below.
 //
 // "" too when any row's account_currency is not three upper-case letters, or when two rows
 // disagree — one account has one currency, so a disagreement means the field cannot be trusted.
@@ -248,9 +250,14 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	}
 
 	// The published currency is the insights rows' account_currency, withheld unless the budgets
-	// above were converted in it (monitorPublishableCurrency). Taken once, so the withholding is
-	// logged once.
-	published := monitorPublishableCurrency(ctx, insights.currency(), currency)
+	// above were converted in it (monitorPublishableCurrency). With no insights rows at all there
+	// is no account_currency to disagree with, so the budgets' own currency stands in — still
+	// subject to the offset check. Taken once, so the withholding is logged once.
+	insightsCurrency := insights.currency()
+	if insights.noCurrencyEvidence() {
+		insightsCurrency = currency
+	}
+	published := monitorPublishableCurrency(ctx, insightsCurrency, currency)
 
 	// Ad-set budgets (LFXV2-2665): CreateCampaign puts the budget on the AD SET (ABO), so a
 	// campaign this service created reports no campaign-level budget at all, and pacing used
@@ -307,8 +314,9 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	return rows, published, nil
 }
 
-// monitorPublishableCurrency is code — the insights rows' account_currency — when the monitor's
-// budgets are denominated and converted in it, and "" otherwise (see
+// monitorPublishableCurrency is code — the insights rows' account_currency, or budgetCurrency itself
+// when the read carried no insights rows — when the monitor's budgets are denominated and
+// converted in it, and "" otherwise (see
 // ListAccountCampaignsWithCurrency). That holds when code is the ad account's currency from the
 // budget conversion's own ?fields=currency read (budgetCurrency) and currencyOffsetFor knows its
 // minor-unit offset, whatever that offset is (1 for JPY/KRW, 100 for USD/EUR). A currency
@@ -549,12 +557,15 @@ type metaAccountInsights struct {
 	// set once any row's value was not an ISO 4217 code or disagreed with another row's.
 	accountCurrency  string
 	currencyUnusable bool
+	// sawRow is set once any insights row was observed, whatever its account_currency held.
+	sawRow bool
 }
 
 // observeCurrency folds one insights row's raw account_currency into the account's. Every row — a
 // row whose counters would not parse included — describes the same account, so every row is
 // evidence. A field that is absent, null or not a JSON string is unusable, like a malformed code.
 func (r *metaAccountInsights) observeCurrency(raw json.RawMessage) {
+	r.sawRow = true
 	var code string
 	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
 		code = ""
@@ -576,6 +587,13 @@ func (r *metaAccountInsights) currency() string {
 		return ""
 	}
 	return r.accountCurrency
+}
+
+// noCurrencyEvidence reports that the read said nothing about the account's currency: no row was
+// observed and no page was refused as untrusted. Rows that omit or garble account_currency, or a
+// page identityjson refuses, are evidence against publishing, not an absence of it.
+func (r *metaAccountInsights) noCurrencyEvidence() bool {
+	return !r.sawRow && !r.currencyUnusable
 }
 
 // fetchAccountCampaignInsights ports getMetaAnalytics' account-level insights read

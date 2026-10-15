@@ -874,8 +874,11 @@ monitor's `currency` field: the insights call also requests `account_currency`, 
 three-upper-case-letter code — the field read RAW, so `null` or a non-string costs only the
 currency, and each insights page checked with `identityjson`, an untrusted page withholding the
 currency (its rows are kept) — absent, malformed or disagreeing rows leave it `""` without
-failing the read. No extra request for the label (the `?fields=currency` read above serves the budget conversion); an account with no insights rows in the window has no
-currency. `monitorPublishableCurrency` then publishes the code only when `currencyOffsetFor` knows its
+failing the read. No extra request for the label (the `?fields=currency` read above serves the budget conversion). An account with no insights rows in the window (no delivery yet)
+has no `account_currency` to disagree with, so — unless an insights page was refused as
+untrusted (`noCurrencyEvidence`) — that `accountCurrency` read stands in for it, still under the
+offset check below; a failed account read fails the monitor read, so it publishes nothing.
+`monitorPublishableCurrency` then publishes the code only when `currencyOffsetFor` knows its
 offset (1 or 100) and it equals the `accountCurrency` read above, the currency the budgets were
 converted in; it withholds (and logs) an unknown code, whose budgets are left unconverted, and a
 code the two reads disagree on. That disagreement — a usable insights code that is not the
