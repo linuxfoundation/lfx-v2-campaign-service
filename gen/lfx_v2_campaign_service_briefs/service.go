@@ -891,7 +891,10 @@ type CampaignCreateInput struct {
 	// omitted or equal bidAmount); Meta at most two decimals, a whole minor unit
 	// of the account currency (checked against the currency at dispatch), and only
 	// for the traffic or leads objective; Reddit only for the traffic objective;
-	// LinkedIn whole cents. `automatic` with a `bidAmount`, an unknown strategy, a
+	// LinkedIn whole cents; X at most the campaign's daily budget (X does not
+	// accept a line item bid above it). Keys are exact: `bidding`, `strategy` and
+	// `bidAmount`; a case variant (`Bidding`, `Strategy`) or an unknown key inside
+	// `bidding` is refused. `automatic` with a `bidAmount`, an unknown strategy, a
 	// wrong JSON type, an explicit null or empty value (only an ABSENT field
 	// defaults: `"strategy": null` or `""`, `"bidAmount": null` and `"bidding":
 	// null` are refused), or a bid breaking these rules is refused synchronously
