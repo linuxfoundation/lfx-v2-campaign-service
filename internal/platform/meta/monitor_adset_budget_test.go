@@ -320,7 +320,7 @@ func TestListAccountCampaigns_BudgetsUseAccountCurrencyOffset(t *testing.T) {
 	}{
 		{"USD divides by 100", usdAccount, 30, 15},
 		{"JPY is already whole units", jpyAccount, 3000, 1500},
-		{"KRW is already whole units", `{"currency":"KRW"}`, 3000, 1500},
+		{"KRW is already whole units", `{"currency":"KRW","id":"act_123"}`, 3000, 1500},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, _ := listMonitorRows(t, monitorFixture{
@@ -341,7 +341,7 @@ func TestListAccountCampaigns_UnknownCurrencyLeavesBudgetsUnknown(t *testing.T) 
 	rows, rec := listMonitorRows(t, monitorFixture{
 		campaigns: []string{monitorList(monitorCampaign("111", StatusActive, `"daily_budget":"3000"`), monitorCampaign("222", StatusActive, ""))},
 		insights:  []string{insightsFor("111", "222")},
-		currency:  `{"currency":"ZZZ"}`,
+		currency:  `{"currency":"ZZZ","id":"act_123"}`,
 	})
 	assertBudgets(t, rows["111"], 0, 0)
 	assertBudgets(t, rows["222"], 0, 0)
@@ -350,6 +350,93 @@ func TestListAccountCampaigns_UnknownCurrencyLeavesBudgetsUnknown(t *testing.T) 
 	}
 	if rows["111"].Impressions != 1000 {
 		t.Errorf("delivery must survive an unknown currency: %+v", rows["111"])
+	}
+}
+
+// A campaign-level stop_time at exactly midnight is the instant that date begins, so the flight's
+// last inclusive day is the one before (PR #316 review): an externally managed CBO campaign
+// stopping at "2026-10-11T00:00:00+0000" ran through 2026-10-10. A 23:59:59 stop keeps its own
+// date, and the midnight is taken in the stop's own offset.
+func TestListAccountCampaigns_CampaignMidnightStopEndsTheDayBefore(t *testing.T) {
+	for _, tc := range []struct{ name, stop, want string }{
+		{"midnight UTC", "2026-10-11T00:00:00+0000", "2026-10-10"},
+		{"23:59:59 the night before", "2026-10-10T23:59:59+0000", "2026-10-10"},
+		{"23:59:59 on the date", "2026-10-11T23:59:59+0000", "2026-10-11"},
+		{"midnight in a non-UTC offset", "2026-10-11T00:00:00-0700", "2026-10-10"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, _ := listMonitorRows(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, `"lifetime_budget":"100000","stop_time":"`+tc.stop+`"`))},
+				insights:  []string{insightsFor("111")},
+				currency:  usdAccount,
+			})
+			r := rows["111"]
+			assertBudgets(t, r, 0, 1000)
+			if r.EndDate != tc.want {
+				t.Errorf("EndDate = %q, want %q", r.EndDate, tc.want)
+			}
+		})
+	}
+}
+
+// The currency answer must name the account it was asked for (PR #316 review): getChecked vouches
+// for the body's JSON, not for whose currency it is. An answer naming another account — or none —
+// is an UNKNOWN currency: no budget is converted in it (a USD account's 3000-cent budget read at
+// JPY's offset would be 3000, not 30), no ad-set read is spent, the published currency is
+// withheld even though the insights rows agree with it, and the delivery metrics survive. The
+// "act_" prefix is not part of the identity: "123" names act_123.
+func TestListAccountCampaigns_CurrencyOfAnotherAccountIsUnknown(t *testing.T) {
+	jpyInsights := `{"data":[` +
+		`{"campaign_id":"111","impressions":"1000","clicks":"10","spend":"5","account_currency":"JPY"},` +
+		`{"campaign_id":"222","impressions":"1000","clicks":"10","spend":"5","account_currency":"JPY"}],"paging":{}}`
+	for _, tc := range []struct {
+		name, currency string
+		matches        bool
+	}{
+		{"another account", `{"id":"act_999","currency":"JPY"}`, false},
+		{"another account, unprefixed", `{"id":"999","currency":"JPY"}`, false},
+		{"no id", `{"currency":"JPY"}`, false},
+		{"a null id", `{"id":null,"currency":"JPY"}`, false},
+		{"an empty id", `{"id":"","currency":"JPY"}`, false},
+		{"a prefixed id of another account sharing a suffix", `{"id":"act_1234","currency":"JPY"}`, false},
+		{"the requested account", `{"id":"act_123","currency":"JPY"}`, true},
+		{"the requested account, unprefixed", `{"id":"123","currency":"JPY"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, rec := monitorServer(t, monitorFixture{
+				campaigns: []string{monitorList(monitorCampaign("111", StatusActive, `"daily_budget":"3000"`), monitorCampaign("222", StatusActive, ""))},
+				insights:  []string{jpyInsights},
+				currency:  tc.currency,
+				adSets:    []string{monitorList(monitorAdSetRow("9001", "222", "ACTIVE", `"daily_budget":"1500"`))},
+			})
+			list, published, err := newMonitorClient(srv).ListAccountCampaignsWithCurrency(context.Background(), "act_123", 30)
+			if err != nil {
+				t.Fatalf("ListAccountCampaignsWithCurrency: %v (a foreign currency answer must not fail the read)", err)
+			}
+			rows := make(map[string]AccountCampaignRow, len(list))
+			for _, r := range list {
+				rows[r.CampaignID] = r
+			}
+			if !tc.matches {
+				assertBudgets(t, rows["111"], 0, 0)
+				assertBudgets(t, rows["222"], 0, 0)
+				if got := adSetRequests(rec); len(got) != 0 {
+					t.Errorf("ad sets read for an account whose currency is unknown: %v", got)
+				}
+				if published != "" {
+					t.Errorf("published currency = %q, want it withheld: the budgets were not converted in it", published)
+				}
+				if rows["111"].Impressions != 1000 || rows["111"].FetchFailed {
+					t.Errorf("delivery must survive a foreign currency answer: %+v", rows["111"])
+				}
+				return
+			}
+			assertBudgets(t, rows["111"], 3000, 0)
+			assertBudgets(t, rows["222"], 1500, 0)
+			if published != "JPY" {
+				t.Errorf("published currency = %q, want JPY", published)
+			}
+		})
 	}
 }
 
@@ -411,6 +498,11 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 		{"an empty end_time beside an absent one is the same window", []string{daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":""`), daily(openEnd)}, 20, 0, "2026-10-01", ""},
 		{"an empty start_time is unknown", []string{daily(`"start_time":"","end_time":"2026-10-31T23:59:59+0000"`)}, 0, 0, "", ""},
 		{"a whitespace end_time is malformed", []string{daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":" "`)}, 0, 0, "", ""},
+		// An end_time at exactly midnight is the instant that date begins: the flight's last day
+		// is the one before (PR #316 review), in the timestamp's own offset.
+		{"a midnight end_time ends the day before", []string{life(`"start_time":"2026-10-01T00:00:00+0000","end_time":"2026-10-11T00:00:00+0000"`)}, 0, 1000, "2026-10-01", "2026-10-10"},
+		{"a midnight end_time in a non-UTC offset ends the day before", []string{life(`"start_time":"2026-10-01T00:00:00-0700","end_time":"2026-10-11T00:00:00-0700"`)}, 0, 1000, "2026-10-01", "2026-10-10"},
+		{"ad sets ending at midnight and at 23:59:59 the night before share a window", []string{daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-11T00:00:00+0000"`), daily(`"start_time":"2026-10-01T09:00:00-0700","end_time":"2026-10-10T23:59:59+0000"`)}, 20, 0, "2026-10-01", "2026-10-10"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rowsJSON := make([]string, 0, len(tc.adSets))

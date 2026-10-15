@@ -154,8 +154,14 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	// One account-currency read per monitor request: every budget Meta reports is in the
 	// account currency's MINOR units, and the scale (100 for USD, 1 for JPY/KRW) is the
 	// currency's, not a constant. An unknown currency leaves every budget unconverted (0,
-	// read as PacingUnknown) rather than guessing a scale 100x wrong.
+	// read as PacingUnknown) rather than guessing a scale 100x wrong. An answer naming another
+	// account is such an unknown currency (PR #316 review): "" here leaves every budget
+	// unconverted and, through monitorPublishableCurrency, withholds the published currency too.
 	currency, err := c.accountCurrency(ctx, accountID)
+	if errors.Is(err, errAccountCurrencyWrongAccount) {
+		slog.WarnContext(ctx, "meta account monitor: the account-currency answer names another account; budgets are left unconverted")
+		currency, err = "", nil
+	}
 	if err != nil {
 		return nil, "", fmt.Errorf("list account campaigns: %w", err)
 	}
@@ -730,7 +736,8 @@ func campaignBudgetField(raw json.RawMessage, bad *bool) string {
 }
 
 // campaignFlightField reads a campaign-list start_time (isStop=false) or stop_time (isStop=true)
-// into date-only form, keeping three cases apart as adSetWindow does:
+// into date-only form — a stop through endDateOnly, so it is the flight's last inclusive day —
+// keeping three cases apart as adSetWindow does:
 //   - ABSENT: no bound ("", ok) — Graph omits an unset field;
 //   - an EMPTY string: no bound for stop_time (Meta's "no end", like an empty ad-set end_time),
 //     but unreadable for start_time, which the ad-set path also requires;
@@ -752,6 +759,9 @@ func campaignFlightField(raw json.RawMessage, isStop bool) (string, bool) {
 		return "", isStop
 	}
 	d := dateOnly(s)
+	if isStop {
+		d = endDateOnly(s)
+	}
 	return d, d != ""
 }
 
@@ -839,6 +849,26 @@ func dateOnly(s string) string {
 	return ""
 }
 
+// endDateOnly is dateOnly for a flight END (campaign stop_time, ad-set end_time): the LAST
+// calendar day the flight runs on, which the rules layer counts inclusively. A stop at 23:59:59
+// (what CreateCampaign writes) is on its own date, but a stop at exactly 00:00:00 is the instant
+// that date BEGINS, so the flight's last day is the one before it — an externally managed
+// campaign stopping at "2026-10-11T00:00:00+0000" ran through 2026-10-10. Read as 2026-10-11 it
+// counted one flight day too many, and a 10-day lifetime budget paced on the plan read ~110% — a
+// false overspend (PR #316 review). The midnight is taken in the timestamp's OWN offset, the same
+// frame dateOnly writes every start and end date in, so "…T00:00:00-0700" ends on the previous
+// date as written there. "" for anything dateOnly refuses.
+func endDateOnly(s string) string {
+	t, ok := parseMetaTimestamp(s)
+	if !ok {
+		return ""
+	}
+	if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
+		t = t.AddDate(0, 0, -1)
+	}
+	return t.Format("2006-01-02")
+}
+
 // adSetBudgetTotal is the sum of one campaign's ad-set budgets, in the account currency's minor
 // units. unknown marks a campaign at least one of whose ad sets is not ACTIVE, or could not be
 // read as exactly one positive budget — its total is then not a statement about the campaign and
@@ -877,9 +907,10 @@ func (t *adSetBudgetTotal) addWindow(start, end string, ok bool) {
 // stop_time (PR #316 review: an empty end_time was classified as malformed, which left every
 // open-ended DAILY ABO campaign pacing unknown). Daily pacing then runs to the window's edge;
 // a lifetime budget with no end stays unknown in the rules layer. Only a non-empty value that is
-// not a whole Meta timestamp (dateOnly) is malformed.
+// not a whole Meta timestamp (dateOnly) is malformed. The end is the flight's last inclusive day
+// (endDateOnly): an end_time at exactly midnight is the day before.
 func adSetWindow(startRaw, endRaw json.RawMessage) (start, end string, ok bool) {
-	timeField := func(raw json.RawMessage) (v string, present, valid bool) {
+	timeField := func(raw json.RawMessage, toDate func(string) string) (v string, present, valid bool) {
 		raw = bytes.TrimSpace(raw)
 		if len(raw) == 0 {
 			return "", false, true
@@ -891,11 +922,11 @@ func adSetWindow(startRaw, endRaw json.RawMessage) (start, end string, ok bool) 
 		if s == "" {
 			return "", false, true // reported as empty: no value, like an absent field
 		}
-		d := dateOnly(s)
+		d := toDate(s)
 		return d, true, d != ""
 	}
-	start, startPresent, startValid := timeField(startRaw)
-	end, _, endValid := timeField(endRaw)
+	start, startPresent, startValid := timeField(startRaw, dateOnly)
+	end, _, endValid := timeField(endRaw, endDateOnly) // the last inclusive day (endDateOnly)
 	if !startPresent || !startValid || !endValid {
 		return "", "", false
 	}

@@ -358,7 +358,7 @@ func TestListAccountCampaigns_EmptyBudget_IsLegitimateZero(t *testing.T) {
 	// No campaign-level budget sends the read to the ad sets; this account has none.
 	srv, _ := monitorServer(t, monitorFixture{
 		campaigns: []string{emptyBudget}, insights: []string{insightsPage("111", 1000, 50, false)},
-		currency: `{"currency":"USD"}`, adSets: []string{`{"data":[],"paging":{}}`},
+		currency: `{"currency":"USD","id":"act_123"}`, adSets: []string{`{"data":[],"paging":{}}`},
 	})
 	c := newMonitorClient(srv)
 
@@ -407,6 +407,32 @@ func TestDateOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := dateOnly(tc.in); got != tc.want {
 				t.Errorf("dateOnly(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEndDateOnly pins the PR #316 review fix: a flight END is its last inclusive day. A stop at
+// exactly midnight is the instant that date begins, so the flight's last day is the one before —
+// in the timestamp's own offset, the frame every flight date is written in. Anything else keeps
+// its own date, and what dateOnly refuses is still refused.
+func TestEndDateOnly(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"midnight UTC ends the day before", "2026-10-11T00:00:00+0000", "2026-10-10"},
+		{"23:59:59 (what CreateCampaign writes) is its own day", "2026-10-10T23:59:59+0000", "2026-10-10"},
+		{"one second past midnight is its own day", "2026-10-11T00:00:01+0000", "2026-10-11"},
+		{"midnight in a negative offset ends the day before, as written", "2026-10-11T00:00:00-0700", "2026-10-10"},
+		{"midnight in a positive offset ends the day before, as written", "2026-10-11T00:00:00+0900", "2026-10-10"},
+		{"RFC 3339 midnight", "2026-10-11T00:00:00Z", "2026-10-10"},
+		{"RFC 3339 colon-offset midnight", "2026-10-11T00:00:00-07:00", "2026-10-10"},
+		{"midnight UTC that is not midnight in its own offset", "2026-10-11T17:00:00-0700", "2026-10-11"},
+		{"a month boundary", "2026-11-01T00:00:00+0000", "2026-10-31"},
+		{"malformed", "2026-10-11garbage", ""},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := endDateOnly(tc.in); got != tc.want {
+				t.Errorf("endDateOnly(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

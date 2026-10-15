@@ -307,7 +307,8 @@ lifetime, since both are paced against the flight's days. An unknown budget arri
 as not computable, and a negative campaign-level budget is unreadable rather than "no budget".
 Meta's action-item text now prints money as "N.NN in account currency", like X's, instead of `$`.
 **Lifetime pacing paces the window** (CBO and ABO alike): spend is the last `days` only, so the
-expectation is now the lifetime budget spread over the flight (end date inclusive) times the
+expectation is now the lifetime budget spread over the flight (end date inclusive — a Meta
+`stop_time`/`end_time` at exactly midnight ends the flight on the day before, `endDateOnly`) times the
 window's flight days — LinkedIn's proration — instead of the plan since the flight started, which
 read a 9,000 / 90-day campaign on day 60 with `days=7` at ~12% when it was on plan. A window the
 flight does not overlap is `pacing_unknown`, and so is an open-ended lifetime flight (no end date:
