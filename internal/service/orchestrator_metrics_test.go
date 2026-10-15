@@ -533,6 +533,14 @@ func (d upstreamCapableDispatcher) ReadMetaAdSets(context.Context, string, model
 	return &model.MetaAdSets{}, nil
 }
 
+// ReadMetaAds implements the Meta ad read (list-meta-ads) for the same reason.
+func (d upstreamCapableDispatcher) ReadMetaAds(context.Context, string, model.Provider, *model.Campaign, string, model.MetricsWindow) (*model.MetaAds, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &model.MetaAds{}, nil
+}
+
 func (d upstreamCapableDispatcher) ToggleMetaAdSetStatus(context.Context, string, model.Provider, *model.Campaign, string, string, MetaAdSetBeforeWrite) (*model.MetaAdSetStatusResult, error) {
 	if d.err != nil {
 		return nil, d.err
@@ -675,6 +683,14 @@ func TestUpstreamCallsAreInstrumented(t *testing.T) {
 			op:   opReadMetaAdSets,
 			call: func(ctx context.Context, o *Orchestrator) error {
 				_, err := o.ReadMetaAdSets(ctx, "p1", platform, campaign, model.MetricsWindowLast7Days)
+				return err
+			},
+		},
+		{
+			name: "read meta ads",
+			op:   opReadMetaAds,
+			call: func(ctx context.Context, o *Orchestrator) error {
+				_, err := o.ReadMetaAds(ctx, "p1", platform, campaign, "888", model.MetricsWindowLast7Days)
 				return err
 			},
 		},

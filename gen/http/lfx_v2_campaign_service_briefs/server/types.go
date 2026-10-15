@@ -848,6 +848,32 @@ type ListMetaAdSetsResponseBody struct {
 	AdSetCount int `form:"ad_set_count" json:"ad_set_count" xml:"ad_set_count"`
 }
 
+// ListMetaAdsResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "list-meta-ads" endpoint HTTP response body.
+type ListMetaAdsResponseBody struct {
+	// Campaign UUID
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The Meta campaign id the ad set was proven to belong to.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// The Meta ad set id the ads were read under.
+	AdSetID string `form:"ad_set_id" json:"ad_set_id" xml:"ad_set_id"`
+	// The reporting window the counters cover.
+	Window string `form:"window" json:"window" xml:"window"`
+	// The ad account's ISO 4217 currency; `cost_micros` is denominated in it.
+	Currency string `form:"currency" json:"currency" xml:"currency"`
+	// When Meta was read (RFC3339, UTC).
+	ReadAt string `form:"read_at" json:"read_at" xml:"read_at"`
+	// true when the ad LISTING reported more ads than the page cap allows (5 pages
+	// of 100): `ads` then holds the ads that were read, not every ad of the ad
+	// set. Delivery is never truncated — the Insights read is all or nothing.
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+	// Every ad the listing returned, in Meta's order, then any unlisted ad that
+	// delivered in the window, by id. Empty when the ad set has none.
+	Ads []*MetaAdResponseBody `form:"ads" json:"ads" xml:"ads"`
+	// len(ads).
+	AdCount int `form:"ad_count" json:"ad_count" xml:"ad_count"`
+}
+
 // ToggleMetaAdSetStatusResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP response body.
@@ -2909,6 +2935,79 @@ type ListMetaAdSetsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type ListMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Conflict" error.
+type ListMetaAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ListMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ListMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ListMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "NotFound" error.
+type ListMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ListMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ListMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ToggleMetaAdSetStatusBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4108,6 +4207,38 @@ type MetaAdSetResponseBody struct {
 	DeliberatelyPaused bool `form:"deliberately_paused" json:"deliberately_paused" xml:"deliberately_paused"`
 }
 
+// MetaAdResponseBody is used to define fields on response body types.
+type MetaAdResponseBody struct {
+	// The Meta ad id
+	ID string `form:"id" json:"id" xml:"id"`
+	// false for an ad that DELIVERED in the window but that Meta's ad listing did
+	// not return (typically deleted or archived since, or beyond the listing cap
+	// when `truncated` is true): its counters are this ad set's spend, so they are
+	// reported, but every descriptive field is absent.
+	Listed bool `form:"listed" json:"listed" xml:"listed"`
+	// The ad's name as Meta holds it. Absent when not reported.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The ad's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED,
+	// ARCHIVED). Absent when not reported.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED,
+	// PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without
+	// notice. Absent when not reported.
+	EffectiveStatus *string `form:"effective_status,omitempty" json:"effective_status,omitempty" xml:"effective_status,omitempty"`
+	// The id of the ad's creative. Absent when not reported.
+	CreativeID *string `form:"creative_id,omitempty" json:"creative_id,omitempty" xml:"creative_id,omitempty"`
+	// The creative's name. Absent when not reported.
+	CreativeName *string `form:"creative_name,omitempty" json:"creative_name,omitempty" xml:"creative_name,omitempty"`
+	// Impressions over the window. 0 when Meta reported no delivery for this ad.
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window.
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window in micro-units of `currency`.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// clicks/impressions, 0 when impressions is 0.
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
 // PlatformResultResponseBody is used to define fields on response body types.
 type PlatformResultResponseBody struct {
 	// Platform this result is for
@@ -4789,6 +4920,34 @@ func NewListMetaAdSetsResponseBody(res *lfxv2campaignservicebriefs.MetaAdSets) *
 		}
 	} else {
 		body.AdSets = []*MetaAdSetResponseBody{}
+	}
+	return body
+}
+
+// NewListMetaAdsResponseBody builds the HTTP response body from the result of
+// the "list-meta-ads" endpoint of the "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsResponseBody(res *lfxv2campaignservicebriefs.MetaAds) *ListMetaAdsResponseBody {
+	body := &ListMetaAdsResponseBody{
+		CampaignID:         res.CampaignID,
+		PlatformCampaignID: res.PlatformCampaignID,
+		AdSetID:            res.AdSetID,
+		Window:             res.Window,
+		Currency:           res.Currency,
+		ReadAt:             res.ReadAt,
+		Truncated:          res.Truncated,
+		AdCount:            res.AdCount,
+	}
+	if res.Ads != nil {
+		body.Ads = make([]*MetaAdResponseBody, len(res.Ads))
+		for i, val := range res.Ads {
+			if val == nil {
+				body.Ads[i] = nil
+				continue
+			}
+			body.Ads[i] = marshalLfxv2campaignservicebriefsMetaAdToMetaAdResponseBody(val)
+		}
+	} else {
+		body.Ads = []*MetaAdResponseBody{}
 	}
 	return body
 }
@@ -6987,6 +7146,84 @@ func NewListMetaAdSetsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.U
 	return body
 }
 
+// NewListMetaAdsBadRequestResponseBody builds the HTTP response body from the
+// result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *ListMetaAdsBadRequestResponseBody {
+	body := &ListMetaAdsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsConflictResponseBody builds the HTTP response body from the
+// result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *ListMetaAdsConflictResponseBody {
+	body := &ListMetaAdsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewListMetaAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *ListMetaAdsServiceUnavailableResponseBody {
+	body := &ListMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *ListMetaAdsInternalServerErrorResponseBody {
+	body := &ListMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ListMetaAdsNotFoundResponseBody {
+	body := &ListMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ListMetaAdsPayloadTooLargeResponseBody {
+	body := &ListMetaAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ListMetaAdsUnauthorizedResponseBody {
+	body := &ListMetaAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewToggleMetaAdSetStatusBadRequestResponseBody builds the HTTP response body
 // from the result of the "toggle-meta-ad-set-status" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -8217,6 +8454,20 @@ func NewListMetaAdSetsPayload(projectID string, briefID string, campaignID strin
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.CampaignID = campaignID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMetaAdsPayload builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint payload.
+func NewListMetaAdsPayload(projectID string, briefID string, campaignID string, adSetID string, window *string, bearerToken *string) *lfxv2campaignservicebriefs.ListMetaAdsPayload {
+	v := &lfxv2campaignservicebriefs.ListMetaAdsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.AdSetID = adSetID
 	v.Window = window
 	v.BearerToken = bearerToken
 

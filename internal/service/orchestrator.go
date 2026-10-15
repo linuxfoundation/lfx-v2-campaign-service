@@ -876,6 +876,7 @@ const (
 	opRemoveKeywordTargeting     = "remove_keyword_targeting"
 	opReadMetaAdSets             = "read_meta_ad_sets"
 	opToggleMetaAdSetStatus      = "toggle_meta_ad_set_status"
+	opReadMetaAds                = "read_meta_ads"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
