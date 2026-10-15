@@ -92,6 +92,19 @@ var (
 	// mismatch on a conditional update (stale If-Match). Maps to 412.
 	ErrPreconditionFailed = errors.New("version precondition failed")
 
+	// ErrWriteOutcomeUnknown marks a write whose COMMIT acknowledgement was LOST — a broken
+	// connection, an I/O error, or the context ending while the answer was awaited — so
+	// PostgreSQL may have committed and the caller must reconcile before acting on either answer.
+	// A PgError whose SQLSTATE itself leaves the outcome open carries it too: 08007
+	// transaction_resolution_unknown, 40003 statement_completion_unknown, the rest of the
+	// connection-exception class 08, and 57P01/57P02 (the server shutting down around the
+	// COMMIT). It is NOT every COMMIT error: any other error the server answered the COMMIT with
+	// (a *pgconn.PgError such as a deferred constraint or trigger raising, or
+	// pgx.ErrTxCommitRollback) is a confirmed rollback and carries no sentinel (see the postgres
+	// repository's classifyCommitErr). Every error before the commit is a definite rollback and
+	// never carries it either.
+	ErrWriteOutcomeUnknown = errors.New("the write's commit failed, so whether it landed is unknown")
+
 	// ErrToggleUnsupported indicates the campaign's platform has no status-toggle
 	// capability wired (no dispatcher, or the dispatcher is not a StatusToggler).
 	// The platform is never contacted. Maps to 400. Lives here (not in the service
@@ -210,8 +223,8 @@ var (
 	// (no dispatcher, or the dispatcher is not a BidWriter). The platform is never contacted.
 	// Maps to 400, and lives here for the same reason as ErrBudgetWriteUnsupported.
 	//
-	// Microsoft Advertising, Reddit, Meta and X implement the capability today (LFXV2-2665);
-	// Google Ads and LinkedIn still answer 400. As with budgets, the service layer holds NO
+	// Microsoft Advertising, Reddit, Meta, X and LinkedIn implement the capability today
+	// (LFXV2-2665); Google Ads still answers 400. As with budgets, the service layer holds NO
 	// allowlist: what a platform supports is decided solely by whether its dispatcher is a
 	// BidWriter.
 	ErrBidUnsupported = errors.New("bid writes are not supported for this platform")
@@ -224,6 +237,15 @@ var (
 	// Maps to 409: each is a property of how the campaign is set up, so no retry improves it.
 	// An outcome the platform did not confirm is never this sentinel.
 	ErrBidUnwritable = errors.New("the campaign's bid could not be written as a manual bid")
+
+	// ErrBidAdoptedCampaign is the NARROWER reason a bid write was refused because the campaign
+	// was ADOPTED (bound from the ad platform, not created here), so this service never set up
+	// the bidding it would be writing into. An adapter returns it ALONGSIDE ErrBidUnwritable, so
+	// every existing ErrBidUnwritable caller keeps matching; the bid handler checks it FIRST so
+	// the 409 names adoption rather than ErrBidUnwritable's strategy/child-entity text, which
+	// does not describe this case (LinkedIn bids on the campaign itself — there is no ad group,
+	// ad set or line item to be missing). Nothing was sent; maps to 409.
+	ErrBidAdoptedCampaign = errors.New("the campaign was adopted, so its bid is managed in the ad platform")
 
 	// ErrBidAmountRejected indicates the requested BID was refused and the platform was NOT
 	// changed: by the adapter's own bounds before the mutate, or by the platform's DEFINITE
@@ -288,6 +310,15 @@ var (
 	// row a provenance is to re-dispatch it, which is what a row written before provenance
 	// tracking existed, or under a connection with no tenant id at all, needs.
 	ErrCampaignProvenanceUnknown = errors.New("the campaign does not record which platform tenant it was created under")
+
+	// ErrCampaignProvenanceMixed indicates a SET of campaigns fails provenance both ways at
+	// once: some record a different creating tenant (ErrCampaignAccountMismatch) and others
+	// record none (ErrCampaignProvenanceUnknown). It is joined with BOTH of those (never
+	// returned alone), so every existing errors.Is check keeps matching, while a handler can
+	// check it first and name both remedies — re-dispatching the unrecorded rows AND
+	// reconciling the foreign ones. Naming only one would send the operator to fix half the
+	// problem and hit the other half on the next read.
+	ErrCampaignProvenanceMixed = errors.New("some campaigns record a different platform tenant and others record none")
 
 	// ErrCampaignUpstreamIdentityMismatch indicates the PLATFORM's own answer contradicts the
 	// identity this service recorded for a campaign, even though the recorded account and the
@@ -447,10 +478,12 @@ var (
 
 	// ErrKeywordReportScopeTooLarge indicates a report-backed keyword read refused because the
 	// project owns more campaigns on the platform than one report can be scoped to (Microsoft's
-	// AccountThroughAdGroupReportScope holds up to 300). Refused before any upstream call, and
-	// PERMANENT while the project stays that large: widening the scope to the account would read
-	// other projects' keywords, and serving a subset would present part of the project as all of
-	// it. The message is fixed, client-safe text: it reaches the HTTP body.
+	// AccountThroughAdGroupReportScope holds up to 300; Reddit's live keyword read covers at most
+	// reddit.MaxReportCampaigns, one report per campaign against its reporting quota). Refused
+	// before any upstream call, and PERMANENT while the project stays that large: widening the
+	// scope to the account would read other projects' keywords, and serving a subset would present
+	// part of the project as all of it. The message is fixed, client-safe text: it reaches the
+	// HTTP body.
 	ErrKeywordReportScopeTooLarge = errors.New("this project has more campaigns on the platform than one keyword report can be scoped to")
 
 	// ErrKeywordReportScopeInvalid indicates a report-backed keyword read refused because a
@@ -467,12 +500,14 @@ var (
 	// bound on the stats jobs one request creates and awaits); Microsoft's is
 	// microsoft.MaxKeywordReportCampaigns (300, the documented Campaigns ceiling of the
 	// AccountThroughAdGroupReportScope its age/gender report shares with the keyword report),
-	// counted over DISTINCT campaign ids. Refused before any upstream call and PERMANENT while the
+	// counted over DISTINCT campaign ids; Reddit's is reddit.MaxReportCampaigns (a local bound
+	// on the per-campaign reports one read issues; the requests themselves are bounded by the ad account's
+	// reporting budget, reddit/report_budget.go). Refused before any upstream call and PERMANENT while the
 	// project stays that large, for ErrKeywordReportScopeTooLarge's reasons. The message is fixed,
 	// client-safe text: it reaches the HTTP body.
 	ErrAudienceScopeTooLarge = errors.New("this project has more campaigns on the platform than one audience read can be scoped to")
 
-	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft or X)
+	// ErrAudienceScopeInvalid indicates a project-scoped audience read (Meta, Microsoft, Reddit or X)
 	// refused because a campaign in the project's scope has a stored platform id that is not a
 	// valid campaign id for that platform. Refused before any upstream call, PERMANENT until the
 	// row is corrected, for ErrKeywordReportScopeInvalid's reasons. The message is fixed,
@@ -512,6 +547,12 @@ var (
 	// platform was contacted: empty or over-long, a text the platform's limits refuse, an
 	// unsupported match type, or the same keyword twice. A permanent input fault → 400.
 	ErrNegativeKeywordInvalid = errors.New("the negative keyword batch is not valid")
+
+	// ErrNegativeKeywordLimit indicates a negative-keyword add that the platform's own cap on the
+	// target would refuse given what it already holds (LFXV2-2665: Reddit's 2,000 excluded
+	// keywords per ad group). Decided from a READ before any write, so nothing was changed; a
+	// state fault, not a malformed request, so mapped to 409.
+	ErrNegativeKeywordLimit = errors.New("the negative keywords would exceed the platform's limit")
 
 	// ErrKeywordTargetingUnsupported indicates the platform has no keyword-TARGETING read or
 	// removal wired (LFXV2-2665: Reddit and X only), or that the capability is switched off for
@@ -569,6 +610,13 @@ var (
 	// set's targeting, so it will not switch its delivery on. Pausing any of the campaign's ad
 	// sets stays allowed. Decided before any write; mapped to 409.
 	ErrMetaAdSetNotRecorded = errors.New("only the ad set this service created for the campaign can be activated here")
+
+	// ErrMetaHeldAdSetActive refuses a Meta campaign ACTIVATE whose recorded ad set the row holds
+	// as deliberately paused while Meta reports that ad set ACTIVE (its pause was never applied, or
+	// it was re-activated elsewhere). Activating the campaign then would let the "deliberately
+	// paused" ad set serve, so nothing is written; mapped to 409. The operator pauses the ad set,
+	// or clears the record by resuming it, through toggle-meta-ad-set-status first.
+	ErrMetaHeldAdSetActive = errors.New("the campaign's deliberately paused ad set is ACTIVE on Meta")
 
 	// ErrStoredPlatformIDInvalid indicates the campaign row's stored platform campaign id is not a
 	// valid id for its platform, so nothing under it can be addressed. Decided locally — the

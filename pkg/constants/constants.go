@@ -78,6 +78,11 @@ const (
 	// Default-off keeps that from reaching anyone until one live read confirms the shape, at
 	// which point the default flips and this constant goes away. RedditDispatcher.ReadMetrics
 	// carries the same statement at the gate itself; keep the two in step.
+	//
+	// It also gates the Reddit audience and keyword performance reads (get-reddit-ads-audience,
+	// get-reddit-ads-keywords, LFXV2-2665, RedditDispatcher.AudienceEnabled / KeywordsEnabled),
+	// which run on the same reporting operation with GENDER/COUNTRY/COMMUNITY or KEYWORD
+	// breakdowns added — more of the same unexercised contract.
 	EnvRedditMetricsEnabled = "REDDIT_METRICS_ENABLED"
 
 	// EnvMicrosoftMetricsEnabled opts a deployment IN to Microsoft Advertising metrics
@@ -94,10 +99,12 @@ const (
 	// default flips and this constant goes away.
 	EnvMicrosoftMetricsEnabled = "MICROSOFT_METRICS_ENABLED"
 
-	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to REMOVING keywords from a
-	// Reddit ad group's targeting (remove-keyword-targeting, LFXV2-2665). Only the exact value
-	// "true" enables it; unset or any other value fails closed and the endpoint answers 400 "not
-	// supported", the shape the metrics gates above use. The keyword-targeting READ is not gated.
+	// EnvRedditKeywordTargetingWritesEnabled opts a deployment IN to BOTH Reddit ad-group targeting
+	// writes (LFXV2-2665): REMOVING keywords (remove-keyword-targeting) and ADDING negative keywords
+	// to excluded_keywords (add-negative-keywords) — the same whole-targeting PATCH, so one switch.
+	// Only the exact value "true" enables them; unset or any other value fails closed and both
+	// endpoints answer 400 "not supported", the shape the metrics gates above use. The
+	// keyword-targeting READ is not gated.
 	//
 	// Reddit has no per-keyword write: the ad group's targeting object is replaced as a whole on
 	// PATCH (per secondary references to the v3 OpenAPI document, which could not be fetched from
@@ -145,8 +152,9 @@ const (
 	// creative asset, which Reddit only accepts as a public URL it fetches. Optional as a
 	// PAIR: with the key or the base URL unset the feature is OFF — the serving route answers
 	// 404 and a Reddit dispatch that references a stored asset is refused before any upstream
-	// call. A value that is SET but unusable (key under 32 bytes or not base64, base URL not
-	// https or not a bare origin, TTL outside 1m..60m) fails startup. See
+	// call. EVERY value that is SET is validated, even while the feature is off for want of its
+	// other half, and an unusable one (key under 32 bytes or not base64, base URL not https or
+	// not a bare origin, TTL outside 5m..60m) fails startup. See
 	// docs/knowledge/architecture/signed-creative-asset-urls.md.
 	// The key is a SECRET (standard base64, >= 32 bytes) sourced from the chart's Secret.
 	EnvCreativeAssetURLSigningKey = "CREATIVE_ASSET_URL_SIGNING_KEY"

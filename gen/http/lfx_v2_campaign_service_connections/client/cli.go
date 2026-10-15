@@ -1804,6 +1804,44 @@ func BuildGetTwitterAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetTwitter
 	return v, nil
 }
 
+// BuildGetLinkedinAdsAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-connections get-linkedin-ads-audience endpoint from
+// CLI flags.
+func BuildGetLinkedinAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceProjectID *string, lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow *string, lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceBearerToken *string) (*lfxv2campaignserviceconnections.GetLinkedinAdsAudiencePayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow != nil {
+			window = lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow
+			if !(*lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "today" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "last_7_days" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "last_30_days" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "this_month" || *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceWindow, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsGetLinkedinAdsAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetLinkedinAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildGetMicrosoftAdsKeywordsPayload builds the payload for the
 // lfx-v2-campaign-service-connections get-microsoft-ads-keywords endpoint from
 // CLI flags.
@@ -1873,6 +1911,82 @@ func BuildGetMicrosoftAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetMicro
 		}
 	}
 	v := &lfxv2campaignserviceconnections.GetMicrosoftAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildGetRedditAdsAudiencePayload builds the payload for the
+// lfx-v2-campaign-service-connections get-reddit-ads-audience endpoint from
+// CLI flags.
+func BuildGetRedditAdsAudiencePayload(lfxV2CampaignServiceConnectionsGetRedditAdsAudienceProjectID *string, lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow *string, lfxV2CampaignServiceConnectionsGetRedditAdsAudienceBearerToken *string) (*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsAudienceProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsGetRedditAdsAudienceProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow != nil {
+			window = lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow
+			if !(*lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow == "today" || *lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow == "last_7_days" || *lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow == "last_30_days" || *lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow == "this_month" || *lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *lfxV2CampaignServiceConnectionsGetRedditAdsAudienceWindow, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsAudienceBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsGetRedditAdsAudienceBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildGetRedditAdsKeywordsPayload builds the payload for the
+// lfx-v2-campaign-service-connections get-reddit-ads-keywords endpoint from
+// CLI flags.
+func BuildGetRedditAdsKeywordsPayload(lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsProjectID *string, lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow *string, lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsBearerToken *string) (*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsProjectID
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow != nil {
+			window = lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow
+			if !(*lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "today" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "last_7_days" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "last_30_days" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "this_month" || *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsWindow, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsGetRedditAdsKeywordsBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload{}
 	v.ProjectID = projectID
 	v.Window = window
 	v.BearerToken = bearerToken
@@ -2073,6 +2187,46 @@ func BuildResolveTwitterAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolv
 		}
 	}
 	v := &lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
+// BuildResolveLinkedinAdsCampaignPayload builds the payload for the
+// lfx-v2-campaign-service-connections resolve-linkedin-ads-campaign endpoint
+// from CLI flags.
+func BuildResolveLinkedinAdsCampaignPayload(lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignProjectID *string, lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignPlatformCampaignID *string, lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignBearerToken *string) (*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignProjectID
+	}
+	var platformCampaignID string
+	{
+		if lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignPlatformCampaignID == nil {
+			return nil, fmt.Errorf("missing required flag --platform-campaign-id")
+		}
+		platformCampaignID = *lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignPlatformCampaignID
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,18}$"))
+		if utf8.RuneCountInString(platformCampaignID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 19, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceConnectionsResolveLinkedinAdsCampaignBearerToken
+		}
+	}
+	v := &lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload{}
 	v.ProjectID = projectID
 	v.PlatformCampaignID = platformCampaignID
 	v.BearerToken = bearerToken

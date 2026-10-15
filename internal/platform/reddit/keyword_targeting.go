@@ -73,9 +73,15 @@ type preEncodedBody []byte
 // OtherDimensionsFingerprint fingerprints every targeting member EXCEPT `keywords`, so a re-read
 // after a keyword write can prove nothing else moved.
 func (t *AdGroupTargeting) OtherDimensionsFingerprint() (string, error) {
+	return t.FingerprintExcept("keywords")
+}
+
+// FingerprintExcept fingerprints every targeting member except the named one, so a re-read after
+// a write of that one member can prove nothing else moved.
+func (t *AdGroupTargeting) FingerprintExcept(member string) (string, error) {
 	rest := make(map[string]json.RawMessage, len(t.members))
 	for k, v := range t.members {
-		if k != "keywords" {
+		if k != member {
 			rest[k] = v
 		}
 	}
@@ -125,34 +131,46 @@ func decodeTargeting(raw json.RawMessage) (map[string]json.RawMessage, []string,
 	if err := json.Unmarshal(raw, &members); err != nil || members == nil {
 		return nil, nil, nil, ErrTargetingUnreadable
 	}
-	keywords := []string{}
-	var elems []json.RawMessage
-	if kw, ok := members["keywords"]; ok {
-		kw = bytes.TrimSpace(kw)
-		if len(kw) > 0 && string(kw) != "null" {
-			if kw[0] != '[' {
-				return nil, nil, nil, ErrTargetingUnreadable
-			}
-			if err := json.Unmarshal(kw, &elems); err != nil {
-				return nil, nil, nil, ErrTargetingUnreadable
-			}
-			for _, e := range elems {
-				e = bytes.TrimSpace(e)
-				if string(e) == "null" {
-					continue
-				}
-				if len(e) == 0 || e[0] != '"' {
-					return nil, nil, nil, ErrTargetingUnreadable
-				}
-				var k string
-				if err := json.Unmarshal(e, &k); err != nil {
-					return nil, nil, nil, ErrTargetingUnreadable
-				}
-				keywords = append(keywords, k)
-			}
-		}
+	keywords, elems, err := decodeStringArray(members["keywords"])
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	return members, keywords, elems, nil
+}
+
+// decodeStringArray decodes one targeting member that is an array of strings (`keywords`,
+// `excluded_keywords`): its string values in order, and its raw elements so a write can send back
+// every element it keeps exactly as read. Absent or null is an empty list with nil elements; a
+// null ELEMENT is kept raw and is not a value; anything else that is not an array of strings is
+// ErrTargetingUnreadable.
+func decodeStringArray(raw json.RawMessage) ([]string, []json.RawMessage, error) {
+	values := []string{}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return values, nil, nil
+	}
+	if raw[0] != '[' {
+		return nil, nil, ErrTargetingUnreadable
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return nil, nil, ErrTargetingUnreadable
+	}
+	for _, e := range elems {
+		e = bytes.TrimSpace(e)
+		if string(e) == "null" {
+			continue
+		}
+		if len(e) == 0 || e[0] != '"' {
+			return nil, nil, ErrTargetingUnreadable
+		}
+		var v string
+		if err := json.Unmarshal(e, &v); err != nil {
+			return nil, nil, ErrTargetingUnreadable
+		}
+		values = append(values, v)
+	}
+	return values, elems, nil
 }
 
 // GetAdGroupTargeting reads one ad group's targeting via GET /ad_accounts/{account}/ad_groups/{id}

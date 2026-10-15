@@ -12,6 +12,7 @@ import (
 	conn "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_connections"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/meta"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/reddit"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/twitter"
@@ -80,6 +81,23 @@ func (s *ConnectionService) classifyInsightsErrorFor(ctx context.Context, projec
 		slog.WarnContext(ctx, "keyword insights window unsupported by platform",
 			"project_id", projectID, "error", safeErrSummary(err))
 		return &conn.BadRequestError{Code: "400", Message: "this reporting window is not supported"}
+	case errors.Is(err, domain.ErrCampaignProvenanceMixed):
+		// Checked BEFORE the provenance-unknown and mismatch arms it is always joined with: the
+		// scope has BOTH faults — rows created under another account AND rows recording none — so
+		// the message names both remedies; either arm alone would hide the other half. Raised by
+		// the Reddit audience and keyword performance reads. Fixed text; the counts stay in the log.
+		slog.WarnContext(ctx, "insights blocked: campaigns in scope belong to a different ad account and others do not record one",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns were created under a different ad account than its current connection, and others do not record which ad account they were created under — re-dispatch the unrecorded campaigns onto the connected account, and re-dispatch or reconcile the others onto it (or reconnect the account that owns them), to read this data"}
+	case errors.Is(err, domain.ErrCampaignProvenanceUnknown):
+		// Checked BEFORE the mismatch arm it is always joined with: the remedy differs. A row that
+		// records no creating account cannot be reconciled by reconnecting — there is nothing
+		// recorded to reconnect to — only re-dispatched. Raised by the Reddit audience and keyword
+		// performance reads, which refuse such rows outright (Reddit ids are unique only within an account). Fixed text;
+		// the counts stay in the log.
+		slog.WarnContext(ctx, "insights blocked: a campaign in scope does not record which ad account it was created under",
+			"project_id", projectID, "error", safeErrSummary(err))
+		return &conn.ConflictError{Code: "409", Message: "some of this project's campaigns do not record which ad account they were created under, so they cannot be read safely — re-dispatch those campaigns onto the connected account to read this data"}
 	case errors.Is(err, ErrCampaignAccountMismatch):
 		// Raised when the scope filter refuses ANY campaign, not only when it refuses every
 		// one — googleAdsScopeForCustomer fails closed on a PARTIAL mismatch too, rather than
@@ -286,9 +304,9 @@ func (s *ConnectionService) ResolveGoogleAdsCampaign(ctx context.Context, p *con
 // Everything above ResolveGoogleAdsCampaign holds here unchanged — a read of this service's own
 // tables, project-scoped in SQL, 200 with no matches for an unowned id, 500 for a storage fault,
 // 503 while the backend is not wired — with ONE difference a caller must handle: more than one
-// match is REACHABLE. Migration 000020's unique index covers Google Ads only, because Microsoft
-// mints campaign ids per ad account, so a project whose connection was re-pointed between accounts
-// can hold two live rows for the same id. Every match is returned and the caller refuses; this
+// match is REACHABLE. Microsoft mints campaign ids per ad account, so its binding index (000044)
+// allows one live row per (id, account), and a project whose connection was re-pointed between
+// accounts can hold one row per account for the same id — plus legacy rows recording no account. Every match is returned and the caller refuses; this
 // layer never picks one.
 //
 // Not gated on MICROSOFT_METRICS_ENABLED: that flag governs reads that contact Microsoft, and this
@@ -317,20 +335,31 @@ var (
 		"the campaign id must be 1-64 letters, digits or underscores")
 	validateTwitterCampaignRefID = platformCampaignIDRule(twitter.ValidateCampaignID,
 		"the campaign id must be 1-64 letters or digits")
+	validateLinkedInCampaignRefID = platformCampaignIDRule(linkedin.ValidateCampaignID,
+		"the campaign id must be a positive integer no greater than 9223372036854775807 (a LinkedIn 64-bit id), without a leading zero")
 )
 
 // ResolveMetaAdsCampaign, ResolveRedditAdsCampaign and ResolveTwitterAdsCampaign are
 // ResolveMicrosoftAdsCampaign for Meta, Reddit and X (LFXV2-2665): the same DB-only,
 // project-scoped lookup through resolvePlatformCampaignRef, differing only in the platform the
 // route fixes and the id rule — each platform package's ValidateCampaignID, applied before any
-// lookup. As for Microsoft, more than one match is reachable (000020's unique index covers
-// Google Ads only) and every match is returned for the caller to refuse.
+// lookup. Every match is returned for the caller to refuse; whether more than one is REACHABLE
+// depends on the platform's binding index: on Meta (000043, global) a valid database holds at
+// most one, while on Reddit and X (000045/000046, per ad account) a project can hold one row per
+// account for the same id, plus legacy rows that record no account.
 func (s *ConnectionService) ResolveMetaAdsCampaign(ctx context.Context, p *conn.ResolveMetaAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
 	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderMetaAds, p.PlatformCampaignID, validateMetaCampaignRefID)
 }
 
 func (s *ConnectionService) ResolveRedditAdsCampaign(ctx context.Context, p *conn.ResolveRedditAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
 	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderRedditAds, p.PlatformCampaignID, validateRedditCampaignRefID)
+}
+
+// ResolveLinkedInAdsCampaign is the same lookup for LinkedIn (LFXV2-2665): DB-only, project-scoped,
+// every match returned — though 000042's global index (LinkedIn ids are globally unique) keeps a
+// valid database to at most one — the id checked by linkedin.ValidateCampaignID before any lookup.
+func (s *ConnectionService) ResolveLinkedinAdsCampaign(ctx context.Context, p *conn.ResolveLinkedinAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {
+	return s.resolvePlatformCampaignRef(ctx, p.ProjectID, model.ProviderLinkedInAds, p.PlatformCampaignID, validateLinkedInCampaignRefID)
 }
 
 func (s *ConnectionService) ResolveTwitterAdsCampaign(ctx context.Context, p *conn.ResolveTwitterAdsCampaignPayload) (*conn.PlatformCampaignResolution, error) {

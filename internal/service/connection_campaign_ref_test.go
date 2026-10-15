@@ -15,7 +15,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// ─── Meta, Reddit and X campaign resolution (LFXV2-2665) ───
+// ─── Meta, Reddit, X and LinkedIn campaign resolution (LFXV2-2665) ───
 //
 // The three routes share resolvePlatformCampaignRef with the Google and Microsoft ones; what
 // each adds is the platform the route fixes and that platform's id rule. Every behaviour the
@@ -51,6 +51,14 @@ var campaignRefRoutes = []campaignRefRoute{
 		malformed: []string{"", "a_b", "a-b", "a/b", " 8wxyz", "8wxyz ", strings.Repeat("a", 65)},
 		resolve: func(s *ConnectionService, projectID, id string) (*conn.PlatformCampaignResolution, error) {
 			return s.ResolveTwitterAdsCampaign(context.Background(), &conn.ResolveTwitterAdsCampaignPayload{ProjectID: projectID, PlatformCampaignID: id})
+		},
+	},
+	{
+		name: "linkedin", platform: model.ProviderLinkedInAds, validID: "868353296",
+		malformed: []string{"", "0", "0868", "-1", "12a", " 868", "868 ", "urn:li:sponsoredCampaign:868", strings.Repeat("9", 20),
+			"9223372036854775808", strings.Repeat("9", 19)}, // past int64: the decoder's Pattern admits these
+		resolve: func(s *ConnectionService, projectID, id string) (*conn.PlatformCampaignResolution, error) {
+			return s.ResolveLinkedinAdsCampaign(context.Background(), &conn.ResolveLinkedinAdsCampaignPayload{ProjectID: projectID, PlatformCampaignID: id})
 		},
 	},
 }
@@ -180,6 +188,11 @@ func TestResolveCampaignRef_MalformedIDIsRefusedBeforeTheLookup(t *testing.T) {
 			svc.SetOrchestrator(NewOrchestrator(&fakeCampaignRepo{resolveErr: errors.New("the lookup ran")}, newFakeJobRepo(), map[model.Provider]PlatformDispatcher{
 				model.ProviderGoogleAds: &keywordActionDispatcher{},
 			}))
+			// The 400 is the route's FIXED sentence: identical for every malformed id, which is
+			// what proves it never echoes the input. A substring test alone misfires when a short
+			// id ("0") happens to occur inside a stated bound ("…775807"), so it is applied only
+			// to ids long enough that containment could only mean an echo.
+			var fixed string
 			for _, id := range r.malformed {
 				_, err := r.resolve(svc, "cncf", id)
 				bad, ok := err.(*conn.BadRequestError)
@@ -187,7 +200,12 @@ func TestResolveCampaignRef_MalformedIDIsRefusedBeforeTheLookup(t *testing.T) {
 					t.Errorf("id %q: error = %T (%v), want *conn.BadRequestError", id, err, err)
 					continue
 				}
-				if strings.Contains(bad.Message, id) && id != "" {
+				if fixed == "" {
+					fixed = bad.Message
+				} else if bad.Message != fixed {
+					t.Errorf("id %q: the 400 varies with the input: %q vs %q", id, bad.Message, fixed)
+				}
+				if len(strings.TrimSpace(id)) >= 4 && strings.Contains(bad.Message, id) {
 					t.Errorf("id %q: the 400 echoes the input: %q", id, bad.Message)
 				}
 			}
@@ -320,5 +338,20 @@ func TestListRedditAdsAccounts_ErrorClassification(t *testing.T) {
 				ListRedditAdsAccounts(context.Background(), &conn.ListRedditAdsAccountsPayload{ProjectID: "p"})
 			tc.check(t, err)
 		})
+	}
+}
+
+// The LinkedIn 400 states the bound the validator ENFORCES — int64's maximum — not just a digit
+// count: a 19-digit id past it (9223372036854775808) is refused, so "at most 19 digits" would be a
+// false description of the rule a caller just broke.
+func TestResolveLinkedinAdsCampaign_400StatesTheInt64Bound(t *testing.T) {
+	svc := NewConnectionService(&mockConnectionRepo{}, &mockEncryptor{})
+	_, err := svc.ResolveLinkedinAdsCampaign(context.Background(), &conn.ResolveLinkedinAdsCampaignPayload{ProjectID: "cncf", PlatformCampaignID: "9223372036854775808"})
+	bad, ok := err.(*conn.BadRequestError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *conn.BadRequestError", err, err)
+	}
+	if !strings.Contains(bad.Message, "9223372036854775807") || strings.Contains(bad.Message, "19 digits") {
+		t.Errorf("message = %q, want it to state the int64 maximum, not a digit count", bad.Message)
 	}
 }

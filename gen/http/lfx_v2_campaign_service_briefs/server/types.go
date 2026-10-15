@@ -115,8 +115,14 @@ type ApplyKeywordActionsRequestBody struct {
 // "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
 // HTTP request body.
 type AddNegativeKeywordsRequestBody struct {
-	// The negative keywords to add, at campaign level.
+	// The negative keywords to add: at campaign level on Microsoft Advertising, on
+	// the campaign's one ad group on Reddit, on its one line item on X.
 	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords,omitempty" json:"negative_keywords,omitempty" xml:"negative_keywords,omitempty"`
+	// Reddit only, and required there: the revision get-keyword-targeting
+	// returned; an empty or blank one is 400. The add is refused (409) when the ad
+	// group's targeting no longer has that fingerprint. Microsoft Advertising and
+	// X refuse the field (400) whenever it is present, even empty.
+	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 
 // RemoveKeywordTargetingRequestBody is the type of the
@@ -3830,8 +3836,17 @@ type CampaignSettingsFieldResponseBody struct {
 	// `CAMPAIGN`). A Meta or Reddit start that the create path itself nudged
 	// forward past UTC midnight (because the requested day had already begun at
 	// dispatch) is shown with both sides and an `unknown` verdict rather than a
-	// false `diverged`. The vocabulary is per-platform and may grow, so a consumer
-	// must render an unrecognised field name rather than dropping it.
+	// false `diverged`. On LinkedIn the COMPARED settings are `budget_amount`,
+	// `budget_type`, `campaign_name`, `start_date` and `end_date` (the start, like
+	// Meta's and Reddit's, may be nudged by the create path); `status`,
+	// `bidding_strategy_type` (LinkedIn's optimizationTargetType), `cost_type`,
+	// `unit_cost` (the bid amount), `unit_cost_currency` (its ISO currency, from
+	// LinkedIn's `unitCost.currencyCode` — `unit_cost` is ABSENT whenever the
+	// currency is not reported, never a bare number) and `objective_type` are
+	// upstream-only; a campaign reporting both a daily and a total budget, neither
+	// (as under a campaign group's shared budget), or a non-USD amount reads both
+	// budget fields `unknown`. The vocabulary is per-platform and may grow, so a
+	// consumer must render an unrecognised field name rather than dropping it.
 	Field string `form:"field" json:"field" xml:"field"`
 	// What the campaign row records — what this dispatch ASKED FOR. Absent when
 	// the row records nothing for this field.
@@ -3987,16 +4002,19 @@ type NegativeKeywordResultResponseBody struct {
 	Text string `form:"text" json:"text" xml:"text"`
 	// The match type as sent to the platform
 	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign already had
-	// it, so the requested state holds; FAILED — definitely not added (see
-	// error_code); UNCONFIRMED — may have been added, verify in the ad platform
-	// before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
+	// or ad group / line item (Reddit / X) already had it, so the requested state
+	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
+	// have been added, verify in the ad platform before retrying.
 	Outcome string `form:"outcome" json:"outcome" xml:"outcome"`
-	// The platform's id for a negative keyword this request added. Absent for
-	// every other outcome.
+	// The platform's id for a negative keyword this request added: Microsoft's
+	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
+	// an excluded keyword has no id, and for every outcome other than APPLIED.
 	NegativeKeywordID *string `form:"negative_keyword_id,omitempty" json:"negative_keyword_id,omitempty" xml:"negative_keyword_id,omitempty"`
-	// The platform's machine-readable error code for a FAILED keyword, when it
-	// named one.
+	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
+	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
+	// it was never sent) or REJECTED (the platform refused it); their own text is
+	// never returned.
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
@@ -4076,6 +4094,18 @@ type MetaAdSetResponseBody struct {
 	// campaign row recorded at dispatch). Always false on an adopted campaign,
 	// which records no ad set.
 	Recorded bool `form:"recorded" json:"recorded" xml:"recorded"`
+	// true when this is the `recorded` ad set and the campaign row holds a
+	// DELIBERATE pause of it made through toggle-meta-ad-set-status: resuming the
+	// campaign (toggle-campaign-status ACTIVE) leaves this ad set PAUSED, and only
+	// resuming it through toggle-meta-ad-set-status clears this. It is this
+	// service's record, not Meta's — `status` is what Meta reports. After a pause
+	// whose outcome was UNCONFIRMED it is normally true (unknown is treated as
+	// paused), but this is NOT guaranteed: when that 503 said the pause's record
+	// could not be confirmed, or that the write lock was lost, it may be false —
+	// re-read it, and if it is false pause the ad set again before resuming the
+	// campaign; never assume it from the 503 alone. Always false on an adopted
+	// campaign.
+	DeliberatelyPaused bool `form:"deliberately_paused" json:"deliberately_paused" xml:"deliberately_paused"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.
@@ -4195,7 +4225,10 @@ type NegativeKeywordInputRequestBody struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
 	// 100 characters.
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
-	// How the negative keyword is compared with a search query. Exact or Phrase.
+	// How the negative keyword is compared with a search query. Microsoft
+	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
+	// (Reddit's excluded keywords carry no match type). Any other value for the
+	// platform is 400.
 	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
 }
 
@@ -8112,7 +8145,9 @@ func NewApplyKeywordActionsPayload(body *ApplyKeywordActionsRequestBody, project
 // NewAddNegativeKeywordsPayload builds a lfx-v2-campaign-service-briefs
 // service add-negative-keywords endpoint payload.
 func NewAddNegativeKeywordsPayload(body *AddNegativeKeywordsRequestBody, projectID string, briefID string, campaignID string, bearerToken *string) *lfxv2campaignservicebriefs.AddNegativeKeywordsPayload {
-	v := &lfxv2campaignservicebriefs.AddNegativeKeywordsPayload{}
+	v := &lfxv2campaignservicebriefs.AddNegativeKeywordsPayload{
+		Revision: body.Revision,
+	}
 	v.NegativeKeywords = make([]*lfxv2campaignservicebriefs.NegativeKeywordInput, len(body.NegativeKeywords))
 	for i, val := range body.NegativeKeywords {
 		if val == nil {
@@ -8563,6 +8598,11 @@ func ValidateAddNegativeKeywordsRequestBody(body *AddNegativeKeywordsRequestBody
 			}
 		}
 	}
+	if body.Revision != nil {
+		if utf8.RuneCountInString(*body.Revision) > 128 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.revision", *body.Revision, utf8.RuneCountInString(*body.Revision), 128, false))
+		}
+	}
 	return
 }
 
@@ -8897,8 +8937,8 @@ func ValidateNegativeKeywordInputRequestBody(body *NegativeKeywordInputRequestBo
 		}
 	}
 	if body.MatchType != nil {
-		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"Exact", "Phrase"}))
+		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase" || *body.MatchType == "Broad") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.match_type", *body.MatchType, []any{"Exact", "Phrase", "Broad"}))
 		}
 	}
 	return
@@ -8923,8 +8963,8 @@ func validateNegativeKeywordInputRequestBody(body *NegativeKeywordInputRequestBo
 		}
 	}
 	if body.MatchType != nil {
-		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".match_type", *body.MatchType, []any{"Exact", "Phrase"}))
+		if !(*body.MatchType == "Exact" || *body.MatchType == "Phrase" || *body.MatchType == "Broad") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".match_type", *body.MatchType, []any{"Exact", "Phrase", "Broad"}))
 		}
 	}
 	return

@@ -466,19 +466,28 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/microsoft-ads/keywords/x", false},
 		{"/projects/p1/microsoft-ads/campaign-ref", true},
 		{"/projects/p1/microsoft-ads/campaign-ref/x", false},
-		// The Meta and X audience reads (LFXV2-2665); Reddit and LinkedIn have none.
+		// The Meta, Reddit, X and LinkedIn audience reads (LFXV2-2665).
 		{"/projects/p1/meta-ads/audience", true},
 		{"/projects/p1/meta-ads/audience/x", false},
 		{"/projects/p1/twitter-ads/audience", true},
 		{"/projects/p1/twitter-ads/audience/x", false},
-		{"/projects/p1/reddit-ads/audience", false},
-		{"/projects/p1/linkedin-ads/audience", false},
-		// The Meta, Reddit and X twins (LFXV2-2665).
+		{"/projects/p1/reddit-ads/audience", true},
+		{"/projects/p1/reddit-ads/audience/x", false},
+		{"/projects/p1/reddit-ads/audiences", false},
+		{"/projects/p1/linkedin-ads/audience", true},
+		{"/projects/p1/linkedin-ads/audience/x", false},
+		{"/projects/p1/linkedin-ads/audiences", false},
+		// The Reddit keyword performance read (LFXV2-2665).
+		{"/projects/p1/reddit-ads/keywords", true},
+		{"/projects/p1/reddit-ads/keywords/x", false},
+		{"/projects/p1/twitter-ads/keywords", false},
+		// The Meta, Reddit, X and LinkedIn twins (LFXV2-2665).
 		{"/projects/p1/meta-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref", true},
 		{"/projects/p1/twitter-ads/campaign-ref", true},
+		{"/projects/p1/linkedin-ads/campaign-ref", true},
 		{"/projects/p1/reddit-ads/campaign-ref/x", false},
-		{"/projects/p1/linkedin-ads/campaign-ref", false},
+		{"/projects/p1/linkedin-ads/campaign-ref/x", false},
 		{"/projects/p1/hubspot-ads/campaign-ref", false},
 		// --- accepted: event-page pre-fill (LFXV2-3043) ---
 		// A SIBLING of /briefs, not a descendant, so unlike /status and /metrics above it
@@ -517,7 +526,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/connection-hubspot/account-monitor/x", false},
 		// --- rejected: keywords/audience on the wrong provider ---
 		{"/projects/p1/meta-ads/keywords", false},
-		{"/projects/p1/linkedin-ads/audience", false},
+		{"/projects/p1/linkedin-ads/keywords", false},
 		// --- rejected: per-provider /metrics (2026-10-13) ---
 		// The chart used to route and rule /{provider}/metrics for five providers, but no
 		// design/ method serves that path — metrics are served per campaign and per brief,
@@ -1145,7 +1154,9 @@ func TestScrapePortCannotDriftFromServicePort(t *testing.T) {
 // TestDeploymentRefusesXStatsJobsOnMultipleReplicas pins the single-replica guard: the X
 // stats-job features' limits (audience job budget, account pacer) are per process, so the chart
 // refuses TWITTER_METRICS_ENABLED with more than one replica — set through either env input, or
-// sourced where the template cannot see it — and still renders every other combination.
+// sourced where the template cannot see it. A multi-replica render with the X flag effectively
+// off is now refused too, but by the unconditional Reddit guard below it, so each case is judged
+// by WHICH guard fired: the X refusal text must appear exactly when refuse is set.
 func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
@@ -1178,11 +1189,62 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 				args = append(args, "--set", s)
 			}
 			out, err := exec.Command("helm", args...).CombinedOutput()
+			xRefused := strings.Contains(string(out), "Run one replica while the flag is on")
 			switch {
 			case tc.refuse && err == nil:
 				t.Fatalf("rendered with %v; want the single-replica refusal", tc.set)
-			case tc.refuse && !strings.Contains(string(out), "Run one replica while the flag is on"):
-				t.Errorf("failed, but not on the guard:\n%s", out)
+			case tc.refuse && !xRefused:
+				t.Errorf("failed, but not on the X guard:\n%s", out)
+			case !tc.refuse && xRefused:
+				t.Fatalf("the X guard refused %v:\n%s", tc.set, out)
+			case !tc.refuse && err != nil && !strings.Contains(string(out), redditReplicaRefusal):
+				t.Fatalf("refused %v, and not by the Reddit replica guard: %v\n%s", tc.set, err, out)
+			}
+		})
+	}
+}
+
+// redditReplicaRefusal is a fragment of the unconditional Reddit replica guard's failure text.
+const redditReplicaRefusal = "Run one replica until the ledger is shared"
+
+// TestDeploymentRefusesRedditReportsOnMultipleReplicas pins the Reddit replica guard: the Reddit
+// reporting budget (report_budget.go) is a per-process ledger, and the ungated Reddit account
+// monitor spends it whatever REDDIT_METRICS_ENABLED says, so the chart refuses more than one
+// replica (or autoscaling past one) with the flag off, on, or sourced from a secret — and still
+// renders the default deploy and every single-replica combination.
+func TestDeploymentRefusesRedditReportsOnMultipleReplicas(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH; skipping chart guard test: %v", err)
+	}
+	const on = "app.environment.REDDIT_METRICS_ENABLED.value=true"
+	for _, tc := range []struct {
+		name   string
+		set    []string
+		refuse bool
+	}{
+		{"default (flag off, one replica)", nil, false},
+		{"flag on, one replica", []string{on}, false},
+		{"flag off, autoscaling capped at one", []string{"autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
+		{"flag on, autoscaling capped at one", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=1"}, false},
+		// The account monitor is always on, so the flag does not matter.
+		{"flag off, two replicas", []string{"replicaCount=2"}, true},
+		{"flag off explicitly, three replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=false", "replicaCount=3"}, true},
+		{"flag on, two replicas", []string{on, "replicaCount=2"}, true},
+		{"flag from a secret, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=null", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, true},
+		{"flag off, autoscaling to four", []string{"autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, true},
+		{"flag off, autoscaling with the default max", []string{"autoscaling.enabled=true"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}
+			for _, s := range tc.set {
+				args = append(args, "--set", s)
+			}
+			out, err := exec.Command("helm", args...).CombinedOutput()
+			switch {
+			case tc.refuse && err == nil:
+				t.Fatalf("rendered with %v; want the single-replica refusal", tc.set)
+			case tc.refuse && !strings.Contains(string(out), redditReplicaRefusal):
+				t.Errorf("failed, but not on the Reddit guard:\n%s", out)
 			case !tc.refuse && err != nil:
 				t.Fatalf("refused %v: %v\n%s", tc.set, err, out)
 			}

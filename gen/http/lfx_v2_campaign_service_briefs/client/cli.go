@@ -1223,7 +1223,7 @@ func BuildAddNegativeKeywordsPayload(lfxV2CampaignServiceBriefsAddNegativeKeywor
 		}
 		err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsAddNegativeKeywordsBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"negative_keywords\": [\n         {\n            \"match_type\": \"Phrase\",\n            \"text\": \"free download\"\n         }\n      ]\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"negative_keywords\": [\n         {\n            \"match_type\": \"Broad\",\n            \"text\": \"free download\"\n         }\n      ],\n      \"revision\": \"sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c\"\n   }'")
 		}
 		if body.NegativeKeywords == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("negative_keywords", "body"))
@@ -1239,6 +1239,11 @@ func BuildAddNegativeKeywordsPayload(lfxV2CampaignServiceBriefsAddNegativeKeywor
 				if err2 := validateNegativeKeywordInputRequestBody(e, "body.negative_keywords[*]"); err2 != nil {
 					err = goa.MergeErrors(err, err2)
 				}
+			}
+		}
+		if body.Revision != nil {
+			if utf8.RuneCountInString(*body.Revision) > 128 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("body.revision", *body.Revision, utf8.RuneCountInString(*body.Revision), 128, false))
 			}
 		}
 		if err != nil {
@@ -1280,7 +1285,9 @@ func BuildAddNegativeKeywordsPayload(lfxV2CampaignServiceBriefsAddNegativeKeywor
 			bearerToken = lfxV2CampaignServiceBriefsAddNegativeKeywordsBearerToken
 		}
 	}
-	v := &lfxv2campaignservicebriefs.AddNegativeKeywordsPayload{}
+	v := &lfxv2campaignservicebriefs.AddNegativeKeywordsPayload{
+		Revision: body.Revision,
+	}
 	if body.NegativeKeywords != nil {
 		v.NegativeKeywords = make([]*lfxv2campaignservicebriefs.NegativeKeywordInput, len(body.NegativeKeywords))
 		for i, val := range body.NegativeKeywords {

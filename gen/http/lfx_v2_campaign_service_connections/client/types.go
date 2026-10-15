@@ -876,6 +876,33 @@ type GetTwitterAdsAudienceResponseBody struct {
 	AllCountersNull *bool `form:"all_counters_null,omitempty" json:"all_counters_null,omitempty" xml:"all_counters_null,omitempty"`
 }
 
+// GetLinkedinAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body.
+type GetLinkedinAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as UTC calendar days (LinkedIn's
+	// Ad Analytics dateRange is UTC) — the same days the LinkedIn campaign metrics
+	// read uses for the same window name
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Every bucket across the five pivots, discriminated by `dimension`. Ordered
+	// by dimension (job_function, seniority, industry, company_size, country),
+	// then impressions descending, then value. Each dimension covers the same
+	// traffic independently, so total within one dimension only — and even then
+	// the total is BELOW the campaigns' own totals: LinkedIn drops values with
+	// fewer than 3 events, withholds values for ads reaching too few members, and
+	// returns only the top 100 values per creative per day.
+	Buckets []*LinkedinAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`, across all dimensions.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+	// Always true: LinkedIn documents professional-demographic metrics as
+	// APPROXIMATE (privacy protection), privacy-thresholded (values under 3 events
+	// dropped, values for ads reaching too few members withheld, top 100 values
+	// per creative per day) and delayed 12-24 hours. Present every counter as an
+	// estimate, never as an exact measurement, and do not reconcile it against the
+	// campaign metrics read.
+	Approximate *bool `form:"approximate,omitempty" json:"approximate,omitempty" xml:"approximate,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body.
@@ -943,6 +970,42 @@ type GetMicrosoftAdsAudienceResponseBody struct {
 	// incomplete (the window's last day may still be aggregating): its counters
 	// may still rise. False when no report is served.
 	DataIncomplete *bool `form:"data_incomplete,omitempty" json:"data_incomplete,omitempty" xml:"data_incomplete,omitempty"`
+}
+
+// GetRedditAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body.
+type GetRedditAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as UTC days (the Reddit campaign
+	// metrics read's range for the same window)
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// Every bucket across the three breakdowns, discriminated by `dimension`.
+	// Ordered by dimension (gender, country, community), then impressions
+	// descending, then value (a value-less bucket last among equals).
+	Buckets []*RedditAdsAudienceBucketResponseBody `form:"buckets,omitempty" json:"buckets,omitempty" xml:"buckets,omitempty"`
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount *int `form:"bucket_count,omitempty" json:"bucket_count,omitempty" xml:"bucket_count,omitempty"`
+}
+
+// GetRedditAdsKeywordsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body.
+type GetRedditAdsKeywordsResponseBody struct {
+	// The reporting window these counters cover, as UTC days (the Reddit campaign
+	// metrics read's range for the same window)
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// One row per (campaign, keyword) across the campaigns this project owns,
+	// ordered by impressions descending, then campaign_id, then text (a text-less
+	// row last among equals), and capped at 50 — see `truncated`.
+	Rows []*RedditAdsKeywordResponseBody `form:"rows,omitempty" json:"rows,omitempty" xml:"rows,omitempty"`
+	// How many rows are in `rows`.
+	RowCount *int `form:"row_count,omitempty" json:"row_count,omitempty" xml:"row_count,omitempty"`
+	// True when this project's campaigns have more (campaign, keyword) rows than
+	// were returned. The rows are the TOP ones by impressions — do not total them
+	// as the project's whole spend.
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
 }
 
 // ResolveGoogleAdsCampaignResponseBody is the type of the
@@ -1013,6 +1076,22 @@ type ResolveRedditAdsCampaignResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
 // endpoint HTTP response body.
 type ResolveTwitterAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches,omitempty" json:"matches,omitempty" xml:"matches,omitempty"`
+	// How many matches were found.
+	MatchCount *int `form:"match_count,omitempty" json:"match_count,omitempty" xml:"match_count,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body.
+type ResolveLinkedinAdsCampaignResponseBody struct {
 	// The upstream id that was resolved, echoed back.
 	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
 	// Every live campaign this project holds for that upstream id. Empty when the
@@ -1113,284 +1192,32 @@ type CreateHubspotCampaignResponseBody struct {
 // MonitorGoogleAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body.
-type MonitorGoogleAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorGoogleAdsAccountResponseBody GoogleAdsAccountMonitorResponseBody
 
 // MonitorLinkedinAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
 // endpoint HTTP response body.
-type MonitorLinkedinAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorLinkedinAdsAccountResponseBody LinkedinAdsAccountMonitorResponseBody
 
 // MonitorMetaAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body.
-type MonitorMetaAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorMetaAdsAccountResponseBody MetaAdsAccountMonitorResponseBody
 
 // MonitorRedditAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
 // endpoint HTTP response body.
-type MonitorRedditAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorRedditAdsAccountResponseBody RedditAdsAccountMonitorResponseBody
 
 // MonitorMicrosoftAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "monitor-microsoft-ads-account" endpoint HTTP response body.
-type MonitorMicrosoftAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorMicrosoftAdsAccountResponseBody MicrosoftAdsAccountMonitorResponseBody
 
 // MonitorTwitterAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body.
-type MonitorTwitterAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorTwitterAdsAccountResponseBody TwitterAdsAccountMonitorResponseBody
 
 // MonitorHubspotAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
@@ -4476,6 +4303,79 @@ type GetTwitterAdsAudienceUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// GetLinkedinAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetLinkedinAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetLinkedinAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetLinkedinAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetLinkedinAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetLinkedinAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetLinkedinAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetLinkedinAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetLinkedinAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetLinkedinAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // GetMicrosoftAdsKeywordsBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4616,6 +4516,152 @@ type GetMicrosoftAdsAudiencePayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-audience"
 // endpoint HTTP response body for the "Unauthorized" error.
 type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetRedditAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetRedditAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetRedditAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetRedditAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetRedditAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetRedditAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetRedditAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetRedditAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsKeywordsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetRedditAdsKeywordsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsKeywordsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "Conflict" error.
+type GetRedditAdsKeywordsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetRedditAdsKeywordsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetRedditAdsKeywordsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsKeywordsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetRedditAdsKeywordsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsKeywordsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "NotFound" error.
+type GetRedditAdsKeywordsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsKeywordsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetRedditAdsKeywordsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// GetRedditAdsKeywordsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetRedditAdsKeywordsUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -4922,6 +4968,72 @@ type ResolveTwitterAdsCampaignPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ResolveTwitterAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "BadRequest" error.
+type ResolveLinkedinAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ResolveLinkedinAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ResolveLinkedinAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "NotFound" error.
+type ResolveLinkedinAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ResolveLinkedinAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ResolveLinkedinAdsCampaignUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -5991,6 +6103,36 @@ type TwitterAdsAudienceBucketResponseBody struct {
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
+// LinkedinAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsAudienceBucketResponseBody struct {
+	// Which LinkedIn Ad Analytics professional-demographic pivot this bucket
+	// belongs to: job_function (MEMBER_JOB_FUNCTION), seniority
+	// (MEMBER_SENIORITY), industry (MEMBER_INDUSTRY), company_size
+	// (MEMBER_COMPANY_SIZE) or country (MEMBER_COUNTRY_V2)
+	Dimension *string `form:"dimension,omitempty" json:"dimension,omitempty" xml:"dimension,omitempty"`
+	// LinkedIn's pivot value for this bucket, VERBATIM — a URN such as
+	// urn:li:function:8, urn:li:seniority:5, urn:li:industry:4 or
+	// urn:li:geo:103644278 (company_size values are passed through as LinkedIn
+	// reports them). NOT resolved to a name: LinkedIn resolves each URN type
+	// through its Standardized Data APIs (/functions, /seniorities, /industries,
+	// /geo), which this read does not call. A value outside a conservative charset
+	// fails the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window — APPROXIMATE (LinkedIn's privacy approximation
+	// for professional demographics)
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window — APPROXIMATE
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window in micro-units of USD (LinkedIn's costInUsd times
+	// 10^6, the same unit the LinkedIn campaign metrics read reports) —
+	// APPROXIMATE, and per LinkedIn not adjusted for over-delivery on a
+	// demographic pivot.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
 // MicrosoftAdsAudienceBucketResponseBody is used to define fields on response
 // body types.
 type MicrosoftAdsAudienceBucketResponseBody struct {
@@ -6008,6 +6150,53 @@ type MicrosoftAdsAudienceBucketResponseBody struct {
 	// Spend over the window in micro-units of the ad account's own currency
 	// (Microsoft's Spend times 10^6). This service performs no FX conversion and
 	// does not know the currency.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// RedditAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type RedditAdsAudienceBucketResponseBody struct {
+	// Which Reddit report breakdown this bucket belongs to: gender (GENDER),
+	// country (COUNTRY) or community (COMMUNITY, the subreddit)
+	Dimension *string `form:"dimension,omitempty" json:"dimension,omitempty" xml:"dimension,omitempty"`
+	// Reddit's breakdown value, verbatim (a gender, a country code or a subreddit
+	// name). ABSENT when Reddit reported an explicit null for this dimension:
+	// traffic Reddit did not attribute to any value, kept so the dimension's
+	// buckets still total its traffic. A value outside a conservative charset
+	// fails the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window (Reddit's SPEND) in micro-units of the ad account's
+	// own currency. This service performs no FX conversion and does not read the
+	// currency.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
+}
+
+// RedditAdsKeywordResponseBody is used to define fields on response body types.
+type RedditAdsKeywordResponseBody struct {
+	// The Reddit campaign this keyword served under (Reddit's id; resolve it to
+	// this service's campaign with reddit-ads/campaign-ref)
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// Reddit's KEYWORD report value, verbatim ("The keyword for the ad."). ABSENT
+	// when Reddit reported an explicit null — delivery it attributed to no
+	// keyword, such as community or interest targeting. Not an identifier: Reddit
+	// reports no keyword id, so this row cannot address a keyword action; it has
+	// not been verified to equal the ad group's targeting entry byte for byte.
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Impressions over the window
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window (Reddit's SPEND, already micro-units) in the ad
+	// account's own currency. This service performs no FX conversion and does not
+	// read the currency.
 	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
 	// Clicks/Impressions as a fraction, 0 when Impressions is 0
 	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
@@ -6057,6 +6246,52 @@ type HubspotCampaignResponseBody struct {
 	// The campaign's start date as HubSpot holds it, for disambiguating same-named
 	// campaigns. Not parsed or normalised here.
 	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
+}
+
+// GoogleAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type GoogleAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // AccountMonitorCampaignResponseBody is used to define fields on response body
@@ -6156,6 +6391,246 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many campaigns the totals reflect: the length of the campaigns array
 	// these totals sum.
 	CampaignCount *int `form:"campaign_count,omitempty" json:"campaign_count,omitempty" xml:"campaign_count,omitempty"`
+	// How many of the campaign_count campaigns have fetch_failed=true. The totals
+	// include those rows at what they carry — zero for a row whose metrics could
+	// not be read — so a non-zero value means the totals may UNDERSTATE the
+	// account, by up to this many campaigns' delivery. An upper bound rather than
+	// an exact count of rows missing from the sum: fetch_failed also marks a row
+	// whose budget or flight alone was unreadable while its metrics were read and
+	// summed. pacing_unknown=true alone does not count a row (every fetch_failed
+	// row also has it, but most pacing_unknown rows were read in full). 0 means
+	// every campaign in the sum was fully read.
+	UnmeasuredCampaigns *int `form:"unmeasured_campaigns,omitempty" json:"unmeasured_campaigns,omitempty" xml:"unmeasured_campaigns,omitempty"`
+}
+
+// LinkedinAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MetaAdsAccountMonitorResponseBody is used to define fields on response body
+// types.
+type MetaAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// RedditAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type RedditAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MicrosoftAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// TwitterAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type TwitterAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days *int `form:"days,omitempty" json:"days,omitempty" xml:"days,omitempty"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns,omitempty" json:"campaigns,omitempty" xml:"campaigns,omitempty"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items,omitempty" json:"action_items,omitempty" xml:"action_items,omitempty"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals,omitempty" json:"totals,omitempty" xml:"totals,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // HubspotEmailMonitorEmailResponseBody is used to define fields on response
@@ -10801,6 +11276,113 @@ func NewGetTwitterAdsAudienceUnauthorized(body *GetTwitterAdsAudienceUnauthorize
 	return v
 }
 
+// NewGetLinkedinAdsAudienceLinkedinAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-linkedin-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetLinkedinAdsAudienceLinkedinAdsAudienceOK(body *GetLinkedinAdsAudienceResponseBody) *lfxv2campaignserviceconnections.LinkedinAdsAudience {
+	v := &lfxv2campaignserviceconnections.LinkedinAdsAudience{
+		Window:      *body.Window,
+		BucketCount: *body.BucketCount,
+		Approximate: *body.Approximate,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.LinkedinAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalLinkedinAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsLinkedinAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint BadRequest error.
+func NewGetLinkedinAdsAudienceBadRequest(body *GetLinkedinAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceConflict builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint Conflict error.
+func NewGetLinkedinAdsAudienceConflict(body *GetLinkedinAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint ServiceUnavailable error.
+func NewGetLinkedinAdsAudienceServiceUnavailable(body *GetLinkedinAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint InternalServerError error.
+func NewGetLinkedinAdsAudienceInternalServerError(body *GetLinkedinAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceNotFound builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint NotFound error.
+func NewGetLinkedinAdsAudienceNotFound(body *GetLinkedinAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint PayloadTooLarge error.
+func NewGetLinkedinAdsAudiencePayloadTooLarge(body *GetLinkedinAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetLinkedinAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-linkedin-ads-audience
+// endpoint Unauthorized error.
+func NewGetLinkedinAdsAudienceUnauthorized(body *GetLinkedinAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewGetMicrosoftAdsKeywordsMicrosoftAdsKeywordsOK builds a
 // "lfx-v2-campaign-service-connections" service "get-microsoft-ads-keywords"
 // endpoint result from a HTTP "OK" response.
@@ -11012,6 +11594,215 @@ func NewGetMicrosoftAdsAudiencePayloadTooLarge(body *GetMicrosoftAdsAudiencePayl
 // lfx-v2-campaign-service-connections service get-microsoft-ads-audience
 // endpoint Unauthorized error.
 func NewGetMicrosoftAdsAudienceUnauthorized(body *GetMicrosoftAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewGetRedditAdsAudienceRedditAdsAudienceOK builds a
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint result from a HTTP "OK" response.
+func NewGetRedditAdsAudienceRedditAdsAudienceOK(body *GetRedditAdsAudienceResponseBody) *lfxv2campaignserviceconnections.RedditAdsAudience {
+	v := &lfxv2campaignserviceconnections.RedditAdsAudience{
+		Window:      *body.Window,
+		BucketCount: *body.BucketCount,
+	}
+	v.Buckets = make([]*lfxv2campaignserviceconnections.RedditAdsAudienceBucket, len(body.Buckets))
+	for i, val := range body.Buckets {
+		if val == nil {
+			v.Buckets[i] = nil
+			continue
+		}
+		v.Buckets[i] = unmarshalRedditAdsAudienceBucketResponseBodyToLfxv2campaignserviceconnectionsRedditAdsAudienceBucket(val)
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceBadRequest builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// BadRequest error.
+func NewGetRedditAdsAudienceBadRequest(body *GetRedditAdsAudienceBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceConflict builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-audience endpoint Conflict error.
+func NewGetRedditAdsAudienceConflict(body *GetRedditAdsAudienceConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// ServiceUnavailable error.
+func NewGetRedditAdsAudienceServiceUnavailable(body *GetRedditAdsAudienceServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// InternalServerError error.
+func NewGetRedditAdsAudienceInternalServerError(body *GetRedditAdsAudienceInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceNotFound builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-audience endpoint NotFound error.
+func NewGetRedditAdsAudienceNotFound(body *GetRedditAdsAudienceNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudiencePayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// PayloadTooLarge error.
+func NewGetRedditAdsAudiencePayloadTooLarge(body *GetRedditAdsAudiencePayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsAudienceUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-audience endpoint
+// Unauthorized error.
+func NewGetRedditAdsAudienceUnauthorized(body *GetRedditAdsAudienceUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsRedditAdsKeywordsOK builds a
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint result from a HTTP "OK" response.
+func NewGetRedditAdsKeywordsRedditAdsKeywordsOK(body *GetRedditAdsKeywordsResponseBody) *lfxv2campaignserviceconnections.RedditAdsKeywords {
+	v := &lfxv2campaignserviceconnections.RedditAdsKeywords{
+		Window:    *body.Window,
+		RowCount:  *body.RowCount,
+		Truncated: *body.Truncated,
+	}
+	v.Rows = make([]*lfxv2campaignserviceconnections.RedditAdsKeyword, len(body.Rows))
+	for i, val := range body.Rows {
+		if val == nil {
+			v.Rows[i] = nil
+			continue
+		}
+		v.Rows[i] = unmarshalRedditAdsKeywordResponseBodyToLfxv2campaignserviceconnectionsRedditAdsKeyword(val)
+	}
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsBadRequest builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords endpoint
+// BadRequest error.
+func NewGetRedditAdsKeywordsBadRequest(body *GetRedditAdsKeywordsBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsConflict builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-keywords endpoint Conflict error.
+func NewGetRedditAdsKeywordsConflict(body *GetRedditAdsKeywordsConflictResponseBody) *lfxv2campaignserviceconnections.ConflictError {
+	v := &lfxv2campaignserviceconnections.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords endpoint
+// ServiceUnavailable error.
+func NewGetRedditAdsKeywordsServiceUnavailable(body *GetRedditAdsKeywordsServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsInternalServerError builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords endpoint
+// InternalServerError error.
+func NewGetRedditAdsKeywordsInternalServerError(body *GetRedditAdsKeywordsInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsNotFound builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-keywords endpoint NotFound error.
+func NewGetRedditAdsKeywordsNotFound(body *GetRedditAdsKeywordsNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords endpoint
+// PayloadTooLarge error.
+func NewGetRedditAdsKeywordsPayloadTooLarge(body *GetRedditAdsKeywordsPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsUnauthorized builds a
+// lfx-v2-campaign-service-connections service get-reddit-ads-keywords endpoint
+// Unauthorized error.
+func NewGetRedditAdsKeywordsUnauthorized(body *GetRedditAdsKeywordsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
 	v := &lfxv2campaignserviceconnections.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -11477,6 +12268,99 @@ func NewResolveTwitterAdsCampaignPayloadTooLarge(body *ResolveTwitterAdsCampaign
 // lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign
 // endpoint Unauthorized error.
 func NewResolveTwitterAdsCampaignUnauthorized(body *ResolveTwitterAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
+	v := &lfxv2campaignserviceconnections.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignPlatformCampaignResolutionOK builds a
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint result from a HTTP "OK" response.
+func NewResolveLinkedinAdsCampaignPlatformCampaignResolutionOK(body *ResolveLinkedinAdsCampaignResponseBody) *lfxv2campaignserviceconnections.PlatformCampaignResolution {
+	v := &lfxv2campaignserviceconnections.PlatformCampaignResolution{
+		PlatformCampaignID: *body.PlatformCampaignID,
+		MatchCount:         *body.MatchCount,
+	}
+	v.Matches = make([]*lfxv2campaignserviceconnections.CampaignRef, len(body.Matches))
+	for i, val := range body.Matches {
+		if val == nil {
+			v.Matches[i] = nil
+			continue
+		}
+		v.Matches[i] = unmarshalCampaignRefResponseBodyToLfxv2campaignserviceconnectionsCampaignRef(val)
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignBadRequest builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint BadRequest error.
+func NewResolveLinkedinAdsCampaignBadRequest(body *ResolveLinkedinAdsCampaignBadRequestResponseBody) *lfxv2campaignserviceconnections.BadRequestError {
+	v := &lfxv2campaignserviceconnections.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignServiceUnavailable builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint ServiceUnavailable error.
+func NewResolveLinkedinAdsCampaignServiceUnavailable(body *ResolveLinkedinAdsCampaignServiceUnavailableResponseBody) *lfxv2campaignserviceconnections.ConnServiceUnavailableError {
+	v := &lfxv2campaignserviceconnections.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignInternalServerError builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint InternalServerError error.
+func NewResolveLinkedinAdsCampaignInternalServerError(body *ResolveLinkedinAdsCampaignInternalServerErrorResponseBody) *lfxv2campaignserviceconnections.InternalServerError {
+	v := &lfxv2campaignserviceconnections.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignNotFound builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint NotFound error.
+func NewResolveLinkedinAdsCampaignNotFound(body *ResolveLinkedinAdsCampaignNotFoundResponseBody) *lfxv2campaignserviceconnections.NotFoundError {
+	v := &lfxv2campaignserviceconnections.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignPayloadTooLarge builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint PayloadTooLarge error.
+func NewResolveLinkedinAdsCampaignPayloadTooLarge(body *ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody) *lfxv2campaignserviceconnections.PayloadTooLargeError {
+	v := &lfxv2campaignserviceconnections.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignUnauthorized builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint Unauthorized error.
+func NewResolveLinkedinAdsCampaignUnauthorized(body *ResolveLinkedinAdsCampaignUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignserviceconnections.UnauthorizedError {
 	v := &lfxv2campaignserviceconnections.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -13766,6 +14650,36 @@ func ValidateGetTwitterAdsAudienceResponseBody(body *GetTwitterAdsAudienceRespon
 	return
 }
 
+// ValidateGetLinkedinAdsAudienceResponseBody runs the validations defined on
+// GetLinkedinAdsAudienceResponseBody
+func ValidateGetLinkedinAdsAudienceResponseBody(body *GetLinkedinAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.Approximate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("approximate", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := validateLinkedinAdsAudienceBucketResponseBody(e, "body.buckets[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsResponseBody runs the validations defined on
 // GetMicrosoftAdsKeywordsResponseBody
 func ValidateGetMicrosoftAdsKeywordsResponseBody(body *GetMicrosoftAdsKeywordsResponseBody) (err error) {
@@ -13840,6 +14754,63 @@ func ValidateGetMicrosoftAdsAudienceResponseBody(body *GetMicrosoftAdsAudienceRe
 	}
 	if body.MetricsAsOf != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceResponseBody runs the validations defined on
+// GetRedditAdsAudienceResponseBody
+func ValidateGetRedditAdsAudienceResponseBody(body *GetRedditAdsAudienceResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Buckets == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("buckets", "body"))
+	}
+	if body.BucketCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("bucket_count", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Buckets {
+		if e != nil {
+			if err2 := validateRedditAdsAudienceBucketResponseBody(e, "body.buckets[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsResponseBody runs the validations defined on
+// GetRedditAdsKeywordsResponseBody
+func ValidateGetRedditAdsKeywordsResponseBody(body *GetRedditAdsKeywordsResponseBody) (err error) {
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Rows == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("rows", "body"))
+	}
+	if body.RowCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("row_count", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "last_7_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	for _, e := range body.Rows {
+		if e != nil {
+			if err2 := validateRedditAdsKeywordResponseBody(e, "body.rows[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
 	}
 	return
 }
@@ -13935,6 +14906,28 @@ func ValidateResolveRedditAdsCampaignResponseBody(body *ResolveRedditAdsCampaign
 // ValidateResolveTwitterAdsCampaignResponseBody runs the validations defined
 // on ResolveTwitterAdsCampaignResponseBody
 func ValidateResolveTwitterAdsCampaignResponseBody(body *ResolveTwitterAdsCampaignResponseBody) (err error) {
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.Matches == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("matches", "body"))
+	}
+	if body.MatchCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("match_count", "body"))
+	}
+	for _, e := range body.Matches {
+		if e != nil {
+			if err2 := validateCampaignRefResponseBody(e, "body.matches[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignResponseBody runs the validations defined
+// on ResolveLinkedinAdsCampaignResponseBody
+func ValidateResolveLinkedinAdsCampaignResponseBody(body *ResolveLinkedinAdsCampaignResponseBody) (err error) {
 	if body.PlatformCampaignID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
 	}
@@ -18091,6 +19084,95 @@ func ValidateGetTwitterAdsAudienceUnauthorizedResponseBody(body *GetTwitterAdsAu
 	return
 }
 
+// ValidateGetLinkedinAdsAudienceBadRequestResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceBadRequestResponseBody
+func ValidateGetLinkedinAdsAudienceBadRequestResponseBody(body *GetLinkedinAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceConflictResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceConflictResponseBody
+func ValidateGetLinkedinAdsAudienceConflictResponseBody(body *GetLinkedinAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on GetLinkedinAdsAudienceServiceUnavailableResponseBody
+func ValidateGetLinkedinAdsAudienceServiceUnavailableResponseBody(body *GetLinkedinAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on GetLinkedinAdsAudienceInternalServerErrorResponseBody
+func ValidateGetLinkedinAdsAudienceInternalServerErrorResponseBody(body *GetLinkedinAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceNotFoundResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceNotFoundResponseBody
+func ValidateGetLinkedinAdsAudienceNotFoundResponseBody(body *GetLinkedinAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudiencePayloadTooLargeResponseBody runs the
+// validations defined on GetLinkedinAdsAudiencePayloadTooLargeResponseBody
+func ValidateGetLinkedinAdsAudiencePayloadTooLargeResponseBody(body *GetLinkedinAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetLinkedinAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on GetLinkedinAdsAudienceUnauthorizedResponseBody
+func ValidateGetLinkedinAdsAudienceUnauthorizedResponseBody(body *GetLinkedinAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody runs the validations
 // defined on GetMicrosoftAdsKeywordsBadRequestResponseBody
 func ValidateGetMicrosoftAdsKeywordsBadRequestResponseBody(body *GetMicrosoftAdsKeywordsBadRequestResponseBody) (err error) {
@@ -18260,6 +19342,184 @@ func ValidateGetMicrosoftAdsAudiencePayloadTooLargeResponseBody(body *GetMicroso
 // ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody runs the validations
 // defined on GetMicrosoftAdsAudienceUnauthorizedResponseBody
 func ValidateGetMicrosoftAdsAudienceUnauthorizedResponseBody(body *GetMicrosoftAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceBadRequestResponseBody runs the validations
+// defined on GetRedditAdsAudienceBadRequestResponseBody
+func ValidateGetRedditAdsAudienceBadRequestResponseBody(body *GetRedditAdsAudienceBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceConflictResponseBody runs the validations
+// defined on GetRedditAdsAudienceConflictResponseBody
+func ValidateGetRedditAdsAudienceConflictResponseBody(body *GetRedditAdsAudienceConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceServiceUnavailableResponseBody runs the
+// validations defined on GetRedditAdsAudienceServiceUnavailableResponseBody
+func ValidateGetRedditAdsAudienceServiceUnavailableResponseBody(body *GetRedditAdsAudienceServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceInternalServerErrorResponseBody runs the
+// validations defined on GetRedditAdsAudienceInternalServerErrorResponseBody
+func ValidateGetRedditAdsAudienceInternalServerErrorResponseBody(body *GetRedditAdsAudienceInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceNotFoundResponseBody runs the validations
+// defined on GetRedditAdsAudienceNotFoundResponseBody
+func ValidateGetRedditAdsAudienceNotFoundResponseBody(body *GetRedditAdsAudienceNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudiencePayloadTooLargeResponseBody runs the validations
+// defined on GetRedditAdsAudiencePayloadTooLargeResponseBody
+func ValidateGetRedditAdsAudiencePayloadTooLargeResponseBody(body *GetRedditAdsAudiencePayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsAudienceUnauthorizedResponseBody runs the validations
+// defined on GetRedditAdsAudienceUnauthorizedResponseBody
+func ValidateGetRedditAdsAudienceUnauthorizedResponseBody(body *GetRedditAdsAudienceUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsBadRequestResponseBody runs the validations
+// defined on GetRedditAdsKeywordsBadRequestResponseBody
+func ValidateGetRedditAdsKeywordsBadRequestResponseBody(body *GetRedditAdsKeywordsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsConflictResponseBody runs the validations
+// defined on GetRedditAdsKeywordsConflictResponseBody
+func ValidateGetRedditAdsKeywordsConflictResponseBody(body *GetRedditAdsKeywordsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsServiceUnavailableResponseBody runs the
+// validations defined on GetRedditAdsKeywordsServiceUnavailableResponseBody
+func ValidateGetRedditAdsKeywordsServiceUnavailableResponseBody(body *GetRedditAdsKeywordsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsInternalServerErrorResponseBody runs the
+// validations defined on GetRedditAdsKeywordsInternalServerErrorResponseBody
+func ValidateGetRedditAdsKeywordsInternalServerErrorResponseBody(body *GetRedditAdsKeywordsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsNotFoundResponseBody runs the validations
+// defined on GetRedditAdsKeywordsNotFoundResponseBody
+func ValidateGetRedditAdsKeywordsNotFoundResponseBody(body *GetRedditAdsKeywordsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsPayloadTooLargeResponseBody runs the validations
+// defined on GetRedditAdsKeywordsPayloadTooLargeResponseBody
+func ValidateGetRedditAdsKeywordsPayloadTooLargeResponseBody(body *GetRedditAdsKeywordsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateGetRedditAdsKeywordsUnauthorizedResponseBody runs the validations
+// defined on GetRedditAdsKeywordsUnauthorizedResponseBody
+func ValidateGetRedditAdsKeywordsUnauthorizedResponseBody(body *GetRedditAdsKeywordsUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -18626,6 +19886,80 @@ func ValidateResolveTwitterAdsCampaignPayloadTooLargeResponseBody(body *ResolveT
 // ValidateResolveTwitterAdsCampaignUnauthorizedResponseBody runs the
 // validations defined on ResolveTwitterAdsCampaignUnauthorizedResponseBody
 func ValidateResolveTwitterAdsCampaignUnauthorizedResponseBody(body *ResolveTwitterAdsCampaignUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignBadRequestResponseBody runs the
+// validations defined on ResolveLinkedinAdsCampaignBadRequestResponseBody
+func ValidateResolveLinkedinAdsCampaignBadRequestResponseBody(body *ResolveLinkedinAdsCampaignBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignServiceUnavailableResponseBody runs the
+// validations defined on
+// ResolveLinkedinAdsCampaignServiceUnavailableResponseBody
+func ValidateResolveLinkedinAdsCampaignServiceUnavailableResponseBody(body *ResolveLinkedinAdsCampaignServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignInternalServerErrorResponseBody runs the
+// validations defined on
+// ResolveLinkedinAdsCampaignInternalServerErrorResponseBody
+func ValidateResolveLinkedinAdsCampaignInternalServerErrorResponseBody(body *ResolveLinkedinAdsCampaignInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignNotFoundResponseBody runs the validations
+// defined on ResolveLinkedinAdsCampaignNotFoundResponseBody
+func ValidateResolveLinkedinAdsCampaignNotFoundResponseBody(body *ResolveLinkedinAdsCampaignNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignPayloadTooLargeResponseBody runs the
+// validations defined on ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody
+func ValidateResolveLinkedinAdsCampaignPayloadTooLargeResponseBody(body *ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateResolveLinkedinAdsCampaignUnauthorizedResponseBody runs the
+// validations defined on ResolveLinkedinAdsCampaignUnauthorizedResponseBody
+func ValidateResolveLinkedinAdsCampaignUnauthorizedResponseBody(body *ResolveLinkedinAdsCampaignUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -20067,6 +21401,71 @@ func validateTwitterAdsAudienceBucketResponseBody(body *TwitterAdsAudienceBucket
 	return
 }
 
+// ValidateLinkedinAdsAudienceBucketResponseBody runs the validations defined
+// on linkedin-ads-audience-bucket
+func ValidateLinkedinAdsAudienceBucketResponseBody(body *LinkedinAdsAudienceBucketResponseBody) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", "body"))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "job_function" || *body.Dimension == "seniority" || *body.Dimension == "industry" || *body.Dimension == "company_size" || *body.Dimension == "country") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"job_function", "seniority", "industry", "company_size", "country"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9:_.\\-]{0,127}$"))
+	}
+	return
+}
+
+// validateLinkedinAdsAudienceBucketResponseBody checks
+// linkedin-ads-audience-bucket and reports errors using the path supplied by
+// its caller
+func validateLinkedinAdsAudienceBucketResponseBody(body *LinkedinAdsAudienceBucketResponseBody, path string) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", path))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", path))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", path))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", path))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", path))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", path))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "job_function" || *body.Dimension == "seniority" || *body.Dimension == "industry" || *body.Dimension == "company_size" || *body.Dimension == "country") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".dimension", *body.Dimension, []any{"job_function", "seniority", "industry", "company_size", "country"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9:_.\\-]{0,127}$"))
+	}
+	return
+}
+
 // ValidateMicrosoftAdsAudienceBucketResponseBody runs the validations defined
 // on microsoft-ads-audience-bucket
 func ValidateMicrosoftAdsAudienceBucketResponseBody(body *MicrosoftAdsAudienceBucketResponseBody) (err error) {
@@ -20112,6 +21511,117 @@ func validateMicrosoftAdsAudienceBucketResponseBody(body *MicrosoftAdsAudienceBu
 	}
 	if body.Ctr == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", path))
+	}
+	return
+}
+
+// ValidateRedditAdsAudienceBucketResponseBody runs the validations defined on
+// reddit-ads-audience-bucket
+func ValidateRedditAdsAudienceBucketResponseBody(body *RedditAdsAudienceBucketResponseBody) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "gender" || *body.Dimension == "country" || *body.Dimension == "community") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.dimension", *body.Dimension, []any{"gender", "country", "community"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}$"))
+	}
+	return
+}
+
+// validateRedditAdsAudienceBucketResponseBody checks
+// reddit-ads-audience-bucket and reports errors using the path supplied by its
+// caller
+func validateRedditAdsAudienceBucketResponseBody(body *RedditAdsAudienceBucketResponseBody, path string) (err error) {
+	if body.Dimension == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dimension", path))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", path))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", path))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", path))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", path))
+	}
+	if body.Dimension != nil {
+		if !(*body.Dimension == "gender" || *body.Dimension == "country" || *body.Dimension == "community") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".dimension", *body.Dimension, []any{"gender", "country", "community"}))
+		}
+	}
+	if body.Value != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".value", *body.Value, "^[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}$"))
+	}
+	return
+}
+
+// ValidateRedditAdsKeywordResponseBody runs the validations defined on
+// reddit-ads-keyword
+func ValidateRedditAdsKeywordResponseBody(body *RedditAdsKeywordResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	if body.Text != nil {
+		if utf8.RuneCountInString(*body.Text) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.text", *body.Text, utf8.RuneCountInString(*body.Text), 200, false))
+		}
+	}
+	return
+}
+
+// validateRedditAdsKeywordResponseBody checks reddit-ads-keyword and reports
+// errors using the path supplied by its caller
+func validateRedditAdsKeywordResponseBody(body *RedditAdsKeywordResponseBody, path string) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", path))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", path))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", path))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", path))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", path))
+	}
+	if body.Text != nil {
+		if utf8.RuneCountInString(*body.Text) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".text", *body.Text, utf8.RuneCountInString(*body.Text), 200, false))
+		}
 	}
 	return
 }
@@ -20189,6 +21699,105 @@ func validateHubspotCampaignResponseBody(body *HubspotCampaignResponseBody, path
 	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	return
+}
+
+// ValidateGoogleAdsAccountMonitorResponseBody runs the validations defined on
+// google-ads-account-monitor
+func ValidateGoogleAdsAccountMonitorResponseBody(body *GoogleAdsAccountMonitorResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, "body.campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, "body.action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, "body.totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// validateGoogleAdsAccountMonitorResponseBody checks
+// google-ads-account-monitor and reports errors using the path supplied by its
+// caller
+func validateGoogleAdsAccountMonitorResponseBody(body *GoogleAdsAccountMonitorResponseBody, path string) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", path))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", path))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", path))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", path))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", path))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, path+".campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, path+".action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, path+".totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
 	return
 }
@@ -20367,6 +21976,14 @@ func ValidateAccountMonitorTotalsResponseBody(body *AccountMonitorTotalsResponse
 	if body.CampaignCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_count", "body"))
 	}
+	if body.UnmeasuredCampaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unmeasured_campaigns", "body"))
+	}
+	if body.UnmeasuredCampaigns != nil {
+		if *body.UnmeasuredCampaigns < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.unmeasured_campaigns", *body.UnmeasuredCampaigns, 0, true))
+		}
+	}
 	return
 }
 
@@ -20384,6 +22001,508 @@ func validateAccountMonitorTotalsResponseBody(body *AccountMonitorTotalsResponse
 	}
 	if body.CampaignCount == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_count", path))
+	}
+	if body.UnmeasuredCampaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("unmeasured_campaigns", path))
+	}
+	if body.UnmeasuredCampaigns != nil {
+		if *body.UnmeasuredCampaigns < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".unmeasured_campaigns", *body.UnmeasuredCampaigns, 0, true))
+		}
+	}
+	return
+}
+
+// ValidateLinkedinAdsAccountMonitorResponseBody runs the validations defined
+// on linkedin-ads-account-monitor
+func ValidateLinkedinAdsAccountMonitorResponseBody(body *LinkedinAdsAccountMonitorResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, "body.campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, "body.action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, "body.totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// validateLinkedinAdsAccountMonitorResponseBody checks
+// linkedin-ads-account-monitor and reports errors using the path supplied by
+// its caller
+func validateLinkedinAdsAccountMonitorResponseBody(body *LinkedinAdsAccountMonitorResponseBody, path string) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", path))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", path))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", path))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", path))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", path))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, path+".campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, path+".action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, path+".totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// ValidateMetaAdsAccountMonitorResponseBody runs the validations defined on
+// meta-ads-account-monitor
+func ValidateMetaAdsAccountMonitorResponseBody(body *MetaAdsAccountMonitorResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, "body.campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, "body.action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, "body.totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// validateMetaAdsAccountMonitorResponseBody checks meta-ads-account-monitor
+// and reports errors using the path supplied by its caller
+func validateMetaAdsAccountMonitorResponseBody(body *MetaAdsAccountMonitorResponseBody, path string) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", path))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", path))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", path))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", path))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", path))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, path+".campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, path+".action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, path+".totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// ValidateRedditAdsAccountMonitorResponseBody runs the validations defined on
+// reddit-ads-account-monitor
+func ValidateRedditAdsAccountMonitorResponseBody(body *RedditAdsAccountMonitorResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, "body.campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, "body.action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, "body.totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// validateRedditAdsAccountMonitorResponseBody checks
+// reddit-ads-account-monitor and reports errors using the path supplied by its
+// caller
+func validateRedditAdsAccountMonitorResponseBody(body *RedditAdsAccountMonitorResponseBody, path string) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", path))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", path))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", path))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", path))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", path))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, path+".campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, path+".action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, path+".totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// ValidateMicrosoftAdsAccountMonitorResponseBody runs the validations defined
+// on microsoft-ads-account-monitor
+func ValidateMicrosoftAdsAccountMonitorResponseBody(body *MicrosoftAdsAccountMonitorResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, "body.campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, "body.action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, "body.totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// validateMicrosoftAdsAccountMonitorResponseBody checks
+// microsoft-ads-account-monitor and reports errors using the path supplied by
+// its caller
+func validateMicrosoftAdsAccountMonitorResponseBody(body *MicrosoftAdsAccountMonitorResponseBody, path string) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", path))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", path))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", path))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", path))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", path))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, path+".campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, path+".action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, path+".totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// ValidateTwitterAdsAccountMonitorResponseBody runs the validations defined on
+// twitter-ads-account-monitor
+func ValidateTwitterAdsAccountMonitorResponseBody(body *TwitterAdsAccountMonitorResponseBody) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", "body"))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", "body"))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", "body"))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", "body"))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", "body"))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, "body.campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, "body.action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, "body.totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
+	}
+	return
+}
+
+// validateTwitterAdsAccountMonitorResponseBody checks
+// twitter-ads-account-monitor and reports errors using the path supplied by
+// its caller
+func validateTwitterAdsAccountMonitorResponseBody(body *TwitterAdsAccountMonitorResponseBody, path string) (err error) {
+	if body.AccountID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("account_id", path))
+	}
+	if body.Days == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("days", path))
+	}
+	if body.Campaigns == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaigns", path))
+	}
+	if body.ActionItems == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("action_items", path))
+	}
+	if body.Totals == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("totals", path))
+	}
+	for _, e := range body.Campaigns {
+		if e != nil {
+			if err2 := validateAccountMonitorCampaignResponseBody(e, path+".campaigns[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	for _, e := range body.ActionItems {
+		if e != nil {
+			if err2 := validateAccountMonitorActionItemResponseBody(e, path+".action_items[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Totals != nil {
+		if err2 := validateAccountMonitorTotalsResponseBody(body.Totals, path+".totals"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.MetricsAsOf != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_as_of", *body.MetricsAsOf, goa.FormatDateTime))
+	}
+	if body.MetricsWindowStart != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_start", *body.MetricsWindowStart, goa.FormatDate))
+	}
+	if body.MetricsWindowEnd != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".metrics_window_end", *body.MetricsWindowEnd, goa.FormatDate))
 	}
 	return
 }

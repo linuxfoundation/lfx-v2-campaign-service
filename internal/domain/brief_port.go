@@ -167,11 +167,12 @@ type CampaignReader interface {
 	// campaign id) can address the brief-scoped mutation routes.
 	//
 	// Returns EVERY live match rather than one, and an empty slice rather than an error when
-	// the project owns none. For Google Ads a valid database holds at most one match —
-	// uq_campaigns_platform_campaign_live (migration 000020) is a global UNIQUE index on
-	// (platform, platform_campaign_id) for live Google Ads rows only. For Microsoft Advertising
-	// more than one live match is reachable (ids are per ad account, and the index does not
-	// cover it), so the slice is load-bearing: a caller must refuse more than one. "This
+	// the project owns none. For Google Ads, LinkedIn and Meta a valid database holds at most one
+	// match — 000020, 000042 and 000043 are global UNIQUE indexes on (platform,
+	// platform_campaign_id) over live rows of that provider only. For Microsoft Advertising,
+	// Reddit and X more than one live match is reachable (their binding indexes, 000044-000046,
+	// also key on the ad account, so two accounts' rows can share an id), so the slice is
+	// load-bearing: a caller must refuse more than one. "This
 	// project does not own that campaign" is an ordinary answer a caller acts on, not a fault.
 	//
 	// Scoped by projectID, which is what stops it answering questions about another

@@ -7,8 +7,8 @@
 // Reddit Ads API v3 takes a promoted-post image only as a public URL it fetches and re-hosts
 // at post creation. A signed URL lets a Reddit dispatch use an image stored through
 // upload-creative-asset without making that store public: the URL names exactly one asset of
-// one brief of one project, is valid for minutes, and is minted only inside the dispatch —
-// never returned to an API client. The full security model is in
+// one brief of one project, is valid for minutes, and is minted only server-side, immediately
+// before the Reddit post request that hands it to Reddit — never returned to an API client. The full security model is in
 // docs/knowledge/architecture/signed-creative-asset-urls.md.
 //
 // # Token
@@ -46,12 +46,27 @@ const (
 	// the image during the post-create call it is handed to, so minutes are ample.
 	DefaultTTL = 10 * time.Minute
 	// MaxTTL is the hard ceiling on a URL's lifetime, both for the configured TTL and for any
-	// expiry Verify will accept — a validly signed URL claiming a later expiry is refused, so
-	// a leaked key cannot mint long-lived URLs that this service would honour.
+	// expiry Verify will accept (plus MaxClockSkew) — a validly signed URL claiming a later
+	// expiry is refused, so a leaked key cannot mint long-lived URLs this service would honour.
 	MaxTTL = 60 * time.Minute
-	// MinTTL keeps a misconfiguration from minting URLs that expire before Reddit can fetch
-	// them.
-	MinTTL = 1 * time.Minute
+	// MaxClockSkew is how far AHEAD of the verifying pod's clock the minting pod's clock may
+	// be. Verify accepts an expiry up to MaxTTL+MaxClockSkew away, because a URL minted at the
+	// MaxTTL ceiling by a pod whose clock leads the serving pod's by even one second would
+	// otherwise look "too far in the future" and be refused, failing Reddit's fetch. It widens
+	// only the far bound: an expiry already in the past is still refused (a minting pod whose
+	// clock LAGS only shortens a URL's life, which MinTTL's margin covers), and it does not let
+	// a leaked key mint materially longer-lived URLs. One minute is generous for NTP-synced pods.
+	MaxClockSkew = 1 * time.Minute
+	// MinTTL is the floor on the configured TTL. The URL is minted immediately before the
+	// promoted-post request that hands it to Reddit (reddit.CampaignInput.ImageURLSource), and
+	// Reddit fetches it inside that request, so the URL must outlive: one post attempt (bounded
+	// by the Reddit client's 30s request timeout), a token refresh that attempt may make first
+	// (the cached token is normally still valid, but a 401 earlier in CreateCampaign can
+	// invalidate it; the refresh is at most one more request timeout), Reddit's own fetch of
+	// the image, and clock skew between the pod that minted it and the pod that serves it.
+	// Five minutes covers that with a wide margin; anything shorter risks a created_degraded
+	// campaign with no ad because the fetch arrived after expiry.
+	MinTTL = 5 * time.Minute
 
 	// RoutePrefix is the path the serving route is mounted under
 	// (design/signed_asset.go). Kept here so Mint and the route cannot drift apart silently;
@@ -88,38 +103,70 @@ var ErrDisabled = errors.New("signed creative-asset URLs are not enabled")
 
 // New builds a Signer from the raw configuration values.
 //
-// It returns (nil, nil) — the feature OFF — when the key or the base URL is empty: the feature
-// is optional, and a deployment that has not provisioned the secret must still start. A value
-// that IS set but is unusable is an error, because a security control that silently degrades
-// to "off" on a typo is worse than one that refuses to start:
+// EVERY non-empty value is validated first, and only then is the feature decided on or off.
+// A value that IS set but unusable is an error even when the feature would be off anyway (a
+// malformed key with no base URL yet, a 61m TTL with no key): a security control that starts
+// silently on a typo only fails later, when the missing half is supplied, which is the worst
+// time to learn it. The rules:
 //   - the key must be standard base64 decoding to at least MinKeyBytes bytes;
 //   - the base URL must be absolute https with a host, and carry no userinfo, path, query or
 //     fragment (the route's path is fixed, and anything else would be signed into nothing);
 //   - the TTL, when set, must parse as a Go duration within [MinTTL, MaxTTL].
 //
+// It then returns (nil, nil) — the feature OFF — when the key or the base URL is empty: the
+// feature is optional, and a deployment that has not provisioned the secret must still start.
 // Error messages never quote the key.
 func New(keyB64, baseURL, ttlRaw string) (*Signer, error) {
 	keyB64 = strings.TrimSpace(keyB64)
 	baseURL = strings.TrimSpace(baseURL)
-	if keyB64 == "" || baseURL == "" {
-		return nil, nil
+	var errs []error
+	var key []byte
+	if keyB64 != "" {
+		k, err := base64.StdEncoding.DecodeString(keyB64)
+		switch {
+		case err != nil:
+			errs = append(errs, errors.New("creative-asset URL signing key is not valid standard base64"))
+		case len(k) < MinKeyBytes:
+			errs = append(errs, fmt.Errorf("creative-asset URL signing key decodes to %d bytes; at least %d are required", len(k), MinKeyBytes))
+		default:
+			key = k
+		}
 	}
-	key, err := base64.StdEncoding.DecodeString(keyB64)
-	if err != nil {
-		return nil, errors.New("creative-asset URL signing key is not valid standard base64")
-	}
-	if len(key) < MinKeyBytes {
-		return nil, fmt.Errorf("creative-asset URL signing key decodes to %d bytes; at least %d are required", len(key), MinKeyBytes)
-	}
-	base, err := parseBaseURL(baseURL)
-	if err != nil {
-		return nil, err
+	var base *url.URL
+	if baseURL != "" {
+		b, err := parseBaseURL(baseURL)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		base = b
 	}
 	ttl, err := parseTTL(ttlRaw)
 	if err != nil {
-		return nil, err
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	if keyB64 == "" || baseURL == "" {
+		return nil, nil
 	}
 	return &Signer{key: key, base: base, ttl: ttl, now: time.Now}, nil
+}
+
+// ValidateIDs reports whether Mint would accept these ids, without minting. The Reddit
+// dispatch calls it before any upstream call so that minting LATE — immediately before the
+// promoted-post request — cannot fail on an id that was knowable up front.
+func ValidateIDs(projectID, briefID, assetID string) error {
+	if !ProjectIDPattern.MatchString(projectID) {
+		return errors.New("project id cannot be carried in a signed asset URL")
+	}
+	if _, err := uuid.Parse(briefID); err != nil {
+		return errors.New("brief id is not a valid UUID")
+	}
+	if _, err := uuid.Parse(assetID); err != nil {
+		return errors.New("asset id is not a valid UUID")
+	}
+	return nil
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {
@@ -188,17 +235,10 @@ func (s *Signer) Mint(projectID, briefID, assetID string) (string, time.Time, er
 	if s == nil {
 		return "", time.Time{}, ErrDisabled
 	}
-	if !ProjectIDPattern.MatchString(projectID) {
-		return "", time.Time{}, errors.New("project id cannot be carried in a signed asset URL")
+	if err := ValidateIDs(projectID, briefID, assetID); err != nil {
+		return "", time.Time{}, err
 	}
-	b, err := uuid.Parse(briefID)
-	if err != nil {
-		return "", time.Time{}, errors.New("brief id is not a valid UUID")
-	}
-	a, err := uuid.Parse(assetID)
-	if err != nil {
-		return "", time.Time{}, errors.New("asset id is not a valid UUID")
-	}
+	b, a := uuid.MustParse(briefID), uuid.MustParse(assetID)
 	exp := s.now().Add(s.ttl).Unix()
 	sig := base64.RawURLEncoding.EncodeToString(s.mac(projectID, b.String(), a.String(), exp))
 	u := *s.base
@@ -208,7 +248,7 @@ func (s *Signer) Mint(projectID, briefID, assetID string) (string, time.Time, er
 }
 
 // Verify reports whether sig is this server's signature over exactly (projectID, briefID,
-// assetID, exp) AND exp is still in the future AND no further away than MaxTTL.
+// assetID, exp) AND exp is still in the future AND no further away than MaxTTL+MaxClockSkew.
 //
 // The ids are compared exactly as given, with no normalisation: Mint signs the canonical
 // spelling, so any other spelling of the same UUID is a different message and fails. The MAC
@@ -230,7 +270,7 @@ func (s *Signer) Verify(projectID, briefID, assetID string, exp int64, sig strin
 	}
 	ok := macEqual(s.mac(projectID, briefID, assetID, exp), got)
 	now := s.now().Unix()
-	fresh := exp > now && exp-now <= int64(MaxTTL/time.Second)
+	fresh := exp > now && exp-now <= int64((MaxTTL+MaxClockSkew)/time.Second)
 	return ok && fresh
 }
 
