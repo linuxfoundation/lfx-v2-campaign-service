@@ -66,11 +66,21 @@ const (
 	// with margin so a nudged start can't have slipped into the past by the time
 	// either request is finally accepted.
 	//
+	// The window actually covered starts EARLIER than the campaign POST: the horizon
+	// is taken before Step 1's account-verify GET (issue #208 moved the window check
+	// above it), so the buffer must also absorb that GET, Step 1.5's post authoring
+	// (and its ImageURLSource fetch), the campaign POST and up to two ad-group POSTs.
+	// The verify GET goes through the RETRYING request path, so one
+	// redditWorstCaseCreateWait (429 term included) is genuinely spendable there; the
+	// mutating creates each spend at most a request timeout plus a token refresh. That
+	// sum (~420s + 4*60s) stays well inside the 3*redditWorstCaseCreateWait + 60s budget.
+	//
 	// NOTE ON THE 429 TERM BELOW. Creates no longer retry throttles — see
-	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on this
-	// path any more, and the buffer is now larger than the worst case it derives
-	// from. That is left DELIBERATELY: the term is retained rather than removed
-	// because over-sizing this buffer costs a slightly later start time, while
+	// requestNoThrottleRetry — so retryMax*maxRetryWait is not reachable on the
+	// mutating creates any more (only on the retryable verify GET above), and the
+	// buffer is larger than the worst case it derives from. That is left
+	// DELIBERATELY: the term is retained rather than removed because over-sizing
+	// this buffer costs a slightly later start time, while
 	// under-sizing it makes Reddit reject the create outright for a start in the
 	// past. The asymmetry is the whole reason the derivation is conservative, and
 	// a retryable path could return here (a future idempotency key would make
