@@ -2127,8 +2127,10 @@ func validateVariantImage(v AdVariant) error {
 	return validateVariantImageURL(v.ImageURL)
 }
 
-// callerValueList renders caller-supplied values for a domain.PreflightRefusal, each through
-// domain.CallerValue, joined with ", ".
+// callerValueList renders caller-supplied values, each through domain.CallerValue, joined
+// with ", ". It serves the geo PreflightRefusals and the success-path "Geo targets
+// dropped/skipped" Steps lines alike: Steps are saved on the create job, so a dropped entry
+// that is a URL (or any other non-code text) must read "(value withheld)" there too.
 func callerValueList(vs []string) string {
 	shown := make([]string, len(vs))
 	for i, v := range vs {
@@ -3108,7 +3110,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// no upstream round trip, and both refusals are pre-send refusals in the PreflightRefusal
 	// sense. They used to run after the preflight and the currency resolution, as bare
 	// fmt.Errorf. The "dropped"/"skipped" Steps lines are still appended at Step 2, after the
-	// preflight's "Account verified" line, so a successful create's Steps read as before.
+	// preflight's "Account verified" line, in the same order as before; each listed entry is
+	// now quoted (or withheld) through callerValueList.
 	//
 	// If the caller supplied geo targets but NONE survive validation (all bogus or
 	// sanctioned), fail rather than silently falling back to US and targeting a
@@ -3264,11 +3267,15 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 
 	// Step 2: geo filtering (done above, before Step 1) + campaign creation.
+	// Both lists render through callerValueList, as the geo refusals do: droppedGeos is
+	// raw caller text that failed validation (it can be a URL carrying a token) and the
+	// Steps are persisted on the job, so each entry is quoted or withheld. skippedGeos is
+	// table-vetted, but goes the same way so the two lines quote codes alike.
 	if len(droppedGeos) > 0 {
-		steps = append(steps, fmt.Sprintf("Geo targets dropped (invalid code or not eligible for Meta ad targeting, e.g. sanctioned/excluded countries): %s", strings.Join(droppedGeos, ", ")))
+		steps = append(steps, fmt.Sprintf("Geo targets dropped (invalid code or not eligible for Meta ad targeting, e.g. sanctioned/excluded countries): %s", callerValueList(droppedGeos)))
 	}
 	if len(skippedGeos) > 0 {
-		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", strings.Join(skippedGeos, ", ")))
+		steps = append(steps, fmt.Sprintf("Geo targets skipped (require regional compliance declaration in Meta Ads Manager): %s", callerValueList(skippedGeos)))
 	}
 
 	campaignName := buildCampaignName(in, geoCountries)

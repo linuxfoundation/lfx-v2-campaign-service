@@ -1793,6 +1793,66 @@ func TestCreateCampaignReportsDroppedIneligibleGeos(t *testing.T) {
 	}
 }
 
+// TestCreateCampaignGeoStepsWithholdURLEntries pins that the success-path "Geo targets
+// dropped"/"skipped" Steps lines render each entry through callerValueList (issue #208): the
+// Steps are saved on the create job, so a URL-shaped geo entry carrying a token must read
+// "(value withheld)", while the dropped valid-format codes are still named, quoted.
+func TestCreateCampaignGeoStepsWithholdURLEntries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "filtering"):
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.Method == http.MethodGet:
+			_, _ = io.WriteString(w, `{"name":"x","currency":"USD"}`)
+		case strings.HasSuffix(r.URL.Path, "/campaigns"):
+			_, _ = io.WriteString(w, `{"id":"120100000000011"}`)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			_, _ = io.WriteString(w, `{"id":"120200000000011"}`)
+		case strings.HasSuffix(r.URL.Path, "/adcreatives"):
+			_, _ = io.WriteString(w, `{"id":"cr1"}`)
+		case strings.HasSuffix(r.URL.Path, "/ads"):
+			_, _ = io.WriteString(w, `{"id":"ad1"}`)
+		}
+	}))
+	defer srv.Close()
+
+	const secret = "s3cr3tT0kenValue"
+	c := NewClient(Credentials{AccessToken: "t"}, AccountConfig{AccountID: "act_1", PageID: "100", CurrencyOffset: 100}, WithBaseURL(srv.URL), WithClock(fixedMetaClock()))
+	res, err := c.CreateCampaign(context.Background(), CampaignInput{
+		EventName:       "E",
+		Project:         "tlf",
+		RegistrationURL: "https://x.example.org/e",
+		GeoTargets:      []string{"US", "https://evil.example/reset?token=" + secret, "IR", "SG"},
+		Budget:          10,
+		StartDate:       "2026-08-01",
+		EndDate:         "2026-08-31",
+		Variants:        []AdVariant{{PrimaryText: "p", Headline: "h"}},
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	var dropped, skipped string
+	for _, s := range res.Steps {
+		low := strings.ToLower(s)
+		if strings.Contains(low, "evil") || strings.Contains(low, strings.ToLower(secret)) {
+			t.Errorf("step echoes the URL-shaped geo entry: %q", s)
+		}
+		if strings.HasPrefix(s, "Geo targets dropped") {
+			dropped = s
+		}
+		if strings.HasPrefix(s, "Geo targets skipped") {
+			skipped = s
+		}
+	}
+	if !strings.HasSuffix(dropped, `: (value withheld), "IR"`) {
+		t.Errorf("dropped step = %q, want it to withhold the URL and name \"IR\" quoted", dropped)
+	}
+	if !strings.HasSuffix(skipped, `: "SG"`) {
+		t.Errorf("skipped step = %q, want it to name \"SG\" quoted", skipped)
+	}
+}
+
 func TestCreateCampaignAllGeosRegulated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"name":"x"}`)

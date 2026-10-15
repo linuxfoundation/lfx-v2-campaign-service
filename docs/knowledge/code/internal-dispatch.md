@@ -4443,9 +4443,15 @@ Reddit's window check (its inputs are the parsed StartDate/EndDate and the clock
 it quotes are `toRedditTimestamp` renderings, so no caller text) and Meta's two geo refusals
 (the caller's GeoTargets and static tables only; each dropped code goes through
 `domain.CallerValue`, so the "dropped" list now quotes each code). Meta still appends the
-"dropped"/"skipped" Steps lines after "Account verified", so a success's Steps are unchanged.
+"dropped"/"skipped" Steps lines after "Account verified", in the same order. Their entries go
+through the same `callerValueList` / `domain.CallerValue` path as the refusals, because the
+Steps are saved on the create job. So on a SUCCESSFUL create a URL-shaped geo entry reads
+"(value withheld)", and every listed code is quoted (`Geo targets dropped (…): (value withheld),
+"IR"`). This is a deliberate change to success-path Steps text; before it the lines joined the
+raw uppercased entries.
 Pinned by `TestCreateCampaign_WindowRefusedBeforeAnyRequest`,
-`TestCreateCampaign_GeoRefusalsBeforeAnyRequest` and three refusal cases. Deliberately NOT
+`TestCreateCampaign_GeoRefusalsBeforeAnyRequest`, `TestCreateCampaignGeoStepsWithholdURLEntries`
+and three refusal cases. Deliberately NOT
 moved: LinkedIn's window re-checks in `findOrCreateCampaignGroup` / `createSponsoredCampaign`
 (clock-race re-checks of what `validateSchedule` already refused up front), Meta's minor-unit
 budget bounds (the offset is the account currency's, from the preflight), Reddit's late
