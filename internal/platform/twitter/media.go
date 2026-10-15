@@ -351,7 +351,7 @@ type mediaState struct {
 
 // decodeMediaState reads a finalize or STATUS body. A body with no `data`, or `"data":null`,
 // says nothing about the media, so it is NOT read as "no processing_info, therefore ready": ok is
-// false and the caller reports the outcome UNCONFIRMED (errMediaStateUnknown) rather than
+// false and the caller reports the outcome UNCONFIRMED (mediaStateUnknown) rather than
 // attaching media X never confirmed. A raw body identityjson refuses is unknown in the same way:
 // the envelope was already decoded last-wins, so a duplicated "data" key (a null or a failed
 // processing_info beside a ready one) is invisible to a check of resp.Data alone.

@@ -89,6 +89,21 @@ func sanitizeSnapshotURL(raw string) string { return redact.SnapshotURL(raw) }
 
 func sanitizeSnapshotText(raw string) string { return redact.SnapshotText(raw) }
 
+// sanitizeSnapshotTexts is sanitizeSnapshotText over a list of caller strings, returning a NEW
+// slice so the caller's backing array — which the config sent to the platform shares — is
+// never written through. A nil list stays nil and an empty one stays empty, so the snapshot's
+// JSON (null vs []) records exactly what the caller sent.
+func sanitizeSnapshotTexts(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = sanitizeSnapshotText(v)
+	}
+	return out
+}
+
 // parseCampaignDate parses a YYYY-MM-DD config date to a *time.Time (UTC), returning
 // nil for a blank or unparseable value (the column is nullable).
 func parseCampaignDate(s string) *time.Time {
