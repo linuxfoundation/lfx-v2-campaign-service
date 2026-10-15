@@ -1000,9 +1000,13 @@ Verification mirrors the create path exactly: a short or malformed mutate respon
 resource name whose kind or account is wrong, or a `campaignCriterion` name reporting a
 different campaign id each yields `unconfirmedNegativeKeywordError`. Everything proven to have
 left the batch unsent yields `notAttemptedNegativeKeywordError` instead — the method's own
-boundary guards, an already-cancelled context, and whatever `ProbeNotSent` recognises after
+boundary guards, an already-cancelled context, whatever `ProbeNotSent` recognises after
 `doRequest` returns (a pre-send dial failure, or a context found already done at token
-acquisition). `IsOutcomeUnconfirmed` gives that precedence over every shape-based inference,
+acquisition), and whatever `RequestNotTransmitted` recognises (a body that would not encode, a
+token that could not be acquired, a request that would not build, each on the first attempt).
+Those four are every error exit of the path that is NOT a reply from Google; what stays unmarked
+is an `apiError` carrying a 4xx, which is Google genuinely refusing the batch.
+`IsOutcomeUnconfirmed` gives that precedence over every shape-based inference,
 because such a failure otherwise looks exactly like a request cut off in flight — and because
 the dispatcher's definite arm stamps an unmarked error onto every keyword as `REJECTED`, which
 would claim Google refused keywords it was never sent.
@@ -2533,6 +2537,18 @@ that never left the process. The marker sits at THAT check and nowhere else: the
 inside the refresh returns `ctx.Err()` too, but a detached refresh may already be on the wire
 there, so the same claim would be false. It WRAPS rather than replaces, so
 `errors.Is(err, context.Canceled)` keeps answering for every existing caller.
+
+`client.go` carries a SECOND, narrower marker for the same family of facts:
+`errRequestNotTransmitted`, exported through `RequestNotTransmitted(err) bool`.
+`doRequestValidated` attaches it at the three returns that happen before `httpClient.Do` —
+encoding the body, acquiring the token, building the `*http.Request` — and, for the latter two,
+only on attempt 0, because the retry loop re-acquires the token after a 429 backoff and a failure
+on a later attempt says nothing about the attempt that already transmitted. `ProbeNotSent`
+deliberately does NOT read it: the metrics/connection-test arm must keep seeing a refused
+credential as `ProbeCredentialRejected` so the operator is told to replace it, while the
+per-keyword outcome arm needs the opposite reading of the same fact — Google never saw these
+keywords, so `NOT_SENT` is the true sentence there. Same fact, two consumers, two correct answers,
+which is why this is its own marker rather than a widening of `ProbeNotSent`.
 
 This package's token path was split to make the predicates answerable at all. `fetchToken`
 previously returned one untyped error for every non-2xx from the token endpoint, so a refresh

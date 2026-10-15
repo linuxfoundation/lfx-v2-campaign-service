@@ -6,12 +6,14 @@ package googleads
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 )
@@ -524,5 +526,142 @@ func TestAddCampaignNegativeKeywords_BoundaryRefusalsAreNotAttempted(t *testing.
 				t.Fatalf("error does not report NotAttempted: %v — nothing was sent, so this must not read as a platform rejection", err)
 			}
 		})
+	}
+}
+
+// tokenFailingAfterPreRead fails every token acquisition once the test arms it. It reproduces
+// the exact ordering Copilot raised on PR #346: the dispatcher's pre-read
+// (ListCampaignNegativeKeywords) succeeds on a valid cached token, that token then enters its
+// refresh buffer, and the refresh ahead of campaignCriteria:mutate fails — so the mutate is
+// never sent.
+type tokenFailingAfterPreRead struct {
+	inner    http.RoundTripper
+	tokenURL string
+	armed    atomic.Bool
+}
+
+func (t *tokenFailingAfterPreRead) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(r.URL.String(), t.tokenURL) && t.armed.Load() {
+		// 503: the token endpoint could not answer. Nothing about the keywords reached Google.
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"temporarily_unavailable"}`)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	}
+	return t.inner.RoundTrip(r)
+}
+
+// TestAddCampaignNegativeKeywords_TokenFailureAfterPreReadIsNotAttempted pins the classification
+// of a token acquisition that fails AFTER the dispatcher's pre-read has already succeeded.
+//
+// doRequestValidated fetches the token inside the retry loop and returned that failure bare.
+// ProbeNotSent does not recognise it (it is neither a dial failure nor the already-done context
+// marker) and createOutcomeAmbiguous does not either (it is neither a transportError nor an
+// apiError), so it reached the dispatcher's DEFINITE arm and every keyword was reported
+// REJECTED over HTTP 200 — for a batch campaignCriteria:mutate never carried.
+//
+// The mutate is sent NON-idempotent, so doRequestValidated's loop runs exactly once and this
+// failure is provably before any transmission.
+func TestAddCampaignNegativeKeywords_TokenFailureAfterPreReadIsNotAttempted(t *testing.T) {
+	// expires_in is inside tokenExpiryBuffer, so the token cached by the pre-read is treated as
+	// needing a refresh when the mutate asks for one — the ordering the defect requires.
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":1,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	rt := &tokenFailingAfterPreRead{inner: http.DefaultTransport, tokenURL: tokenSrv.URL}
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL),
+		WithHTTPClient(&http.Client{Transport: rt}))
+
+	// The pre-read the dispatcher performs before deciding which keywords are new. It must
+	// SUCCEED: the defect only appears once the caller is past every guard with a built batch.
+	if _, err := c.ListCampaignNegativeKeywords(context.Background(), "777"); err != nil {
+		t.Fatalf("pre-read failed, so this is not the ordering under test: %v", err)
+	}
+	// From here every token refresh fails.
+	rt.armed.Store(true)
+
+	ids, err := c.AddCampaignNegativeKeywords(context.Background(), "777", []Keyword{{Text: "free", MatchType: MatchTypeBroad}})
+	if err == nil {
+		t.Fatalf("expected a refusal, got ids %v", ids)
+	}
+	var notAttempted interface{ NotAttempted() bool }
+	if !errors.As(err, &notAttempted) || !notAttempted.NotAttempted() {
+		t.Fatalf("error does not report NotAttempted: %v — the mutate was never sent, so it must not read as a platform rejection", err)
+	}
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a mutate that was never sent must not classify as unconfirmed: %v", err)
+	}
+}
+
+// TestRequestNotTransmitted_OnlyClaimsTheFirstAttempt pins the guard that keeps this marker
+// honest: it is attached only on attempt 0.
+//
+// A token failure on a LATER attempt follows a 429 whose request was already transmitted, so
+// "never reached the transport" would be false — the outcome is genuinely ambiguous, which is
+// the retry-history gap tracked in #347 and must not be converted into a confident claim.
+func TestRequestNotTransmitted_OnlyClaimsTheFirstAttempt(t *testing.T) {
+	var tokenHits atomic.Int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The SECOND token request — the one the retry makes after the 429 — fails.
+		if tokenHits.Add(1) > 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":"temporarily_unavailable"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":1,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	// A 429 with a short Retry-After, so the idempotent call retries and re-acquires the token.
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":"rate limited"}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL))
+
+	// idempotent=true, so the 429 is retried and the failing token fetch happens on attempt 1.
+	_, err := c.doRequest(context.Background(), http.MethodGet, c.customerPath("campaigns:search"), nil, true)
+	if err == nil {
+		t.Fatal("expected the retried call to fail")
+	}
+	if tokenHits.Load() < 2 {
+		t.Fatalf("the retry never re-acquired the token (%d hits), so this is not the path under test: %v", tokenHits.Load(), err)
+	}
+	if RequestNotTransmitted(err) {
+		t.Fatalf("a token failure AFTER a transmitted attempt must not be claimed as never-transmitted: %v", err)
+	}
+}
+
+// TestRequestNotTransmitted_IsNotReadByProbeNotSent pins the separation that keeps the
+// connection-test arm correct.
+//
+// Both predicates answer the same question — did this request leave the process — but they serve
+// callers that need opposite readings of a refused credential. If ProbeNotSent absorbed this
+// marker, a token refresh Google answers 401 would be reported to the metrics arm as "not sent"
+// and would shadow ProbeCredentialRejected, so the operator would never be told to replace a
+// credential that no longer works.
+func TestRequestNotTransmitted_IsNotReadByProbeNotSent(t *testing.T) {
+	err := fmt.Errorf("%w: %w", errRequestNotTransmitted, ErrCredentialRejected)
+
+	if !RequestNotTransmitted(err) {
+		t.Fatal("RequestNotTransmitted must claim its own marker")
+	}
+	if ProbeNotSent(err) {
+		t.Error("ProbeNotSent must NOT absorb errRequestNotTransmitted — it would shadow a credential verdict on the metrics arm")
+	}
+	if !ProbeCredentialRejected(err) {
+		t.Error("the wrap must preserve the chain so ProbeCredentialRejected still answers")
 	}
 }

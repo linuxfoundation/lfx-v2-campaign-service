@@ -244,7 +244,14 @@ func (c *Client) mutateCampaignNegativeKeywords(ctx context.Context, campaignRes
 		// failure carries no outcome marker at all and the dispatcher's DEFINITE arm reports
 		// every keyword as a platform REJECTION over HTTP 200 — Google refusing keywords it
 		// was never asked about, which is the same false claim the text-limit guard fixed.
-		if ProbeNotSent(err) {
+		// RequestNotTransmitted covers the three failures that return before the transport is
+		// handed anything: encoding the body, acquiring the token, and building the request.
+		// A token refresh that 503s — or that Google answers 401 — happens AFTER the pre-read
+		// has already succeeded, so without this the dispatcher reported every keyword as a
+		// platform REJECTION for a batch Google never received. It is checked alongside
+		// ProbeNotSent rather than inside it because the metrics arm must keep reading a
+		// refused credential as ProbeCredentialRejected; see errRequestNotTransmitted.
+		if ProbeNotSent(err) || RequestNotTransmitted(err) {
 			return nil, &notAttemptedNegativeKeywordError{err: fmt.Errorf("google-ads negative keywords were not sent (campaign %s: %s): %w", campaignID, definiteFailureNote, err)}
 		}
 		if createOutcomeAmbiguous(err) {
@@ -291,16 +298,23 @@ func (e *unconfirmedNegativeKeywordError) Unwrap() error     { return e.err }
 func (e *unconfirmedNegativeKeywordError) Unconfirmed() bool { return true }
 
 // notAttemptedNegativeKeywordError marks a failure PROVEN to have left the batch unsent, so the
-// criteria cannot exist. Three routes reach it: AddCampaignNegativeKeywords' own boundary guards,
+// criteria cannot exist. Four routes reach it: AddCampaignNegativeKeywords' own boundary guards,
 // which refuse before a request is built; an already-cancelled context, caught at the same point;
-// and anything ProbeNotSent proves after doRequest returns — a pre-send dial failure (DNS,
+// anything ProbeNotSent proves after doRequest returns — a pre-send dial failure (DNS,
 // connect-time refusal), or a context found already done at token acquisition, which is the one
-// cancellation whose side of the wire is known. IsOutcomeUnconfirmed gives NotAttempted precedence
-// over every shape-based inference precisely for these — they otherwise look exactly like a
-// request cut off in flight, and would be reported as "the criteria may exist" when nothing was
-// ever sent. Anything ProbeNotSent does not recognise stays unclaimed and falls through to the
-// ambiguity check, which is the cheap direction: a cancellation landing after transmission is
-// indistinguishable from one landing before it.
+// cancellation whose side of the wire is known; and anything RequestNotTransmitted proves — a
+// body that would not encode, a token that could not be acquired, a request that would not build,
+// each on the first attempt, so none of them reached the transport.
+//
+// Together those four are every error exit of this path that is NOT a reply from Google. What
+// remains unmarked is exactly what should be: an apiError carrying a 4xx, which is Google
+// genuinely refusing the batch, and which the DEFINITE arm describes correctly.
+//
+// IsOutcomeUnconfirmed gives NotAttempted precedence over every shape-based inference precisely
+// for these — they otherwise look exactly like a request cut off in flight, and would be reported
+// as "the criteria may exist" when nothing was ever sent. Anything NEITHER predicate recognises
+// stays unclaimed and falls through to the ambiguity check, which is the cheap direction: a
+// cancellation landing after transmission is indistinguishable from one landing before it.
 type notAttemptedNegativeKeywordError struct{ err error }
 
 func (e *notAttemptedNegativeKeywordError) Error() string      { return e.err.Error() }

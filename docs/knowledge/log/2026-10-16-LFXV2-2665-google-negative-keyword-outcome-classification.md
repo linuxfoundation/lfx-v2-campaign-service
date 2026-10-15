@@ -15,8 +15,10 @@ wraps the error in `notAttemptedNegativeKeywordError`, because it proves the str
 ambiguity check keeps everything `ProbeNotSent` does not recognise, which is the cheap direction —
 a cancellation landing after transmission is indistinguishable from one landing before it.
 `notAttemptedNegativeKeywordError`'s docblock said "the one failure" was an already-cancelled
-context; three routes now reach it — the boundary guards below, the cancelled context, and
-anything `ProbeNotSent` proves — and it enumerates all three.
+context; three routes reached it after this fix — the boundary guards below, the cancelled
+context, and anything `ProbeNotSent` proves — and it enumerated all three. A fourth was added the
+same day by the `errRequestNotTransmitted` class fix; see
+`2026-10-16-LFXV2-2665-google-request-not-transmitted.md`.
 
 **The client's dedupe key did not agree with the dispatcher's.** `validateKeywordList`
 (`internal/platform/googleads/targeting.go`, shared by `validateNegativeKeywords` and the create
