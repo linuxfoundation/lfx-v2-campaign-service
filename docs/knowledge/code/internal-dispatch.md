@@ -3182,10 +3182,13 @@ resolvers' behaviour. A compile-time parameter does not stop a call site, or a s
 swap kept the suite green. The sweep drives every entry point of the LinkedIn, Meta, Reddit, X,
 Microsoft and HubSpot dispatchers (Google Ads is out of its scope) against credential-less rows
 with the forced-system flag ON. The scopes `scopedConnReader` is asked for, with and without a
-project row, identify the resolver: `resolve` asks the system scope first; `existingResolver(<recorded>)`
+project row, identify the resolver: `resolve` asks the system scope first; `existingResolver(<non-empty id>)`
 asks project then system; `existingResolver("")` and HubSpot's unforced `resolve` reach the system
 scope only when the project has no row; `resolveOwned` and `resolveOwnedForAdoption` never reach it.
-Each row states the identity it expects. `TestClassifyResolver_FingerprintsAreDistinct` guards the
+Each row states the identity it expects. Every existing-campaign row also runs a third fixture.
+In it the project row decrypts and carries the account the campaign records, so only a resolver
+bound to THAT account stays on the project scope; one bound to any other non-empty id goes on to
+ask the system scope. `TestClassifyResolver_FingerprintsAreDistinct` guards the
 classifier, so a change to `credsSource` that merged two fingerprints fails there rather than
 blinding the sweep. A new entry point needs a row in its dispatcher's table.
 

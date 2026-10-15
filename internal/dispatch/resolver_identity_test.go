@@ -35,7 +35,7 @@ import (
 //
 //	resolver                          A (scopes asked)      B (scopes asked)
 //	resolve (creation, forced)        [system]              [system]
-//	existingResolver(<recorded acct>) [project, system…]    [project, system…]
+//	existingResolver(<non-empty id>)  [project, system…]    [project, system…]
 //	existingResolver("") / unforced   [project]             [project, system…]
 //	resolveOwned / ...ForAdoption     [project]             [project]
 //
@@ -43,6 +43,10 @@ import (
 // the identity it expects and a swap in either direction fails with the identity it got.
 // resolveOwned and resolveOwnedForAdoption share a fingerprint: the latter only translates
 // resolveOwned's ErrNotFound, and adoption's own tests pin that translation.
+//
+// A and B cannot tell WHICH non-empty account an existing-campaign resolver was bound to, so
+// existing-campaign rows also run fixture C (see sweepResolverIdentity), which pins the binding
+// to the account the campaign records.
 
 // Resolver identities, as classifyResolver names them.
 const (
@@ -51,7 +55,7 @@ const (
 	idCreation = "resolve (creation)"
 	// idExisting is existingResolver / resolveExisting bound to the account the campaign
 	// RECORDS having been created under: every operation on an existing campaign.
-	idExisting = "resolveExisting (recorded creation account)"
+	idExisting = "resolveExisting (bound to a recorded creation account)"
 	// idFallback is project-then-system resolution with nothing recorded to steer it:
 	// existingResolver("") for a paid provider, and resolve for HubSpot, which the
 	// forced-system flag never governs.
@@ -92,10 +96,17 @@ type resolverEntryPoint struct {
 }
 
 // sweepResolverIdentity runs every entry point under both fixtures and asserts the identity.
-// sysAccount is the account id the SYSTEM row carries and blob is the campaign's persisted
-// result recording that same account as the creating one — so an existing-campaign resolver
-// bound to the recorded account is steered to the system scope, and one that is not is not.
-func sweepResolverIdentity(t *testing.T, provider model.Provider, sysAccount, blob string, cases []resolverEntryPoint) {
+// recorded is the account id the campaign's persisted result (blob) records as its creating
+// account.
+//
+// Fixtures A and B only prove an existing-campaign resolver was bound to SOME non-empty account:
+// with the project row unusable, resolveExisting tries the system scope for any non-empty id
+// before comparing it. So every idExisting row also runs fixture C, which pins the binding to
+// the RECORDED account: the project row decrypts (to an empty credential set the adapter then
+// refuses, before building a client) and carries the recorded account. A resolver bound to that
+// account matches on the project scope and asks nothing more; one bound to any other account
+// mismatches and goes on to ask the system scope.
+func sweepResolverIdentity(t *testing.T, provider model.Provider, recorded, blob string, cases []resolverEntryPoint) {
 	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,12 +120,12 @@ func sweepResolverIdentity(t *testing.T, provider model.Provider, sysAccount, bl
 			t.Setenv(constants.EnvMicrosoftMetricsEnabled, "true")
 			t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
 
-			run := func(withProjectRow bool) []string {
+			run := func(projectRow *model.Connection) []string {
 				// Credential-less rows: resolveConn refuses them before decrypting, so
 				// resolution fails at the scope it chose and nothing downstream runs.
-				rows := map[string]*model.Connection{model.SystemProjectID: credlessConn(provider, sysAccount)}
-				if withProjectRow {
-					rows[resolverIdentityProject] = credlessConn(provider, "project-account")
+				rows := map[string]*model.Connection{model.SystemProjectID: credlessConn(provider, recorded)}
+				if projectRow != nil {
+					rows[resolverIdentityProject] = projectRow
 				}
 				repo := &scopedConnReader{rows: rows}
 				campaign := &model.Campaign{
@@ -127,7 +138,7 @@ func sweepResolverIdentity(t *testing.T, provider model.Provider, sysAccount, bl
 				tc.call(repo, campaign)
 				return repo.gets
 			}
-			a, b := run(true), run(false)
+			a, b := run(credlessConn(provider, "project-account")), run(nil)
 			if got := classifyResolver(a, b); got != tc.want {
 				t.Errorf("%s %s authenticates through %q, want %q (scopes asked: with a project row %v, without %v).\n"+
 					"The resolver decides which account the operation authenticates as. An existing-campaign operation "+
@@ -135,6 +146,19 @@ func sweepResolverIdentity(t *testing.T, provider model.Provider, sysAccount, bl
 					"cannot be paused while it keeps spending; a monitor, probe or adoption read that may fall back "+
 					"answers from an account the project does not own.",
 					provider, tc.name, got, tc.want, a, b)
+			}
+			if tc.want != idExisting {
+				return
+			}
+			// Fixture C: the project row IS the recorded account, and decrypts.
+			owner := usableConn("{}", recorded)
+			owner.ID = "conn-174-owner-" + string(provider)
+			owner.Provider = provider
+			if c := run(owner); !slices.Equal(c, []string{resolverIdentityProject}) {
+				t.Errorf("%s %s did not bind its resolver to the campaign's RECORDED creation account %q: with the "+
+					"project row on that account it asked %v, want only the project scope.\nA resolver bound to another "+
+					"account steers the operation away from the account that can address the campaign.",
+					provider, tc.name, recorded, c)
 			}
 		})
 	}
@@ -450,6 +474,9 @@ func TestResolverIdentity_HubSpot(t *testing.T) {
 		}},
 		{"ResolveEmailClient", idFallback, func(r connReader, _ *model.Campaign) {
 			_, _ = d(r).ResolveEmailClient(riCtx, resolverIdentityProject)
+		}},
+		{"ResolveEmailClientWithOrigin", idFallback, func(r connReader, _ *model.Campaign) {
+			_, _, _ = d(r).ResolveEmailClientWithOrigin(riCtx, resolverIdentityProject)
 		}},
 		{"ReadEmailMonitor", idFallback, func(r connReader, c *model.Campaign) {
 			_, _ = d(r).ReadEmailMonitor(riCtx, resolverIdentityProject, p, []*model.Campaign{c}, 7)
