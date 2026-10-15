@@ -1143,3 +1143,84 @@ func TestListAccountCampaigns_UpdatedBeforeCreatedIsUnknown(t *testing.T) {
 		})
 	}
 }
+
+// An explicit disagreement between the Insights rows' account_currency and the account-currency
+// read leaves every budget unknown, not just the published label (PR #316 review): spend is in
+// the Insights currency, so a "1000" daily budget converted as USD 10 and paced against JPY spend
+// raises a false alert. Both budget sources are covered — the CBO campaign's own budget and the
+// ABO ad-set fallback, which is not even read — with settled, readable created_time/updated_time
+// so only the mismatch can make the budgets unknown; delivery is kept and the currency withheld.
+// Agreeing reads (the control) still convert both.
+func TestListAccountCampaigns_InsightsCurrencyMismatchLeavesBudgetsUnknown(t *testing.T) {
+	settled := `"created_time":"2025-11-01T00:00:00+0000","updated_time":"2025-12-01T00:00:00+0000"`
+	insights := func(code string) string {
+		return `{"data":[` +
+			`{"campaign_id":"111","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code + `"},` +
+			`{"campaign_id":"222","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code + `"}],"paging":{}}`
+	}
+	for _, tc := range []struct {
+		name, insightsCode string
+		mismatch           bool
+	}{
+		{"insights JPY, account USD", "JPY", true},
+		{"insights EUR, account USD", "EUR", true},
+		{"agreeing currencies still convert", "USD", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, rec := monitorServer(t, monitorFixture{
+				campaigns: []string{monitorList(
+					monitorCampaign("111", StatusActive, `"daily_budget":"1000",`+settled),
+					monitorCampaign("222", StatusActive, settled))},
+				insights: []string{insights(tc.insightsCode)},
+				currency: usdAccount,
+				adSets:   []string{monitorList(monitorAdSetRow("9001", "222", "ACTIVE", `"daily_budget":"1500","created_time":"2025-11-01T00:00:00+0000"`))},
+			})
+			list, published, err := newMonitorClient(srv).ListAccountCampaignsWithCurrency(context.Background(), "act_123", 30)
+			if err != nil {
+				t.Fatalf("ListAccountCampaignsWithCurrency: %v (a currency mismatch must not fail the read)", err)
+			}
+			rows := make(map[string]AccountCampaignRow, len(list))
+			for _, r := range list {
+				rows[r.CampaignID] = r
+			}
+			if len(rows) != 2 {
+				t.Fatalf("got rows %+v, want both campaigns", list)
+			}
+			for _, id := range []string{"111", "222"} {
+				if r := rows[id]; r.Impressions != 1000 || r.Clicks != 10 || r.SpendUSD != 5 || r.FetchFailed {
+					t.Errorf("row %s = %+v, want its delivery metrics kept", id, r)
+				}
+			}
+			out, _ := rules.EvaluateMetaMonitor(toMonitorMetrics(rows))
+			if !tc.mismatch {
+				assertBudgets(t, rows["111"], 10, 0)
+				assertBudgets(t, rows["222"], 15, 0)
+				if published != "USD" {
+					t.Errorf("published currency = %q, want USD", published)
+				}
+				if len(adSetRequests(rec)) != 1 {
+					t.Errorf("ad-set requests = %v, want the one fallback read", adSetRequests(rec))
+				}
+				for _, r := range out {
+					if r.Metrics.PacingUnknown {
+						t.Errorf("row %s pacing unknown, want a verdict when the currencies agree", r.Metrics.PlatformCampaignID)
+					}
+				}
+				return
+			}
+			assertBudgets(t, rows["111"], 0, 0)
+			assertBudgets(t, rows["222"], 0, 0)
+			if got := adSetRequests(rec); len(got) != 0 {
+				t.Errorf("ad sets read although the budget currency is unknown: %v", got)
+			}
+			if published != "" {
+				t.Errorf("published currency = %q, want it withheld", published)
+			}
+			for _, r := range out {
+				if !r.Metrics.PacingUnknown {
+					t.Errorf("row %s got a pacing verdict %v%% (%s), want unknown", r.Metrics.PlatformCampaignID, r.PacingPct, r.PacingLabel)
+				}
+			}
+		})
+	}
+}

@@ -188,7 +188,10 @@ renderer formats with a symbol when it is present and without one otherwise.
   knows — offset 1 (JPY, KRW, …) as well as 100 — when it equals that read's currency. It
   withholds, and logs, a code outside `currencyMinorUnitOffset` (budgets left unconverted; no
   three-decimal currency is in the map) and one the two reads disagree on, which would label
-  budgets converted at another currency's scale. The offset-100-only restriction of #338 is gone.
+  budgets converted at another currency's scale. That disagreement also leaves every budget
+  unknown — no campaign budget converted, no ad-set fallback read — so pacing is unknown while
+  delivery is kept: spend is in the insights currency (PR #316 review). The offset-100-only
+  restriction of #338 is gone.
 - **Identity and failure.** The two new reads (Reddit, Microsoft) and X's currency are taken only
   from a body `identityjson` trusts that names the requested account. Any failure — transport,
   status, untrusted body, another account's id — leaves `currency` absent and never fails the
