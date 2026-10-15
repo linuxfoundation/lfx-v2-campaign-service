@@ -31,6 +31,39 @@ func leaseHolderPID(ctx context.Context, t *testing.T, pool *pgxpool.Pool, accou
 	return pid
 }
 
+// leaseReleaseDeadline bounds how long a closed lease's backend may take to exit.
+const leaseReleaseDeadline = 5 * time.Second
+
+// waitForLeaseRelease waits until no backend holds accountID's lease and the closed session's
+// backend pid has left pg_stat_activity, failing after leaseReleaseDeadline.
+//
+// Close does not (and need not) wait for the server: pgx sends Terminate and closes the socket,
+// and Postgres drops the session's advisory locks only as that backend exits, a moment later and
+// asynchronously to the client. Until then the lock is still held, so a reader on another
+// connection can see it for a few milliseconds after Close returns. That window is the safe
+// direction: another instance's try-lock answers "held elsewhere", never a second owner.
+func waitForLeaseRelease(ctx context.Context, t *testing.T, pool *pgxpool.Pool, accountID string, pid int32) {
+	t.Helper()
+	deadline := time.Now().Add(leaseReleaseDeadline)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		holder := leaseHolderPID(ctx, t, pool, accountID)
+		var alive bool
+		if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1)", pid).Scan(&alive); err != nil {
+			t.Fatalf("read pg_stat_activity: %v", err)
+		}
+		if holder == 0 && !alive {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lease not released %s after Close: holder %d, closed backend %d alive %v",
+				leaseReleaseDeadline, holder, pid, alive)
+		}
+		<-tick.C
+	}
+}
+
 // Two instances (two leases, as two pods would hold) cannot both own one account; the owner keeps
 // it across calls; other accounts are independent; Close hands it over.
 func TestLiveStatsJobLease_OneOwnerPerAccountAndReleaseOnClose(t *testing.T) {
@@ -53,14 +86,13 @@ func TestLiveStatsJobLease_OneOwnerPerAccountAndReleaseOnClose(t *testing.T) {
 	if err := b.Own(ctx, other); err != nil {
 		t.Errorf("b.Own of another account: %v", err)
 	}
-	if leaseHolderPID(ctx, t, pool, account) == 0 {
+	pid := leaseHolderPID(ctx, t, pool, account)
+	if pid == 0 {
 		t.Fatal("no backend holds the lease a owns")
 	}
 
 	a.Close(ctx)
-	if pid := leaseHolderPID(ctx, t, pool, account); pid != 0 {
-		t.Errorf("backend %d still holds the lease after Close", pid)
-	}
+	waitForLeaseRelease(ctx, t, pool, account, pid)
 	if err := b.Own(ctx, account); err != nil {
 		t.Errorf("b.Own after a closed: %v", err)
 	}
