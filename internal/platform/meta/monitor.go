@@ -230,9 +230,10 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 		}
 	}
 
-	// The published currency is the insights rows' account_currency, withheld unless its offset
-	// is 100 (monitorPublishableCurrency). Taken once, so the withholding is logged once.
-	published := monitorPublishableCurrency(ctx, insights.currency())
+	// The published currency is the insights rows' account_currency, withheld unless the budgets
+	// above were converted in it (monitorPublishableCurrency). Taken once, so the withholding is
+	// logged once.
+	published := monitorPublishableCurrency(ctx, insights.currency(), currency)
 
 	// Ad-set budgets (LFXV2-2665): CreateCampaign puts the budget on the AD SET (ABO), so a
 	// campaign this service created reports no campaign-level budget at all, and pacing used
@@ -289,22 +290,24 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	return rows, published, nil
 }
 
-// monitorCurrencyOffset is the minor-unit offset the monitor's currency is published for: the 100
-// the BFF-ported minorUnitsToWhole assumed for every budget before minorToWhole replaced it.
-const monitorCurrencyOffset = 100
-
-// monitorPublishableCurrency is code when its offset is monitorCurrencyOffset and "" otherwise
-// (see ListAccountCampaignsWithCurrency).
-// TODO(#316): publish every recognised currency now that budgets are converted by its offset.
-func monitorPublishableCurrency(ctx context.Context, code string) string {
+// monitorPublishableCurrency is code — the insights rows' account_currency — when the monitor's
+// budgets are denominated and converted in it, and "" otherwise (see
+// ListAccountCampaignsWithCurrency). That holds when code is the ad account's currency from the
+// budget conversion's own ?fields=currency read (budgetCurrency) and currencyOffsetFor knows its
+// minor-unit offset, whatever that offset is (1 for JPY/KRW, 100 for USD/EUR). A currency
+// currencyOffsetFor does not know leaves every budget unconverted, and a code the two reads
+// disagree on would label budgets converted at another currency's scale, so both are withheld.
+func monitorPublishableCurrency(ctx context.Context, code, budgetCurrency string) string {
 	if code == "" {
 		return ""
 	}
-	if off, ok := currencyOffsetFor(code); !ok || off != monitorCurrencyOffset {
-		// The code is three upper-case letters (insights.currency normalized it), so it is safe
-		// to log; no account id is.
-		slog.WarnContext(ctx, "meta account monitor: withholding the account currency; its budgets are not converted for this currency's minor unit",
-			"currency", code, "known_offset", ok, "offset", off)
+	off, ok := currencyOffsetFor(code)
+	agrees := code == strings.ToUpper(strings.TrimSpace(budgetCurrency))
+	if !ok || !agrees {
+		// Both codes are three upper-case letters (insights.currency normalized code and
+		// accountCurrency validated budgetCurrency), so they are safe to log; no account id is.
+		slog.WarnContext(ctx, "meta account monitor: withholding the account currency; its budgets are not converted in it",
+			"currency", code, "budget_currency", budgetCurrency, "known_offset", ok, "offset", off)
 		return ""
 	}
 	return code
