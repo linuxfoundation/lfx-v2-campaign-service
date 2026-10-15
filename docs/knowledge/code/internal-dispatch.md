@@ -4460,11 +4460,13 @@ and scope faults beat an inactive connection, 401 → expired, 5xx unclassified 
 
 Marked refusals: the pre-send validation in each client's `CreateCampaign`, up to its first
 request. That is Reddit up to the account-verify GET (name/project/budget/dates/objective/video
-goal/**conversion pixel**/CTA/headline/account id/geo), LinkedIn up to the group find-or-create
+goal/**conversion pixel**/CTA/headline/account id/geo, the composed campaign and ad-group
+name lengths, and the **campaign window** — end not after the nudged start), LinkedIn up to the group find-or-create
 (account, targeting profile, event name, **budget minimums**, variants, project, geo, schedule,
 name lengths), Meta up to the account preflight GET (variants and lengths, budget, currency
 offset, dates, account/page id, project, event, IG id, DSA pair, objective, placements, promoted
-object, variant image choice), X up to `verifyAccount` (event, project, budget, date format and
+object, variant image choice, and the two **geo refusals** — no usable geo targets, all geos
+regulated), X up to `verifyAccount` (event, project, budget, date format and
 calendar validity (`validateDate`), date order and lead time, tweet id, composed tweet length,
 image placement and `validateImageInput`, account/funding instrument, and the composed
 campaign and line-item name lengths), and Microsoft up to geo resolution (account/customer ids, project, event, budget,
@@ -4475,7 +4477,32 @@ way: `resolveLinkedInImages`, Meta `resolveVariantAssets`, Microsoft `resolveMic
 (including its `ValidateImage`), X `resolveTwitterImage` and Reddit `checkRedditAsset`. That
 covers malformed ids, a missing or foreign asset, size and byte limits, a full reservation, and
 empty bytes. Repository-error wraps stay unmarked. Reddit's composed campaign / ad-group name length
-checks are NOT: they run after the account-verify GET, so a request was already sent. Dispatcher-authored ones
+checks used to run after the account-verify GET and so stayed unmarked; they now run before it
+(every input — event name, project, objective, normalized geos — is settled by then) and are
+marked, pinned with zero upstream requests by `TestCreateCampaign_ComposedNameRefusedBeforeAnyRequest`
+and the "reddit composed ad group name too long" refusal case. The rest of the #208
+ordering audit (every non-Google create path, 2026-10-15) moved two more groups the same way:
+Reddit's window check (its inputs are the parsed StartDate/EndDate and the clock; both instants
+it quotes are `toRedditTimestamp` renderings, so no caller text) and Meta's two geo refusals
+(the caller's GeoTargets and static tables only; each dropped code goes through
+`domain.CallerValue`, so the "dropped" list now quotes each code). Meta still appends the
+"dropped"/"skipped" Steps lines after "Account verified", in the same order. Their entries go
+through the same `callerValueList` / `domain.CallerValue` path as the refusals, because the
+Steps are saved on the create job. So on a SUCCESSFUL create a URL-shaped geo entry reads
+"(value withheld)", and every listed code is quoted (`Geo targets dropped (…): (value withheld),
+"IR"`). This is a deliberate change to success-path Steps text; before it the lines joined the
+raw uppercased entries.
+Pinned by `TestCreateCampaign_WindowRefusedBeforeAnyRequest`,
+`TestCreateCampaign_GeoRefusalsBeforeAnyRequest`, `TestCreateCampaignGeoStepsWithholdURLEntries`
+and three refusal cases. Deliberately NOT
+moved: LinkedIn's window re-checks in `findOrCreateCampaignGroup` / `createSponsoredCampaign`
+(clock-race re-checks of what `validateSchedule` already refused up front), Meta's minor-unit
+budget bounds (the offset is the account currency's, from the preflight), Reddit's late
+`ImageURLSource` URL check (the URL is minted late on purpose), and HubSpot's hero-image URL
+parse/scheme checks (best-effort after the clone; refusing up front would turn a degrade into a
+failed create). X, Microsoft and HubSpot had no other reachable deterministic check after their
+first request: what remains there is either upstream-dependent or a backstop repeating an
+earlier check. Dispatcher-authored ones
 are marked too: Reddit's stored-asset choice, LinkedIn's inactive / incomplete / missing-org /
 no-variant / foreign-account refusals, X's missing funding instrument, and HubSpot's missing
 `sourceEmailId` and send-list-in-suppression check. Every CALLER or connection value a marked
