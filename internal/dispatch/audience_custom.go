@@ -269,6 +269,30 @@ func (x *AudienceExplorer) previewCustom(ctx context.Context, client *hubspot.Cl
 	if len(missing) > 0 {
 		return nil, &audience.UnknownPropertiesError{Names: missing}
 	}
+	// Ambassador programmes are read like the speaker signals: one the portal lacks
+	// is skipped with a warning, and only having none refuses the request.
+	if criteria.Ambassadors {
+		present := []string{}
+		var absent []string
+		for _, prop := range audience.AmbassadorProgrammes() {
+			def, perr := client.GetContactProperty(ctx, prop)
+			if perr != nil {
+				return nil, fmt.Errorf("audience custom: read property %q: %w", prop, perr)
+			}
+			if def == nil {
+				absent = append(absent, prop)
+				continue
+			}
+			present = append(present, prop)
+		}
+		criteria.AmbassadorProperties = present
+		if err := audience.ValidateCustomCriteria(criteria); err != nil {
+			return nil, err
+		}
+		if len(absent) > 0 && len(present) > 0 {
+			warnings = append(warnings, fmt.Sprintf("This portal has no %s, so those ambassador programmes are left out.", strings.Join(absent, ", ")))
+		}
+	}
 	if err := audience.CheckFilterKinds(criteria.PropertyFilters, kinds); err != nil {
 		return nil, err
 	}

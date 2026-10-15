@@ -536,3 +536,43 @@ func TestVersionedName_StaysWithinTheNameLimit(t *testing.T) {
 	assert.Equal(t, CustomNameMaxLen, utf8.RuneCountInString(FitListName(long+"x")))
 	assert.Equal(t, "short", FitListName("short"))
 }
+
+// Property filters alone describe no audience: "email is known" ungated is most of
+// the portal. With the gate, the single branch carries it and the size is bounded.
+func TestCustomListFilter_APropertyOnlyAudienceIsGated(t *testing.T) {
+	c := CustomCriteria{PropertyFilters: []CustomPropertyFilter{{Property: "email", Operator: CustomOpKnown}}}
+	_, err := CustomListFilter(c)
+	assert.ErrorIs(t, err, ErrInvalidRequest, "an ungated property-only audience is refused")
+
+	c.GateListID = "26716"
+	raw, err := CustomListFilter(c)
+	require.NoError(t, err)
+	root := decodeBranch(t, raw)
+	require.Len(t, root.FilterBranches, 1)
+	var gated bool
+	for _, f := range root.FilterBranches[0].Filters {
+		if f.FilterType == "IN_LIST" && f.ListID == "26716" {
+			gated = true
+		}
+	}
+	assert.True(t, gated, "the property-only branch is inside the gate")
+	assert.True(t, AllBranchesGated(c), "so the gate's size bounds it")
+
+	roles := CustomCriteria{Ambassadors: true}
+	_, err = CustomListFilter(roles)
+	assert.NoError(t, err, "a role restriction is narrow enough without a gate")
+}
+
+// A programme the portal lacks is skipped, not refused; only having none refuses.
+func TestCustomListFilter_AmbassadorsUseOnlyThePortalsProgrammes(t *testing.T) {
+	c := CustomCriteria{Ambassadors: true, AmbassadorProperties: []string{"lf_energy_ambassador___bio"}}
+	raw, err := CustomListFilter(c)
+	require.NoError(t, err)
+	root := decodeBranch(t, raw)
+	require.Len(t, root.FilterBranches, 1)
+	assert.Equal(t, "lf_energy_ambassador___bio", root.FilterBranches[0].Filters[0].Property)
+
+	c.AmbassadorProperties = []string{}
+	_, err = CustomListFilter(c)
+	assert.ErrorIs(t, err, ErrInvalidRequest, "no programme in the portal means no way to select ambassadors")
+}

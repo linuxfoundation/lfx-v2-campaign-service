@@ -752,3 +752,26 @@ func TestInterpretCustom_TheRequestedEditionsWinOverTheWarehouseDefault(t *testi
 		})
 	}
 }
+
+// Ambassador programmes are read like speaker signals: one the portal lacks is skipped
+// with a warning naming it, and only a portal with none is refused.
+func TestPreviewCustom_SkipsAnAmbassadorProgrammeThePortalLacks(t *testing.T) {
+	portal := seoulPortal()
+	portal.properties["lf_energy_ambassador___bio"] = "string"
+	srv := portal.serve(t)
+	defer srv.Close()
+	x := explorerOver(srv, nil)
+	c := seoulCriteria()
+	c.Ambassadors = true
+
+	p, err := x.PreviewCustom(context.Background(), "proj-1", c, "")
+	require.NoError(t, err, "one missing programme no longer fails the request")
+	assert.Equal(t, len(seoulCriteria().Cities)*2+2, p.BranchCount, "the location branches, once for the one programme present")
+	warnings := strings.Join(p.Warnings, "\n")
+	assert.Contains(t, warnings, "cncf_ambassador___year_ambassador")
+	assert.Contains(t, warnings, "open_mainframe_ambassador___bio")
+
+	delete(portal.properties, "lf_energy_ambassador___bio")
+	_, err = x.PreviewCustom(context.Background(), "proj-1", c, "")
+	assert.ErrorIs(t, err, audience.ErrInvalidRequest, "a portal with no programme cannot select ambassadors")
+}

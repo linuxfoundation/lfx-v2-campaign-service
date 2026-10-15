@@ -480,7 +480,7 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   copied once per speaker signal the portal's registration event defines
   (`registration_type CONTAINS Speaker`, `is_event_speaker_bool`, `is_event_speaker`), each with
   the operation type its portal property requires (HubSpot has no `CONTAINS_TOKEN`), because
-  HubSpot will not take an OR nested inside a branch; ambassadors copy each branch once per programme property. A restriction on only some
+  HubSpot will not take an OR nested inside a branch; ambassadors copy each branch once per programme property the portal defines (`AmbassadorProperties`, read by the orchestration; a missing programme is skipped with a warning, and none at all is refused). A restriction on only some
   branches is an OR'd way around it. Copies clone their slices so appending to one cannot alias
   another. The expansion is capped at `customBranchLimit` (60).
 - **No suppression on a custom list.** It is an inclusion building block: suppressions apply once,
@@ -488,8 +488,10 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   block is reused (the legacy rule "single-signal lists never carry their own suppression").
 - **Fail closed.** `ValidateCustomCriteria` refuses an ungated contact-location branch (a city
   filter alone selects everyone who ever typed that city, mailable or not), a speaker restriction
-  with neither a list nor event names (every speaker of every event), an unknown operator, and a
-  value operator with no values. Every refusal wraps `ErrInvalidRequest` with operator-facing text.
+  with neither a list nor event names (every speaker of every event), an audience of property
+  filters alone with no gate (`email is known` ungated is most of the portal; with the gate the one
+  roles/properties branch carries it, so `AllBranchesGated` and the upper bound hold), an unknown
+  operator, and a value operator with no values. Every refusal wraps `ErrInvalidRequest` with operator-facing text.
 - **Naming.** `CustomListName` follows the reference pattern
   (`<YYQN> - <Location> - Mailable Contacts - <Label>`, `<Event> Speakers - <Scope>`,
   `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never

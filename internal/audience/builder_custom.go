@@ -206,6 +206,11 @@ type CustomCriteria struct {
 	PropertyFilters []CustomPropertyFilter
 	Speakers        *CustomSpeakers
 	Ambassadors     bool
+	// AmbassadorProperties are the programme properties this portal defines, set by
+	// the orchestration from the portal (as Speakers.PropertyTypes is): a missing
+	// programme is skipped rather than failing the request. Nil means every
+	// programme in ambassadorProperties.
+	AmbassadorProperties []string
 	// Label names the event(s) the audience is for; it only feeds the list name.
 	Label string
 }
@@ -361,9 +366,8 @@ func CustomContactProperties(c CustomCriteria) []string {
 	for _, f := range c.PropertyFilters {
 		out = append(out, strings.TrimSpace(f.Property))
 	}
-	if c.Ambassadors {
-		out = append(out, ambassadorProperties...)
-	}
+	// Ambassador programmes are not listed: a missing one is skipped, not refused,
+	// so the orchestration reads them separately.
 	return UniqueIDs(out)
 }
 
@@ -406,6 +410,15 @@ func ValidateCustomCriteria(c CustomCriteria) error {
 	}
 	if c.GateEventHistory && gate == "" {
 		return bad("gating event history requires a brand master list")
+	}
+	// Property filters alone describe no audience of their own: "email is known"
+	// with no gate is most of the portal. Roles (speakers, ambassadors) are
+	// narrow enough by themselves.
+	if !customHasBase(c) && c.Speakers == nil && !c.Ambassadors && gate == "" {
+		return bad("an audience of property filters alone must be gated by a brand master list, or it selects most of the portal")
+	}
+	if c.Ambassadors && c.AmbassadorProperties != nil && len(cleanValues(c.AmbassadorProperties)) == 0 {
+		return bad("this portal defines none of the ambassador programme properties, so ambassadors cannot be selected")
 	}
 	for _, f := range c.PropertyFilters {
 		if strings.TrimSpace(f.Property) == "" {
@@ -468,9 +481,10 @@ func CustomListFilter(c CustomCriteria) (json.RawMessage, error) {
 		branches = withSpeakers(branches, s)
 	}
 	if c.Ambassadors {
-		branches = crossWith(branches, len(ambassadorProperties), func(b *filterBranch, i int) {
+		programmes := c.ambassadorProps()
+		branches = crossWith(branches, len(programmes), func(b *filterBranch, i int) {
 			b.Filters = append(b.Filters, customPropertyFilter(CustomPropertyFilter{
-				Property: ambassadorProperties[i], Operator: CustomOpKnown,
+				Property: programmes[i], Operator: CustomOpKnown,
 			}))
 		})
 	}
@@ -487,8 +501,30 @@ func CustomListFilter(c CustomCriteria) (json.RawMessage, error) {
 	return json.Marshal(filterBranch{FilterBranchType: "OR", FilterBranches: branches, Filters: []filter{}})
 }
 
+// customHasBase reports whether the criteria select contacts by a location,
+// event history, a page view or a named edition, rather than by roles or
+// properties alone.
+func customHasBase(c CustomCriteria) bool {
+	return c.ContactLocation || c.EventRegistered || c.EducationEnrolled ||
+		len(cleanValues(c.RegisteredFor)) > 0 || len(cleanValues(c.PageViewURLs)) > 0
+}
+
+// AmbassadorProgrammes are every programme property an ambassadors restriction
+// may read.
+func AmbassadorProgrammes() []string { return append([]string(nil), ambassadorProperties...) }
+
+// ambassadorProps are the programme properties the restriction filters on.
+func (c CustomCriteria) ambassadorProps() []string {
+	if c.AmbassadorProperties == nil {
+		return ambassadorProperties
+	}
+	return cleanValues(c.AmbassadorProperties)
+}
+
 // customBaseBranches are the location and event-history branches, or one empty
-// AND branch when the audience is defined by roles or properties alone.
+// AND branch when the audience is defined by roles or properties alone. That
+// branch carries the gate when there is one: it is what bounds a property-only
+// audience to the brand's contacts.
 func customBaseBranches(c CustomCriteria) []filterBranch {
 	cities, countries := cleanValues(c.Cities), cleanValues(c.Countries)
 	gate := strings.TrimSpace(c.GateListID)
@@ -576,7 +612,11 @@ func customBaseBranches(c CustomCriteria) []filterBranch {
 	}
 
 	if len(out) == 0 {
-		out = append(out, filterBranch{FilterBranchType: "AND", FilterBranches: []filterBranch{}, Filters: []filter{}})
+		b := filterBranch{FilterBranchType: "AND", FilterBranches: []filterBranch{}, Filters: []filter{}}
+		if gate != "" {
+			b.Filters = append(b.Filters, inListFilter(gate, "IN_LIST"))
+		}
+		out = append(out, b)
 	}
 	return out
 }
@@ -829,6 +869,10 @@ func AllBranchesGated(c CustomCriteria) bool {
 	}
 	if c.EventRegistered || c.EducationEnrolled {
 		return c.GateEventHistory
+	}
+	if !customHasBase(c) {
+		// The single roles/properties branch carries the gate.
+		return true
 	}
 	return c.ContactLocation
 }
