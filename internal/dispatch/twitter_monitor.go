@@ -35,7 +35,10 @@ import (
 // exercised against a live X Ads account. The flag gates this monitor AND the X audience read
 // (twitter_audience.go), the two features on the stats-jobs contract; X's per-campaign metrics
 // read (ReadMetrics), a different and long-standing synchronous endpoint, is unaffected.
-var _ service.AccountReportReader = (*TwitterDispatcher)(nil)
+var (
+	_ service.AccountReportReader   = (*TwitterDispatcher)(nil)
+	_ service.AccountCurrencyReader = (*TwitterDispatcher)(nil)
+)
 
 // twitterMonitorEnabled gates the report-backed X monitor, mirroring microsoftMonitorEnabled:
 // only the exact value "true" enables it, read per call. Disabled, every AccountReportReader
@@ -134,6 +137,22 @@ func (d *TwitterDispatcher) ListAccountCampaigns(ctx context.Context, projectID 
 		})
 	}
 	return out, nil
+}
+
+// ReadAccountCurrency implements service.AccountCurrencyReader: the account's currency from the
+// same cached account read ListAccountCampaigns has just made for the account's timezone
+// (twitter.Client.AccountCurrency), so inside that cache's minute it costs no call. Same trust
+// boundary as every method here: the project's own connection, and only its bound account.
+func (d *TwitterDispatcher) ReadAccountCurrency(ctx context.Context, projectID string, platform model.Provider, accountID string) (string, error) {
+	client, err := d.resolveTwitterMonitorClient(ctx, projectID, platform, accountID)
+	if err != nil {
+		return "", err
+	}
+	currency, err := client.AccountCurrency(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read x ads account currency: %w", err)
+	}
+	return currency, nil
 }
 
 // SubmitAccountReport implements service.AccountReportReader.

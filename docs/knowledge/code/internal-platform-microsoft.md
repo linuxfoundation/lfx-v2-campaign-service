@@ -993,6 +993,21 @@ orchestrator saves the state between requests instead (see
   Incomplete Data" is reported as `Partial` rather than refused, unlike the per-campaign read,
   because the monitor's window always includes today.
 
+`account_currency.go`'s `AccountCurrency` reads the account's currency for the monitor's
+`currency` field — the campaign list and the report carry none — with ONE Customer Management
+`Account/Query` (`GetAccount`, `doCustomerRequest`, idempotent). The body must pass
+`identityjson` and its `Account.Id` (bare or quoted) must be the client's account, else
+`errAccountCurrencyUntrusted`; errors carry no upstream text. `CurrencyCode` (read RAW) is a
+three-letter code from Microsoft's v13 value set and is published only when
+`microsoftPublishableCurrencies` lists it — the value set's current ISO 4217 codes, HRK included
+(accurate for an unconverted account), the withdrawn/non-ISO AZM, BGL, BYB, EEK, LTL, LVL, ROL,
+RUR, SIT, SKK, VEF, YUN and ZWD excluded; anything else (absent, null, not a string, unlisted) is
+`""` with no error. Sent with `idempotent=false` so a 429 is not backed off and retried. A
+recognised code is cached on the client per account for `accountCurrencyCacheFor` (6h — an
+account's currency does not change), a `""` answer only for `accountCurrencyUnrecognisedCacheFor`
+(5m); failures are never cached. Unverified against a live account, like the rest of the monitor. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 `ValidateMonitorAccountID` is the strict, Pattern-identical account-id check for this path.
 
 ## Keyword report (report-backed, default-OFF, LFXV2-2665)
