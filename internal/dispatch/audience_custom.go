@@ -74,9 +74,27 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		if draft.Criteria.Label == "" {
 			draft.Criteria.Label = event.Name
 		}
-		// Past editions come from the warehouse, verbatim: they are exact filter values.
+		// Past editions come from the warehouse, verbatim: they are exact filter values,
+		// and registered_for's default. Editions the request or the answers named are
+		// used instead, but only as exact names of this event or one of its editions,
+		// and an audience that excludes past registrants gets none.
 		if len(event.PastEditions) > 0 {
-			kept, omitted := capPastEditions(event.PastEditions)
+			named, invented := knownEditions(draft.Criteria.RegisteredFor, append([]string{event.Name}, event.PastEditions...))
+			if len(invented) > 0 {
+				draft.Notes = append(draft.Notes, fmt.Sprintf(
+					"Left out %d registered_for names that are not this event's or one of its past editions' exact names: %s.",
+					len(invented), strings.Join(invented, "; ")))
+			}
+			defaults := event.PastEditions
+			switch {
+			case len(named) > 0:
+				defaults = named
+			case len(draft.Criteria.RegisteredFor) > 0, draft.ExcludePastEditions:
+				// Every named edition was unknown, or past registrants were ruled out:
+				// adding the warehouse's editions would reach people the operator excluded.
+				defaults = nil
+			}
+			kept, omitted := capPastEditions(defaults)
 			draft.Criteria.RegisteredFor = kept
 			if omitted > 0 {
 				draft.Notes = append(draft.Notes, fmt.Sprintf(
@@ -476,6 +494,32 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 		Location:     sanitizeExtractedField(details.Location),
 		Dates:        identity.Dates,
 	}, nil
+}
+
+// knownEditions keeps the requested names that are, ignoring case and spacing,
+// one of the known edition names, returned in the known spelling, and lists the
+// rest. A guessed edition name would match nobody.
+func knownEditions(requested, known []string) (kept, unknown []string) {
+	canonical := make(map[string]string, len(known))
+	for _, k := range known {
+		if n := strings.Join(strings.Fields(k), " "); n != "" {
+			canonical[strings.ToLower(n)] = n
+		}
+	}
+	seen := map[string]bool{}
+	for _, r := range requested {
+		key := strings.ToLower(strings.Join(strings.Fields(r), " "))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		if name, ok := canonical[key]; ok {
+			kept = append(kept, name)
+		} else {
+			unknown = append(unknown, r)
+		}
+	}
+	return kept, unknown
 }
 
 // capPastEditions bounds the warehouse's past editions to registered_for's

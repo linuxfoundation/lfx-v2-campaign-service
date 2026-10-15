@@ -4358,8 +4358,16 @@ enumeration property would preview and then match nobody): a caller's value is k
 portal's `CourseTopicCandidates`, otherwise the best candidate replaces it; the model's choice is
 never used.
 
+For an event audience the warehouse's past editions are `registered_for`'s DEFAULT, not an
+override (2026-10-15): editions the request or the answers named (the model copies them into
+`registered_for`) are used instead, kept by `knownEditions` only as exact names of this event or one
+of its editions (in the warehouse's spelling, any other name dropped with a note), and a draft whose
+model set `include_past_editions: false`, or whose every named edition was unknown, gets none. So
+an operator who asked for one edition, or ruled out past registrants, is never sent the whole
+family.
+
 Interpretation keeps every draft inside the contract preview enforces: an event audience's
-`registered_for` takes the warehouse's past editions capped at `CustomMaxRegisteredFor` (25) by
+`registered_for` takes its editions capped at `CustomMaxRegisteredFor` (25) by
 `capPastEditions` — newest year first, since the warehouse returns them alphabetically and up to
 its own 500-row cap — with a draft note naming how many were left out, and `ParseCustomDraft` caps
 `page_view_urls` at 10. The speakers list is auto-picked only through `audience.SpeakerListFits`,

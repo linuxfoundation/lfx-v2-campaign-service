@@ -710,3 +710,45 @@ func TestPreviewCustom_ADerivedNameFitsTheCreateLimit(t *testing.T) {
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len([]rune(p.Name)), audience.CustomNameMaxLen)
 }
+
+// The warehouse's past editions are registered_for's default, not an override: an
+// operator who named editions gets exactly those (in the warehouse's spelling), one
+// who excluded past registrants gets none, and a guessed name never reaches a filter.
+func TestInterpretCustom_TheRequestedEditionsWinOverTheWarehouseDefault(t *testing.T) {
+	events := []snowflake.Event{{EventName: "Synthetic Summit 2024"}, {EventName: "Synthetic Summit 2025"}}
+	for name, tc := range map[string]struct {
+		reply   string // the model's registered_for
+		exclude bool   // the model set include_past_editions to false
+		want    []string
+		note    string
+	}{
+		"nothing named takes the default":  {reply: `"registered_for":[]`, want: []string{"Synthetic Summit 2024", "Synthetic Summit 2025"}},
+		"a named edition replaces it":      {reply: `"registered_for":["synthetic  summit 2025"]`, want: []string{"Synthetic Summit 2025"}},
+		"the event's own edition is known": {reply: `"registered_for":["Synthetic Summit 2026"]`, want: []string{"Synthetic Summit 2026"}},
+		"excluded past registrants":        {reply: `"registered_for":[]`, exclude: true, want: nil},
+		"only a guessed name":              {reply: `"registered_for":["Synthetic Summit Tokyo 2025"]`, want: nil, note: "Synthetic Summit Tokyo 2025"},
+		"a guessed name beside a real one": {reply: `"registered_for":["Synthetic Summit 2024","Synth Summit 24"]`, want: []string{"Synthetic Summit 2024"}, note: "Synth Summit 24"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			srv := portal.serve(t)
+			defer srv.Close()
+			extra := ""
+			if tc.exclude {
+				extra = `"include_past_editions":false,`
+			}
+			criteria := `{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],` + tc.reply + `,"label":""},` + extra + `"questions":[],"notes":[]}`
+			llm := &seqLLM{replies: []string{`{"eventName":"","brandShort":"SYN","eventDates":[]}`, criteria}}
+			repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+			builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: events}, hubspot.WithBaseURL(srv.URL))
+			x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026", StartDate: "2026-03-02"}}, llm)
+
+			out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, out.Draft.Criteria.RegisteredFor)
+			if tc.note != "" {
+				assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), tc.note, "a dropped name is reported")
+			}
+		})
+	}
+}

@@ -79,3 +79,11 @@
   `speakers.event_names` and a filter's `values`.
 - Nits: `internal-service.md` says which file serves which endpoints, the two Kubernetes concept
   pages name both non-idempotent writers, and `CustomNameMaxLen` follows the length-limit naming.
+
+**Fix** — Greptile on the merged head:
+
+- **The warehouse's past editions are a default, not an override.** With an event URL, interpret
+  replaced the model's `registered_for` with every past edition, so an operator who asked for one
+  edition's registrants, or answered that past registrants are excluded, got the whole family.
+  Named editions now win (kept only as exact known names; others dropped with a note), and a model
+  reply with `include_past_editions: false` gets none.
