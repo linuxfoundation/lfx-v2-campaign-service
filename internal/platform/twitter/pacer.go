@@ -4,6 +4,7 @@
 package twitter
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -33,6 +34,8 @@ type writePacer struct {
 type AccountPacers struct {
 	mu sync.Mutex
 	m  map[string]*writePacer
+	// media holds the per-(account, image) Media Library locks (mediaLocks); created lazily.
+	media *mediaLocks
 }
 
 // NewAccountPacers returns an empty registry.
@@ -62,4 +65,67 @@ func WithAccountPacers(r *AccountPacers) Option {
 			c.pacers = r
 		}
 	}
+}
+
+// mediaLocks serializes the Media Library find-or-upload for ONE (ad account, image) pair, so
+// two dispatches carrying identical bytes to one account cannot both miss the lookup and both
+// upload and add (media.go's ensureImageMedia). The lock spans lookup -> upload -> library add;
+// the second holder's lookup then finds the first's entry.
+//
+// A semaphore (a 1-buffered channel) rather than a sync.Mutex so a waiter's context bounds its
+// wait. Entries are reference-counted and removed when the last holder or waiter leaves, so the
+// map holds only pairs with a dispatch in flight. The scope is the PROCESS, as for the pacer:
+// replicas do not share it.
+type mediaLocks struct {
+	mu sync.Mutex
+	m  map[string]*mediaLock
+}
+
+type mediaLock struct {
+	sem  chan struct{}
+	refs int
+}
+
+func newMediaLocks() *mediaLocks { return &mediaLocks{m: map[string]*mediaLock{}} }
+
+// acquire blocks until key is held or ctx is done, returning the release func on success.
+func (l *mediaLocks) acquire(ctx context.Context, key string) (func(), error) {
+	l.mu.Lock()
+	e, ok := l.m[key]
+	if !ok {
+		e = &mediaLock{sem: make(chan struct{}, 1)}
+		l.m[key] = e
+	}
+	e.refs++
+	l.mu.Unlock()
+
+	drop := func() {
+		l.mu.Lock()
+		e.refs--
+		if e.refs == 0 {
+			delete(l.m, key)
+		}
+		l.mu.Unlock()
+	}
+	select {
+	case e.sem <- struct{}{}:
+		return func() {
+			<-e.sem
+			drop()
+		}, nil
+	case <-ctx.Done():
+		drop()
+		return nil, ctx.Err()
+	}
+}
+
+// forMedia returns the registry's shared media locks, so every client for one account in this
+// process serializes against the same entries.
+func (r *AccountPacers) forMedia() *mediaLocks {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.media == nil {
+		r.media = newMediaLocks()
+	}
+	return r.media
 }

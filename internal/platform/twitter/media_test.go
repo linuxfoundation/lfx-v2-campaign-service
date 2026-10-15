@@ -49,6 +49,10 @@ type mediaFakeX struct {
 	libraryStatus  int
 	libraryBody    string
 	lookupBody     string // overrides the computed lookup page when set
+	// initWaitsForLookups, when > 0, holds each initialize until that many lookups have
+	// arrived (or initWaitMax passes), so an unserialized pair of uploads is caught every time.
+	initWaitsForLookups int
+	initWaitMax         time.Duration
 }
 
 func newMediaFakeX() *mediaFakeX {
@@ -78,6 +82,12 @@ func (f *mediaFakeX) uploaded() []byte {
 
 func (f *mediaFakeX) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/2/media/upload/initialize" && f.initWaitsForLookups > 0 {
+			deadline := time.Now().Add(f.initWaitMax)
+			for f.count("lookup") < f.initWaitsForLookups && time.Now().Before(deadline) {
+				time.Sleep(2 * time.Millisecond)
+			}
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		p := r.URL.Path
@@ -476,5 +486,120 @@ func TestCreateCampaign_NoImageMakesNoMediaRequests(t *testing.T) {
 	}
 	if res.MediaKey != "" || strings.Contains(f.tweetQuery, "media_keys") {
 		t.Errorf("no media may be attached without an image: %q", f.tweetQuery)
+	}
+}
+
+// TestCreateCampaign_ImageMediaStateMustBeReported: a finalize or STATUS body that does not
+// say what state the media is in, or a state that never becomes "succeeded", is never read as
+// ready. The create fails before the library add and the campaign; where the body is
+// unreadable — including a raw body identityjson refuses, such as a duplicated "data" key the
+// envelope decode resolved last-wins — the outcome is UNCONFIRMED, as for any unreadable 2xx.
+func TestCreateCampaign_ImageMediaStateMustBeReported(t *testing.T) {
+	const pending = `{"data":{"id":"777","media_key":"3_777","processing_info":{"state":"pending","check_after_secs":1}}}`
+	cases := []struct {
+		name, finalize, status string
+		unconfirmed            bool
+		statusPolls            int
+	}{
+		{"finalize without data", `{}`, "", true, 0},
+		{"finalize with null data", `{"data":null}`, "", true, 0},
+		{"status without data", pending, `{}`, true, 1},
+		{"status with null data", pending, `{"data":null}`, true, 1},
+		{"finalize with a duplicated data key", `{"data":null,"data":{"id":"777","media_key":"3_777"}}`, "", true, 0},
+		{"status with a duplicated data key", pending, `{"data":{"processing_info":{"state":"failed"}},"data":{"id":"777","media_key":"3_777","processing_info":{"state":"succeeded"}}}`, true, 1},
+		{"status without processing_info", pending, `{"data":{"id":"777","media_key":"3_777"}}`, true, 1},
+		{"empty processing state", `{"data":{"id":"777","media_key":"3_777","processing_info":{"state":""}}}`, `{"data":{"processing_info":{"state":""}}}`, false, maxMediaStatusPolls},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMediaFakeX()
+			f.finalizeBody, f.statusBody = tc.finalize, tc.status
+			c := newMediaTestClient(t, f)
+			res, err := c.CreateCampaign(context.Background(), imageInput(testPNG(600)))
+			if err == nil || res != nil {
+				t.Fatalf("an unreported media state must not be treated as ready: res=%v err=%v", res, err)
+			}
+			if got := strings.Contains(err.Error(), "UNCONFIRMED"); got != tc.unconfirmed {
+				t.Errorf("UNCONFIRMED=%v, want %v: %v", got, tc.unconfirmed, err)
+			}
+			if f.count("status") != tc.statusPolls {
+				t.Errorf("status polls = %d, want %d", f.count("status"), tc.statusPolls)
+			}
+			if f.count("library") != 0 || f.count("campaign") != 0 || f.count("tweet") != 0 {
+				t.Error("nothing may be added or created for media X never reported ready")
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_ConcurrentSameImageUploadsOnce: two clients for ONE account (sharing the
+// dispatcher's AccountPacers registry, as two projects on the shared LF connection do) create
+// with identical image bytes at the same time. Exactly one upload and one library add happen;
+// the other create reuses the entry. The fake holds the first initialize until a second lookup
+// arrives, so an unserialized pair is caught deterministically.
+func TestCreateCampaign_ConcurrentSameImageUploadsOnce(t *testing.T) {
+	f := newMediaFakeX()
+	f.initWaitsForLookups = 2
+	f.initWaitMax = 300 * time.Millisecond
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+	reg := NewAccountPacers()
+	mk := func() *Client {
+		c := NewClient(
+			Credentials{ConsumerKey: "ck", ConsumerSecret: "cs", AccessToken: "at", AccessTokenSecret: "ats"},
+			AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
+			WithBaseURL(srv.URL), WithMediaUploadBaseURL(srv.URL), WithWriteDelay(0), WithAccountPacers(reg),
+		)
+		c.timeFn = staticTime
+		return c
+	}
+	clients := []*Client{mk(), mk()}
+	img := testPNG(600)
+	var wg sync.WaitGroup
+	errs := make([]error, len(clients))
+	keys := make([]string, len(clients))
+	for i, c := range clients {
+		wg.Add(1)
+		go func(i int, c *Client) {
+			defer wg.Done()
+			res, err := c.CreateCampaign(context.Background(), imageInput(img))
+			errs[i] = err
+			if res != nil {
+				keys[i] = res.MediaKey
+			}
+		}(i, c)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+	if f.count("init") != 1 || f.count("library") != 1 {
+		t.Errorf("concurrent creates of one image must upload once: init=%d library=%d", f.count("init"), f.count("library"))
+	}
+	if keys[0] != "3_777" || keys[1] != "3_777" {
+		t.Errorf("both creates must attach the one library entry, got %v", keys)
+	}
+}
+
+// TestMediaLocks_ContextBoundsTheWaitAndEntriesAreDropped: a waiter whose context ends gives
+// up without the lock, and the map is empty once every holder and waiter has left.
+func TestMediaLocks_ContextBoundsTheWaitAndEntriesAreDropped(t *testing.T) {
+	l := newMediaLocks()
+	rel, err := l.acquire(context.Background(), "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := l.acquire(ctx, "k"); err == nil {
+		t.Fatal("a waiter whose context ends must not get the lock")
+	}
+	rel()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.m) != 0 {
+		t.Errorf("entries must be dropped when unused, %d left", len(l.m))
 	}
 }
