@@ -14,6 +14,10 @@
   for that address and dials every other address normally. Going through a real transport and
   `http.Client` wraps the error exactly as a real refusal is wrapped, so production classifiers
   (`isPreSendDialError`, `ProbeNotSent`, `ClassifyAdSetWrite`, `ErrWriteNotSent`) match it.
+  The helper fails the test at cleanup if no dial was refused: a client that bypassed the
+  transport would hit a `*net.DNSError` on `refused.invalid`, which the classifiers also call
+  pre-send, and would otherwise pass without proving the refusal. Twitter's `testClient` takes
+  trailing options so the keyword-targeting subtest keeps using it.
 - Sites: reddit `TestCreateCampaign_AuthorPostPreSendIsDefinite`,
   `TestReportBudgets_PreSendDialFailureReleasesTheSlot`,
   `TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts/pre-send dial failure`,

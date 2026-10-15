@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"testing"
 )
@@ -29,17 +30,28 @@ const refusedAddr = "refused.invalid:80"
 // an *os.SyscallError — so the error reaches the client wrapped as a real refusal would be
 // and the production classifiers match it through errors.Is/errors.As. Every other address
 // is dialed normally, so token and API test servers keep working through the same client.
+//
+// The test fails at cleanup if no dial was refused: refused.invalid cannot resolve, so a
+// client that bypassed this transport would fail with a *net.DNSError instead — which the
+// classifiers also call pre-send — and the test would pass without proving the refusal.
 func refusedDialTransport(t *testing.T) *http.Transport {
 	t.Helper()
 	var d net.Dialer
+	var refused atomic.Int32
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			if addr == refusedAddr {
+				refused.Add(1)
 				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
 			}
 			return d.DialContext(ctx, network, addr)
 		},
 	}
-	t.Cleanup(tr.CloseIdleConnections)
+	t.Cleanup(func() {
+		tr.CloseIdleConnections()
+		if refused.Load() == 0 {
+			t.Error("refusedDialTransport: no dial to refusedURL was refused; the client did not use this transport")
+		}
+	})
 	return tr
 }
