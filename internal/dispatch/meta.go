@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 
@@ -245,61 +244,15 @@ const MaxConcurrentVariantAssetBytes int64 = maxVariantAssetBytes
 // ending the wait, and it would spend that whole budget queueing instead of dispatching.
 const VariantAssetReserveWait = 30 * time.Second
 
-// maxAssetIDInError bounds how much of a REJECTED imageAssetId is quoted back. A valid
+// maxAssetIDInError bounds how much of a REJECTED imageAssetId is quoted back; the bound is
+// now enforced by domain.CallerValue (issue #208), which replaced this package's
+// safeAssetIDForError and additionally withholds URL-, query- and token-shaped values. A valid
 // id is a 36-character UUID, so this is generous for anything legitimate while keeping a
 // malformed value short enough to stay readable. Deliberately well under
 // errSummaryMaxRunes (200) so this value cannot by itself consume an error summary and
 // push the surrounding wording — which says WHICH variant and WHAT is wrong — out of the
 // truncation window.
 const maxAssetIDInError = 64
-
-// safeAssetIDForError renders a rejected imageAssetId for an error message that reaches
-// operator-facing output and a structured error log.
-//
-// imageAssetId is opaque CALLER JSON with no length or charset bound anywhere on its path
-// (design/brief.go sets none, and the config is decoded straight into metaConfig), so the
-// raw value is attacker-controlled in both size and content. It reaches
-// slog.ErrorContext's "error" attribute via notCreated → the orchestrator's default
-// pre-create arm, so quoting it unchanged would let a caller write arbitrary text — and
-// arbitrarily MUCH of it — into the orchestrator's structured error log.
-//
-// Two independent problems, so two independent controls:
-//   - UNBOUNDED LENGTH → truncated to maxAssetIDInError runes (runes, not bytes, so a
-//     multi-byte value is never split mid-character into invalid UTF-8).
-//   - LOG INJECTION → every non-graphic rune is replaced. Newlines and carriage returns
-//     are the ones that matter: a log line the caller can break is a log line the caller
-//     can forge a second, fake entry inside.
-//
-// It is NOT a redactor and makes no claim to be one — the same distinction
-// safeErrSummary carries. It bounds and neutralises; it does not decide that the content
-// was secret. Nothing secret is expected here (this is a caller-supplied reference, not a
-// credential), so bounding the blast radius is the appropriate control.
-//
-// The value is wrapped in explicit markers rather than %q. %q would escape the control
-// characters, but only AFTER the unbounded value had already been accepted, and it leaves
-// the reader unable to tell a truncated value from a complete one.
-func safeAssetIDForError(id string) string {
-	var b strings.Builder
-	n := 0
-	truncated := false
-	for _, r := range id {
-		if n == maxAssetIDInError {
-			truncated = true
-			break
-		}
-		if unicode.IsGraphic(r) {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune(unicode.ReplacementChar)
-		}
-		n++
-	}
-	out := "<" + b.String() + ">"
-	if truncated {
-		out = "<" + b.String() + "… (truncated)>"
-	}
-	return out
-}
 
 // resolveVariantAssets loads each variant's referenced image (imageAssetId) into the bytes
 // the Meta client uploads, returning a COPY so the caller's cfg.Variants — reused by
@@ -408,7 +361,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		}
 		parsed, perr := uuid.Parse(assetID)
 		if perr != nil {
-			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, safeAssetIDForError(assetID))
+			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which is not a valid asset id", i+1, domain.CallerValue(assetID))
 		}
 		// CANONICALIZE before the id is used as a cache key or a lookup value.
 		//
@@ -434,7 +387,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 			continue
 		}
 		if d.creatives == nil {
-			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
+			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s but the creative-asset store is not configured", i+1, assetID)
 		}
 		// PRICE THE ASSET BEFORE LOADING IT.
 		//
@@ -445,7 +398,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		size, serr := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 		if serr != nil {
 			if errors.Is(serr, domain.ErrNotFound) {
-				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+				return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
 			}
 			return nil, func() {}, fmt.Errorf("meta variant %d: size creative asset %s: %w", i+1, assetID, serr)
 		}
@@ -455,7 +408,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// "peak is the cap plus one asset" overshoot is gone.
 		totalBytes += size
 		if totalBytes > maxVariantAssetBytes {
-			return nil, func() {}, fmt.Errorf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
+			return nil, func() {}, domain.PreflightRefusalf("meta variants reference more than %d bytes of distinct creative assets (%d bytes at variant %d); split the campaign or reuse fewer images",
 				maxVariantAssetBytes, totalBytes, i+1)
 		}
 
@@ -463,14 +416,14 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// rather than once at the end for exactly the ordering reason above.
 		relOne, ok := d.assets.reserve(ctx, size)
 		if !ok {
-			return nil, func() {}, fmt.Errorf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
+			return nil, func() {}, domain.PreflightRefusalf("meta variants reference %d bytes of creative assets, which exceeds the memory concurrently available for dispatch; retry when other dispatches finish", totalBytes)
 		}
 		releases = append(releases, relOne)
 
 		asset, gerr := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 		if gerr != nil {
 			if errors.Is(gerr, domain.ErrNotFound) {
-				return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
+				return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which does not exist for this brief", i+1, assetID)
 			}
 			return nil, func() {}, fmt.Errorf("meta variant %d: load creative asset %s: %w", i+1, assetID, gerr)
 		}
@@ -483,7 +436,7 @@ func (d *MetaDispatcher) resolveVariantAssets(ctx context.Context, brief *model.
 		// than proceed: leaving ImageBytes empty here would build a LINK-ONLY ad for a
 		// variant that asked for an image — a silent downgrade that spends money.
 		if len(asset.Bytes) == 0 {
-			return nil, func() {}, fmt.Errorf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
+			return nil, func() {}, domain.PreflightRefusalf("meta variant %d references creative asset %s, which has no stored image bytes", i+1, assetID)
 		}
 		byID[assetID] = asset.Bytes
 		mimeByID[assetID] = asset.MimeType
@@ -568,13 +521,12 @@ func (d *MetaDispatcher) resolveMetaCredentials(ctx context.Context, projectID s
 // naming the missing choice: domain.ErrAccountNotSelected alongside
 // domain.ErrConnectionNotUsable, which unusableConnectionReason reports as
 // "account_not_selected". That pair is a CLASSIFICATION, not a status code, and the reason
-// token reaches an operator through the LOG — not the job result. Be precise about this,
-// because the natural assumption is wrong: the only caller is Dispatch, which is queued work,
-// and dispatchPlatform collapses EVERY dispatcher error into the same
-// "platform campaign creation failed" job result (internal/service/orchestrator.go). Nothing
-// returned here reaches the caller as text. Google Ads' create path is in exactly the same
-// position and says so at validateGoogleAdsConnection's call site; classification there buys
-// log hygiene and claim semantics, and it buys the same here.
+// token reaches an operator through the LOG and, since issue #208, through the job result.
+// Be precise about this: the only caller is Dispatch, which is queued work, and
+// dispatchPlatform reports a dispatcher error in the job result only by CLASSIFICATION
+// (DispatchFailureMessage, internal/service/dispatch_failure.go) — here "this project's
+// meta-ads connection cannot be used as configured (reason: account_not_selected)". The error's
+// own text never reaches the caller.
 //
 // The same sentinels DO drive a synchronous 409 (internal/service/brief.go) — which is why
 // they are used rather than a bespoke error — but only from the status toggle and metrics

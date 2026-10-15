@@ -186,7 +186,9 @@ func (d *RedditDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBr
 	var imageURLSource func(context.Context) (string, error)
 	assetID, err := d.checkRedditAssetChoice(cfg)
 	if err != nil {
-		return nil, notCreated(err)
+		// Fixed, caller-safe texts (domain.ErrCreateConfigInvalid's contract), raised before any
+		// Reddit call: the async job may surface them verbatim (issue #208).
+		return nil, notCreated(domain.WrapPreflightRefusal(err))
 	}
 	if assetID != "" {
 		if err := d.checkRedditAsset(ctx, brief, assetID); err != nil {

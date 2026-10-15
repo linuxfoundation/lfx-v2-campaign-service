@@ -1884,7 +1884,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// No dispatcher returns this pairing today (every preCreateError is returned
 		// with a nil campaign), so this is a guard against a future adapter, not a
 		// live bug. It is cheap, and the failure it prevents costs real money.
-		if dispatchErrIsPreCreate(derr) && campaign == nil {
+		// preCreate is decided ONCE and used twice: for the claim below and for the job
+		// result's message (DispatchFailureMessage), so the message can never describe a
+		// different outcome than the one the claim was given.
+		preCreate := dispatchErrIsPreCreate(derr) && campaign == nil
+		if preCreate {
 			// The reason token is carried on THIS branch only, and only for the errors it
 			// has a vocabulary for. Pre-create is where the connection faults land — a
 			// resolve that could not produce a usable client never reached the provider —
@@ -1903,8 +1907,9 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 			// branches carry no reason for the same reason: there the error describes the
 			// provider, not the connection.
 			//
-			// Without this the token reached NOTHING. res.Error below collapses every
-			// dispatcher error to one string, and this line logged only err.Error() — so the
+			// Without this the token reached NOTHING. res.Error below once collapsed every
+			// dispatcher error to one string (it now carries this token too — see
+			// DispatchFailureMessage), and this line logged only err.Error() — so the
 			// classification that several dispatchers and the Meta credentials-only
 			// bootstrap all cite as the operator's signal existed solely in prose that
 			// promised it. A structured reason is what makes "the operator learns
@@ -2057,7 +2062,10 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				slog.ErrorContext(ctx, "platform dispatch failed (claim retained; outcome unknown)", "platform", p, "job_id", jobID, "error", derr)
 			}
 		}
-		res.Error = "platform campaign creation failed"
+		// WHY it failed, from a service-authored refusal or a fixed classification, never
+		// from derr's text (issue #208); see DispatchFailureMessage. The status, the claim and
+		// any persisted row were all settled above and are not affected by this line.
+		res.Error = DispatchFailureMessage(p, derr, preCreate)
 		return res
 	}
 	if campaign == nil {

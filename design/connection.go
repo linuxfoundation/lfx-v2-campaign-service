@@ -629,11 +629,11 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // ASYNCHRONOUS, so what a caller who created the row and stopped there meets is the polled job
 // result rather than an HTTP status.
 //
-// That result is GENERIC, and the rule below does not ask otherwise. dispatchPlatform collapses
-// every dispatcher error into "platform campaign creation failed", so no tagging can make the
-// polled result name the missing choice; what the tagging buys is a fixed-vocabulary
-// reason=account_not_selected on the dispatch-failure log line, which is where an operator tells
-// this apart from a bad credential. The requirement the rule states is that a half-configured
+// That result is a CLASSIFICATION, and the rule below does not ask for more. Since issue #208
+// dispatchPlatform reports a dispatcher error as a fixed sentence per class
+// (DispatchFailureMessage), so the polled result says the connection cannot be used and carries
+// the fixed-vocabulary reason token (account_not_selected) — the same token the dispatch-failure
+// log line carries, which is where an operator tells this apart from a bad credential. The requirement the rule states is that a half-configured
 // connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
 // LinkedIn, Microsoft and Reddit keep Required("account_id"), but no longer all for the

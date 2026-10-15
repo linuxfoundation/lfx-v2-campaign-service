@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // orgIDRE matches a valid LinkedIn organization id: a non-empty run of ASCII
@@ -96,7 +98,7 @@ func validFacets(kind string, in []string) ([]string, error) {
 	out := nonBlankFacets(in)
 	for _, v := range out {
 		if !matchesAnyFacetPrefix(v, prefixes) {
-			return nil, fmt.Errorf("malformed LinkedIn %s facet %q — expected a %s<id> value", kind, v, strings.Join(prefixes, "<id> or a "))
+			return nil, fmt.Errorf("malformed LinkedIn %s facet %s — expected a %s<id> value", kind, domain.CallerValue(v), strings.Join(prefixes, "<id> or a "))
 		}
 	}
 	return out, nil
@@ -196,15 +198,15 @@ func (c *Client) resolveOrgID(accountID string) (string, error) {
 			continue
 		}
 		if a.OrgID == "" {
-			return "", fmt.Errorf("LinkedIn account %q has no orgId configured", accountID)
+			return "", fmt.Errorf("LinkedIn account %s has no orgId configured", domain.CallerValue(accountID))
 		}
 		if !orgIDRE.MatchString(a.OrgID) {
-			return "", fmt.Errorf("LinkedIn account %q has a malformed orgId %q — expected a numeric organization id", accountID, a.OrgID)
+			return "", fmt.Errorf("LinkedIn account %s has a malformed orgId %s — expected a numeric organization id", domain.CallerValue(accountID), domain.CallerValue(a.OrgID))
 		}
 		if resolved == "" {
 			resolved = a.OrgID
 		} else if resolved != a.OrgID {
-			return "", fmt.Errorf("LinkedIn account %q has contradictory orgId mappings (%q vs %q) in the configured accounts list — refusing to guess which tenant to use", accountID, resolved, a.OrgID)
+			return "", fmt.Errorf("LinkedIn account %s has contradictory orgId mappings (%s vs %s) in the configured accounts list — refusing to guess which tenant to use", domain.CallerValue(accountID), domain.CallerValue(resolved), domain.CallerValue(a.OrgID))
 		}
 	}
 	if resolved != "" {
@@ -212,7 +214,7 @@ func (c *Client) resolveOrgID(accountID string) (string, error) {
 		// account's own orgId is a cross-tenant conflict; fail closed rather than
 		// silently preferring one.
 		if accountID == c.cfg.DefaultAccountID && c.cfg.DefaultOrgID != "" && c.cfg.DefaultOrgID != resolved {
-			return "", fmt.Errorf("LinkedIn default account %q has orgId %q that conflicts with defaultOrgId %q — refusing to guess which tenant to use", accountID, resolved, c.cfg.DefaultOrgID)
+			return "", fmt.Errorf("LinkedIn default account %s has orgId %s that conflicts with defaultOrgId %s — refusing to guess which tenant to use", domain.CallerValue(accountID), domain.CallerValue(resolved), domain.CallerValue(c.cfg.DefaultOrgID))
 		}
 		return resolved, nil
 	}
@@ -249,18 +251,18 @@ func (c *Client) resolveAccountID(override string) (string, error) {
 		for _, a := range c.cfg.Accounts {
 			if a.AccountID == override {
 				if !accountIDRE.MatchString(override) {
-					return "", fmt.Errorf("invalid LinkedIn ad account ID %q: must be numeric", override)
+					return "", fmt.Errorf("invalid LinkedIn ad account ID %s: must be numeric", domain.CallerValue(override))
 				}
 				return override, nil
 			}
 		}
-		return "", fmt.Errorf("unsupported LinkedIn ad account ID %q — not in the runtime config", override)
+		return "", fmt.Errorf("unsupported LinkedIn ad account ID %s — not in the runtime config", domain.CallerValue(override))
 	}
 	if c.cfg.DefaultAccountID != "" {
 		// Enforce the digit-only invariant the source config parser guarantees, so
 		// a malformed configured id can't be interpolated into a request URN.
 		if !accountIDRE.MatchString(c.cfg.DefaultAccountID) {
-			return "", fmt.Errorf("invalid default LinkedIn ad account ID %q: must be numeric", c.cfg.DefaultAccountID)
+			return "", fmt.Errorf("invalid default LinkedIn ad account ID %s: must be numeric", domain.CallerValue(c.cfg.DefaultAccountID))
 		}
 		return c.cfg.DefaultAccountID, nil
 	}
