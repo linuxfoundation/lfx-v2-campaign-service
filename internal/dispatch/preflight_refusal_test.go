@@ -113,6 +113,18 @@ func TestDispatch_PreflightRefusalsAreOperatorSafe(t *testing.T) {
 			want:   `invalid start date: "2099-02-30" is not a real calendar date`,
 		},
 		{
+			// LFXV2-2665 create-time bidding: Dispatch re-runs the bid plan before any upstream
+			// call (for a path that skipped PreflightCreate), so its refusal is marked like the
+			// budget checks beside it. The X client's own copy of this check is marked too.
+			name:     "x manual bid over the daily budget",
+			provider: model.ProviderTwitterAds,
+			build: func(hc *http.Client) refusalDispatcher {
+				return NewTwitterDispatcher(fakeConnReader{conn: activeTwitterConn(goodTwitterCreds)}, identityEncryptor{}, twitter.WithHTTPClient(hc))
+			},
+			config: `{"twitterConfig":{"budgetAmount":5,"startDate":"2099-03-01","endDate":"2099-03-10","tweetId":"1234567890","bidding":{"strategy":"manual","bidAmount":6}}}`,
+			want:   "invalid campaign config: twitterConfig.bidding: bidAmount 6 exceeds the daily budget 5; X does not accept a line item bid above its campaign's budget",
+		},
+		{
 			name:     "microsoft budget over the maximum",
 			provider: model.ProviderMicrosoftAds,
 			build: func(hc *http.Client) refusalDispatcher {

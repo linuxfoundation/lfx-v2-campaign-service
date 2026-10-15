@@ -4413,7 +4413,10 @@ and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and 
 decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
 cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
 `MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
-`<configKey>.bidding: <reason>`.
+`<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
+(issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
+an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`
+raises it the async job reports it verbatim.
 
 The rules run twice: in each lane dispatcher's `PreflightCreate` (a `service.CreatePreflighter`, so
 the create path answers a synchronous 400 before any job; it returns `ErrPreflightNotApplicable`
@@ -4506,6 +4509,11 @@ profile and facet names — is rendered through `domain.CallerValue`, a strict A
 reaches a marked refusal (LinkedIn `toMs`/`validateSchedule`/`resolveAccountID`/`resolveOrgID`/
 targeting profile and facet checks, Meta `buildPromotedObject`, Microsoft keyword/geo/ad-copy
 validators, X `validateDate`/`validateImageInput`, Reddit's asset-id check) use it too.
+Create-time bidding (LFXV2-2665) follows the same rule: the dispatchers' `biddingInvalid`
+refusals, and the clients' own pre-send bid checks — X `manualMaxBidMicros` and bid-over-budget,
+Reddit's manual-bid objective and amount checks, LinkedIn `campaignBidding`, Microsoft
+`validateBiddingScheme` — are marked. Meta's bid-cap checks are NOT: they need the account currency,
+so they run after the account preflight GET.
 Refusals that can quote a URL
 (registration, image or post URL validators), carry credential-derived text (credential shape,
 JSON decode) or come after a read was sent (Meta's inactive-account check) are deliberately

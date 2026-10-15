@@ -2533,7 +2533,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	// also decides the objective and the campaign name's Objective segment.
 	bidding, err := campaignBidding(in.ManualCPCBid)
 	if err != nil {
-		return nil, err
+		// ValidateBidAmount's sentences are service-authored and numeric-only (issue #208).
+		return nil, domain.WrapPreflightRefusal(err)
 	}
 
 	// Refuse to create a campaign with no creatives: LinkedIn campaign-group and

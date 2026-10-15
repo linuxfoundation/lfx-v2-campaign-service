@@ -324,7 +324,7 @@ func validateBiddingScheme(scheme string, cpcBidSet bool) (*msBiddingScheme, err
 		}
 		return &msBiddingScheme{Type: BidSchemeMaxClicks}, nil
 	default:
-		return nil, fmt.Errorf("microsoft-ads: unsupported campaign bid strategy %q", scheme)
+		return nil, fmt.Errorf("microsoft-ads: unsupported campaign bid strategy %s", domain.CallerValue(scheme))
 	}
 }
 
@@ -579,7 +579,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}
 	biddingScheme, err := validateBiddingScheme(in.BiddingScheme, cpcBidSet)
 	if err != nil {
-		return nil, fmt.Errorf("microsoft-ads campaign bid strategy invalid: %w", err)
+		return nil, domain.WrapPreflightRefusal(fmt.Errorf("microsoft-ads campaign bid strategy invalid: %w", err))
 	}
 	// Geo codes are shape-checked here (pure, offline) and RESOLVED to numeric LocationIds
 	// below, before the first mutating call. Splitting the two is deliberate: this half needs

@@ -3309,7 +3309,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if in.MaxBid != 0 {
 		micros, err := manualMaxBidMicros(in.MaxBid)
 		if err != nil {
-			return nil, err
+			// Service-authored, numeric-only, raised before verifyAccount: operator-safe (issue #208).
+			return nil, domain.WrapPreflightRefusal(err)
 		}
 		// X: a line item's bid_amount_local_micro "should not exceed daily_budget_amount_local_micro
 		// or total_budget_amount_local_micro of the parent campaign" (Campaign Management reference,
@@ -3318,8 +3319,8 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// over the budget is refused before the campaign POST rather than by the line-item POST
 		// after the paid campaign exists (PR #332 review).
 		if micros > toMicroCurrency(in.BudgetUsd) {
-			return nil, &bidAmountError{msg: fmt.Sprintf("the manual bid %s exceeds the campaign's daily budget %s; X does not accept a line item bid above its campaign's budget",
-				strconv.FormatFloat(in.MaxBid, 'f', -1, 64), strconv.FormatFloat(in.BudgetUsd, 'f', -1, 64))}
+			return nil, domain.WrapPreflightRefusal(&bidAmountError{msg: fmt.Sprintf("the manual bid %s exceeds the campaign's daily budget %s; X does not accept a line item bid above its campaign's budget",
+				strconv.FormatFloat(in.MaxBid, 'f', -1, 64), strconv.FormatFloat(in.BudgetUsd, 'f', -1, 64))})
 		}
 		maxBidMicros = micros
 	}

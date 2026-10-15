@@ -163,9 +163,13 @@ func (p bidPlan) stamp(c *model.Campaign) {
 
 // biddingInvalid builds a refusal the create path answers 400. key is the platform's config key
 // (e.g. "metaConfig"), so the message names the exact field to change. The text is this service's
-// own: no caller value other than the amount, and nothing from a platform, is placed in it.
+// own: no caller value other than the amount and a config key rendered through domain.CallerValue
+// (quoteKey), and nothing from a platform, is placed in it. Every caller is a pure check that runs
+// before any upstream request, so the refusal is marked operator-safe (domain.PreflightRefusal,
+// issue #208): when Dispatch raises it, the async job reports it verbatim. errors.Is against
+// domain.ErrCreateConfigInvalid still holds through the wrap.
 func biddingInvalid(key, format string, args ...any) error {
-	return fmt.Errorf("%w: %s.bidding: %s", domain.ErrCreateConfigInvalid, key, fmt.Sprintf(format, args...))
+	return domain.WrapPreflightRefusal(fmt.Errorf("%w: %s.bidding: %s", domain.ErrCreateConfigInvalid, key, fmt.Sprintf(format, args...)))
 }
 
 // formatBid renders an amount at full precision for a refusal message.
@@ -330,13 +334,12 @@ func biddingKeyProblem(fields map[string]json.RawMessage) string {
 	return ""
 }
 
-// quoteKey renders a caller-supplied key for a refusal message: quoted, and cut to 40 runes so a
-// pathological key cannot bloat the 400.
+// quoteKey renders a caller-supplied key for a refusal message through domain.CallerValue, the
+// allowlist every operator-safe refusal uses (issue #208): a plain key is quoted and length-capped,
+// anything else reads "(value withheld)", so a pathological key can neither bloat the 400 nor
+// carry opaque text into the job result.
 func quoteKey(k string) string {
-	if r := []rune(k); len(r) > 40 {
-		k = string(r[:40]) + "…"
-	}
-	return strconv.Quote(k)
+	return domain.CallerValue(k)
 }
 
 func isJSONNull(raw json.RawMessage) bool {

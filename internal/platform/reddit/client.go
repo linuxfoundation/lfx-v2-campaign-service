@@ -1684,11 +1684,13 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	var bidMicros int64
 	if in.ManualCPCBid != 0 {
 		if objParams.bidType != BidTypeCPC {
-			return nil, &bidAmountError{msg: fmt.Sprintf("manual bidding sets a cost-per-click bid, which needs the traffic objective; %q bids %s", objective, objParams.bidType)}
+			// Raised before the account-verify GET, so operator-safe (issue #208); the
+			// objective is rendered through CallerValue like every other marked refusal.
+			return nil, domain.WrapPreflightRefusal(&bidAmountError{msg: fmt.Sprintf("manual bidding sets a cost-per-click bid, which needs the traffic objective; %s bids %s", domain.CallerValue(objective), objParams.bidType)})
 		}
 		micros, err := manualBidMicros(in.ManualCPCBid)
 		if err != nil {
-			return nil, err
+			return nil, domain.WrapPreflightRefusal(err)
 		}
 		bidStrategy, bidMicros = BidStrategyManual, micros
 	}
