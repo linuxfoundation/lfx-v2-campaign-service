@@ -139,7 +139,7 @@ renderer formats with a symbol when it is present and without one otherwise.
 | LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); spend is `costInLocalCurrency`, in the same currency | No |
 | Reddit | `GET /ad_accounts/{id}` (`reddit.Client.readMonitorAccountCurrency`), beside the report fan-out, 3s budget, no 429 retry | One |
 | X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
-| Microsoft | Customer Management `Account/Query` (`microsoft.Client.AccountCurrency`), `CurrencyCode` enum name mapped to ISO by `currencyCodeISO`; no 429 retry; cached on the client 6h | One per account per 6h |
+| Microsoft | Customer Management `Account/Query` (`microsoft.Client.AccountCurrency`), `CurrencyCode` (a three-letter code from Microsoft's v13 value set) published only if `microsoftPublishableCurrencies` lists it as a current ISO 4217 code; no 429 retry; a recognised code cached on the client 6h, an unrecognised answer 5m | One per account per 6h |
 | Google Ads | not set (Google Ads is owned separately) | — |
 
 - **Plumbing.** The live reads go through a new optional capability, `AccountMonitorReader`
@@ -189,8 +189,12 @@ renderer formats with a symbol when it is present and without one otherwise.
   status, untrusted body, another account's id — leaves `currency` absent and never fails the
   monitor; errors carry no upstream text (Reddit's also redact the account id). On X, the
   timezone's own rules are unchanged: a currency problem cannot fail the timezone read. The
-  Microsoft read is unverified against a live account, like the rest of that monitor; a value-set
-  name `currencyCodeISO` does not list leaves the currency absent rather than guessed.
+  Microsoft read is unverified against a live account, like the rest of that monitor. Microsoft's
+  v13 `CurrencyCode` value set is three-letter codes (an earlier version of this change wrongly
+  mapped enum names such as `USDollar`, which turned every real answer into "absent"); its
+  withdrawn or non-ISO codes — AZM, BGL, BYB, EEK, LTL, LVL, ROL, RUR, SIT, SKK, VEF, YUN, ZWD —
+  are withheld because their scale is ambiguous, while HRK is kept as the accurate label for an
+  account Microsoft still reports in kuna.
 - **Published examples.** Every body type but Google's carries a `currency` example (`USD`), and
   both example tests check `currency` is present exactly on the non-Google operations.
 

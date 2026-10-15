@@ -1286,7 +1286,7 @@ var AccountMonitor = Type("account-monitor", func() {
 	// Optional: absent is the honest answer when the platform did not report a currency this
 	// service can vouch for — never a default. Google Ads leaves it unset. No example here: it is
 	// absent on Google, so each body type sets its own (design/account_monitor_examples.go).
-	Attribute("currency", String, "The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly.", func() {
+	Attribute("currency", String, "The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.", func() {
 		Pattern(`^[A-Z]{3}$`)
 		Meta("openapi:example", "false")
 	})

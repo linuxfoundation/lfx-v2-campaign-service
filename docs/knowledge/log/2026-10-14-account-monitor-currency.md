@@ -33,3 +33,10 @@ shared decode, which on X took the timezone and the whole monitor with it. Meta'
 and LinkedIn's campaign-list pages are checked with `identityjson` before decoding, so a repeated
 or case-variant key can no longer collapse to its last value and be published; an untrusted page
 withholds the currency but keeps the rows, unlike the audience reads, which fail on one.
+
+PR #338 review: Microsoft's v13 `CurrencyCode` value set is three-letter codes, not names, so the
+earlier mapping of names such as `USDollar` to ISO codes was wrong — it turned every real answer
+into an absent currency and cached that for 6 hours. The returned code is now published when it is
+a current ISO 4217 code from that set; the withdrawn or non-ISO AZM, BGL, BYB, EEK, LTL, LVL, ROL,
+RUR, SIT, SKK, VEF, YUN and ZWD are withheld, and HRK is kept as the accurate label for an
+unconverted account. An answer with no recognised code is cached for only 5 minutes.

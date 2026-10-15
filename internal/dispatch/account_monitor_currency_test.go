@@ -240,7 +240,7 @@ func TestMicrosoftMonitor_ReadAccountCurrency(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"Account":{"Id":1234567,"CurrencyCode":"Euro"}}`)
+			_, _ = io.WriteString(w, `{"Account":{"Id":1234567,"CurrencyCode":"EUR"}}`)
 		}))
 		t.Cleanup(custSrv.Close)
 		return []microsoft.Option{microsoft.WithTokenURL(tokenSrv.URL), microsoft.WithCustomerBaseURL(custSrv.URL),
