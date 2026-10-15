@@ -724,6 +724,19 @@ client's injected clock, rather than the BFF's hardcoded `date_preset=last_30d`.
 departures, the credential-scoping (`resolveOwned`, no system-account fallback), and
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
 
+`ListAccountCampaignsWithCurrency` is the same read plus the account's currency for the
+monitor's `currency` field: the insights call also requests `account_currency`, and
+`metaAccountInsights.observeCurrency` keeps it only when every row names the same
+three-upper-case-letter code — the field read RAW, so `null` or a non-string costs only the
+currency, and each insights page checked with `identityjson`, an untrusted page withholding the
+currency (its rows are kept) — absent, malformed or disagreeing rows leave it `""` without
+failing the read. No extra request; an account with no insights rows in the window has no
+currency. `monitorPublishableCurrency` then withholds (and logs) any code whose
+`currencyOffsetFor` offset is not 100: `minorUnitsToWhole` divides every budget by 100, so a
+JPY/KRW/… account's budgets are wrong by that factor and must not be labelled as correct. #316
+makes the conversion currency-aware; drop the restriction when it merges. `ListAccountCampaigns` wraps it and drops the currency. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 See [internal/platform/meta](../../../internal/platform/meta).
 
 ## Connection-probe predicates (LFXV2-2665)

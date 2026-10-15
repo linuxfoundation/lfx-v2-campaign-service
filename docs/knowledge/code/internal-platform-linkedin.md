@@ -817,6 +817,19 @@ CTR, the worst case of the very condition it detects, now that an impressions fl
 separates that from an unserved campaign), and the days-1-ending-today window
 convention this dispatcher shares with Google/Reddit/Meta's monitor reads.
 
+The monitor's Ad Analytics read asks for `costInLocalCurrency` (the account's currency, the one
+its budgets are in) — not `costInUsd` as the single-campaign metrics read does — so
+`AccountCampaignRow.Spend` and the budgets share one currency on any account.
+`ListAccountCampaignsWithCurrency` is the same read plus that currency for the monitor's
+`currency` field, from the `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign
+list (`budgetCurrencies`): the code when every budget names the same well-formed one, else `""`.
+Two different codes also set `PacingUnknown` on every row whose budget named one. Each page is
+checked with `identityjson` and decoded element by element (`monitorCampaignElement`), each
+`currencyCode` RAW: an untrusted page withholds the currency, and an untrusted element or a code
+that is `null` or not a string also sets that row's `PacingUnknown`; rows are never dropped for
+it. No extra request. `ListAccountCampaigns` wraps it and drops the currency. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 `LinkedInDispatcher.VerifyAccountOrg(ctx, projectID, platform)` implements another optional
 capability, `OrgReferenceVerifier` (`internal/service/orchestrator.go`) — LinkedIn is the ONLY
 adapter that does, since it is the only platform with an upstream signal to check (see "Org/account
