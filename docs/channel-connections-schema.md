@@ -149,7 +149,7 @@ The current inventory below bears this out: the two LinkedIn accounts are TLF's 
 
 ## Current Account Inventory
 
-Non-secret platform account IDs currently configured in the Express BFF, retained here as a migration reference. Each provider has a different tenancy model — most share one account across foundations (campaigns separated by naming convention); LinkedIn alone uses separate accounts per foundation. The authority for tenancy is [architecture.md § Account Tenancy](architecture.md#account-tenancy). Under the singleton model, each row below maps to one project's connection.
+Non-secret platform account IDs currently configured in the Express BFF, retained here as a migration reference. Each provider has a different tenancy model — most share one account across foundations (campaigns separated by naming convention); LinkedIn alone uses separate accounts per foundation. Microsoft Ads is not listed: its LF account is not yet recorded, so neither grouping is asserted for it. The authority for tenancy is [architecture.md § Account Tenancy](architecture.md#account-tenancy). Under the singleton model, each row below maps to one project's connection.
 
 **Single shared account (all foundations):**
 - **Google Ads** — Manager `9746983954`, Customer `8666746580`; foundations distinguished by campaign naming convention today, not separate accounts.
