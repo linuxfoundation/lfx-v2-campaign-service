@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -40,6 +41,14 @@ func newFakeX() *fakeX {
 func (f *fakeX) id(prefix string) string {
 	f.nextID++
 	return fmt.Sprintf("%s%d", prefix, f.nextID)
+}
+
+// promotedTweetID returns the id of the i-th recorded association, under the lock the
+// handler writes it with.
+func (f *fakeX) promotedTweetID(i int) any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.promotedTweets[i]["id"]
 }
 
 func (f *fakeX) postCount(kind string) int {
@@ -160,8 +169,8 @@ func TestCreateCampaign_RetryAfterUnconfirmedPromotionReusesAuthoredTweet(t *tes
 	if second.CampaignID != first.CampaignID || second.LineItemID != first.LineItemID {
 		t.Errorf("retry ids = %s/%s, want the first attempt's %s/%s", second.CampaignID, second.LineItemID, first.CampaignID, first.LineItemID)
 	}
-	if second.PromotedTweetID == "" || second.PromotedTweetID != f.promotedTweets[0]["id"] {
-		t.Errorf("retry PromotedTweetID = %q, want the committed association %v", second.PromotedTweetID, f.promotedTweets[0]["id"])
+	if want := f.promotedTweetID(0); second.PromotedTweetID == "" || second.PromotedTweetID != want {
+		t.Errorf("retry PromotedTweetID = %q, want the committed association %v", second.PromotedTweetID, want)
 	}
 	if second.AuthoredTweetID != "" {
 		t.Errorf("retry AuthoredTweetID = %q, want empty: this call authored nothing", second.AuthoredTweetID)
@@ -197,7 +206,7 @@ func TestCreateCampaign_RetryWithExplicitTweetReusesAssociation(t *testing.T) {
 	if got := f.postCount("promoted_tweet"); got != 1 {
 		t.Errorf("promoted_tweets POSTs = %d, want 1", got)
 	}
-	if second.PromotedTweetID != f.promotedTweets[0]["id"] || second.PromotedTweetWarning != "" {
+	if second.PromotedTweetID != f.promotedTweetID(0) || second.PromotedTweetWarning != "" {
 		t.Errorf("retry promoted = %q warning %q, want the existing association and no warning", second.PromotedTweetID, second.PromotedTweetWarning)
 	}
 }
@@ -272,13 +281,10 @@ func TestCreateCampaign_PromotedTweetLookupFailureBlocksAuthoring(t *testing.T) 
 // association read runs only on a reused line item.
 func TestCreateCampaign_FreshCreateDoesNotReadPromotedTweets(t *testing.T) {
 	f := newFakeX()
-	var reads int
-	var mu sync.Mutex
+	var reads atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/promoted_tweets") {
-			mu.Lock()
-			reads++
-			mu.Unlock()
+			reads.Add(1)
 		}
 		f.ServeHTTP(w, r)
 	}))
@@ -288,8 +294,8 @@ func TestCreateCampaign_FreshCreateDoesNotReadPromotedTweets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if reads != 0 {
-		t.Errorf("promoted_tweets GETs on a fresh create = %d, want 0", reads)
+	if n := reads.Load(); n != 0 {
+		t.Errorf("promoted_tweets GETs on a fresh create = %d, want 0", n)
 	}
 	if res.Reused || res.AuthoredTweetID == "" || res.PromotedTweetID == "" || res.PromotedTweetWarning != "" {
 		t.Errorf("fresh create changed: %+v", res)
@@ -367,7 +373,7 @@ func TestFindLineItemByName_ForeignParentRefuses(t *testing.T) {
 	defer srv.Close()
 	c := newAuthorTweetTestClient(srv.URL)
 	id, err := c.findLineItemByName(context.Background(), "camp1", "target")
-	if err == nil || id != "" {
+	if err == nil || id != "" || !strings.Contains(err.Error(), "different parent campaign") {
 		t.Fatalf("want a provenance refusal, got id=%q err=%v", id, err)
 	}
 }
@@ -418,4 +424,105 @@ func TestListPromotedTweets_FailsClosed(t *testing.T) {
 			t.Fatalf("want no refs, got %v %v", refs, err)
 		}
 	})
+}
+
+// TestFindByName_TwinOnLaterPageRefuses pins the read-every-page rule: a same-named twin on
+// page 2 must refuse, not be missed by a walk that stopped at page 1's match. The same id
+// repeated across pages is one element, not two.
+func TestFindByName_TwinOnLaterPageRefuses(t *testing.T) {
+	for name, page2ID := range map[string]string{"twin": "b", "same element": "a"} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("cursor") == "" {
+					_, _ = w.Write([]byte(`{"data":[{"id":"a","name":"wanted"}],"next_cursor":"p2"}`))
+					return
+				}
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":%q,"name":"wanted"}],"next_cursor":null}`, page2ID)
+			}))
+			defer srv.Close()
+			c := newAuthorTweetTestClient(srv.URL)
+			id, err := c.findByName(context.Background(), "campaigns?q=wanted", "wanted")
+			if page2ID == "a" {
+				if err != nil || id != "a" {
+					t.Fatalf("want a, got id=%q err=%v", id, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "more than one live element") {
+				t.Fatalf("want an ambiguity refusal, got id=%q err=%v", id, err)
+			}
+		})
+	}
+}
+
+// explicitTweetRetry runs one explicit-TweetID create, lets seed adjust the upstream state,
+// optionally fails the association read, and runs the retry.
+func explicitTweetRetry(t *testing.T, seed func(f *fakeX, lineItemID string), failRead bool) (*fakeX, *CampaignResult) {
+	t.Helper()
+	f := newFakeX()
+	var failing atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failing.Load() && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/promoted_tweets") {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		f.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	c := newAuthorTweetTestClient(srv.URL)
+	in := baseAuthorInput("")
+	in.TweetID = "1234567890"
+	first, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("first attempt: %v", err)
+	}
+	f.mu.Lock()
+	seed(f, first.LineItemID)
+	f.mu.Unlock()
+	failing.Store(failRead)
+	second, err := c.CreateCampaign(context.Background(), in)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	return f, second
+}
+
+// TestCreateCampaign_ExplicitTweetReadFailureStillPromotes: an explicit tweet publishes
+// nothing, so a failed association read does not block the POST.
+func TestCreateCampaign_ExplicitTweetReadFailureStillPromotes(t *testing.T) {
+	f, res := explicitTweetRetry(t, func(f *fakeX, _ string) { f.promotedTweets = nil }, true)
+	if got := f.postCount("promoted_tweet"); got != 2 {
+		t.Errorf("promoted_tweets POSTs = %d, want 2 (the retry still promotes)", got)
+	}
+	if res.PromotedTweetID == "" || !stepsContain(res.Steps, "promoting tweet 1234567890 anyway") {
+		t.Errorf("want a promoted tweet and the read-failure step, got %q / %v", res.PromotedTweetID, res.Steps)
+	}
+}
+
+// TestCreateCampaign_ExplicitTweetAssociatedTwiceRefuses: the same tweet twice on the reused
+// line item is ambiguous, so nothing is promoted.
+func TestCreateCampaign_ExplicitTweetAssociatedTwiceRefuses(t *testing.T) {
+	f, res := explicitTweetRetry(t, func(f *fakeX, li string) {
+		f.promotedTweets = append(f.promotedTweets, map[string]any{"id": "ptdup", "line_item_id": li, "tweet_id": "1234567890", "deleted": false})
+	}, false)
+	if got := f.postCount("promoted_tweet"); got != 1 {
+		t.Errorf("promoted_tweets POSTs = %d, want 1", got)
+	}
+	if res.PromotedTweetID != "" || !strings.Contains(res.PromotedTweetWarning, "promoted more than once") {
+		t.Errorf("want a refusal, got %q / %q", res.PromotedTweetID, res.PromotedTweetWarning)
+	}
+}
+
+// TestCreateCampaign_ExplicitTweetNotYetAssociatedIsPromoted: the reused line item promotes a
+// DIFFERENT tweet; the requested one is promoted as asked (the pass-back path).
+func TestCreateCampaign_ExplicitTweetNotYetAssociatedIsPromoted(t *testing.T) {
+	f, res := explicitTweetRetry(t, func(f *fakeX, li string) {
+		f.promotedTweets = []map[string]any{{"id": "ptother", "line_item_id": li, "tweet_id": "99", "deleted": false}}
+	}, false)
+	if got := f.postCount("promoted_tweet"); got != 2 {
+		t.Errorf("promoted_tweets POSTs = %d, want 2", got)
+	}
+	if res.PromotedTweetID == "" || res.PromotedTweetID == "ptother" || res.PromotedTweetWarning != "" {
+		t.Errorf("want a fresh association, got %q / %q", res.PromotedTweetID, res.PromotedTweetWarning)
+	}
 }

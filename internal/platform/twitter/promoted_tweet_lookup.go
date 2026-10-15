@@ -65,7 +65,7 @@ func (c *Client) listPromotedTweets(ctx context.Context, lineItemID string) ([]p
 		var items []promotedTweetElement
 		if resp != nil && len(resp.Data) > 0 {
 			if err := json.Unmarshal(resp.Data, &items); err != nil {
-				return nil, fmt.Errorf("x promoted tweets lookup returned an undecodable page")
+				return nil, fmt.Errorf("x promoted tweets lookup returned an undecodable page: %w", err)
 			}
 		}
 		if resp == nil || items == nil {

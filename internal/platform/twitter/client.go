@@ -3724,8 +3724,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	//   - explicit TweetID already associated: that association is reused, not re-POSTed
 	//     (the re-POST answers DUPLICATE_PROMOTABLE_ENTITY, which cannot be read as this
 	//     line item's). Two associations of the same tweet are refused the same way.
-	//   - the read fails: an existing association cannot be ruled out, so nothing is
-	//     authored or promoted (non-fatal, like every Step 4 degrade).
+	//   - the read fails: when authoring, an existing association cannot be ruled out,
+	//     so nothing is authored or promoted (non-fatal, like every Step 4 degrade); with
+	//     an explicit TweetID the POST still goes out, since nothing is published and a
+	//     repeat is refused by X as DUPLICATE_PROMOTABLE_ENTITY.
 	//
 	// What this still cannot find is a tweet that was PUBLISHED but never PROMOTED (an
 	// authoring outcome that was lost, or an abort between authoring and promotion): it
@@ -3737,6 +3739,11 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	if lineItemReused && (tweetID != "" || composedTweetText != "") {
 		existing, lookupErr := c.listPromotedTweets(ctx, lineItemID)
 		switch {
+		case lookupErr != nil && tweetID != "":
+			// An explicit tweet publishes nothing, so there is no second tweet to prevent,
+			// and a re-POST of an association that already exists here is refused by X as
+			// DUPLICATE_PROMOTABLE_ENTITY (handled below) rather than duplicated. Promote.
+			steps = append(steps, fmt.Sprintf("Could not read reused line item %s's existing promoted tweets (%s); promoting tweet %s anyway — X reports an existing association as a duplicate", lineItemID, lookupErr.Error(), tweetID))
 		case lookupErr != nil:
 			step4Blocked = true
 			promotedTweetWarning = fmt.Sprintf("could not read the promoted tweets already on reused line item %s (%s) — nothing was authored or promoted, because an association from an earlier attempt cannot be ruled out; verify in X Ads Manager before retrying", lineItemID, lookupErr.Error())

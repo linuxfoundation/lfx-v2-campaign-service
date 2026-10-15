@@ -9,12 +9,13 @@ matches instead of reusing the first one listed.
   tweet under the LF handle and attached a second spending creative.
 - `listPromotedTweets` (`promoted_tweet_lookup.go`) reads the reused line item's live
   associations; one is reused (no authoring, no re-POST, warning step), two or more refuse, a
-  failed read blocks Step 4's writes. Runs only on a reused line item, so a fresh create is
+  failed read blocks authoring (an explicit `TweetID` is still promoted; X refuses a repeat as
+  `DUPLICATE_PROMOTABLE_ENTITY`). Runs only on a reused line item, so a fresh create is
   unchanged.
 - `findByNameChecked`: two or more live exact-name matches refuse; deleted matches skipped; a
   campaign on another funding instrument, or a line item under another campaign, refuses.
 - Still not found: a tweet published but never promoted (its id is returned in
   `AuthoredTweetID` with the pass-back instruction, as before).
-- Tests: `create_idempotency_test.go` with a stateful fake X server. Mutation-checked: 12/12
+- Tests: `create_idempotency_test.go` with a stateful fake X server. Mutation-checked: 13/13
   killed.
 - Concept updated: `code/internal-platform-twitter.md`.

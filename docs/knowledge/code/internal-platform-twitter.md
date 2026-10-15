@@ -1416,7 +1416,9 @@ adopt someone else's campaign), skips elements X reports `deleted`, and runs a p
 check on each match: a campaign whose `funding_instrument_id` differs from the connection's,
 or a line item whose `campaign_id` is not the one filtered on, is refused. Each refusal is a
 lookup error, so the campaign level returns `(nil, err)` before any write and the line-item
-level returns the partial carrying the campaign.
+level returns the partial carrying the campaign. Because the walk no longer stops at the first
+match, a lookup that used to succeed on a page-1 match can now fail closed on a later full page
+with no usable cursor or at `maxListPages`; with the server-side `q=` filter that is unlikely.
 
 `listPromotedTweets` (`promoted_tweet_lookup.go`) reads `GET promoted_tweets?line_item_ids=
 <id>&with_deleted=false&count=200` and fails closed exactly as `findByName` does (no data
@@ -1432,8 +1434,12 @@ first create is unchanged. What Step 4 does with the answer:
   operator to verify.
 - explicit `TweetID` already associated once: reused, not re-POSTed (the re-POST would answer
   `DUPLICATE_PROMOTABLE_ENTITY`, which cannot be read as this line item's). Twice: refused.
-- the read fails: nothing is authored or promoted, with a warning — an existing association
-  cannot be ruled out.
+- explicit `TweetID` not yet associated (the line item promotes another tweet, or nothing):
+  promoted as asked — the pass-back path for a published-but-unpromoted tweet.
+- the read fails while AUTHORING: nothing is authored or promoted, with a warning — an
+  existing association cannot be ruled out. With an explicit `TweetID` the POST still goes
+  out (with a step saying the read failed): nothing is published, and a repeat on this line
+  item is refused by X as `DUPLICATE_PROMOTABLE_ENTITY` rather than duplicated.
 
 Every reuse path is already `Reused`, so the dispatcher records `created_degraded`. The gap
 that remains is a tweet PUBLISHED but never PROMOTED (authoring outcome lost, or an abort
@@ -1445,5 +1451,7 @@ Tests: `create_idempotency_test.go`, against a stateful fake X server — a retr
 that committed the promoted tweet creates nothing new (tweet text and explicit-id flows); two
 associations refuse; a failed association read blocks writes; a fresh create makes no
 association read; duplicate campaign or line-item names refuse; a foreign funding instrument
-or parent refuses; a deleted twin is skipped. Mutation-checked: twelve mutations of the new
-rules, each killed.
+or parent refuses; a deleted twin is skipped; a twin on page 2 refuses while the same id on
+two pages does not; the explicit-`TweetID` matrix (read failure still promotes, associated
+twice refuses, not yet associated is promoted). Mutation-checked: thirteen mutations of the
+new rules, each killed.
