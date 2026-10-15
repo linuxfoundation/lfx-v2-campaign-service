@@ -97,3 +97,6 @@
   `SpeakerListFits` accepts for the scope and editions, as the auto-pick requires.
 - **The hero warning points to the HubSpot editor.** Staging again reuses the stored campaign and
   its warnings, so "or stage again" invited retries that could not repair the draft.
+- **A label of only generic words matches as a whole** (Greptile). "Open Source Summit Japan" has no
+  distinctive word left, which marked the event's own lists unrelated; such a label must now appear
+  whole, year aside, in the list's name.

@@ -115,6 +115,7 @@ var audienceWords = []string{"mailable", "marketable", "contacts", "catchment"}
 // The audience's own cities and countries, and generic event words ("summit",
 // "europe"), are not distinctive: "Open Compliance Summit Tokyo 2025" shares
 // "Tokyo" with "AGNTCon + MCPCon Tokyo" and is still another event's list.
+// A label with no distinctive word left must appear whole in the list's name.
 //
 // A restricted audience (speakers, ambassadors, property filters) is narrower
 // than any list whose name does not carry the restriction, so such a list is at
@@ -130,6 +131,11 @@ func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarLi
 	for _, s := range similar {
 		if s.Recommendation == CustomReuseAsIs || s.Recommendation == CustomReuseUpdate {
 			sharesEvent := len(keywords) > 0 && SharesKeyword(s.Name, keywords)
+			if len(keywords) == 0 {
+				// A label made only of generic and location words ("Open Source Summit
+				// Japan") has no single distinctive word, so it must match as a whole.
+				sharesEvent = namesWholeLabel(s.Name, c.Label)
+			}
 			generalAudience := locationAudience && containsAny(s.Name, audienceWords)
 			if !sharesEvent && !generalAudience {
 				s.Recommendation = CustomReuseNone
@@ -161,6 +167,13 @@ func distinctiveEventKeywords(c CustomCriteria) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+// namesWholeLabel reports whether a list name contains the label as a phrase,
+// ignoring case, spacing and the label's year.
+func namesWholeLabel(name, label string) bool {
+	phrase := strings.ToLower(strings.Join(strings.Fields(StripYear(label)), " "))
+	return phrase != "" && strings.Contains(strings.ToLower(strings.Join(strings.Fields(name), " ")), phrase)
 }
 
 // carriesRestriction reports whether a similar list shows every restriction the

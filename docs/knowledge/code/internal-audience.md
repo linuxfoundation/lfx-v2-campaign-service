@@ -551,7 +551,9 @@ signal:
   `SpeakerListFits` accepts for the requested scope and editions, and a property filter never
   shows in a name, so with one no list is "reuse". Its "is this the same event" check uses only
   DISTINCTIVE label words: the audience's own cities and countries and generic event words
-  ("summit", "tokyo") are dropped, so another event's list in the same city is never kept. Course topics are not a restriction: every education audience carries them as its brand
+  ("summit", "tokyo") are dropped, so another event's list in the same city is never kept. A
+  label with no distinctive word left ("Open Source Summit Japan") must instead appear whole, year
+  aside, in the list's name. Course topics are not a restriction: every education audience carries them as its brand
   fit, so counting them would make reuse unreachable (2026-10-15).
 
 **QA and send-time suppression (2026-10-12).** `CheckExclusionCompleteness(filters, sendTime)`

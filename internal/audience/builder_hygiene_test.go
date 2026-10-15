@@ -95,6 +95,22 @@ func TestGuardReuse_ASharedCityDoesNotMakeAnotherEventsListReusable(t *testing.T
 	assert.Equal(t, CustomReuseNone, other[0].Recommendation, "a shared city is not an event word")
 }
 
+// A label of only generic words has no distinctive one left, so the whole label must
+// match: the event's own lists stand, another edition's region does not.
+func TestGuardReuse_AnAllGenericLabelMatchesAsAWhole(t *testing.T) {
+	c := CustomCriteria{Cities: []string{"Tokyo"}, ContactLocation: true, Label: "Open Source Summit Japan 2026"}
+	out := GuardReuse([]CustomSimilarList{
+		{ListRow: ListRow{ListID: "1", Name: "26Q2 - LF - Open Source Summit Japan 2026 Registrants"}, Recommendation: CustomReuseUpdate},
+		{ListRow: ListRow{ListID: "2", Name: "25Q3 - LF - Open Source Summit Korea 2025 Registrants"}, Recommendation: CustomReuseUpdate},
+	}, c)
+	got := map[string]CustomReuseRecommendation{}
+	for _, s := range out {
+		got[s.ListID] = s.Recommendation
+	}
+	assert.Equal(t, CustomReuseUpdate, got["1"], "the event's own list stands")
+	assert.Equal(t, CustomReuseNone, got["2"], "another region's edition is a different event")
+}
+
 func TestGuardReuse_ARestrictedAudienceNeverReusesABroaderList(t *testing.T) {
 	general := CustomSimilarList{ListRow: ListRow{ListID: "2", Name: "26Q3 - Seoul - Mailable Contacts"}, Recommendation: CustomReuseAsIs}
 	speakers := CustomSimilarList{ListRow: ListRow{ListID: "5", Name: "26Q3 - OSS Korea 2026 Speakers - Current"}, Recommendation: CustomReuseAsIs}
