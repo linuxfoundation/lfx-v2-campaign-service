@@ -2594,9 +2594,9 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// part 2) was an extraction rather than an annotation: ToggleStatus validated the
 	// connection inline across four checks (inactive status, credential decode, incomplete
 	// credentials, missing account id) with no shared helper to put the tagging in. The new
-	// helper serves ToggleStatus and ReadMetrics, the two paths that reach this classification.
-	// Dispatch keeps its own inline validation, because its failures are wrapped in
-	// notCreated() to release the dispatch claim — a contract this helper does not carry.
+	// helper serves ToggleStatus and ReadMetrics, the two paths that reach this classification,
+	// and Dispatch too, which wraps its errors in notCreated() itself to release the dispatch
+	// claim — a contract the helper does not carry.
 	//
 	// Meta's tagging deliberately stops short of a missing account id HERE, because
 	// ToggleStatus never reads AccountConfig.AccountID (a status update targets the campaign
