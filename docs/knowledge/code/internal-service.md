@@ -813,10 +813,9 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   them in LFXV2-3196 (`resolveLinkedInCredentials`, covering the credential-state three plus the
   missing account, which it needs because its client is constructed with a RuntimeConfig naming
   the account) — for its two synchronous entry points, `ToggleStatus` and `ReadMetrics`.
-  LinkedIn's `Dispatch` deliberately keeps its own inline validation and does NOT route through
-  that helper: it wraps failures in `notCreated()` to release the dispatch claim, a contract the
-  helper does not carry, and it is asynchronous so it never reaches this arm anyway
-  (`internal-dispatch.md` records the same split). In Google Ads the wrap has three owners:
+  LinkedIn's `Dispatch` routes through the same helper too (since 2026-10-15), wrapping its
+  error in `notCreated()` itself to release the dispatch claim; it is asynchronous, so it never
+  reaches this arm and surfaces in the job result instead (`internal-dispatch.md`). In Google Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**

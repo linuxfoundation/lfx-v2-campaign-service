@@ -249,42 +249,29 @@ func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linked
 // planned per-(brief, platform) single-flight guard (LFXV2-2665). Callers must not treat
 // a LinkedIn ambiguous error as freely retryable the way name-idempotent platforms are.
 func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
-	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
+	// The connection checks are resolveLinkedInCredentials, the helper ToggleStatus and
+	// ReadMetrics share, so create and toggle accept EXACTLY the same connections and tag each
+	// defect the same way — an empty account id included, which now names the missing choice
+	// (ErrAccountNotSelected) instead of failing bare. Its errors are wrapped with notCreated
+	// HERE: the claim-release contract is create-only, so the helper does not carry it.
+	// d.creds.resolve, not an existingResolver: Dispatch CREATES, so it is governed by the
+	// forced-system flag rather than by an account a campaign was previously created under.
+	res, creds, err := d.resolveLinkedInCredentials(ctx, brief.ProjectID, platform, d.creds.resolve)
 	if err != nil {
-		return nil, err // preCreateError
+		return nil, notCreated(err)
 	}
 	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
 	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
 	// See stampProvenance for why this is a defer on the named return, not a per-return call.
 	defer func() { res.stampProvenance(camp) }()
-	if res.status != model.StatusActive {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is %s, not active", domain.CallerValue(brief.ProjectID), domain.CallerValue(string(res.status))))
-	}
 
-	var creds linkedinCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode linkedin credentials: %w", err))
-	}
-	// ASSIGN the trimmed token, do not merely test it. resolveLinkedInCredentials — which the
-	// discovery and toggle paths share — writes the trimmed value back, so testing it here while
-	// sending the raw one makes the two paths disagree about the SAME stored credential: a
-	// whitespace-padded token passes this check, lists accounts successfully through discovery,
-	// and is then sent padded from here for LinkedIn to reject. That is the misleading-discovery
-	// state the shared resolver exists to prevent, reintroduced by testing a value instead of
-	// adopting it. (The padding is refused at bootstrap install time, so this is defence in
-	// depth. The bootstrap installer refuses padded values, but that is NOT the only writer: the
-	// public create-connection and set-credential APIs reach `credentialJSON`, which marshals and
-	// encrypts without trimming, so a padded token is persistable through supported input today.
-	// An earlier version of this comment called the path unreachable; it is not.)
-	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
-	if creds.AccessToken == "" {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin credentials are incomplete (need accessToken)"))
-	}
-
+	// The org id is creation-only (the toggle and metrics paths never read it), so it is
+	// checked here rather than in the shared helper. The helper has already refused an empty
+	// account id.
 	orgID := strings.TrimSpace(res.providerConfig["org_id"])
 	accountID := strings.TrimSpace(res.accountID)
-	if accountID == "" || orgID == "" {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is missing account id or org id", domain.CallerValue(brief.ProjectID)))
+	if orgID == "" {
+		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is missing org id", domain.CallerValue(brief.ProjectID)))
 	}
 
 	var cfg linkedinConfig
@@ -551,12 +538,12 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 // callers below, each with bare errors that fell through to 503 — "transient, retry later" for
 // defects no retry can fix. No amount of retrying repairs a credential blob that is not valid
 // JSON. Four CHECKS, two CALLERS: Dispatch was a third inline site but never reached that 503
-// mapping, for the reason the next paragraph gives.
+// mapping, because campaign create is asynchronous.
 //
-// Scoped to the toggle and metrics paths (LFXV2-3196). Dispatch keeps its own inline checks:
-// they wrap in notCreated() to release the dispatch claim, which is a different contract from
-// returning a classified error to a synchronous handler, and folding the two would mean this
-// helper had to know which caller it had.
+// Dispatch calls it too (LFXV2-3196 scoped it to toggle and metrics; the create path joined
+// later). The helper still returns PLAIN classified errors: Dispatch wraps them in notCreated()
+// itself to release the dispatch claim, so the helper never has to know which caller it has —
+// the same split Meta, X and Microsoft draw between their shared validator and create.
 //
 // resolveCreds selects the credential entry point (see credsResolver): discovery is governed by
 // the forced-system flag; an operation on an existing campaign resolves the account that
@@ -628,12 +615,10 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 // rejected at toggle could be accepted here — the failure mode that makes a discovery endpoint
 // actively misleading rather than merely permissive.
 //
-// NOT shared with Dispatch, and the distinction is worth stating precisely because an earlier
-// version of this comment claimed it was. Dispatch calls d.creds.resolve directly and validates
-// inline (see its own block above), so the two CAN drift — and did: Dispatch was sending an
-// untrimmed access token while this resolver trimmed it, which is why a padded credential listed
-// accounts here and failed on create. That is fixed, but by a regression test rather than by
-// shared code, so the invariant this comment may claim is the narrower one.
+// Shared with Dispatch too, which calls resolveLinkedInCredentials for its connection checks.
+// Before it did, Dispatch validated inline and the two drifted: it sent an untrimmed access
+// token while this resolver trimmed it, so a padded credential listed accounts here and failed
+// on create. Sharing the code is what now keeps discovery and create from disagreeing.
 //
 // It returns the *resolved alongside the credentials so this endpoint can name the
 // connection (and attribute a defect to the LF SYSTEM row) exactly as the create,

@@ -23,14 +23,15 @@ import (
 //   - accountDiscoveryProviders membership additionally requires the second eligibility half —
 //     "Dispatch itself calls the validator that tags ErrAccountNotSelected" — which is a
 //     call-graph judgement no assertion can derive. Every dispatcher, Reddit included, mentions
-//     that sentinel somewhere, so a grep cannot tell LinkedIn (tagged in a resolver Dispatch
-//     never calls) from X (whose Dispatch calls the tagging validator itself).
+//     that sentinel somewhere, so a grep could not tell LinkedIn before its create path joined
+//     the resolver (tagged in a resolver Dispatch did not call) from X (whose Dispatch calls the
+//     tagging validator itself).
 //
 // So the second half stays prose, and what is pinned here is the INVARIANT that survives it:
 // holding both halves implies holding the first, hence subset.
 //
-// Deliberately NOT an equality assertion. The sets are unequal today — Microsoft and X hold both
-// halves and are still excluded, which is a sequencing decision rather than a capability gap —
+// Deliberately NOT an equality assertion. The sets are unequal today — Microsoft and LinkedIn hold
+// both halves and are still excluded, which is a sequencing decision rather than a capability gap —
 // and asserting equality would turn that judgement into a test failure every time discovery
 // lands for a new provider. That is precisely the pressure that produced three successive
 // hand-corrections of the roster prose.
