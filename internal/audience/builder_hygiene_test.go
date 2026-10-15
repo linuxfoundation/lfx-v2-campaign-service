@@ -163,3 +163,21 @@ func TestWithEventYear(t *testing.T) {
 	assert.Equal(t, "KubeCon 2025", WithEventYear("KubeCon 2025", []string{"2026-03-01"}), "a name with a year keeps it")
 	assert.Equal(t, "KubeCon", WithEventYear("KubeCon", nil))
 }
+
+// A suppression hint is matched with the name's separators normalised, so an
+// underscored opt-out list is hidden, refused for reuse and never an inclusion
+// signal, everywhere the hint is read.
+func TestSuppressionHints_MatchWithSeparatorsNormalised(t *testing.T) {
+	for _, name := range []string{"Seoul - Opt_Out Contacts", "26Q3 - LF - Do_Not_Email", "Global.Opt.Out"} {
+		reason, hidden := DiscoveryHidden(name, false)
+		assert.True(t, hidden, "%q is offered for inclusion", name)
+		assert.Equal(t, "suppression", reason, name)
+		assert.False(t, ReusableCandidate(name), "%q is offered for reuse", name)
+		assert.Equal(t, SignalUncertain, ClassifyList(name, nil, EventIdentity{}).Signal, "%q classified as an inclusion signal", name)
+	}
+	assert.True(t, MatchesEventSuppression("OSS Korea 2026 - Do_Not_Email", EventKeywords("OSS Korea")), "an event's underscored suppression is found")
+	assert.False(t, MatchesBrandMaster("26Q2 - LF - Opt_Out Master-list", "LF"), "an opt-out list is never the brand gate")
+
+	_, hidden := DiscoveryHidden("26Q3 - Seoul - Contest Winners", false)
+	assert.False(t, hidden, "test-list matching keeps its punctuation: a contest is not a test list")
+}

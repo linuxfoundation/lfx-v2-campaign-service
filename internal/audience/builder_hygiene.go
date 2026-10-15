@@ -19,12 +19,13 @@ import (
 // ---------------------------------------------------------------------------
 
 // discoveryHiddenHints mark lists that are never an inclusion candidate. Each has
-// its own home: suppressions in the Exclude step, masters in the Reuse step.
+// its own home: suppressions in the Exclude step (matched by hasSuppressionHint,
+// separators normalised), masters in the Reuse step. The test hints keep their
+// punctuation: "[test" is what separates a test list from "Contest".
 var discoveryHiddenHints = []struct {
 	reason string
 	hints  []string
 }{
-	{"suppression", suppressionNameHints},
 	{"master", []string{"master"}},
 	{"test", []string{"[psh-test]", "[test", "test]", "e2e test", "(test)", "- test -"}},
 	{"staff", []string{"staff"}},
@@ -37,6 +38,9 @@ var uploadSuffixRE = regexp.MustCompile(`(?i)\.(csv|xlsx?|tsv)\s*$`)
 // inclusion, and why. uncertain says the classifier found no signal: a file-named
 // upload is hidden only then, since a classified upload carries real evidence.
 func DiscoveryHidden(name string, uncertain bool) (string, bool) {
+	if hasSuppressionHint(name) {
+		return "suppression", true
+	}
 	for _, group := range discoveryHiddenHints {
 		if containsAny(name, group.hints) {
 			return group.reason, true

@@ -536,3 +536,27 @@ func TestVersionedName_StaysWithinTheNameLimit(t *testing.T) {
 	assert.Equal(t, CustomNameMaxLen, utf8.RuneCountInString(FitListName(long+"x")))
 	assert.Equal(t, "short", FitListName("short"))
 }
+
+// Named editions are event history: under the stricter mailable reading their
+// registrants are gated like the location history, never let past the gate.
+func TestCustomListFilter_GatedHistoryGatesTheNamedEditions(t *testing.T) {
+	c := CustomCriteria{RegisteredFor: []string{"OSS Korea 2025"}, GateListID: "26716", GateEventHistory: true}
+	raw, err := CustomListFilter(c)
+	require.NoError(t, err)
+	root := decodeBranch(t, raw)
+	require.Len(t, root.FilterBranches, 1)
+	var gated bool
+	for _, f := range root.FilterBranches[0].Filters {
+		if f.FilterType == "IN_LIST" && f.ListID == "26716" {
+			gated = true
+		}
+	}
+	assert.True(t, gated, "the named-editions branch is inside the gate")
+	assert.True(t, AllBranchesGated(c), "so the gate bounds the audience")
+
+	c.GateEventHistory = false
+	raw, err = CustomListFilter(c)
+	require.NoError(t, err)
+	assert.Empty(t, decodeBranch(t, raw).FilterBranches[0].Filters, "the reference reading leaves event history ungated")
+	assert.False(t, AllBranchesGated(c))
+}

@@ -100,3 +100,16 @@
 - **A label of only generic words matches as a whole** (Greptile). "Open Source Summit Japan" has no
   distinctive word left, which marked the event's own lists unrelated; such a label must now appear
   whole, year aside, in the list's name.
+- **Suppression hints match with separators normalised** (Copilot). "Seoul - Opt_Out Contacts" matched
+  no hint, so discovery offered it for inclusion and reuse accepted it. `hasSuppressionHint` also
+  reads the name through `normaliseSuppressionName`, and every reader of the hints uses it:
+  `DiscoveryHidden`, `ClassifyList`, `MatchesBrandMaster` and `MatchesEventSuppression`. Test-list
+  hints keep their punctuation, so "Contest" is still not a test list.
+- **Named editions are gated under the stricter reading** (Greptile). With `gate_event_history`, the
+  location and education history were gated but the `registered_for` branch was not, so the past
+  editions an event draft adds by default reached registrants outside the brand master list. That
+  branch now carries the gate too, and `AllBranchesGated` counts it.
+- **This edition is named with its year** (Greptile). A yearless page title ("Synthetic Summit") went
+  into the prompt and the known-editions check as this edition's name, so the exact filter missed
+  registrations stored as "Synthetic Summit 2026". `customEventContext` now names it with
+  `WithEventYear`.

@@ -474,7 +474,9 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   branches — `city`/`ip_city` (+ `country_dropdown`/`ip_country` when broadened), each gated by
   the brand master list; and event-history branches qualified INSIDE the `UNIFIED_EVENTS` node on
   the event's own `event_city`/`user_city` (+ country), gated only when `GateEventHistory` is set.
-  `RegisteredFor` adds a branch for exact edition names (this edition's registrants).
+  `RegisteredFor` adds a branch for exact edition names (this edition's registrants), gated like
+  the other event history when `GateEventHistory` is set. Every suppression-hint check reads the
+  name with its separators normalised too (`hasSuppressionHint`), so `Opt_Out` is an opt-out.
 - **Restrictions reach EVERY branch.** Extra property filters are ANDed into each branch; the
   speaker restriction is an `IN_LIST` on an existing speakers list or, absent one, each branch is
   copied once per speaker signal the portal's registration event defines

@@ -489,10 +489,13 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 	return &audience.CustomEventContext{
 		PastEditions: past,
 		URL:          eventURL,
-		Name:         identity.Name,
-		BrandShort:   identity.BrandShort,
-		Location:     sanitizeExtractedField(details.Location),
-		Dates:        identity.Dates,
+		// The edition's own name carries its year ("Synthetic Summit 2026"), as its
+		// registrations are stored: a yearless page title would be copied into an
+		// exact registered_for filter and match none of them.
+		Name:       audience.WithEventYear(identity.Name, identity.Dates),
+		BrandShort: identity.BrandShort,
+		Location:   sanitizeExtractedField(details.Location),
+		Dates:      identity.Dates,
 	}, nil
 }
 

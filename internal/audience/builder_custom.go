@@ -568,11 +568,17 @@ func customBaseBranches(c CustomCriteria) []filterBranch {
 		})
 	}
 	if names := cleanValues(c.RegisteredFor); len(names) > 0 {
-		out = append(out, filterBranch{
+		b := filterBranch{
 			FilterBranchType: "AND",
 			FilterBranches:   []filterBranch{eventWith(registrationEventTypeID, valueFilter("event_name", "IS_EQUAL_TO", names, false))},
 			Filters:          []filter{},
-		})
+		}
+		// Named editions are event history too: the stricter mailable reading gates
+		// them like the location history, or their registrants bypass the gate.
+		if c.GateEventHistory {
+			b.Filters = append(b.Filters, inListFilter(gate, "IN_LIST"))
+		}
+		out = append(out, b)
 	}
 
 	if len(out) == 0 {
@@ -824,13 +830,16 @@ func AllBranchesGated(c CustomCriteria) bool {
 	if strings.TrimSpace(c.GateListID) == "" {
 		return false
 	}
-	if len(cleanValues(c.RegisteredFor)) > 0 || len(cleanValues(c.PageViewURLs)) > 0 {
+	if len(cleanValues(c.PageViewURLs)) > 0 {
 		return false
 	}
-	if c.EventRegistered || c.EducationEnrolled {
-		return c.GateEventHistory
+	// Event history (location registrations, education, named editions) is gated
+	// only under the stricter mailable reading; contact location always is.
+	history := c.EventRegistered || c.EducationEnrolled || len(cleanValues(c.RegisteredFor)) > 0
+	if history && !c.GateEventHistory {
+		return false
 	}
-	return c.ContactLocation
+	return c.ContactLocation || history
 }
 
 // brandAliases are the long names brand master lists are filed under where they
@@ -865,7 +874,7 @@ func MatchesBrandMaster(name, brandShort string) bool {
 	if !strings.Contains(lower, "master-list") && !strings.Contains(lower, "master list") && !strings.Contains(lower, "masterlist") {
 		return false
 	}
-	if containsAny(name, suppressionNameHints) {
+	if hasSuppressionHint(name) {
 		return false
 	}
 	brand := strings.ToLower(strings.TrimSpace(brandShort))

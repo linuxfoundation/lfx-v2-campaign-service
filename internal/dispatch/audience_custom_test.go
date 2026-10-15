@@ -372,7 +372,7 @@ func TestInterpretCustom_AnEventURLQuotesThePageToTheModel(t *testing.T) {
 
 	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
 	require.NoError(t, err)
-	assert.Equal(t, "Synthetic Summit", out.Draft.Criteria.Label, "the page names the event when the model does not")
+	assert.Equal(t, "Synthetic Summit 2026", out.Draft.Criteria.Label, "the page names the event, with its year, when the model does not")
 	assert.Equal(t, "SYN", out.Draft.BrandShort)
 	assert.Equal(t, []string{"South Korea"}, out.Draft.Criteria.Countries)
 }
@@ -751,4 +751,25 @@ func TestInterpretCustom_TheRequestedEditionsWinOverTheWarehouseDefault(t *testi
 			}
 		})
 	}
+}
+
+// A page title without its year names this edition by its full stored name, so an
+// exact registered_for filter for this edition's registrants matches them.
+func TestInterpretCustom_ThisEditionIsNamedWithItsYear(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":["Synthetic Summit 2026"],"label":""},"questions":[],"notes":[]}`,
+	}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: []snowflake.Event{{EventName: "Synthetic Summit 2025"}}}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic Summit 2026"}, out.Draft.Criteria.RegisteredFor, "this edition's full name is a known edition")
+	require.NotNil(t, out.Event)
+	assert.Equal(t, "Synthetic Summit 2026", out.Event.Name)
 }
