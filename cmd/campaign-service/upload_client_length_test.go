@@ -163,8 +163,8 @@ func TestUploadClient_DeclaredLengthUploadsRunConcurrently(t *testing.T) {
 			seen = append(seen, obs)
 		case err := <-results:
 			h.release()
-			t.Fatalf("an upload completed while another was parked (err=%v, 503s=%d): uploads were "+
-				"serialized, so the client is not declaring its length", err, doer.count(http.StatusServiceUnavailable))
+			t.Fatalf("an upload completed while another was parked (err=%T %v, 503s=%d): uploads were "+
+				"serialized, so the client is not declaring its length", err, err, doer.count(http.StatusServiceUnavailable))
 		case <-timeout:
 			h.release()
 			t.Fatalf("only %d of %d uploads were admitted concurrently", len(seen), concurrent)
