@@ -433,8 +433,8 @@ func TestListAccountCampaigns_ABOBudget_FlightFromAdSets(t *testing.T) {
 	}
 }
 
-// An ABO campaign whose OWN campaign-level flight is unreadable (null, numeric or malformed
-// start_time/stop_time) still takes its budget and flight from its ad sets (PR #316 review). The
+// An ABO campaign whose OWN campaign-level flight is unreadable (a null, numeric, malformed or
+// empty start_time/stop_time; an empty start is unreadable, unlike an empty stop) still takes its budget and flight from its ad sets (PR #316 review). The
 // ad-set fallback supplies its own window, so it must not also require a readable campaign flight:
 // adding that guard would leave a freshly created ABO campaign pacing unknown, the bug this PR
 // fixes. The CBO counterpart, where the fallback must NOT run, is
