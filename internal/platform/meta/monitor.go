@@ -127,7 +127,8 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 //
 // It is also "" — and logged — when the code is not one currencyOffsetFor knows (the budgets are
 // then left unconverted), or when it differs from the accountCurrency read (the existing
-// ?fields=currency read) the budgets were converted in (see monitorPublishableCurrency).
+// ?fields=currency read) the budgets would be converted in (see monitorPublishableCurrency); that
+// disagreement also leaves every budget unconverted, since spend is in the insights currency.
 // Offset-1 currencies (JPY, KRW, …) are published like offset-100 ones: budgets are converted with
 // the account currency's own offset (minorToWhole).
 func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID string, days int) ([]AccountCampaignRow, string, error) {
@@ -166,6 +167,17 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 		return nil, "", fmt.Errorf("list account campaigns: %w", err)
 	}
 	offset, currencyKnown := currencyOffsetFor(currency)
+	// An explicit disagreement between the Insights rows' account_currency and this read is
+	// not only a reason to withhold the published label (monitorPublishableCurrency): spend is
+	// reported in the Insights currency, so a budget converted in the other one would be paced
+	// against spend in a different currency — a "1000" daily budget read as USD 10 against JPY
+	// spend raises a false alert (PR #316 review). Neither read is known to be the right one, so
+	// the budget currency is unknown for the whole read: no campaign budget is converted and no
+	// ad-set fallback is read, leaving pacing unknown while delivery metrics are kept. Insights
+	// with no usable currency (no rows, an invalid code, rows disagreeing) is not a disagreement.
+	if ic := insights.currency(); currencyKnown && ic != "" && ic != strings.ToUpper(strings.TrimSpace(currency)) {
+		currencyKnown = false
+	}
 
 	editCutoff, cutoffOK := budgetEditCutoff(window.since)
 	rows := make([]AccountCampaignRow, 0, len(campaigns))

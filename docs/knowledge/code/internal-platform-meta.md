@@ -878,7 +878,13 @@ failing the read. No extra request for the label (the `?fields=currency` read ab
 currency. `monitorPublishableCurrency` then publishes the code only when `currencyOffsetFor` knows its
 offset (1 or 100) and it equals the `accountCurrency` read above, the currency the budgets were
 converted in; it withholds (and logs) an unknown code, whose budgets are left unconverted, and a
-code the two reads disagree on. `ListAccountCampaigns` wraps it and drops the currency. See
+code the two reads disagree on. That disagreement — a usable insights code that is not the
+`accountCurrency` read — also leaves the budget currency unknown for the whole read (PR #316
+review): spend is reported in the insights currency, so a budget converted in the other one (a
+`"1000"` daily budget read as USD 10 against JPY spend) would raise a false pacing alert. No
+campaign-level budget is converted and no ad-set fallback is read, so pacing is unknown, while
+delivery (spend, impressions, clicks) is kept; insights with no usable code is not a disagreement.
+`ListAccountCampaigns` wraps it and drops the currency. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
 See [internal/platform/meta](../../../internal/platform/meta).
