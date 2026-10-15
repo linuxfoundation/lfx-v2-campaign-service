@@ -1001,6 +1001,9 @@ func redditRunStatus(status string) (string, error) {
 //
 // Kept verbatim: Objective (refused by the client unless it names a known objective),
 // ImageAssetID (a stored asset key), numbers and dates.
+// Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
+// manual before anything is sent, and bidAmount is a number
+// (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
 //
 // cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
 // so every slice that is rewritten is REALLOCATED first: the FULL url and text must still

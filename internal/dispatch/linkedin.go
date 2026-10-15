@@ -1253,6 +1253,9 @@ func linkedinRunStatus(status string) (string, error) {
 // (validFacets: facet URNs only, and creation is refused when no profile matches), and
 // AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
 // Variants[].ImageAssetID (a stored asset key), numbers, flags and dates are kept too.
+// Bidding is kept verbatim too: resolveBidding refuses a strategy other than automatic or
+// manual before anything is sent, and bidAmount is a number
+// (TestConfigSnapshot_BiddingRoundTripsThroughTheValidator replays the stored copy).
 //
 // cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
 // so every slice that is rewritten is REALLOCATED first: the FULL text must still reach
