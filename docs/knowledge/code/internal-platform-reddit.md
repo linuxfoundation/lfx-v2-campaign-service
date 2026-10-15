@@ -539,6 +539,18 @@ returned rows on every platform, so the aggregate and the campaigns array beside
 can never describe different populations. `FetchAccountTotals`, the `AccountTotals`
 type and the `AccountTotalsReader` plumbing were removed with it.
 
+`ListAccountCampaignsWithCurrency` is the same read plus the account's currency for the
+monitor's `currency` field. Neither the campaign list nor the reports carry one, so it makes ONE
+more request after the campaign list, run CONCURRENTLY with the report fan-out on its own
+`monitorCurrencyTimeout` (3s) and sent with `requestNoThrottleRetry` (a 429 is not waited out),
+so it never delays or fails the rows — `readMonitorAccountCurrency`: `GET /ad_accounts/{id}`,
+refused unless `identityjson` trusts the raw body and its `data.id` is the requested account,
+with errors that carry no upstream text and redact the account id (`errMonitorAccountUntrusted`).
+An absent, null or malformed `currency` is `""`; any error is dropped and the currency left `""`
+— the rows are never affected. `ListAccountCampaigns` makes no such request. Unverified against
+a live account, like discovery's use of the same field. See
+[Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
+
 **Scope audit (2026-10-05, LFXV2-2665 Track M3).** The read's only scope filter
 (`configured_status` ACTIVE/PAUSED) matches the BFF, so there is no Google-class scope
 defect; five other defects were fixed:

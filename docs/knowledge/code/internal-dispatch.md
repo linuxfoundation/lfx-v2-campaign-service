@@ -3082,7 +3082,7 @@ overlay flip like the cutover flags; the branch stays dormant until an operator 
 | --- | --- | --- |
 | `resolve` | `Dispatch` (creation) and the discovery/`ListAccounts` helpers | system when the flag is on, else project-then-fallback |
 | `resolveExisting` | `ToggleStatus`, `ReadMetrics` — anything holding a `*model.Campaign` | **the account the campaign RECORDS being created under** |
-| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics`, Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
+| `resolveOwned` | adoption, and every provider's account-monitor read (`ListAccountCampaignMetrics` and LinkedIn's, Meta's and Reddit's `ReadAccountMonitor`, which it wraps; Microsoft's and X's report-backed `ListAccountCampaigns`/`SubmitAccountReport`/`CheckAccountReport`/`ReadAccountCurrency` in `microsoft_monitor.go` and `twitter_monitor.go`, and Microsoft's report-backed keyword read in `microsoft_keyword_report.go`; round-16/17 review — see `account-monitor-endpoints.md`'s Trust boundary section) | project only (never forced, never fell back) |
 
 The rule for an existing campaign is NOT "never forced". It is "follow the recorded creation
 account", and the difference is the whole point: those two agree for a campaign created before the
@@ -4285,6 +4285,27 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
 fetched from HubSpot once per `RunQA` call, not once per reference.
+
+## Account-monitor currency (LFXV2-2665)
+
+The account monitor's `currency` field reaches the service two ways
+([Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency)):
+
+- **Live reads.** `LinkedInDispatcher`, `MetaDispatcher` and `RedditDispatcher` implement
+  `service.AccountMonitorReader` (`ReadAccountMonitor` → `model.AccountMonitorRead`), carrying
+  the currency their client's `ListAccountCampaignsWithCurrency` returns. Their
+  `ListAccountCampaignMetrics` returns the same read's rows, so every guard is in one body;
+  Reddit's skips the currency (`readAccountMonitor(..., withCurrency=false)` calls the client's
+  plain `ListAccountCampaigns`), so the rows-only path pays no extra ad-account read. LinkedIn
+  also maps `AccountCampaignRow.PacingUnknown` (budgets disagreeing about the currency). `GoogleAdsDispatcher` is untouched and implements only
+  `AccountMetricsReader`, so Google's currency is absent.
+- **Report-backed reads.** `MicrosoftDispatcher` and `TwitterDispatcher` implement
+  `service.AccountCurrencyReader` (`ReadAccountCurrency`), each through its monitor's own
+  resolver (`resolveMicrosoftMonitorClient` / `resolveTwitterMonitorClient`), so the gate,
+  own-connection and bound-account checks run before any request, exactly as for the other
+  three monitor methods. Microsoft calls `microsoft.Client.AccountCurrency` (one Customer
+  Management read); X calls `twitter.Client.AccountCurrency`, which reuses the cached account
+  read `ListAccountCampaigns` just made.
 
 ## HubSpot email account monitor (`hubspot_monitor.go`, LFXV2-2665)
 

@@ -10,7 +10,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
-// Every LinkedIn row failure — an unparseable budget amount or costInUsd — is classed decode;
+// Every LinkedIn row failure — an unparseable budget amount or costInLocalCurrency — is classed decode;
 // a healthy row carries no class.
 func TestListAccountCampaigns_FailedRowIsDecode(t *testing.T) {
 	srv, _ := adAccountsServer(t,
@@ -20,9 +20,9 @@ func TestListAccountCampaigns_FailedRowIsDecode(t *testing.T) {
 			`{"id":333,"name":"Healthy","status":"ACTIVE"}`+
 			`],"metadata":{}}`,
 		`{"elements":[`+
-			`{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInUsd":"not-a-number"},`+
-			`{"pivotValues":["urn:li:sponsoredCampaign:222"],"impressions":10,"clicks":1,"costInUsd":"1.00"},`+
-			`{"pivotValues":["urn:li:sponsoredCampaign:333"],"impressions":10,"clicks":1,"costInUsd":"1.00"}`+
+			`{"pivotValues":["urn:li:sponsoredCampaign:111"],"impressions":1000,"clicks":50,"costInLocalCurrency":"not-a-number"},`+
+			`{"pivotValues":["urn:li:sponsoredCampaign:222"],"impressions":10,"clicks":1,"costInLocalCurrency":"1.00"},`+
+			`{"pivotValues":["urn:li:sponsoredCampaign:333"],"impressions":10,"clicks":1,"costInLocalCurrency":"1.00"}`+
 			`]}`,
 	)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, RuntimeConfig{}, WithBaseURL(srv.URL))
