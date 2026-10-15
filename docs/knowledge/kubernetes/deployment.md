@@ -228,6 +228,12 @@ be a release old, not just present. The campaigns slot index (`000022`'s
 adopt/claim advisory lock ships (LFXV2-2023): the binary before the lock takes no slot lock, so
 if the drop shipped with the lock, rolling the image back would leave that binary's adopt free
 to race a slot-2 claim on a schema with nothing else to stop it. Staged a release apart, the
-binary a rollback returns to either still has the index or already takes the lock.
+binary a rollback returns to either still has the index or already takes the lock. That also
+means the lock release must BOOT on the contracted schema, not just behave on it: startup runs
+`postgres.Migrate`, and the pool is closed on any error from its required-index check. So the
+lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot,
+present is still validated in full — while the four-column
+`uq_campaigns_brief_platform_variant_slot_version_live` stays required and its absence still fails
+startup with `ErrMissingRequiredIndex`. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex`.
 
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

@@ -249,7 +249,8 @@ func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
 }
 
 // contractedSchemaRepo migrates a scratch database of its own and then DROPS 000022's
-// three-column one-live-row-per-slot index in it — the schema the contract release will ship.
+// three-column one-live-row-per-slot index in it — the schema the contract release will ship —
+// and re-runs the startup Migrate against that schema before building the repository.
 // A scratch database, not the shared one, because every other live test in the package runs
 // against the expand-phase schema and some of them (the ErrSlotVersionUnavailable path) depend
 // on that index existing.
@@ -267,6 +268,12 @@ func contractedSchemaRepo(ctx context.Context, t *testing.T) (*postgres.Campaign
 	t.Cleanup(pool.Close) // registered after freshDatabase's reaper, so it runs before the drop
 	if _, err := pool.Exec(ctx, `DROP INDEX uq_campaigns_brief_platform_variant_live`); err != nil {
 		t.Fatalf("drop 000022's index to model the contracted schema: %v", err)
+	}
+	// Then boot on it the way container.go does — Migrate, whose required-index check gates
+	// startup — rather than handing the schema straight to a repository. The lock release is
+	// the rollback target for the release that ships this drop, so it must START here too.
+	if err := postgres.Migrate(dsn); err != nil {
+		t.Fatalf("startup migrate on the contracted schema: %s", dbtest.SafeDSNErrFor(dsn, err))
 	}
 	return postgres.NewCampaignRepo(&postgres.Pool{Pool: pool}), pool
 }

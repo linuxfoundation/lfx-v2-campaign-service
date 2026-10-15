@@ -131,59 +131,93 @@ func TestMigrateRefusesADroppedRequiredIndex(t *testing.T) {
 	}
 }
 
-// TestMigrateRefusesADroppedDispatchIndex is the same state for the OTHER required index,
-// and it is the one with money attached.
+// TestMigrateToleratesTheDroppedLegacySlotIndex pins PR #260's rollback promise on the path
+// production takes at startup: container.go runs postgres.Migrate and closes the pool on ANY
+// error, so whatever Migrate's required-index check refuses, the pod refuses to serve.
 //
-// Migration 000014 dropped campaigns_brief_id_platform_key and 000024 dropped the
-// two-column index that replaced it, so uq_campaigns_brief_platform_variant_live
-// is the sole arbiter of (brief_id, platform) uniqueness and the thing ClaimCampaignDispatch
-// rests on. 000014 guards its definition — but only once, while 000014 is running. An index
-// lost afterwards (an operator clearing invalid-index debris, a rebuild from 000013 whose
-// IF NOT EXISTS no-opped against a same-named leftover) left a schema that booted clean and
-// double-created paid campaigns under concurrency. That is exactly the silent absence the
-// runner check exists to refuse, so it has to cover this index and not only the lease one.
-func TestMigrateRefusesADroppedDispatchIndex(t *testing.T) {
-	pool := dbtest.Pool(t)
+// The lock release (LFXV2-2023) is the image-only rollback target for the later release that
+// drops 000022's three-column uq_campaigns_brief_platform_variant_live. Staging the drop a
+// release after the lock only delivers that target if THIS image boots on the contracted
+// schema — while the four-column slot-version index, which every claim, upsert and adopt in
+// this release names as its ON CONFLICT arbiter, stays a hard requirement.
+//
+// A scratch database, not the shared one: every other live test in the package runs against
+// the expand-phase schema, and some depend on the legacy index existing.
+//
+// Revert check: drop `optional: true` from the legacy entry in pool.go's requiredIndexes and
+// the first Migrate below fails with ErrMissingRequiredIndex.
+func TestMigrateToleratesTheDroppedLegacySlotIndex(t *testing.T) {
+	const (
+		legacy = "uq_campaigns_brief_platform_variant_live"
+		slot   = "uq_campaigns_brief_platform_variant_slot_version_live"
+	)
 	ctx := context.Background()
+	_ = dbtest.Pool(t) // skip (or fail on CI) exactly as every live test does when unconfigured
+	dsn := freshDatabase(ctx, t)
+	if err := postgres.Migrate(dsn); err != nil {
+		t.Fatalf("migrate the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) }) // before freshDatabase's drop
 
-	const idx = "uq_campaigns_brief_platform_variant_live"
-
-	t.Cleanup(func() { restoreDispatchIndex(t, pool) })
-
-	if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
-		t.Fatalf("drop the required index: %v", err)
+	if !postgres.RequiredIndexIsOptional(legacy) || postgres.RequiredIndexIsOptional(slot) {
+		t.Errorf("optional(%s)=%t optional(%s)=%t, want true and false",
+			legacy, postgres.RequiredIndexIsOptional(legacy), slot, postgres.RequiredIndexIsOptional(slot))
 	}
 
-	err := postgres.Migrate(dbtest.DSN())
-	if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
-		t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — "+
-			"succeeding here starts the service with (brief_id, platform) uniqueness gone "+
-			"and concurrent claims free to double-create paid campaigns", idx, dbtest.SafeDSNErr(err))
-	}
-	if !strings.Contains(err.Error(), idx) {
-		t.Errorf("the error does not name %s: %v", idx, err)
-	}
-	// The remedy has to be the statement that rebuilds THIS index. It used to be
-	// `force 12` — 000013 creates it, and forcing back to 17 replays 000018 and rebuilds
-	// the wrong one. Per-name annotation fixed that and left a worse problem: Up() after a
-	// force replays every migration ABOVE the version, and 000006/000007's bare
-	// `ADD CONSTRAINT` (no IF NOT EXISTS form exists in PostgreSQL) fail with 42710 and
-	// leave the version dirty. The DDL replays nothing.
-	rebuild, ok := postgres.RequiredIndexRebuildSQL(idx)
-	if !ok {
-		t.Fatalf("no rebuild statement for %s", idx)
-	}
-	if !strings.Contains(err.Error(), rebuild) {
-		t.Errorf("the error does not print the statement that rebuilds %s: %v", idx, err)
-	}
-	if strings.Contains(err.Error(), "force ") {
-		t.Errorf("the error still tells the operator to force a version, which replays "+
-			"migrations that fail on replay: %v", err)
-	}
-	if !postgres.IsPermanentMigrationErr(err) {
-		t.Errorf("ErrMissingRequiredIndex is not permanent; boot would 503-loop rather than " +
-			"printing the statement that rebuilds the index")
-	}
+	t.Run("an impostor under the legacy name is still refused", func(t *testing.T) {
+		// Optional means ABSENT is fine — not that anything carrying the name is.
+		if _, err := conn.Exec(ctx, "DROP INDEX "+legacy); err != nil {
+			t.Fatalf("drop %s: %v", legacy, err)
+		}
+		if _, err := conn.Exec(ctx, "CREATE INDEX "+legacy+" ON campaigns (brief_id, platform, variant) WHERE status <> 'deleted'"); err != nil {
+			t.Fatalf("create a non-unique impostor: %v", err)
+		}
+		err := postgres.Migrate(dsn)
+		if !errors.Is(err, postgres.ErrRequiredIndexMismatch) {
+			t.Fatalf("Migrate with a non-unique %s: got %s, want ErrRequiredIndexMismatch",
+				legacy, dbtest.SafeDSNErrFor(dsn, err))
+		}
+	})
+
+	t.Run("legacy index dropped: startup succeeds", func(t *testing.T) {
+		if _, err := conn.Exec(ctx, "DROP INDEX IF EXISTS "+legacy); err != nil {
+			t.Fatalf("drop %s to model the contracted schema: %v", legacy, err)
+		}
+		if err := postgres.Migrate(dsn); err != nil {
+			t.Fatalf("Migrate after dropping %s: %s — the lock release cannot boot on the "+
+				"schema its successor leaves, so an image-only rollback boot-loops",
+				legacy, dbtest.SafeDSNErrFor(dsn, err))
+		}
+	})
+
+	t.Run("slot-version index dropped too: startup still refuses", func(t *testing.T) {
+		if _, err := conn.Exec(ctx, "DROP INDEX "+slot); err != nil {
+			t.Fatalf("drop %s: %v", slot, err)
+		}
+		err := postgres.Migrate(dsn)
+		if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
+			t.Fatalf("Migrate after dropping %s: got %s, want ErrMissingRequiredIndex — with "+
+				"both indexes gone nothing stops a retry creating a duplicate paid campaign",
+				slot, dbtest.SafeDSNErrFor(dsn, err))
+		}
+		if !strings.Contains(err.Error(), slot) {
+			t.Errorf("the error does not name %s: %v", slot, err)
+		}
+		if strings.Contains(err.Error(), legacy) {
+			t.Errorf("the error asks for the optional %s back: %v", legacy, err)
+		}
+		rebuild, ok := postgres.RequiredIndexRebuildSQL(slot)
+		if !ok || !strings.Contains(err.Error(), rebuild) {
+			t.Errorf("the error does not print the statement that rebuilds %s: %v", slot, err)
+		}
+		if !postgres.IsPermanentMigrationErr(err) {
+			t.Errorf("ErrMissingRequiredIndex is not permanent")
+		}
+	})
 }
 
 // TestMigrateRefusesARequiredIndexWithTheWrongDefinition pins the third state in this
@@ -276,22 +310,6 @@ func restoreLeaseIndex(t *testing.T, pool interface {
 			" ON campaign_audiences (brief_id, platform) WHERE status = 'building'")
 }
 
-// restoreDispatchIndex rebuilds the campaigns partial unique index (migration 000013).
-// Since 000014 dropped campaigns_brief_id_platform_key this is the ONLY thing standing
-// between two concurrent claims and two paid campaigns for one (brief, platform), so a
-// test that leaves it dropped does not merely dirty the database — it makes every later
-// dispatch test pass against a table that cannot enforce what they are about.
-func restoreDispatchIndex(t *testing.T, pool interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-},
-) {
-	t.Helper()
-	restoreRequiredIndex(t, pool, "uq_campaigns_brief_platform_variant_live",
-		"CREATE UNIQUE INDEX uq_campaigns_brief_platform_variant_live"+
-			" ON campaigns (brief_id, platform, variant) WHERE status <> 'deleted'")
-}
-
 func restoreRequiredIndex(t *testing.T, pool interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
@@ -333,8 +351,9 @@ func restoreRequiredIndex(t *testing.T, pool interface {
 // requiredIndexes, and it exists because of the eight that were not the subject of the
 // change that built the guard.
 //
-// The two tests above cover the audience-lease and dispatch indexes — the ones under
-// active work when requiredIndexes was written. The seven per-provider connection indexes
+// The tests above cover the audience-lease index and the two campaign slot indexes — the
+// ones under active work when requiredIndexes was written. (An OPTIONAL entry — one a
+// contract migration drops on schedule — must instead boot when dropped.) The seven per-provider connection indexes
 // and the live-brief slug index are exposed identically and were simply not what anyone was
 // looking at: 000001 declares no table-level UNIQUE constraint, and 000003 DROPs
 // campaign_briefs_project_id_event_slug_key before creating its replacement, so in every
@@ -384,6 +403,15 @@ func TestMigrateRefusesEachDroppedSingletonIndex(t *testing.T) {
 
 			if _, err := pool.Exec(ctx, "DROP INDEX IF EXISTS "+idx); err != nil {
 				t.Fatalf("drop %s: %v", idx, err)
+			}
+
+			// An OPTIONAL entry is one a contract migration drops on schedule; this image
+			// must boot without it (TestMigrateToleratesTheDroppedLegacySlotIndex).
+			if postgres.RequiredIndexIsOptional(idx) {
+				if err := postgres.Migrate(dbtest.DSN()); err != nil {
+					t.Fatalf("Migrate after dropping the optional %s: %s", idx, dbtest.SafeDSNErr(err))
+				}
+				return
 			}
 
 			// The version is already recorded clean, so Up() returns ErrNoChange and

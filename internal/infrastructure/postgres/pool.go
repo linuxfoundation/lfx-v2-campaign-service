@@ -356,17 +356,26 @@ var requiredIndexes = []requiredIndex{{
 	keys: []string{"brief_id", "platform", "variant"},
 	// Deparsed, and character-identical to the form 000023's guard compares against.
 	predicate: "(status <> 'deleted'::text)",
+	// OPTIONAL from the lock release on (LFXV2-2023, PR #260): absent is a healthy boot,
+	// present is still checked in full. This image is the image-only rollback target for
+	// the later release that drops the index, so it must start on the schema that release
+	// leaves behind — staging the drop a release after the lock promises exactly that, and
+	// a hard requirement here would turn the rollback into a boot loop on
+	// ErrMissingRequiredIndex. The N-1 binary that still relies on the index for its claims
+	// is not this one: its own boot check keeps it required, and a rollback to it happens
+	// only before the drop.
+	optional: true,
 }, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
 	// four-column successor to the entry above, widening the slot so a DELIBERATE second
 	// campaign on one slot is distinguishable from a RETRY of the first.
 	//
 	// Both entries are listed on purpose while expand/contract runs. The three-column
-	// index is what the N-1 binary's claims key on and must stay enforced through a
-	// rollout; the four-column one is what this release's claim, upsert and adopt name as
-	// their ON CONFLICT arbiter. The follow-up release drops the narrower index and this
-	// list loses the entry above with it — until then a missing EITHER index is a boot
-	// failure, because each one serializes a different binary's writes.
+	// index is what the N-1 binary's claims key on; the four-column one is what this
+	// release's claim, upsert and adopt name as their ON CONFLICT arbiter. Only THIS one is
+	// required: the entry above is optional (see its comment) so this image still boots
+	// once the follow-up release drops the narrower index, and a missing four-column index
+	// is still a boot failure.
 	name:   "uq_campaigns_brief_platform_variant_slot_version_live",
 	table:  "campaigns",
 	unique: true,
@@ -547,8 +556,9 @@ func (r requiredIndex) createSQL() string {
 	return b.String()
 }
 
-// RequiredIndexNames returns the names of every index Migrate refuses to boot without, in
-// the order the error reports them.
+// RequiredIndexNames returns the names of every index Migrate validates, in the order the
+// error reports them. Migrate refuses to boot without each one except those
+// RequiredIndexIsOptional reports, whose absence it tolerates.
 //
 // It is exported for the live-database tests in the dbtest package, which are in a
 // different package and so cannot reach the unexported list — and driving them off the real
@@ -561,6 +571,15 @@ func RequiredIndexNames() []string {
 		out = append(out, r.name)
 	}
 	return out
+}
+
+// RequiredIndexIsOptional reports whether Migrate tolerates the named index's ABSENCE (it is
+// still validated when present). False for a name not in the list. Exported, like
+// RequiredIndexNames, so the dbtest drop-each-index tests can tell the two kinds apart off
+// the real list instead of a hand-written copy.
+func RequiredIndexIsOptional(name string) bool {
+	i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == name })
+	return i >= 0 && requiredIndexes[i].optional
 }
 
 // RequiredIndexRebuildSQL returns the statement that recreates the named required index,
@@ -600,6 +619,11 @@ type requiredIndex struct {
 	// renders it: a bare column name, or the deparsed text of an expression key.
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
+	// optional tolerates the index's ABSENCE — an index a contract migration is scheduled to
+	// drop, which this image must still boot without (see the entry that sets it). A
+	// PRESENT optional index is checked exactly like a required one: invalid, not ready, or
+	// carrying the name with the wrong definition is still refused.
+	optional bool
 }
 
 // createIndexRe matches the CREATE statement for a named index in a migration file.
@@ -799,6 +823,9 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn, expected map[st
 		var keys []string
 		row := conn.QueryRow(ctx, requiredIndexQuery, want.name, want.table)
 		switch scanErr := row.Scan(&unique, &live, &rightTable, &predicate, &keys); {
+		case errors.Is(scanErr, pgxv5.ErrNoRows) && want.optional:
+			// Dropped on schedule by a contract migration: nothing to enforce, nothing to report.
+			continue
 		case errors.Is(scanErr, pgxv5.ErrNoRows), scanErr == nil && !live:
 			missing = append(missing, want.name)
 			continue

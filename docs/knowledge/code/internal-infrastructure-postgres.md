@@ -187,7 +187,16 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`. `AdoptCampaign` classifies `23505` by
   index name for the same reason: the legacy slot index means `ErrConflict`, only
   `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
-  `requiredIndexes` until the index-drop release removes the narrower one.
+  `requiredIndexes`, but the narrower one is marked `optional`: its ABSENCE is a healthy boot, while
+  a PRESENT one is still checked in full (invalid, or the name on the wrong definition, is still
+  refused). This release is the image-only rollback target for the release that drops it, and
+  `container.go` closes the pool on any `Migrate` error — so a hard requirement would turn that
+  rollback into a boot loop on `ErrMissingRequiredIndex`. The four-column slot-version index stays
+  required. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex` (drop the legacy index,
+  run `Migrate`, boot succeeds; drop the slot-version index too, `ErrMissingRequiredIndex` naming
+  only it; a non-unique impostor under the legacy name is `ErrRequiredIndexMismatch`), and
+  `contractedSchemaRepo` re-runs `Migrate` after its drop. `RequiredIndexIsOptional` lets the
+  drop-each-index tests tell the two kinds apart off the real list.
 
   **Per-slot advisory lock, staged one release BEFORE the index drop.** Once the three-column
   index is gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
@@ -252,7 +261,8 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   authority.
 
   The lock ships FIRST and the index drop (the contract migration, plus removing
-  `uq_campaigns_brief_platform_variant_live` from `requiredIndexes`, plus retiring
+  `uq_campaigns_brief_platform_variant_live` from `requiredIndexes` — already only `optional`
+  there, so the lock release boots without it — plus retiring
   `ErrSlotVersionUnavailable` and the legacy-index `23505` handling) ships **one release after
   this lock is deployed**. That ordering is what makes an image-only rollback safe: reverting the
   image does not revert the schema (see the deployment concept), and the binary before this one
