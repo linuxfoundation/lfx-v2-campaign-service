@@ -28,7 +28,10 @@ import (
 // (resolveOwned, never the LF system-account fallback) and only the account that connection is
 // bound to (requireMicrosoftManagedAccount). See the Trust boundary section of
 // docs/knowledge/architecture/account-monitor-endpoints.md.
-var _ service.AccountReportReader = (*MicrosoftDispatcher)(nil)
+var (
+	_ service.AccountReportReader   = (*MicrosoftDispatcher)(nil)
+	_ service.AccountCurrencyReader = (*MicrosoftDispatcher)(nil)
+)
 
 // microsoftMonitorEnabled gates the report-backed monitor on the same flag as ReadMetrics, for
 // the same reason: the Reporting request and response shapes follow Microsoft's published v13
@@ -117,6 +120,23 @@ func (d *MicrosoftDispatcher) ListAccountCampaigns(ctx context.Context, projectI
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+// ReadAccountCurrency implements service.AccountCurrencyReader: the account's currency from one
+// identity-checked Customer Management read (microsoft.Client.AccountCurrency) — the monitor's
+// campaign list and report carry none. Same trust boundary as every method here: the project's
+// own connection, and only its bound account. The orchestrator treats an error as "currency
+// unknown" and serves the monitor without it.
+func (d *MicrosoftDispatcher) ReadAccountCurrency(ctx context.Context, projectID string, platform model.Provider, accountID string) (string, error) {
+	client, err := d.resolveMicrosoftMonitorClient(ctx, projectID, platform, accountID)
+	if err != nil {
+		return "", err
+	}
+	currency, err := client.AccountCurrency(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read microsoft account currency: %w", err)
+	}
+	return currency, nil
 }
 
 // microsoftIsSearchCampaign reports whether a campaign's CampaignType is Search. Microsoft
