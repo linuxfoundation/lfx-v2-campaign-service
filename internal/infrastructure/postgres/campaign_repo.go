@@ -918,9 +918,9 @@ const replaceCampaignQuery = `UPDATE campaigns SET
 	  AND status <> 'deleted'`
 
 // UpsertCampaign records a dispatch result on its (brief, platform, variant, slot
-// version), under the per-slot advisory lock. It INSERTs when the slot version has no
-// live row, and conflict-updates the live row only when that row's job_id is this
-// write's claim (c.JobID) and the slot ownership check passes; otherwise it returns
+// version), under the per-slot advisory lock. It conflict-updates the live row only when
+// that row's job_id is this write's claim (c.JobID); with the claim gone it INSERTs only
+// into a slot with no live row at any version. Otherwise it returns
 // domain.ErrDispatchClaimLost having written nothing. See domain.CampaignWriter.
 func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
 	tx, err := r.db.Begin(ctx)
