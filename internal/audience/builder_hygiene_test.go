@@ -94,9 +94,12 @@ func TestGuardReuse_ARestrictedAudienceNeverReusesABroaderList(t *testing.T) {
 	withFilter.PropertyFilters = []CustomPropertyFilter{{Property: "jobtitle", Operator: CustomOpContains, Values: []string{"CTO"}}}
 	assert.Equal(t, CustomReuseUpdate, got(withFilter, general), "a property filter never shows in a name")
 
-	withTopics := base
-	withTopics.EducationTopics = []string{"Kubernetes"}
-	assert.Equal(t, CustomReuseUpdate, got(withTopics, general))
+	// The canonical location draft carries course topics as its brand fit; they are
+	// no restriction, or this service would never reuse a list it built itself.
+	canonical := base
+	canonical.EducationEnrolled = true
+	canonical.EducationTopics = []string{"Kubernetes"}
+	assert.Equal(t, CustomReuseAsIs, got(canonical, general), "topics do not block reuse")
 }
 
 func TestSettleQuestions(t *testing.T) {

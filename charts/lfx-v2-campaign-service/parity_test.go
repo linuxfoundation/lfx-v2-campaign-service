@@ -508,6 +508,7 @@ func TestRouteRuleSetParity(t *testing.T) {
 		{"/projects/p1/audience-builder/existing-master-lists", true},
 		{"/projects/p1/audience-builder/preview-count", true},
 		{"/projects/p1/audience-builder/compose-master", true},
+		{"/projects/p1/audience-builder/attach-existing", true},
 		{"/projects/p1/audience-builder/qa/run", true},
 		{"/projects/p1/audience-builder/custom/interpret", true},
 		{"/projects/p1/audience-builder/custom/preview", true},

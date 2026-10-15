@@ -74,7 +74,7 @@ entries. Thirteen leaves are spelled out — `capabilities`, `discover`, `lists/
 `suppression-lists`, `last-sent`, `existing-master-lists`, `preview-count`,
 `compose-master`, `attach-existing`, `qa/run`, `custom/interpret`, `custom/preview`,
 `custom/create` — for two reasons. `compose-master` and `custom/create` create real contact lists
-in a production HubSpot portal and is not idempotent, so routing a path the service does
+in a production HubSpot portal and are not idempotent, so routing a path the service does
 not serve is worse here than for a read-only family: the base path serves nothing, and
 `POST /signal-list` is specified in the plan but deliberately unimplemented. And five of
 the leaves are two segments deep (`lists/search`, `qa/run` and the three `custom/*`), so a single-segment

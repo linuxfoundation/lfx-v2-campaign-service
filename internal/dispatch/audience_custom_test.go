@@ -664,14 +664,14 @@ func TestPreviewCustom_ANonStringTopicPropertyIsRefusedForItsType(t *testing.T) 
 // A taken name at the input limit previews as a version create accepts back.
 func TestPreviewCustom_AVersionedNameFitsTheCreateLimit(t *testing.T) {
 	portal := seoulPortal()
-	long := strings.Repeat("n", audience.CustomMaxNameLen)
+	long := strings.Repeat("n", audience.CustomNameMaxLen)
 	portal.lists[long] = "990"
 	srv := portal.serve(t)
 	defer srv.Close()
 
 	p, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", seoulCriteria(), long)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len([]rune(p.Name)), audience.CustomMaxNameLen)
+	assert.LessOrEqual(t, len([]rune(p.Name)), audience.CustomNameMaxLen)
 	assert.True(t, strings.HasSuffix(p.Name, " (v2)"), "the taken name is versioned, not reused: %q", p.Name)
 }
 
@@ -708,5 +708,5 @@ func TestPreviewCustom_ADerivedNameFitsTheCreateLimit(t *testing.T) {
 
 	p, err := explorerOver(srv, nil).PreviewCustom(context.Background(), "proj-1", c, "")
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len([]rune(p.Name)), audience.CustomMaxNameLen)
+	assert.LessOrEqual(t, len([]rune(p.Name)), audience.CustomNameMaxLen)
 }

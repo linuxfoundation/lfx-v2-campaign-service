@@ -52,8 +52,8 @@ chart↔route parity invariant — see [httproute.md](httproute.md)):
    entry by entry rather than covered by an `audience-builder/**` wildcard: five of its
    leaves are two segments deep (`lists/search`, `qa/run`, `custom/interpret`,
    `custom/preview`, `custom/create`) so a single-segment capture
-   would miss them, and `compose-master` writes real contact lists into a production
-   HubSpot portal and is not idempotent, so a `**` that also authorized the bare base and
+   would miss them, and `compose-master` and `custom/create` write real contact lists into a
+   production HubSpot portal and are not idempotent, so a `**` that also authorized the bare base and
    the unimplemented `signal-list` would rule paths the service does not serve.
    **There is no `{provider}/metrics` entry.** The rule used to authorize
    `/projects/:projectId/{google-ads,linkedin-ads,meta-ads,reddit-ads,twitter-ads}/metrics`,

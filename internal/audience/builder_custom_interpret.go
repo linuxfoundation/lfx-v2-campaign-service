@@ -389,7 +389,10 @@ func CustomReusePrompt(request string, answers []CustomAnswer, c CustomCriteria,
 }
 
 // customRestrictions describes what narrows the criteria below "everyone in the
-// location", in the words a list name would use.
+// location", in the words a list name would use. A property filter is described
+// by its property and operator only, never its values: a value can be a real
+// contact's email or phone, and this text goes to an external model. Course
+// topics are the brand-fit part of every education audience, not a narrowing.
 func customRestrictions(c CustomCriteria) []string {
 	var out []string
 	if c.Speakers != nil {
@@ -399,10 +402,7 @@ func customRestrictions(c CustomCriteria) []string {
 		out = append(out, "only community ambassadors")
 	}
 	for _, f := range c.PropertyFilters {
-		out = append(out, fmt.Sprintf("only contacts whose %s %s %s", f.Property, f.Operator, strings.Join(f.Values, ", ")))
-	}
-	if topics := cleanValues(c.EducationTopics); len(topics) > 0 {
-		out = append(out, "education enrolment only in courses about "+strings.Join(topics, ", "))
+		out = append(out, fmt.Sprintf("only contacts matching a %s filter on %s", f.Operator, f.Property))
 	}
 	return out
 }

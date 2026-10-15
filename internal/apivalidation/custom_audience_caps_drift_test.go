@@ -57,12 +57,12 @@ func TestCustomDraftCaps_MatchTheGeneratedValidator(t *testing.T) {
 		`{"property":"` + strings.Repeat("q", 101) + `","operator":"is_known","values":[]}`,
 		`{"property":"` + strings.Repeat("p", 100) + `","operator":"is_known","values":[]}`,
 	}
-	for i := range 12 {
-		filters = append(filters, fmt.Sprintf(`{"property":"prop_%02d","operator":"contains","values":["x"]}`, i))
-	}
 	quote := func(in []string) string { return `"` + strings.Join(in, `","`) + `"` }
-	raw := `{"criteria":{"cities":[` + quote(values("city", 30)) + `],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[` +
-		strings.Join(filters, ",") + `],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[` + quote(values("events.example.org/page-", 15)) +
+	for i := range 12 {
+		filters = append(filters, fmt.Sprintf(`{"property":"prop_%02d","operator":"is_any_of","values":[%s]}`, i, quote(values("v", 30))))
+	}
+	raw := `{"criteria":{"cities":[` + quote(values("city", 30)) + `],"countries":[` + quote(values("Countryland ", 30)) + `],"contact_location":true,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[` +
+		strings.Join(filters, ",") + `],"speakers":{"scope":"current","event_names":[` + quote(values("Synthetic Summit Track ", 30)) + `]},"ambassadors":false,"education_topics":[` + quote(values("topic", 30)) + `],"page_view_urls":[` + quote(values("events.example.org/page-", 15)) +
 		`],"registered_for":[` + quote(values("Synthetic Summit 19", 30)) + `],"label":""},"questions":[],"notes":[]}`
 	d, err := audience.ParseCustomDraft(raw)
 	if err != nil {
@@ -70,8 +70,9 @@ func TestCustomDraftCaps_MatchTheGeneratedValidator(t *testing.T) {
 	}
 	c := d.Criteria
 	// The parser must have hit every cap, or the one-past cases below prove nothing.
-	if len(c.Cities) != 25 || len(c.PropertyFilters) != 10 || len(c.PageViewURLs) != audience.CustomMaxPageViewURLs {
-		t.Fatalf("draft not at its caps: cities=%d filters=%d page_view_urls=%d", len(c.Cities), len(c.PropertyFilters), len(c.PageViewURLs))
+	if len(c.Cities) != 25 || len(c.Countries) != 25 || len(c.EducationTopics) != 25 || c.Speakers == nil || len(c.Speakers.EventNames) != 25 ||
+		len(c.PropertyFilters) != 10 || len(c.PropertyFilters[1].Values) != 25 || len(c.PageViewURLs) != audience.CustomMaxPageViewURLs {
+		t.Fatalf("draft not at its caps: %+v", c)
 	}
 	if c.PropertyFilters[0].Property != strings.Repeat("p", 100) {
 		t.Fatalf("the over-long property name was kept: %q", c.PropertyFilters[0].Property)
@@ -82,6 +83,9 @@ func TestCustomDraftCaps_MatchTheGeneratedValidator(t *testing.T) {
 	}
 	draft := map[string]any{
 		"cities":           c.Cities,
+		"countries":        c.Countries,
+		"education_topics": c.EducationTopics,
+		"speakers":         map[string]any{"scope": string(c.Speakers.Scope), "event_names": c.Speakers.EventNames},
 		"contact_location": true,
 		"gate_list_id":     "26716",
 		"property_filters": propertyFilters,
@@ -104,6 +108,10 @@ func TestCustomDraftCaps_MatchTheGeneratedValidator(t *testing.T) {
 		"page_view_urls":   {"page_view_urls": append(c.PageViewURLs, "events.example.org/one-more")},
 		"registered_for":   {"registered_for": values("Synthetic Summit 19", audience.CustomMaxRegisteredFor+1)},
 		"property name":    {"property_filters": []map[string]any{{"property": strings.Repeat("p", 101), "operator": "is_known"}}},
+		"countries":        {"countries": append(c.Countries, "One More")},
+		"education_topics": {"education_topics": append(c.EducationTopics, "one-more")},
+		"event_names":      {"speakers": map[string]any{"scope": "current", "event_names": append(c.Speakers.EventNames, "One More")}},
+		"filter values":    {"property_filters": []map[string]any{{"property": "prop_01", "operator": "is_any_of", "values": append(c.PropertyFilters[1].Values, "one-more")}}},
 	}
 	for name, body := range onePast {
 		if err := decodePreviewCustom(t, body); err == nil {

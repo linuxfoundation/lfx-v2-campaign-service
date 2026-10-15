@@ -58,7 +58,24 @@
   course or topic property.
 - **The draft caps are pinned against the generated validator.** A new `internal/apivalidation`
   test parses an oversized model reply, decodes the unedited draft through the generated
-  preview decoder, and checks one item past each cap is refused, so a Go cap drifting from its
+  preview decoder, and checks one item past each capped field is refused (cities, countries,
+  education_topics, speakers.event_names, property_filters and their values, page_view_urls,
+  registered_for, and the property-name length), so a Go cap drifting from its
   `MaxLength` fails.
 - **The HubSpot client documents its one body exception in code too**, and the concept page names
   the shared `customErr` mapper (interpret, preview and create) as `ValidationMessage`'s caller.
+
+**Fix** — the maintainer's third review:
+
+- **No filter value reaches the reuse model.** The restrictions quoted to the ranking model describe
+  a property filter by its property and operator only: a value can be a real contact's email or
+  phone, and the prompt goes to an external model.
+- **Course topics are not a reuse restriction.** Every education audience carries them as its brand
+  fit, so counting them made reuse unreachable for the canonical draft and re-created lists this
+  service had already built.
+- **`attach-existing` has its parity row**, so a leaf dropped from both chart files fails the build,
+  as the API catalog says.
+- **The drift test covers every capped field**, including `countries`, `education_topics`,
+  `speakers.event_names` and a filter's `values`.
+- Nits: `internal-service.md` says which file serves which endpoints, the two Kubernetes concept
+  pages name both non-idempotent writers, and `CustomNameMaxLen` follows the length-limit naming.

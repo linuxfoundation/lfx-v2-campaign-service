@@ -526,13 +526,13 @@ func TestReusableCandidate_HidesWhatDiscoveryHides(t *testing.T) {
 // Create takes back the name preview returned, so a versioned or derived name must
 // fit the input's 250-rune limit.
 func TestVersionedName_StaysWithinTheNameLimit(t *testing.T) {
-	long := strings.Repeat("é", CustomMaxNameLen)
+	long := strings.Repeat("é", CustomNameMaxLen)
 	v := VersionedName(long, 2)
-	assert.Equal(t, CustomMaxNameLen, utf8.RuneCountInString(v))
+	assert.Equal(t, CustomNameMaxLen, utf8.RuneCountInString(v))
 	assert.True(t, strings.HasSuffix(v, " (v2)"))
 	assert.True(t, utf8.ValidString(v), "cut on a rune boundary")
 	assert.Equal(t, "KubeCon (v3)", VersionedName("KubeCon", 3))
 
-	assert.Equal(t, CustomMaxNameLen, utf8.RuneCountInString(FitListName(long+"x")))
+	assert.Equal(t, CustomNameMaxLen, utf8.RuneCountInString(FitListName(long+"x")))
 	assert.Equal(t, "short", FitListName("short"))
 }

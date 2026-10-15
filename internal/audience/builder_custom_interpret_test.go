@@ -152,6 +152,7 @@ func TestCustomReusePrompt_CarriesTheAnswersAndRestrictions(t *testing.T) {
 	assert.Contains(t, p, "Everyone or speakers? => Only speakers")
 	assert.Contains(t, p, "restriction: only event speakers (Current)")
 	assert.Contains(t, p, "restriction: only community ambassadors")
-	assert.Contains(t, p, "restriction: only contacts whose jobtitle contains CTO")
+	assert.Contains(t, p, "restriction: only contacts matching a contains filter on jobtitle")
+	assert.NotContains(t, p, "CTO", "a filter value never reaches the external model")
 	assert.Less(t, strings.Index(p, "restriction:"), strings.Index(p, "END ANSWERS"), "restrictions are quoted inside the data block")
 }

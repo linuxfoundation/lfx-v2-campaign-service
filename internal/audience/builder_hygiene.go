@@ -113,11 +113,12 @@ var audienceWords = []string{"mailable", "marketable", "contacts", "catchment"}
 // "likely the same audience". A recommendation stands only when the name shares
 // an event word with the label or reads as a general audience list.
 //
-// A restricted audience (speakers, ambassadors, property filters, course topics)
-// is narrower than any list whose name does not carry the restriction, so such a
-// list is at most "update", never "reuse": using it as-is would reach people the
-// restriction rules out. A property filter or topic never shows in a name, so
-// with either no list is "reuse".
+// A restricted audience (speakers, ambassadors, property filters) is narrower
+// than any list whose name does not carry the restriction, so such a list is at
+// most "update", never "reuse": using it as-is would reach people the restriction
+// rules out. A property filter never shows in a name, so with one no list is
+// "reuse". Course topics are not a restriction: every education audience carries
+// them as its brand fit, and treating them as one would make reuse unreachable.
 func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarList {
 	keywords := EventKeywords(c.Label)
 	locationAudience := c.ContactLocation || c.EventRegistered || c.EducationEnrolled
@@ -143,7 +144,7 @@ func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarLi
 }
 
 // carriesRestriction reports whether a list name shows every restriction the
-// criteria narrow by. Property filters and course topics never show in a name.
+// criteria narrow by. A property filter never shows in a name.
 func carriesRestriction(name string, c CustomCriteria) bool {
 	lower := strings.ToLower(name)
 	if c.Speakers != nil && !strings.Contains(lower, "speaker") {
@@ -152,7 +153,7 @@ func carriesRestriction(name string, c CustomCriteria) bool {
 	if c.Ambassadors && !strings.Contains(lower, "ambassador") {
 		return false
 	}
-	return len(c.PropertyFilters) == 0 && len(cleanValues(c.EducationTopics)) == 0
+	return len(c.PropertyFilters) == 0
 }
 
 // customMaxAnswerRounds bounds the question loop: after this many answers the
