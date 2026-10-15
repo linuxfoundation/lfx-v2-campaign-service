@@ -3176,6 +3176,19 @@ function type for adapters whose credential helper serves BOTH kinds of caller
 bind the recorded id with `existingResolver(<platform>CreationAccountID(campaign))`, so the
 creation-path signature stays free of a campaign argument it has no value for.
 
+The CHOICE each caller makes is pinned by `resolver_identity_test.go` (#174), not only the
+resolvers' behaviour. A compile-time parameter does not stop a call site, or a shared helper's
+`resolveCreds` pass-through, from being swapped to `d.creds.resolve`, and before this sweep that
+swap kept the suite green. The sweep drives every entry point of the LinkedIn, Meta, Reddit, X,
+Microsoft and HubSpot dispatchers (Google Ads is out of its scope) against credential-less rows
+with the forced-system flag ON. The scopes `scopedConnReader` is asked for, with and without a
+project row, identify the resolver: `resolve` asks the system scope first; `existingResolver(<recorded>)`
+asks project then system; `existingResolver("")` and HubSpot's unforced `resolve` reach the system
+scope only when the project has no row; `resolveOwned` and `resolveOwnedForAdoption` never reach it.
+Each row states the identity it expects. `TestClassifyResolver_FingerprintsAreDistinct` guards the
+classifier, so a change to `credsSource` that merged two fingerprints fails there rather than
+blinding the sweep. A new entry point needs a row in its dispatcher's table.
+
 ### The forced path itself
 
 A guard at the top of `credsSource.resolve` routes to `resolveForcedSystem` when the flag is on,
