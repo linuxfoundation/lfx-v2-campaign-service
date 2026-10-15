@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 )
 
 const (
@@ -44,6 +46,9 @@ type AccountCampaignRow struct {
 	// FetchFailed marks a row whose insights lookup could not be matched/parsed — this
 	// dispatcher-level method never fabricates a zero-metrics row for a fetch failure.
 	FetchFailed bool
+	// FailureClass is why FetchFailed is set. Every Meta row failure is a value Meta returned
+	// that would not parse (an insights counter or a budget string), so it is always decode.
+	FailureClass model.MonitorFailureClass
 }
 
 // ListAccountCampaigns ports getMetaAnalytics: an account-level insights read
@@ -115,6 +120,9 @@ func (c *Client) ListAccountCampaigns(ctx context.Context, accountID string, day
 		// filter silently dropping a PAUSED campaign whose insights row failed to parse,
 		// making the fetch failure invisible instead of surfacing as unmeasured — the
 		// opposite of what FetchFailed exists to do.
+		if row.FetchFailed {
+			row.FailureClass = model.MonitorFailureDecode
+		}
 		if row.Impressions > 0 || row.Status == StatusActive || row.FetchFailed {
 			rows = append(rows, row)
 		}

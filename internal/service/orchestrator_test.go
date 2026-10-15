@@ -3617,3 +3617,33 @@ func TestOrchestrator_PreflightCreate_RecordsARefusalAsASuccessfulRead(t *testin
 		})
 	}
 }
+
+// boundCampaignRepo fails UpsertCampaign as the real repo does when the dispatch resolved to an
+// upstream campaign another live brief already binds (000020 / 000042).
+type boundCampaignRepo struct{ fakeCampaignRepo }
+
+func (r *boundCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s is already bound to another brief", domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+}
+
+// A dispatch onto an already-bound upstream campaign is a GENUINE duplicate, and the job says
+// so — not "created upstream campaign but failed to record it", which would claim a creation
+// this dispatch cannot vouch for. The upstream id is kept for reconciliation.
+func TestOrchestrator_DispatchOntoABoundCampaignNamesTheConflict(t *testing.T) {
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&boundCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderGoogleAds: okDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+	if !strings.Contains(string(j.Result), "already bound to another brief") || strings.Contains(string(j.Result), "failed to record it") {
+		t.Errorf("result = %s, want the already-bound conflict named", j.Result)
+	}
+	if !strings.Contains(string(j.Result), "pc-google-ads") {
+		t.Errorf("result = %s, want the upstream id preserved for reconciliation", j.Result)
+	}
+}

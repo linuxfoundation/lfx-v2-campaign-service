@@ -79,8 +79,20 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
   facet is the bound account, the same pair `GetCampaignMetrics` sends: LinkedIn campaign ids are
   unique only within an ad account, the token can reach several, and unknown provenance proceeds,
   so the campaign facet alone could match a same-id campaign on another accessible account.
-  `pivotValues` is projected explicitly (it is in LinkedIn's documented fields list, and every
-  element is required to carry it).
+  `pivotValues` is projected explicitly, and this was re-checked after review (#322): the
+  ads-reporting page's "Requesting specific metrics in the Analytics Finder" lists `pivotValues`
+  among the supported `fields`, its `pivot=MEMBER_COMPANY` sample sends
+  `fields=…,costInLocalCurrency,pivotValues`, its `MEMBER_COUNTRY_V2` and URN-resolution samples
+  send `fields=impressions,pivotValues`, and it states that without `fields` "only impressions and
+  clicks are returned by default". No page says `pivotValues` is rejected or returned
+  automatically. The 400 recorded in `monitor.go` names the legacy SINGULAR `pivotValue`, which is
+  not a schema field; that comment now says so. Every element is required to carry exactly one
+  value, so omitting the projection would risk a 503 on every read.
+- **Cancellation.** The first failing request cancels the read's context: requests in flight are
+  cancelled, tasks still queued behind the limiter check the context and never reach LinkedIn,
+  and no partial result is returned; the error is the failing request's own (`*apiError`, 500 in
+  the test), never a sibling's cancellation. `TestGetAudienceInsights_FirstFailureCancelsInFlightAndQueued`
+  pins all three with two campaigns (10 requests, 5 queued).
 - **What the response can and cannot prove.** Checked: every element carries exactly ONE
   `pivotValue`, of the requested pivot's URN type, and never a `urn:li:sponsoredCampaign` (a CAMPAIGN
   grouping in the answer means LinkedIn did not apply the requested pivot). NOT checkable: that
@@ -125,7 +137,7 @@ Sources: [Reporting](https://learn.microsoft.com/en-us/linkedin/marketing/integr
 ## Routing
 
 `charts/lfx-v2-campaign-service/templates/httproute.yaml` routes
-`(linkedin-ads|meta-ads|twitter-ads)/audience`; `ruleset.yaml` rules
+`(linkedin-ads|meta-ads|reddit-ads|twitter-ads)/audience`; `ruleset.yaml` rules
 `/projects/:projectId/linkedin-ads/audience` (campaign_manager); `parity_test.go` accepts the base
 path and rejects `/audience/x` and `/audiences`.
 

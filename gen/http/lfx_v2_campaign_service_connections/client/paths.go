@@ -259,6 +259,16 @@ func GetMicrosoftAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string
 	return fmt.Sprintf("/projects/%v/microsoft-ads/audience", projectID)
 }
 
+// GetRedditAdsAudienceLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-reddit-ads-audience HTTP endpoint.
+func GetRedditAdsAudienceLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/reddit-ads/audience", projectID)
+}
+
+// GetRedditAdsKeywordsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service get-reddit-ads-keywords HTTP endpoint.
+func GetRedditAdsKeywordsLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/reddit-ads/keywords", projectID)
+}
+
 // ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-google-ads-campaign HTTP endpoint.
 func ResolveGoogleAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/google-ads/campaign-ref", projectID)
@@ -282,6 +292,11 @@ func ResolveRedditAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID strin
 // ResolveTwitterAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-twitter-ads-campaign HTTP endpoint.
 func ResolveTwitterAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/twitter-ads/campaign-ref", projectID)
+}
+
+// ResolveLinkedinAdsCampaignLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign HTTP endpoint.
+func ResolveLinkedinAdsCampaignLfxV2CampaignServiceConnectionsPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/linkedin-ads/campaign-ref", projectID)
 }
 
 // ListMetaAdsAccountsLfxV2CampaignServiceConnectionsPath returns the URL path to the lfx-v2-campaign-service-connections service list-meta-ads-accounts HTTP endpoint.

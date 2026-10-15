@@ -129,6 +129,13 @@ func (s *BriefService) UpdateCampaignBid(ctx context.Context, p *briefs.UpdateCa
 				msg = msg + ": " + safeErrSummary(errors.New(rejected.BidAmountReason()))
 			}
 			return nil, &briefs.BadRequestError{Code: "400", Message: msg}
+		case errors.Is(werr, domain.ErrBidAdoptedCampaign):
+			// Checked BEFORE ErrBidUnwritable, which it is joined with: the generic 409 below
+			// talks about strategies and ad groups, which is not why an adopted campaign is
+			// refused.
+			slog.WarnContext(ctx, "campaign bid change refused: the campaign was adopted",
+				append(logArgs, "platform_campaign_id", existing.PlatformCampaignID)...)
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign was adopted (bound to this brief from the ad platform, not created by this service), so its bid is managed in the ad platform's own UI — for LinkedIn, Campaign Manager; this endpoint does not set an adopted campaign's bid"}
 		case errors.Is(werr, ErrBidUnwritable):
 			// Automated, unreported or non-per-click bidding, OR an ad group / ad set / line item that
 			// could not be confirmed (missing, deleted, owned by another campaign, unreadable). The

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/linkedin"
-description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, and optional single-flight access-token refresh."
+description: "LinkedIn Marketing API client: OAuth2 dark-post campaigns (Campaign Group -> Campaign -> Dark Post -> Creative) with targeting, up-front validation, campaign status toggle, live analytics reads, ad-account discovery, budget reads and writes against the campaign's own dailyBudget/totalBudget fields through the same validator the create path uses, an identity-checked single-campaign read behind the settings readback, adoption and a send-once unitCost bid write, and optional single-flight access-token refresh."
 resource: "internal/platform/linkedin"
 tags:
   - platform-client
@@ -448,6 +448,58 @@ needing enforcement. The call returns **no body**, so the 2xx
 itself is the confirmation; `IsOutcomeUnconfirmed` still separates a maybe-applied 5xx from a
 definite 4xx.
 
+## Campaign read, bid write and adoption (`campaign_settings.go`, `bid_update.go`, LFXV2-2665)
+
+Sources: LinkedIn Marketing API "Create and Manage Campaigns" (li-lms-2026-09,
+https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaigns),
+"Updated Marketing API Error Responses"
+(https://learn.microsoft.com/en-us/linkedin/marketing/error-responses), "Create and Manage
+Campaign Groups"
+(https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads/account-structure/create-and-manage-campaign-groups)
+and the error-handling guide
+(https://learn.microsoft.com/en-us/linkedin/shared/api-guide/concepts/error-handling), all
+consulted 2026-10-13.
+
+`GetCampaignSettings(ctx, id)` is ONE `GET adAccounts/{acct}/adCampaigns/{id}` through
+`doEntityGET` (single-entity, no Rest.li FINDER header, raw body kept). The body must pass
+`identityjson.Check`, decode cleanly and echo the requested id; the `account` and `campaignGroup`
+URNs must parse, and `status` must be one of the eight documented values — else the read is
+unverifiable. Amounts (`unitCost`, `dailyBudget`, `totalBudget`) are parsed EXACTLY into
+micro-units by `parseDecimalMicros` (string or number; sign, exponent, >6 significant decimals
+or a value past int64 micro-units → unparseable, never rounded or wrapped); a budget object
+PRESENT without an amount marks the budget unparseable. `runSchedule` epoch-ms → UTC instants. A **404 is (nil, nil) only
+after `confirmAccountReadable`** answers 2xx naming the connection's account — LinkedIn documents
+404 for restricted Ads access too. `Terminal()` is CANCELED/PENDING_DELETION/REMOVED (ARCHIVED and
+COMPLETED can be revived). `ValidateCampaignID` and `ValidAccountID` require a positive int64
+without a leading zero (`isPositiveLong`: the `^[1-9][0-9]{0,18}$` shape PLUS a `ParseInt`, as
+`microsoft.ValidateCampaignID` does). The `resolve-linkedin-ads-campaign` Pattern is only the shape,
+so the decoder is necessary, not sufficient — `internal/apivalidation` pins that the one class it
+admits and the rule refuses is a 19-digit id past MaxInt64. `GetCampaignSettings` and
+`UpdateCampaignUnitCost` re-check the resolved account id with `ValidAccountID`.
+`AdoptedCampaignResult` builds the adopted row's blob, whose new `CampaignResult.Adopted` flag is
+what the dispatcher's toggle and bid lever read.
+
+**Bid.** `unitCost` is the campaign's bid ("amount to bid (for manual bidding) ... target cost ...
+or cost cap"); `ManualCPC()` is costType CPC with optimizationTargetType NONE or
+ENHANCED_CONVERSION — the two values the reference lists as keeping a campaign "in manual bidding
+mode" (MAX_* is auto-bidding, TARGET_COST_PER_* target cost, CAP_COST_AND_* cost cap, always CPM).
+**The create path sends costType CPC and no optimizationTargetType/unitCost**, which the schema
+defaults to NONE and 0 — manual, and "if unitCost is 0, the campaign does not deliver"; whether
+LinkedIn instead applies an objective-based automated default is unverified live, so the dispatcher
+decides on the REPORTED value. `ValidateBidAmount` returns the USD wire string at whole cents
+(the two-decimal wire form parsed back must EQUAL the requested float — no tolerance — so a
+sub-cent amount is refused, never rounded; ≤ 1,000,000). `UpdateCampaignUnitCost` re-runs it,
+then sends one PARTIAL_UPDATE `$set unitCost {amount, USD}` under `withSendOnce`, the context
+opt-out that stops `doRequest` retrying a PARTIAL_UPDATE 429 — so a throttle returns as the 429
+itself, which `createOutcomeAmbiguous` classifies unconfirmed (the budget write keeps its retry).
+A definite 400 becomes `ErrBidAmountInvalid` only via `bidAmountRefused`: the FULL body
+(`apiError.raw` — `Body` is cut at 400 chars) passes `identityjson`, decodes, its `status` equals
+the HTTP status, and EVERY input error names `/Campaign/unitCost/amount` with
+FIELD_VALUE_TOO_LOW/HIGH, CONDITIONAL_VALUE_TOO_LOW/HIGH or INVALID_VALUE_FOR_FIELD and
+echoing a `decimalValue` (required, not optional) EXACTLY equal to the sent amount — compared as
+rationals (`exactDecimal`, plain decimals only), never as float64, so `5.2500000000000001` is not
+`5.25`. LinkedIn's text is never surfaced.
+
 ## Metrics read
 
 `GetCampaignMetrics(ctx, accountID, campaignID, window)` is the platform-client helper behind
@@ -802,8 +854,10 @@ enum has no MEMBER_* value. An Analytics element carries only the demographic va
 attribution comes from the per-campaign request; each element must carry exactly one
 `pivotValue`, never a campaign URN. The answers are summed per value in `GetAudienceInsights`. At
 most `MaxAudienceCampaigns` (10) campaigns, so at most 50 requests, run `audienceConcurrency` (5)
-at a time through an `errgroup` whose first failure cancels the rest. `pivotValues` is named in
-`fields` explicitly, as LinkedIn's documented fields list shows.
+at a time through an `errgroup.WithContext` whose first failure cancels the in-flight requests;
+queued tasks check the context before sending, so they never reach LinkedIn. `pivotValues` is named
+in `fields` explicitly, as LinkedIn's documented fields list and its MEMBER_* samples show; the
+400 `monitor.go` records is for the legacy singular `pivotValue`.
 
 Decode is fail-closed: `identityjson.Check` on the raw body first (a repeated `elements` key
 would otherwise decode as an authoritative empty answer), `elements` as a pointer, counters as

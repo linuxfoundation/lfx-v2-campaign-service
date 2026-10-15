@@ -10,7 +10,12 @@ image:
   # pullPolicy is the image pull policy
   pullPolicy: IfNotPresent
 
-# replicaCount is the number of replicas for the deployment
+# replicaCount is the number of replicas for the deployment. It must stay 1:
+# templates/deployment.yaml refuses to render more (or autoscaling past one),
+# because the Reddit reporting budget is a per-process ledger that the
+# always-on Reddit account monitor spends from, so every replica would
+# multiply it against the ad account's 60-requests-a-minute quota. The
+# Recreate rollout's migration ordering also rests on one replica.
 replicaCount: 1
 
 # podAnnotations are additional annotations applied to the pod template.
@@ -254,6 +259,13 @@ app:
     # than "true" is treated as off, so a typo fails closed.
     # Flip to "true" only after the shape is verified against a live Reddit ad
     # account; at that point the gate is removed and this key goes away.
+    # The same flag gates the Reddit audience and keyword performance reads
+    # (reddit-ads/audience, reddit-ads/keywords, LFXV2-2665), which run on the
+    # same reporting operation with breakdowns.
+    # Their reporting budget (Reddit's 60 report requests a minute per ad
+    # account) is kept per process and is ALSO spent by the ungated Reddit
+    # account monitor, so templates/deployment.yaml refuses replicaCount > 1
+    # (or autoscaling past one) whatever this flag says — see replicaCount.
     REDDIT_METRICS_ENABLED:
       value: "false"
 
@@ -271,11 +283,13 @@ app:
     MICROSOFT_METRICS_ENABLED:
       value: "false"
 
-    # Opts this deployment IN to removing keywords from a Reddit ad group's
-    # targeting (remove-keyword-targeting, LFXV2-2665). Default off: Reddit
+    # Opts this deployment IN to BOTH Reddit ad-group targeting writes
+    # (LFXV2-2665): removing keywords (remove-keyword-targeting) and adding
+    # negative keywords to excluded_keywords (add-negative-keywords) — enabling
+    # it enables both. Default off: Reddit
     # replaces an ad group's targeting object as a whole, so the write sends
     # back every dimension it read, and that round trip has not been exercised
-    # against a live Reddit ad account. While off, the endpoint answers 400 for
+    # against a live Reddit ad account. While off, both endpoints answer 400 for
     # Reddit campaigns; the keyword-targeting READ is not gated. Any value other
     # than "true" is treated as off, so a typo fails closed.
     REDDIT_KEYWORD_TARGETING_WRITES_ENABLED:
@@ -441,7 +455,7 @@ app:
     # (/_campaigns/creative-assets/..., anonymous by design — see ruleset.yaml) and passes it
     # to Reddit. Optional as a PAIR: with the key or the base URL unset the feature is OFF (the
     # route 404s and a Reddit config naming imageAssetId is refused with a 400). A value that
-    # is SET but unusable fails startup.
+    # is SET but unusable fails startup, even while its other half is still unset.
     #
     # Rollout prerequisite: ExternalSecret / secret sync must provision
     # `creative-asset-url-signing-key` (standard base64 of >= 32 random bytes, e.g.
@@ -458,7 +472,8 @@ app:
     # https origin only (no path/query); empty keeps the feature off. e.g. https://lfx-api.<domain>
     CREATIVE_ASSET_PUBLIC_BASE_URL:
       value: ''
-    # Lifetime of a minted URL (Go duration, 1m..60m). Reddit fetches during the post create.
+    # Lifetime of a minted URL (Go duration, 5m..60m). Minted just before the promoted-post
+    # request; the 5m floor covers that request, Reddit's fetch and clock skew.
     CREATIVE_ASSET_URL_TTL:
       value: "10m"
 

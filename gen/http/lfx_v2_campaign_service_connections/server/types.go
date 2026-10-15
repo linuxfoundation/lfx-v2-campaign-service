@@ -972,6 +972,42 @@ type GetMicrosoftAdsAudienceResponseBody struct {
 	DataIncomplete bool `form:"data_incomplete" json:"data_incomplete" xml:"data_incomplete"`
 }
 
+// GetRedditAdsAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body.
+type GetRedditAdsAudienceResponseBody struct {
+	// The reporting window these counters cover, as UTC days (the Reddit campaign
+	// metrics read's range for the same window)
+	Window string `form:"window" json:"window" xml:"window"`
+	// Every bucket across the three breakdowns, discriminated by `dimension`.
+	// Ordered by dimension (gender, country, community), then impressions
+	// descending, then value (a value-less bucket last among equals).
+	Buckets []*RedditAdsAudienceBucketResponseBody `form:"buckets" json:"buckets" xml:"buckets"`
+	// How many buckets are in `buckets`, across all three dimensions. Each
+	// dimension independently covers the same traffic, so summing any counter
+	// across dimensions triple-counts it — total within one dimension only.
+	BucketCount int `form:"bucket_count" json:"bucket_count" xml:"bucket_count"`
+}
+
+// GetRedditAdsKeywordsResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body.
+type GetRedditAdsKeywordsResponseBody struct {
+	// The reporting window these counters cover, as UTC days (the Reddit campaign
+	// metrics read's range for the same window)
+	Window string `form:"window" json:"window" xml:"window"`
+	// One row per (campaign, keyword) across the campaigns this project owns,
+	// ordered by impressions descending, then campaign_id, then text (a text-less
+	// row last among equals), and capped at 50 — see `truncated`.
+	Rows []*RedditAdsKeywordResponseBody `form:"rows" json:"rows" xml:"rows"`
+	// How many rows are in `rows`.
+	RowCount int `form:"row_count" json:"row_count" xml:"row_count"`
+	// True when this project's campaigns have more (campaign, keyword) rows than
+	// were returned. The rows are the TOP ones by impressions — do not total them
+	// as the project's whole spend.
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+}
+
 // ResolveGoogleAdsCampaignResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body.
@@ -1040,6 +1076,22 @@ type ResolveRedditAdsCampaignResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
 // endpoint HTTP response body.
 type ResolveTwitterAdsCampaignResponseBody struct {
+	// The upstream id that was resolved, echoed back.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// Every live campaign this project holds for that upstream id. Empty when the
+	// project owns none. For Google Ads a unique index makes more than one
+	// impossible in a valid database; Microsoft Advertising ids are minted per ad
+	// account and no index makes them single. Either way, more than one match must
+	// be refused rather than silently resolved.
+	Matches []*CampaignRefResponseBody `form:"matches" json:"matches" xml:"matches"`
+	// How many matches were found.
+	MatchCount int `form:"match_count" json:"match_count" xml:"match_count"`
+}
+
+// ResolveLinkedinAdsCampaignResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body.
+type ResolveLinkedinAdsCampaignResponseBody struct {
 	// The upstream id that was resolved, echoed back.
 	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
 	// Every live campaign this project holds for that upstream id. Empty when the
@@ -1140,284 +1192,32 @@ type CreateHubspotCampaignResponseBody struct {
 // MonitorGoogleAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-google-ads-account"
 // endpoint HTTP response body.
-type MonitorGoogleAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorGoogleAdsAccountResponseBody GoogleAdsAccountMonitorResponseBody
 
 // MonitorLinkedinAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-linkedin-ads-account"
 // endpoint HTTP response body.
-type MonitorLinkedinAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorLinkedinAdsAccountResponseBody LinkedinAdsAccountMonitorResponseBody
 
 // MonitorMetaAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-meta-ads-account"
 // endpoint HTTP response body.
-type MonitorMetaAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorMetaAdsAccountResponseBody MetaAdsAccountMonitorResponseBody
 
 // MonitorRedditAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-reddit-ads-account"
 // endpoint HTTP response body.
-type MonitorRedditAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorRedditAdsAccountResponseBody RedditAdsAccountMonitorResponseBody
 
 // MonitorMicrosoftAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service
 // "monitor-microsoft-ads-account" endpoint HTTP response body.
-type MonitorMicrosoftAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorMicrosoftAdsAccountResponseBody MicrosoftAdsAccountMonitorResponseBody
 
 // MonitorTwitterAdsAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-twitter-ads-account"
 // endpoint HTTP response body.
-type MonitorTwitterAdsAccountResponseBody struct {
-	// The account this read covers, echoed back from the request.
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// The REQUESTED trailing-days window (today inclusive), echoed back from the
-	// request. The live-read platforms cover exactly these days. Report-backed
-	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
-	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
-	// window that crosses a DST fall-back covers 89 days, because 90 such days
-	// exceed X's 90-day cap by an hour.
-	Days int `form:"days" json:"days" xml:"days"`
-	// Every campaign visible on the account, with the rule engine's per-row pacing
-	// output attached.
-	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
-	// The rule engine's findings across the account's campaigns.
-	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
-	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
-	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
-	// campaigns' metrics describe — when the platform report they come from was
-	// requested (not when it was collected, which can be later). Those platforms'
-	// reports take minutes, so the service serves the last finished report and
-	// builds the next one between requests. Absent when no report has finished
-	// yet; in that case every campaign has fetch_failed=true and is excluded from
-	// pacing and action items. Omitted on every other platform, whose metrics are
-	// read live in the request.
-	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
-	// (inclusive) the metrics cover, from the saved report's own window, in the
-	// timezone the platform's report is built in — the account's timezone on X; on
-	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
-	// named by their UTC dates. Absent when no report has finished yet (with
-	// metrics_as_of). Omitted on every other platform, which covers exactly the
-	// requested days.
-	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
-	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
-	// Absent when no report has finished yet. Omitted on every other platform.
-	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
-	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
-	// is building on the platform, so a later read will return newer metrics (or
-	// the first ones, when metrics_as_of is absent). Omitted on every other
-	// platform.
-	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
-}
+type MonitorTwitterAdsAccountResponseBody TwitterAdsAccountMonitorResponseBody
 
 // MonitorHubspotAccountResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "monitor-hubspot-account"
@@ -4722,6 +4522,152 @@ type GetMicrosoftAdsAudienceUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// GetRedditAdsAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetRedditAdsAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type GetRedditAdsAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetRedditAdsAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetRedditAdsAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetRedditAdsAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type GetRedditAdsAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetRedditAdsAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetRedditAdsAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsKeywordsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "BadRequest" error.
+type GetRedditAdsKeywordsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsKeywordsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "Conflict" error.
+type GetRedditAdsKeywordsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// GetRedditAdsKeywordsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type GetRedditAdsKeywordsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsKeywordsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "InternalServerError" error.
+type GetRedditAdsKeywordsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsKeywordsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "NotFound" error.
+type GetRedditAdsKeywordsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsKeywordsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type GetRedditAdsKeywordsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// GetRedditAdsKeywordsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service "get-reddit-ads-keywords"
+// endpoint HTTP response body for the "Unauthorized" error.
+type GetRedditAdsKeywordsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ResolveGoogleAdsCampaignBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-connections" service "resolve-google-ads-campaign"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -5022,6 +4968,72 @@ type ResolveTwitterAdsCampaignPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-connections" service "resolve-twitter-ads-campaign"
 // endpoint HTTP response body for the "Unauthorized" error.
 type ResolveTwitterAdsCampaignUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "BadRequest" error.
+type ResolveLinkedinAdsCampaignBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type ResolveLinkedinAdsCampaignServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "InternalServerError" error.
+type ResolveLinkedinAdsCampaignInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "NotFound" error.
+type ResolveLinkedinAdsCampaignNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ResolveLinkedinAdsCampaignUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-connections" service
+// "resolve-linkedin-ads-campaign" endpoint HTTP response body for the
+// "Unauthorized" error.
+type ResolveLinkedinAdsCampaignUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code string `form:"code" json:"code" xml:"code"`
 	// Error message
@@ -6143,6 +6155,53 @@ type MicrosoftAdsAudienceBucketResponseBody struct {
 	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
 }
 
+// RedditAdsAudienceBucketResponseBody is used to define fields on response
+// body types.
+type RedditAdsAudienceBucketResponseBody struct {
+	// Which Reddit report breakdown this bucket belongs to: gender (GENDER),
+	// country (COUNTRY) or community (COMMUNITY, the subreddit)
+	Dimension string `form:"dimension" json:"dimension" xml:"dimension"`
+	// Reddit's breakdown value, verbatim (a gender, a country code or a subreddit
+	// name). ABSENT when Reddit reported an explicit null for this dimension:
+	// traffic Reddit did not attribute to any value, kept so the dimension's
+	// buckets still total its traffic. A value outside a conservative charset
+	// fails the read rather than being returned.
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window (Reddit's SPEND) in micro-units of the ad account's
+	// own currency. This service performs no FX conversion and does not read the
+	// currency.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions after summing across campaigns, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
+// RedditAdsKeywordResponseBody is used to define fields on response body types.
+type RedditAdsKeywordResponseBody struct {
+	// The Reddit campaign this keyword served under (Reddit's id; resolve it to
+	// this service's campaign with reddit-ads/campaign-ref)
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// Reddit's KEYWORD report value, verbatim ("The keyword for the ad."). ABSENT
+	// when Reddit reported an explicit null — delivery it attributed to no
+	// keyword, such as community or interest targeting. Not an identifier: Reddit
+	// reports no keyword id, so this row cannot address a keyword action; it has
+	// not been verified to equal the ad group's targeting entry byte for byte.
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Impressions over the window
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window (Reddit's SPEND, already micro-units) in the ad
+	// account's own currency. This service performs no FX conversion and does not
+	// read the currency.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// Clicks/Impressions as a fraction, 0 when Impressions is 0
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
+}
+
 // CampaignRefResponseBody is used to define fields on response body types.
 type CampaignRefResponseBody struct {
 	// This service's campaign id, as the mutation routes take it.
@@ -6187,6 +6246,52 @@ type HubspotCampaignResponseBody struct {
 	// The campaign's start date as HubSpot holds it, for disambiguating same-named
 	// campaigns. Not parsed or normalised here.
 	StartDate *string `form:"start_date,omitempty" json:"start_date,omitempty" xml:"start_date,omitempty"`
+}
+
+// GoogleAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type GoogleAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // AccountMonitorCampaignResponseBody is used to define fields on response body
@@ -6286,6 +6391,246 @@ type AccountMonitorTotalsResponseBody struct {
 	// How many campaigns the totals reflect: the length of the campaigns array
 	// these totals sum.
 	CampaignCount int `form:"campaign_count" json:"campaign_count" xml:"campaign_count"`
+	// How many of the campaign_count campaigns have fetch_failed=true. The totals
+	// include those rows at what they carry — zero for a row whose metrics could
+	// not be read — so a non-zero value means the totals may UNDERSTATE the
+	// account, by up to this many campaigns' delivery. An upper bound rather than
+	// an exact count of rows missing from the sum: fetch_failed also marks a row
+	// whose budget or flight alone was unreadable while its metrics were read and
+	// summed. pacing_unknown=true alone does not count a row (every fetch_failed
+	// row also has it, but most pacing_unknown rows were read in full). 0 means
+	// every campaign in the sum was fully read.
+	UnmeasuredCampaigns int `form:"unmeasured_campaigns" json:"unmeasured_campaigns" xml:"unmeasured_campaigns"`
+}
+
+// LinkedinAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type LinkedinAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MetaAdsAccountMonitorResponseBody is used to define fields on response body
+// types.
+type MetaAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// RedditAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type RedditAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// MicrosoftAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type MicrosoftAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
+}
+
+// TwitterAdsAccountMonitorResponseBody is used to define fields on response
+// body types.
+type TwitterAdsAccountMonitorResponseBody struct {
+	// The account this read covers, echoed back from the request.
+	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// The REQUESTED trailing-days window (today inclusive), echoed back from the
+	// request. The live-read platforms cover exactly these days. Report-backed
+	// platforms (Microsoft Ads, X) report the exact days their metrics cover in
+	// metrics_window_start / metrics_window_end, which can differ: on X a 90-day
+	// window that crosses a DST fall-back covers 89 days, because 90 such days
+	// exceed X's 90-day cap by an hour.
+	Days int `form:"days" json:"days" xml:"days"`
+	// Every campaign visible on the account, with the rule engine's per-row pacing
+	// output attached.
+	Campaigns []*AccountMonitorCampaignResponseBody `form:"campaigns" json:"campaigns" xml:"campaigns"`
+	// The rule engine's findings across the account's campaigns.
+	ActionItems []*AccountMonitorActionItemResponseBody `form:"action_items" json:"action_items" xml:"action_items"`
+	Totals      *AccountMonitorTotalsResponseBody       `form:"totals" json:"totals" xml:"totals"`
+	// Report-backed platforms (Microsoft Ads, X) only: the point in time these
+	// campaigns' metrics describe — when the platform report they come from was
+	// requested (not when it was collected, which can be later). Those platforms'
+	// reports take minutes, so the service serves the last finished report and
+	// builds the next one between requests. Absent when no report has finished
+	// yet; in that case every campaign has fetch_failed=true and is excluded from
+	// pacing and action items. Omitted on every other platform, whose metrics are
+	// read live in the request.
+	MetricsAsOf *string `form:"metrics_as_of,omitempty" json:"metrics_as_of,omitempty" xml:"metrics_as_of,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the FIRST calendar day
+	// (inclusive) the metrics cover, from the saved report's own window, in the
+	// timezone the platform's report is built in — the account's timezone on X; on
+	// Microsoft Ads the report's GMT (Europe/London) time zone, with the days
+	// named by their UTC dates. Absent when no report has finished yet (with
+	// metrics_as_of). Omitted on every other platform, which covers exactly the
+	// requested days.
+	MetricsWindowStart *string `form:"metrics_window_start,omitempty" json:"metrics_window_start,omitempty" xml:"metrics_window_start,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: the LAST calendar day
+	// (inclusive) the metrics cover, in the same timezone as metrics_window_start.
+	// Absent when no report has finished yet. Omitted on every other platform.
+	MetricsWindowEnd *string `form:"metrics_window_end,omitempty" json:"metrics_window_end,omitempty" xml:"metrics_window_end,omitempty"`
+	// Report-backed platforms (Microsoft Ads, X) only: true while a newer report
+	// is building on the platform, so a later read will return newer metrics (or
+	// the first ones, when metrics_as_of is absent). Omitted on every other
+	// platform.
+	MetricsPending *bool `form:"metrics_pending,omitempty" json:"metrics_pending,omitempty" xml:"metrics_pending,omitempty"`
 }
 
 // HubspotEmailMonitorEmailResponseBody is used to define fields on response
@@ -7180,6 +7525,53 @@ func NewGetMicrosoftAdsAudienceResponseBody(res *lfxv2campaignserviceconnections
 	return body
 }
 
+// NewGetRedditAdsAudienceResponseBody builds the HTTP response body from the
+// result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceResponseBody(res *lfxv2campaignserviceconnections.RedditAdsAudience) *GetRedditAdsAudienceResponseBody {
+	body := &GetRedditAdsAudienceResponseBody{
+		Window:      res.Window,
+		BucketCount: res.BucketCount,
+	}
+	if res.Buckets != nil {
+		body.Buckets = make([]*RedditAdsAudienceBucketResponseBody, len(res.Buckets))
+		for i, val := range res.Buckets {
+			if val == nil {
+				body.Buckets[i] = nil
+				continue
+			}
+			body.Buckets[i] = marshalLfxv2campaignserviceconnectionsRedditAdsAudienceBucketToRedditAdsAudienceBucketResponseBody(val)
+		}
+	} else {
+		body.Buckets = []*RedditAdsAudienceBucketResponseBody{}
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsResponseBody builds the HTTP response body from the
+// result of the "get-reddit-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsResponseBody(res *lfxv2campaignserviceconnections.RedditAdsKeywords) *GetRedditAdsKeywordsResponseBody {
+	body := &GetRedditAdsKeywordsResponseBody{
+		Window:    res.Window,
+		RowCount:  res.RowCount,
+		Truncated: res.Truncated,
+	}
+	if res.Rows != nil {
+		body.Rows = make([]*RedditAdsKeywordResponseBody, len(res.Rows))
+		for i, val := range res.Rows {
+			if val == nil {
+				body.Rows[i] = nil
+				continue
+			}
+			body.Rows[i] = marshalLfxv2campaignserviceconnectionsRedditAdsKeywordToRedditAdsKeywordResponseBody(val)
+		}
+	} else {
+		body.Rows = []*RedditAdsKeywordResponseBody{}
+	}
+	return body
+}
+
 // NewResolveGoogleAdsCampaignResponseBody builds the HTTP response body from
 // the result of the "resolve-google-ads-campaign" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -7277,6 +7669,29 @@ func NewResolveRedditAdsCampaignResponseBody(res *lfxv2campaignserviceconnection
 // "lfx-v2-campaign-service-connections" service.
 func NewResolveTwitterAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveTwitterAdsCampaignResponseBody {
 	body := &ResolveTwitterAdsCampaignResponseBody{
+		PlatformCampaignID: res.PlatformCampaignID,
+		MatchCount:         res.MatchCount,
+	}
+	if res.Matches != nil {
+		body.Matches = make([]*CampaignRefResponseBody, len(res.Matches))
+		for i, val := range res.Matches {
+			if val == nil {
+				body.Matches[i] = nil
+				continue
+			}
+			body.Matches[i] = marshalLfxv2campaignserviceconnectionsCampaignRefToCampaignRefResponseBody(val)
+		}
+	} else {
+		body.Matches = []*CampaignRefResponseBody{}
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignResponseBody builds the HTTP response body from
+// the result of the "resolve-linkedin-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignResponseBody(res *lfxv2campaignserviceconnections.PlatformCampaignResolution) *ResolveLinkedinAdsCampaignResponseBody {
+	body := &ResolveLinkedinAdsCampaignResponseBody{
 		PlatformCampaignID: res.PlatformCampaignID,
 		MatchCount:         res.MatchCount,
 	}
@@ -11291,6 +11706,162 @@ func NewGetMicrosoftAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignservic
 	return body
 }
 
+// NewGetRedditAdsAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetRedditAdsAudienceBadRequestResponseBody {
+	body := &GetRedditAdsAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetRedditAdsAudienceConflictResponseBody {
+	body := &GetRedditAdsAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-reddit-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetRedditAdsAudienceServiceUnavailableResponseBody {
+	body := &GetRedditAdsAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-reddit-ads-audience" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetRedditAdsAudienceInternalServerErrorResponseBody {
+	body := &GetRedditAdsAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetRedditAdsAudienceNotFoundResponseBody {
+	body := &GetRedditAdsAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetRedditAdsAudiencePayloadTooLargeResponseBody {
+	body := &GetRedditAdsAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-reddit-ads-audience" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetRedditAdsAudienceUnauthorizedResponseBody {
+	body := &GetRedditAdsAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsBadRequestResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *GetRedditAdsKeywordsBadRequestResponseBody {
+	body := &GetRedditAdsKeywordsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsConflictResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsConflictResponseBody(res *lfxv2campaignserviceconnections.ConflictError) *GetRedditAdsKeywordsConflictResponseBody {
+	body := &GetRedditAdsKeywordsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "get-reddit-ads-keywords" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *GetRedditAdsKeywordsServiceUnavailableResponseBody {
+	body := &GetRedditAdsKeywordsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "get-reddit-ads-keywords" endpoint of
+// the "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *GetRedditAdsKeywordsInternalServerErrorResponseBody {
+	body := &GetRedditAdsKeywordsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsNotFoundResponseBody builds the HTTP response body
+// from the result of the "get-reddit-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *GetRedditAdsKeywordsNotFoundResponseBody {
+	body := &GetRedditAdsKeywordsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsPayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "get-reddit-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *GetRedditAdsKeywordsPayloadTooLargeResponseBody {
+	body := &GetRedditAdsKeywordsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewGetRedditAdsKeywordsUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "get-reddit-ads-keywords" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewGetRedditAdsKeywordsUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *GetRedditAdsKeywordsUnauthorizedResponseBody {
+	body := &GetRedditAdsKeywordsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewResolveGoogleAdsCampaignBadRequestResponseBody builds the HTTP response
 // body from the result of the "resolve-google-ads-campaign" endpoint of the
 // "lfx-v2-campaign-service-connections" service.
@@ -11615,6 +12186,72 @@ func NewResolveTwitterAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaigns
 // of the "lfx-v2-campaign-service-connections" service.
 func NewResolveTwitterAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveTwitterAdsCampaignUnauthorizedResponseBody {
 	body := &ResolveTwitterAdsCampaignUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignBadRequestResponseBody builds the HTTP response
+// body from the result of the "resolve-linkedin-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignBadRequestResponseBody(res *lfxv2campaignserviceconnections.BadRequestError) *ResolveLinkedinAdsCampaignBadRequestResponseBody {
+	body := &ResolveLinkedinAdsCampaignBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignServiceUnavailableResponseBody(res *lfxv2campaignserviceconnections.ConnServiceUnavailableError) *ResolveLinkedinAdsCampaignServiceUnavailableResponseBody {
+	body := &ResolveLinkedinAdsCampaignServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignInternalServerErrorResponseBody(res *lfxv2campaignserviceconnections.InternalServerError) *ResolveLinkedinAdsCampaignInternalServerErrorResponseBody {
+	body := &ResolveLinkedinAdsCampaignInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignNotFoundResponseBody builds the HTTP response
+// body from the result of the "resolve-linkedin-ads-campaign" endpoint of the
+// "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignNotFoundResponseBody(res *lfxv2campaignserviceconnections.NotFoundError) *ResolveLinkedinAdsCampaignNotFoundResponseBody {
+	body := &ResolveLinkedinAdsCampaignNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignPayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignPayloadTooLargeResponseBody(res *lfxv2campaignserviceconnections.PayloadTooLargeError) *ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody {
+	body := &ResolveLinkedinAdsCampaignPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewResolveLinkedinAdsCampaignUnauthorizedResponseBody builds the HTTP
+// response body from the result of the "resolve-linkedin-ads-campaign"
+// endpoint of the "lfx-v2-campaign-service-connections" service.
+func NewResolveLinkedinAdsCampaignUnauthorizedResponseBody(res *lfxv2campaignserviceconnections.UnauthorizedError) *ResolveLinkedinAdsCampaignUnauthorizedResponseBody {
+	body := &ResolveLinkedinAdsCampaignUnauthorizedResponseBody{
 		Code:    res.Code,
 		Message: res.Message,
 	}
@@ -13173,6 +13810,28 @@ func NewGetMicrosoftAdsAudiencePayload(projectID string, window *string, bearerT
 	return v
 }
 
+// NewGetRedditAdsAudiencePayload builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-audience endpoint payload.
+func NewGetRedditAdsAudiencePayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload {
+	v := &lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewGetRedditAdsKeywordsPayload builds a lfx-v2-campaign-service-connections
+// service get-reddit-ads-keywords endpoint payload.
+func NewGetRedditAdsKeywordsPayload(projectID string, window *string, bearerToken *string) *lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload {
+	v := &lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload{}
+	v.ProjectID = projectID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
 // NewResolveGoogleAdsCampaignPayload builds a
 // lfx-v2-campaign-service-connections service resolve-google-ads-campaign
 // endpoint payload.
@@ -13226,6 +13885,18 @@ func NewResolveRedditAdsCampaignPayload(projectID string, platformCampaignID str
 // endpoint payload.
 func NewResolveTwitterAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload {
 	v := &lfxv2campaignserviceconnections.ResolveTwitterAdsCampaignPayload{}
+	v.ProjectID = projectID
+	v.PlatformCampaignID = platformCampaignID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewResolveLinkedinAdsCampaignPayload builds a
+// lfx-v2-campaign-service-connections service resolve-linkedin-ads-campaign
+// endpoint payload.
+func NewResolveLinkedinAdsCampaignPayload(projectID string, platformCampaignID string, bearerToken *string) *lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload {
+	v := &lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload{}
 	v.ProjectID = projectID
 	v.PlatformCampaignID = platformCampaignID
 	v.BearerToken = bearerToken

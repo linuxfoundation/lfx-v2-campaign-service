@@ -358,3 +358,83 @@ func TestGetAudienceInsights_LocalRefusalsNeverContactLinkedIn(t *testing.T) {
 		t.Errorf("at the cap: %v", err)
 	}
 }
+
+// A failing request must cancel the read: requests already in flight see their contexts
+// cancelled, requests still queued behind audienceConcurrency never reach LinkedIn, and no partial
+// result is returned. Two campaigns give 10 requests, so 5 are queued when the first 5 start.
+func TestGetAudienceInsights_FirstFailureCancelsInFlightAndQueued(t *testing.T) {
+	const safety = 5 * time.Second
+	var mu sync.Mutex
+	arrived, cancelled := 0, 0
+	allOthersWaiting := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		failing := strings.Contains(r.URL.RawQuery, "&pivot=MEMBER_JOB_FUNCTION&") &&
+			strings.Contains(r.URL.RawQuery, url.QueryEscape(campaignURNPrefix+"111"))
+		mu.Lock()
+		arrived++
+		if arrived == audienceConcurrency {
+			close(allOthersWaiting)
+		}
+		mu.Unlock()
+		if failing {
+			// Fail only once every other in-flight slot is occupied by a waiting request, so
+			// the cancellation has something to cancel.
+			select {
+			case <-allOthersWaiting:
+			case <-time.After(safety):
+				t.Error("the other in-flight requests never arrived")
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			mu.Lock()
+			cancelled++
+			mu.Unlock()
+		case <-time.After(safety):
+			t.Errorf("an in-flight request was not cancelled after another failed: %s", r.URL.RawQuery)
+			_, _ = io.WriteString(w, `{"elements":[]}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(Credentials{AccessToken: "tok"}, RuntimeConfig{}, WithBaseURL(srv.URL), WithClock(audienceClock))
+
+	begun := time.Now()
+	got, err := c.GetAudienceInsights(context.Background(), "512345678", model.MetricsWindowLast30Days, []string{"111", "222"})
+	if err == nil {
+		t.Fatalf("a read with a failed request succeeded: %+v", got)
+	}
+	if got != nil {
+		t.Errorf("a failed read returned a partial result: %+v", got)
+	}
+	// The read must report the failure that CAUSED the cancellation — the 500 — not a sibling's
+	// cancellation or any other error.
+	var ae *apiError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusInternalServerError {
+		t.Errorf("error = %v, want the failing request's *apiError with status 500", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Errorf("the read reported a sibling's cancellation instead of the failure that caused it: %v", err)
+	}
+	if took := time.Since(begun); took >= safety {
+		t.Errorf("the read took %v: in-flight requests were waited out, not cancelled", took)
+	}
+	// Server-side cancellation is observed asynchronously after the client gives up.
+	deadline := time.Now().Add(safety)
+	for {
+		mu.Lock()
+		a, cn := arrived, cancelled
+		mu.Unlock()
+		if cn == audienceConcurrency-1 || time.Now().After(deadline) {
+			if a != audienceConcurrency {
+				t.Errorf("%d requests reached LinkedIn, want exactly %d: queued requests must never be sent", a, audienceConcurrency)
+			}
+			if cn != audienceConcurrency-1 {
+				t.Errorf("%d in-flight requests were cancelled, want %d", cn, audienceConcurrency-1)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

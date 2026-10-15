@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
@@ -96,9 +98,91 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 // violation.
 const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
 
-// platformCampaignUniqueIndex is 000020's index: one live row per upstream campaign id. Its
-// violation is what ErrPlatformCampaignAlreadyBound means.
+// platformCampaignUniqueIndex is 000020's index: one live row per upstream Google Ads campaign
+// id. Its violation is what ErrPlatformCampaignAlreadyBound means.
 const platformCampaignUniqueIndex = "uq_campaigns_platform_campaign_live"
+
+// linkedInCampaignUniqueIndex is 000042's index: one live row per LinkedIn campaign id (LinkedIn
+// ids are globally unique). Its violation means ErrPlatformCampaignAlreadyBound too.
+const linkedInCampaignUniqueIndex = "uq_campaigns_linkedin_campaign_live"
+
+// platformCampaignBindingIndexes are the per-provider "one upstream campaign, one live row"
+// indexes: 000020 (Google Ads) and 000042 (LinkedIn), both global; 000043 (Meta), global; and
+// 000044-000046 (Microsoft, Reddit, X), keyed on the ad account too. Each provider keeps its OWN
+// index — see 000042 for why they are not one widened predicate — and a violation of any of them
+// means the same thing to a caller: ErrPlatformCampaignAlreadyBound.
+var platformCampaignBindingIndexes = []string{
+	platformCampaignUniqueIndex,
+	linkedInCampaignUniqueIndex,
+	"uq_campaigns_meta_campaign_live",
+	"uq_campaigns_microsoft_campaign_live",
+	"uq_campaigns_reddit_campaign_live",
+	"uq_campaigns_twitter_campaign_live",
+}
+
+// isPlatformCampaignBindingViolation reports whether err violates one of
+// platformCampaignBindingIndexes.
+func isPlatformCampaignBindingViolation(err error) bool {
+	for _, name := range platformCampaignBindingIndexes {
+		if isUniqueViolationOn(err, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// accountKeyedBindingSQL is, per provider whose binding index is keyed on the ad account
+// (000044-000046), the SQL that extracts that account from a row's result JSON — the same
+// expression as the index key. A live row where it is NULL records no account (a legacy row) and
+// so is invisible to that provider's index; refuseLegacyBinding uses it to refuse binding an id
+// such a row already holds, on adoption and dispatch alike, rather than let a second binding slip
+// past the index.
+var accountKeyedBindingSQL = map[model.Provider]string{
+	model.ProviderMicrosoftAds: `COALESCE(NULLIF(result ->> 'accountId', ''), NULLIF(substring(result ->> 'microsoftAdsUrl' from '[?&]aid=([^&#]+)'), ''))`,
+	model.ProviderRedditAds:    `NULLIF(result ->> 'accountId', '')`,
+	model.ProviderTwitterAds:   `NULLIF(result ->> 'AccountID', '')`,
+}
+
+// legacyBindingQuery reports whether a live row of the platform OTHER than the slot being
+// written already holds the upstream id while recording NO account (the %s is the provider's
+// account expression). The slot exclusion keeps a dispatch's own claim row — the row UpsertCampaign
+// is about to fill — from counting against itself.
+const legacyBindingQuery = `SELECT EXISTS (SELECT 1 FROM campaigns
+	WHERE platform = $1 AND platform_campaign_id = $2 AND status <> 'deleted' AND (%s) IS NULL
+	AND NOT (brief_id = $3 AND variant = $4 AND slot_version = $5))`
+
+// legacyBindingLockQuery serializes every writer binding one (platform, upstream id) for the rest
+// of the transaction, so the legacy-row check and the INSERT/UPSERT that follows are atomic
+// against another writer doing the same — the index cannot arbitrate against a NULL key.
+const legacyBindingLockQuery = `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`
+
+// refuseLegacyBinding is the account-keyed providers' guard for the gap their index leaves: a
+// live row recording NO account (written before the field existed) is NULL in the key, so the
+// index lets a second binding of the same upstream campaign through. Run inside the writer's
+// transaction, under legacyBindingLockQuery, it returns ErrPlatformCampaignAlreadyBound when such
+// a row holds the id — for adoption (AdoptCampaign) and for dispatch (UpsertCampaign) alike: X's
+// create path reuses campaigns by a name built from the event and project, so a second brief's
+// dispatch can resolve to the very campaign a legacy row binds. A no-op for providers whose
+// binding index is not account-keyed.
+func refuseLegacyBinding(ctx context.Context, tx pgx.Tx, op string, c *model.Campaign) error {
+	expr, ok := accountKeyedBindingSQL[c.Platform]
+	if !ok || c.PlatformCampaignID == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, legacyBindingLockQuery, string(c.Platform), c.PlatformCampaignID); err != nil {
+		return fmt.Errorf("%s: lock the upstream binding: %w", op, err)
+	}
+	var held bool
+	if err := tx.QueryRow(ctx, fmt.Sprintf(legacyBindingQuery, expr), string(c.Platform), c.PlatformCampaignID,
+		c.BriefID, model.NormalizeVariant(c.Variant), model.NormalizeSlotVersion(c.SlotVersion)).Scan(&held); err != nil {
+		return fmt.Errorf("%s: check legacy bindings: %w", op, err)
+	}
+	if held {
+		return fmt.Errorf("%s: %w: %s campaign %s is already bound to a brief (by a row that records no ad account)",
+			op, domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+	}
+	return nil
+}
 
 // ClaimCampaignDispatch atomically claims the right to dispatch (brief, platform)
 // by inserting a placeholder 'pending' campaign row. The (brief_id, platform)
@@ -477,15 +561,17 @@ func (r *CampaignRepo) ListRecentProjectPlatformCampaigns(ctx context.Context, p
 // the mutation routes are brief- and campaign-scoped, while the keyword rows a caller acts on
 // carry only the platform's numeric id.
 //
-// FOR GOOGLE ADS, AT MOST ONE ROW CAN MATCH, enforced by the schema rather than by this query:
-// migration 000020 creates uq_campaigns_platform_campaign_live, a UNIQUE index on
-// (platform, platform_campaign_id) WHERE platform = 'google-ads'. The index is GLOBAL — it has
-// no project_id column — so adding project_id can only narrow one row to zero or one.
+// FOR GOOGLE ADS, LINKEDIN AND META, AT MOST ONE ROW CAN MATCH, enforced by the schema rather
+// than by this query: migrations 000020, 000042 and 000043 create UNIQUE indexes on
+// (platform, platform_campaign_id) scoped to each of those platforms. They are GLOBAL — no
+// project_id column — so adding project_id can only narrow one row to zero or one.
 //
-// FOR MICROSOFT ADVERTISING MORE THAN ONE LIVE ROW CAN MATCH: that index does not cover it, and
-// Microsoft campaign ids are minted per ad account, so a project whose connection was re-pointed
-// to another account can hold two live rows with the same id. The return-every-row shape is
-// therefore LOAD-BEARING there, not merely defensive: no LIMIT and no DISTINCT, so the caller
+// FOR MICROSOFT ADVERTISING, REDDIT AND X MORE THAN ONE LIVE ROW CAN MATCH: their binding indexes
+// (000044-000046) are keyed on the AD ACCOUNT too (Microsoft mints ids per account; Reddit and X
+// do not document theirs as global), so a project whose connection was re-pointed to another
+// account can hold one live row per account for the same id — and a legacy row that records no
+// account is not constrained at all. The return-every-row shape is therefore LOAD-BEARING there,
+// not merely defensive: no LIMIT and no DISTINCT, so the caller
 // sees every match and refuses rather than acting on whichever row sorted first. Ordered by id so
 // a repeated call answers identically.
 const resolvePlatformCampaignQuery = `SELECT id, brief_id FROM campaigns
@@ -706,6 +792,11 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	if err != nil {
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
+	// The legacy account-less binding gap, closed on the DISPATCH path too, in this transaction
+	// and before the upsert (see refuseLegacyBinding).
+	if lerr := refuseLegacyBinding(ctx, tx, "upsert campaign", c); lerr != nil {
+		return nil, lerr
+	}
 
 	row := tx.QueryRow(ctx, upsertCampaignQuery,
 		c.ProjectID, c.BriefID, c.JobID, string(c.Platform), nullStr(c.PlatformCampaignID),
@@ -723,6 +814,14 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
+		// A dispatch whose platform resolved to an upstream campaign ANOTHER live row already
+		// binds (LinkedIn's create path reuses a same-name campaign in its group) violates a
+		// per-provider binding index. Named, so the orchestrator reports "already bound" rather
+		// than an anonymous persist failure; the caller still retains the claim.
+		if isPlatformCampaignBindingViolation(err) {
+			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s is already bound to another brief",
+				domain.ErrPlatformCampaignAlreadyBound, c.Platform, c.PlatformCampaignID)
+		}
 		return nil, fmt.Errorf("upsert campaign: %w", err)
 	}
 	if eerr := enqueueCampaignIndex(ctx, tx, upserted, indexPayload); eerr != nil {
@@ -822,6 +921,14 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		return nil, domain.ErrStaleApproval
 	}
 
+	// LEGACY ROWS on an account-keyed binding index (000044-000046): a live row that records no
+	// account is NULL in the index key, so it can neither block nor be blocked by it. Adoption must
+	// not use that gap to bind the same upstream campaign a second time, so an id such a row holds
+	// is refused as already bound — conservatively, since the legacy row's account is unknown.
+	if lerr := refuseLegacyBinding(ctx, tx, "adopt campaign", c); lerr != nil {
+		return nil, lerr
+	}
+
 	// Both actor columns from ONE value: adoption creates the row and is also the last
 	// thing to have touched it, so created_by and updated_by are the same actor. nil is an
 	// ordinary outcome and stores NULL — see ClaimCampaignDispatch for why.
@@ -851,11 +958,11 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
 			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
 		}
-		if isUniqueViolationOn(err, platformCampaignUniqueIndex) {
-			// The other brief is deliberately not named, and neither is its project. The
-			// index is global (000020), so the conflicting row may belong to a project this
-			// caller cannot see — Google Ads is one shared upstream account across every
-			// foundation. Naming it would turn a 409 into a cross-project disclosure of
+		if isPlatformCampaignBindingViolation(err) {
+			// The other brief is deliberately not named, and neither is its project. Both
+			// binding indexes are global (000020 for Google Ads — one shared upstream account
+			// across every foundation; 000042 for LinkedIn — globally unique campaign ids), so
+			// the conflicting row may belong to a project this caller cannot see. Naming it would turn a 409 into a cross-project disclosure of
 			// which briefs exist elsewhere. The caller already knows the campaign id they
 			// asked for, which is the part they can act on.
 			return nil, fmt.Errorf("%w: %s campaign %s is already bound to a brief",
@@ -984,9 +1091,55 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 		return nil, fmt.Errorf("replace campaign: %w", eerr)
 	}
 	if cerr := tx.Commit(ctx); cerr != nil {
-		return nil, fmt.Errorf("replace campaign: commit: %w", cerr)
+		return nil, classifyCommitErr("replace campaign", cerr)
 	}
 	return updated, nil
+}
+
+// classifyCommitErr tells the two kinds of COMMIT failure apart.
+//
+//   - The SERVER answered the COMMIT with an error that settles the transaction (a
+//     *pgconn.PgError — e.g. a deferred constraint or trigger raising — or
+//     pgx.ErrTxCommitRollback, the server reporting the transaction rolled back): the rollback is
+//     CONFIRMED and the error carries no sentinel.
+//   - Anything else means the acknowledgement was LOST and the server may have committed: a broken
+//     connection, an I/O error, the context ending while the answer was awaited — and the
+//     PgErrors whose SQLSTATE itself says the outcome is not known (commitOutcomeUnknownState).
+//     Only these carry domain.ErrWriteOutcomeUnknown — the hazard the audience repo's
+//     reconcileAmbiguousAudienceCommit handles for its own writes.
+func classifyCommitErr(op string, cerr error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(cerr, &pgErr) && commitOutcomeUnknownState(pgErr.Code) {
+		return fmt.Errorf("%s: commit (SQLSTATE %s, outcome unknown): %w: %w", op, pgErr.Code, domain.ErrWriteOutcomeUnknown, cerr)
+	}
+	if pgErr != nil || errors.Is(cerr, pgx.ErrTxCommitRollback) {
+		return fmt.Errorf("%s: commit rolled back by the server: %w", op, cerr)
+	}
+	return fmt.Errorf("%s: commit: %w: %w", op, domain.ErrWriteOutcomeUnknown, cerr)
+}
+
+// commitOutcomeUnknownState reports whether a SQLSTATE answered to a COMMIT leaves the
+// transaction's fate unknown, rather than confirming a rollback:
+//
+//   - 08007 transaction_resolution_unknown and 40003 statement_completion_unknown say so
+//     outright.
+//   - The rest of class 08 (connection_exception: 08000, 08003 connection_does_not_exist, 08006
+//     connection_failure, 08P01 protocol_violation, …) describes the CONNECTION, not the
+//     transaction: whatever reported it, it does not establish that the COMMIT was not
+//     processed, so the whole class is treated as unknown.
+//   - 57P01 admin_shutdown and 57P02 crash_shutdown: the server was going down around the COMMIT,
+//     and whether its commit record reached disk before it did is not something the client can
+//     establish.
+//
+// Erring towards "unknown" is the safe side: it costs a reconciliation, never a wrong answer.
+func commitOutcomeUnknownState(code string) bool {
+	switch {
+	case code == "40003", strings.HasPrefix(code, "08"):
+		return true
+	case code == "57P01", code == "57P02":
+		return true
+	}
+	return false
 }
 
 // VerifyClaimedVersion checks that a row still matches the version claimed under

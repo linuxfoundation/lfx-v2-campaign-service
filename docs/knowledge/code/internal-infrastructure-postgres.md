@@ -408,7 +408,8 @@ looking at. The seven connection entries are therefore GENERATED from the table 
 than written out, so an eighth provider added to the schema and the list is covered without
 anyone remembering, and `TestMigrateRefusesEachDroppedSingletonIndex` drops each one against
 a live database and requires `Migrate` to refuse. The counts above are the ten that existed
-when the list was written; 000020's `uq_campaigns_platform_campaign_live` is the eleventh,
+when the list was written; 000020's `uq_campaigns_platform_campaign_live` is the eleventh (and
+000042's `uq_campaigns_linkedin_campaign_live` a later one),
 and it arrived by exactly the route this paragraph warns about — the index was created on one
 branch while the list was introduced on another, so neither tree was wrong on its own and the
 schema-wide check in `TestEveryUniquePartialIndexIsRequired` is what caught it. That test
@@ -1518,6 +1519,27 @@ up. Gating on `status='building'` instead makes the condition that decides the o
 statement that performs it, and makes the call idempotent under retry: a row already `failed`,
 already `built`, or gone matches nothing and returns `nil` rather than an error.
 
+## `ReplaceCampaign`'s commit errors: confirmed rollback vs lost acknowledgement (PR #309)
+
+`classifyCommitErr` splits a failed `tx.Commit` in `ReplaceCampaign` in two. If the server
+answered with an error (a `*pgconn.PgError`, such as a deferred constraint or trigger raising, or
+`pgx.ErrTxCommitRollback`), the rollback is confirmed: a definite error with no sentinel. The
+exception is a PgError whose SQLSTATE itself leaves the outcome open (`commitOutcomeUnknownState`):
+08007 `transaction_resolution_unknown`, 40003 `statement_completion_unknown`, the rest of the
+connection-exception class 08 (it describes the connection, not the transaction), and 57P01/57P02
+(the server shutting down around the COMMIT). Those count as unknown, since erring that way costs
+a reconciliation and never a wrong answer. `TestClassifyCommitErr` pins the table. Any other failure (a
+broken connection, an I/O error, the context ending while the answer is awaited) means the
+acknowledgement was lost and the server may have committed; that is wrapped in
+`domain.ErrWriteOutcomeUnknown`, the hazard `reconcileAmbiguousAudienceCommit` handles for
+audiences. Errors before the commit (begin, the guarded UPDATE, the 404/412 classification, the
+outbox insert) are definite rollbacks and never carry it. The Meta ad-set lever reconciles on the
+sentinel, on the claimed connection or after releasing and re-taking the claim, never through a
+second pooled connection beside the claim. Every other caller's handling is unchanged.
+`TestLiveReplaceCampaignCommitErrorClasses` pins both classes with deferred triggers scoped to its
+own rows: a raise for the confirmed rollback, and a slow commit under a short deadline for the
+lost acknowledgement.
+
 ## DeleteCampaign's guards
 
 `DeleteCampaign` takes a `SELECT status, version … FOR UPDATE` lock inside one
@@ -1713,6 +1735,76 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   000013 carries the clause and is safe only because 000014 follows it with an explicit
   `indisvalid` guard; nothing follows 000020, so the absence of the clause is the guard.
   `TestMigration000020_HasNoIfNotExists` keeps it absent.
+- **`uq_campaigns_linkedin_campaign_live`** (migration 000042, LFXV2-2665) — LinkedIn's binding
+  guard, a SEPARATE index exactly as the paragraph above requires rather than a wider 000020
+  predicate. Keyed `(platform, platform_campaign_id)` over live rows with `platform =
+  'linkedin-ads'`, and global ON PURPOSE for LinkedIn's own reason: LinkedIn documents URNs as
+  globally unique identifiers and a campaign's URN, `urn:li:sponsoredCampaign:{id}`, carries no
+  account, so the same id in two projects IS the same paid campaign and the key can neither
+  false-reject nor false-accept. Registered in `requiredIndexes`, built CONCURRENTLY with no
+  `IF NOT EXISTS` for 000020's reason (`TestMigration000042_IsASeparateLinkedInIndex` pins the
+  text and that 000020 was not widened). Its violation is classified by
+  `isPlatformCampaignBindingViolation` — `ErrPlatformCampaignAlreadyBound` from `AdoptCampaign`
+  and now also from `UpsertCampaign`, where a LinkedIn dispatch that resolved to an
+  already-bound campaign (its create path reuses a same-name campaign in its group) is reported
+  by the orchestrator as a named conflict with the claim retained, not as "created upstream but
+  failed to record it". Live coverage: `adopt_linkedin_binding_live_test.go` (two concurrent
+  adoptions into two projects' briefs → exactly one success and one AlreadyBound; a dispatch
+  onto a bound id → AlreadyBound, freed by soft delete; the raw index refuses LinkedIn across
+  projects and leaves other platforms alone).
+- **`uq_campaigns_meta_campaign_live`, `uq_campaigns_microsoft_campaign_live`,
+  `uq_campaigns_reddit_campaign_live`, `uq_campaigns_twitter_campaign_live`** (migrations
+  000043-000046, LFXV2-2665) — the same binding guard for the remaining adoptable providers, one
+  SEPARATE index each, decided per provider:
+  - **Meta (000043): GLOBAL** `(platform, platform_campaign_id)`. A campaign is a Graph API node,
+    "an individual object with a unique ID" (https://developers.facebook.com/docs/graph-api/overview),
+    read as `GET /{id}` with no account.
+  - **Microsoft (000044): per AD ACCOUNT.** Ids are account-scoped (LFXV2-3056; every Campaign
+    Management call carries `CustomerAccountId`). Third key: `COALESCE(NULLIF(result->>'accountId',''),
+    NULLIF(substring(result->>'microsoftAdsUrl' from '[?&]aid=([^&#]+)'),''))` — exactly
+    `microsoftCreationAccountID`'s reading, legacy `aid=` fallback included.
+  - **Reddit (000045) and X (000046): per AD ACCOUNT**, because neither documents its ids as global
+    (every campaign path is account-scoped). An account key is exact either way: global ids always
+    carry one account, so duplicates are still refused, and per-account ids cannot false-reject.
+    Keys: `NULLIF(result->>'accountId','')` (Reddit) and `NULLIF(result->>'AccountID','')` (X — its
+    result struct is marshalled untagged).
+  The expression keys made `requiredIndexes` compare keys via `pg_get_indexdef(index, n, true)`
+  (a bare column name, or an expression key's deparsed text) instead of `pg_attribute`, which
+  silently dropped expression keys; `createSQL` parenthesises an expression key. The check
+  no longer compares the live deparse against TEXT captured on one PostgreSQL version:
+  `serverDeparsedRequiredIndexes` builds each expected definition on an empty TEMP copy of its
+  table (`LIKE`, in one always-rolled-back transaction, a savepoint per probe) and compares the
+  server's deparse of BOTH sides, so a major upgrade that re-renders an expression or predicate
+  cannot fail boot while a genuinely different definition still does
+  (`TestLiveRequiredIndexCheckComparesTheServersOwnDeparse`). The probe is BEST-EFFORT: if any
+  infrastructure step fails (begin, temp-table creation, savepoint, rollback-to, reading the probe
+  — e.g. a role without TEMPORARY, a read-only default, a hot standby) it logs one WARN naming the
+  step and error class and the remaining entries compare as stored text, so the check is never
+  stricter than before; a stored definition the server cannot parse falls back the same way
+  (`TestLiveRequiredIndexCheckFallsBackWhenTheProbeCannotRun`, via the test-only `probeFault`
+  hook).
+  The probe runs on its OWN connection (`probeRequiredIndexDeparse`) under `probeBudget` (3s),
+  with `SET LOCAL statement_timeout`/`lock_timeout`, BEFORE the required checks' own deadline
+  starts, so it can never spend that deadline (`TestLiveSlowProbeCannotSpendTheRequiredChecksDeadline`).
+  Its WARNs never carry the raw error (`probeErrAttrs`: step, `%T`, SQLSTATE, a fixed
+  `probeRedactedDiagnostic`), because pgx and server error text repeats DSN identifiers and roles. CI pins `postgres:16-alpine`
+  (`.github/workflows/lfx-v2-campaign-service-build.yaml`); the deployed database is external
+  (the chart only receives its connection settings), so its version is not pinned by this repo.
+  **Legacy rows** that record no account are NULL in the key, and NULLs are distinct, so the
+  index alone would let a second binding of their upstream campaign through. `refuseLegacyBinding`
+  closes that on BOTH write paths — `AdoptCampaign` and `UpsertCampaign` (dispatch: X reuses a
+  campaign by an event+project name, so a second brief's dispatch can resolve to it): inside the
+  writer's transaction, under a `pg_advisory_xact_lock` on (platform, upstream id), it refuses
+  (AlreadyBound) an id a live account-less row of that platform holds, excluding the writer's own
+  slot so a retried persist of the legacy row itself is not refused. It never blocks a different
+  upstream id. All six index names are in `platformCampaignBindingIndexes`, which
+  `isPlatformCampaignBindingViolation` reads for both adoption and `UpsertCampaign` (dispatch).
+  Live coverage: `adopt_binding_providers_live_test.go` (concurrent adoption: one success + one
+  AlreadyBound per provider; different accounts both bind on the account-keyed three; dispatch
+  duplicates; legacy rows). **Deploy risk:** existing duplicate live bindings make the
+  CONCURRENTLY build fail and leave the version DIRTY — soft-delete one duplicate, `DROP INDEX
+  CONCURRENTLY` the INVALID index, `migrate … force <N-1>`, then restart (each migration's comment
+  spells it out).
 
 The insert and its outbox index row are co-committed in one transaction, as every campaign
 write is — see `enqueueCampaignIndex`.

@@ -7738,6 +7738,334 @@ func EncodeGetMicrosoftAdsAudienceError(encoder func(context.Context, http.Respo
 	}
 }
 
+// EncodeGetRedditAdsAudienceResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-connections get-reddit-ads-audience endpoint.
+func EncodeGetRedditAdsAudienceResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.RedditAdsAudience)
+		enc := encoder(ctx, w)
+		body := NewGetRedditAdsAudienceResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGetRedditAdsAudienceRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-connections get-reddit-ads-audience endpoint.
+func DecodeGetRedditAdsAudienceRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload, error) {
+		var payload *lfxv2campaignserviceconnections.GetRedditAdsAudiencePayload
+		var (
+			projectID   string
+			window      *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		windowRaw := r.URL.Query().Get("window")
+		if windowRaw != "" {
+			window = &windowRaw
+		}
+		if window != nil {
+			if !(*window == "today" || *window == "last_7_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetRedditAdsAudiencePayload(projectID, window, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGetRedditAdsAudienceError returns an encoder for errors returned by
+// the get-reddit-ads-audience lfx-v2-campaign-service-connections endpoint.
+func EncodeGetRedditAdsAudienceError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsAudienceBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsAudienceConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsAudienceServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsAudienceInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsAudienceNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsAudiencePayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsAudienceUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeGetRedditAdsKeywordsResponse returns an encoder for responses returned
+// by the lfx-v2-campaign-service-connections get-reddit-ads-keywords endpoint.
+func EncodeGetRedditAdsKeywordsResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.RedditAdsKeywords)
+		enc := encoder(ctx, w)
+		body := NewGetRedditAdsKeywordsResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeGetRedditAdsKeywordsRequest returns a decoder for requests sent to the
+// lfx-v2-campaign-service-connections get-reddit-ads-keywords endpoint.
+func DecodeGetRedditAdsKeywordsRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload, error) {
+		var payload *lfxv2campaignserviceconnections.GetRedditAdsKeywordsPayload
+		var (
+			projectID   string
+			window      *string
+			bearerToken *string
+			err         error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		windowRaw := r.URL.Query().Get("window")
+		if windowRaw != "" {
+			window = &windowRaw
+		}
+		if window != nil {
+			if !(*window == "today" || *window == "last_7_days" || *window == "last_30_days" || *window == "this_month" || *window == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *window, []any{"today", "last_7_days", "last_30_days", "this_month", "last_month"}))
+			}
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewGetRedditAdsKeywordsPayload(projectID, window, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeGetRedditAdsKeywordsError returns an encoder for errors returned by
+// the get-reddit-ads-keywords lfx-v2-campaign-service-connections endpoint.
+func EncodeGetRedditAdsKeywordsError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsKeywordsBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "Conflict":
+			var res *lfxv2campaignserviceconnections.ConflictError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsKeywordsConflictResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusConflict)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsKeywordsServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsKeywordsInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsKeywordsNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsKeywordsPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewGetRedditAdsKeywordsUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
 // EncodeResolveGoogleAdsCampaignResponse returns an encoder for responses
 // returned by the lfx-v2-campaign-service-connections
 // resolve-google-ads-campaign endpoint.
@@ -8488,6 +8816,159 @@ func EncodeResolveTwitterAdsCampaignError(encoder func(context.Context, http.Res
 				body = formatter(ctx, res)
 			} else {
 				body = NewResolveTwitterAdsCampaignUnauthorizedResponseBody(res)
+			}
+			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusUnauthorized)
+			return enc.Encode(body)
+		default:
+			return encodeError(ctx, w, v)
+		}
+	}
+}
+
+// EncodeResolveLinkedinAdsCampaignResponse returns an encoder for responses
+// returned by the lfx-v2-campaign-service-connections
+// resolve-linkedin-ads-campaign endpoint.
+func EncodeResolveLinkedinAdsCampaignResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*lfxv2campaignserviceconnections.PlatformCampaignResolution)
+		enc := encoder(ctx, w)
+		body := NewResolveLinkedinAdsCampaignResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeResolveLinkedinAdsCampaignRequest returns a decoder for requests sent
+// to the lfx-v2-campaign-service-connections resolve-linkedin-ads-campaign
+// endpoint.
+func DecodeResolveLinkedinAdsCampaignRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload, error) {
+	return func(r *http.Request) (*lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload, error) {
+		var payload *lfxv2campaignserviceconnections.ResolveLinkedinAdsCampaignPayload
+		var (
+			projectID          string
+			platformCampaignID string
+			bearerToken        *string
+			err                error
+
+			params = mux.Vars(r)
+		)
+		projectID = params["project_id"]
+		platformCampaignID = r.URL.Query().Get("platform_campaign_id")
+		if platformCampaignID == "" {
+			err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "query string"))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("platform_campaign_id", platformCampaignID, "^[1-9][0-9]{0,18}$"))
+		if utf8.RuneCountInString(platformCampaignID) > 19 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("platform_campaign_id", platformCampaignID, utf8.RuneCountInString(platformCampaignID), 19, false))
+		}
+		bearerTokenRaw := r.Header.Get("Authorization")
+		if bearerTokenRaw != "" {
+			bearerToken = &bearerTokenRaw
+		}
+		if err != nil {
+			return payload, err
+		}
+		payload = NewResolveLinkedinAdsCampaignPayload(projectID, platformCampaignID, bearerToken)
+		if payload.BearerToken != nil {
+			cred := *payload.BearerToken
+			if index := strings.IndexByte(string(cred), ' '); index >= 0 {
+				// Remove authorization scheme prefix (e.g. "Bearer")
+				cred = cred[index+1:]
+				payload.BearerToken = &cred
+			}
+		}
+
+		return payload, nil
+	}
+}
+
+// EncodeResolveLinkedinAdsCampaignError returns an encoder for errors returned
+// by the resolve-linkedin-ads-campaign lfx-v2-campaign-service-connections
+// endpoint.
+func EncodeResolveLinkedinAdsCampaignError(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder, formatter func(ctx context.Context, err error) goahttp.Statuser) func(context.Context, http.ResponseWriter, error) error {
+	encodeError := goahttp.ErrorEncoder(encoder, formatter)
+	return func(ctx context.Context, w http.ResponseWriter, v error) error {
+		var en goa.GoaErrorNamer
+		if !errors.As(v, &en) {
+			return encodeError(ctx, w, v)
+		}
+		switch en.GoaErrorName() {
+		case "BadRequest":
+			var res *lfxv2campaignserviceconnections.BadRequestError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignBadRequestResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusBadRequest)
+			return enc.Encode(body)
+		case "ServiceUnavailable":
+			var res *lfxv2campaignserviceconnections.ConnServiceUnavailableError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignServiceUnavailableResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return enc.Encode(body)
+		case "InternalServerError":
+			var res *lfxv2campaignserviceconnections.InternalServerError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignInternalServerErrorResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusInternalServerError)
+			return enc.Encode(body)
+		case "NotFound":
+			var res *lfxv2campaignserviceconnections.NotFoundError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignNotFoundResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusNotFound)
+			return enc.Encode(body)
+		case "PayloadTooLarge":
+			var res *lfxv2campaignserviceconnections.PayloadTooLargeError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignPayloadTooLargeResponseBody(res)
+			}
+			w.Header().Set("goa-error", res.GoaErrorName())
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return enc.Encode(body)
+		case "Unauthorized":
+			var res *lfxv2campaignserviceconnections.UnauthorizedError
+			errors.As(v, &res)
+			enc := encoder(ctx, w)
+			var body any
+			if formatter != nil {
+				body = formatter(ctx, res)
+			} else {
+				body = NewResolveLinkedinAdsCampaignUnauthorizedResponseBody(res)
 			}
 			w.Header().Set("Www-Authenticate", res.WwwAuthenticate)
 			w.Header().Set("goa-error", res.GoaErrorName())
@@ -11156,6 +11637,38 @@ func marshalLfxv2campaignserviceconnectionsMicrosoftAdsAudienceBucketToMicrosoft
 	return res
 }
 
+// marshalLfxv2campaignserviceconnectionsRedditAdsAudienceBucketToRedditAdsAudienceBucketResponseBody
+// builds a value of type *RedditAdsAudienceBucketResponseBody from a value of
+// type *lfxv2campaignserviceconnections.RedditAdsAudienceBucket.
+func marshalLfxv2campaignserviceconnectionsRedditAdsAudienceBucketToRedditAdsAudienceBucketResponseBody(v *lfxv2campaignserviceconnections.RedditAdsAudienceBucket) *RedditAdsAudienceBucketResponseBody {
+	res := &RedditAdsAudienceBucketResponseBody{
+		Dimension:   v.Dimension,
+		Value:       v.Value,
+		Impressions: v.Impressions,
+		Clicks:      v.Clicks,
+		CostMicros:  v.CostMicros,
+		Ctr:         v.Ctr,
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignserviceconnectionsRedditAdsKeywordToRedditAdsKeywordResponseBody
+// builds a value of type *RedditAdsKeywordResponseBody from a value of type
+// *lfxv2campaignserviceconnections.RedditAdsKeyword.
+func marshalLfxv2campaignserviceconnectionsRedditAdsKeywordToRedditAdsKeywordResponseBody(v *lfxv2campaignserviceconnections.RedditAdsKeyword) *RedditAdsKeywordResponseBody {
+	res := &RedditAdsKeywordResponseBody{
+		CampaignID:  v.CampaignID,
+		Text:        v.Text,
+		Impressions: v.Impressions,
+		Clicks:      v.Clicks,
+		CostMicros:  v.CostMicros,
+		Ctr:         v.Ctr,
+	}
+
+	return res
+}
+
 // marshalLfxv2campaignserviceconnectionsCampaignRefToCampaignRefResponseBody
 // builds a value of type *CampaignRefResponseBody from a value of type
 // *lfxv2campaignserviceconnections.CampaignRef.
@@ -11246,11 +11759,12 @@ func marshalLfxv2campaignserviceconnectionsAccountMonitorActionItemToAccountMoni
 // type *lfxv2campaignserviceconnections.AccountMonitorTotals.
 func marshalLfxv2campaignserviceconnectionsAccountMonitorTotalsToAccountMonitorTotalsResponseBody(v *lfxv2campaignserviceconnections.AccountMonitorTotals) *AccountMonitorTotalsResponseBody {
 	res := &AccountMonitorTotalsResponseBody{
-		Spend:         v.Spend,
-		Impressions:   v.Impressions,
-		Clicks:        v.Clicks,
-		Conversions:   v.Conversions,
-		CampaignCount: v.CampaignCount,
+		Spend:               v.Spend,
+		Impressions:         v.Impressions,
+		Clicks:              v.Clicks,
+		Conversions:         v.Conversions,
+		CampaignCount:       v.CampaignCount,
+		UnmeasuredCampaigns: v.UnmeasuredCampaigns,
 	}
 
 	return res
