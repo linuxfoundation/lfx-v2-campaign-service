@@ -69,30 +69,30 @@ func (d *TwitterDispatcher) resolveTwitterImage(ctx context.Context, brief *mode
 	}
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		return nil, noop, fmt.Errorf("twitter config references creative asset %s, which is not a valid asset id", safeAssetIDForError(raw))
+		return nil, noop, domain.PreflightRefusalf("twitter config references creative asset %s, which is not a valid asset id", domain.CallerValue(raw))
 	}
 	assetID := parsed.String()
 	// Judged on the SAME normalized inputs the client's authoring condition reads (tweetID is
 	// already trimmed by Dispatch), so the two cannot disagree about whether a tweet is authored.
 	if tweetID != "" || strings.TrimSpace(cfg.TweetText) == "" {
-		return nil, noop, fmt.Errorf("twitter imageAssetId %s is attached only to an authored tweet, so it requires tweetText and no tweetId", assetID)
+		return nil, noop, domain.PreflightRefusalf("twitter imageAssetId %s is attached only to an authored tweet, so it requires tweetText and no tweetId", assetID)
 	}
 	if d.creatives == nil {
-		return nil, noop, fmt.Errorf("twitter config references creative asset %s but the creative-asset store is not configured", assetID)
+		return nil, noop, domain.PreflightRefusalf("twitter config references creative asset %s but the creative-asset store is not configured", assetID)
 	}
 	size, err := d.creatives.GetAssetSize(ctx, brief.ProjectID, brief.ID, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, noop, fmt.Errorf("twitter config references creative asset %s, which does not exist for this brief", assetID)
+			return nil, noop, domain.PreflightRefusalf("twitter config references creative asset %s, which does not exist for this brief", assetID)
 		}
 		return nil, noop, fmt.Errorf("size creative asset %s: %w", assetID, err)
 	}
 	if size > twitter.MaxImageBytes {
-		return nil, noop, fmt.Errorf("creative asset %s is %d bytes, over X's %d-byte image limit; upload a smaller image", assetID, size, twitter.MaxImageBytes)
+		return nil, noop, domain.PreflightRefusalf("creative asset %s is %d bytes, over X's %d-byte image limit; upload a smaller image", assetID, size, twitter.MaxImageBytes)
 	}
 	release, ok := d.assets.reserve(ctx, size)
 	if !ok {
-		return nil, noop, fmt.Errorf("creative asset %s (%d bytes) exceeds the memory concurrently available for dispatch; retry when other dispatches finish", assetID, size)
+		return nil, noop, domain.PreflightRefusalf("creative asset %s (%d bytes) exceeds the memory concurrently available for dispatch; retry when other dispatches finish", assetID, size)
 	}
 	// Structural unwind, as in resolveVariantAssets: every exit but the one success return —
 	// including a panic out of the repository — gives the reservation back.
@@ -105,12 +105,12 @@ func (d *TwitterDispatcher) resolveTwitterImage(ctx context.Context, brief *mode
 	asset, err := d.creatives.GetAsset(ctx, brief.ProjectID, brief.ID, assetID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, noop, fmt.Errorf("twitter config references creative asset %s, which does not exist for this brief", assetID)
+			return nil, noop, domain.PreflightRefusalf("twitter config references creative asset %s, which does not exist for this brief", assetID)
 		}
 		return nil, noop, fmt.Errorf("load creative asset %s: %w", assetID, err)
 	}
 	if asset == nil || len(asset.Bytes) == 0 {
-		return nil, noop, fmt.Errorf("creative asset %s has no stored image bytes", assetID)
+		return nil, noop, domain.PreflightRefusalf("creative asset %s has no stored image bytes", assetID)
 	}
 	handedOff = true
 	return &twitter.ImageInput{Bytes: asset.Bytes, MIME: asset.MimeType}, release, nil

@@ -144,9 +144,9 @@ func (s *ConnectionService) SetCredentialGoogleAds(ctx context.Context, p *conn.
 // design.
 //
 // The async caller is the one that makes this function load-bearing rather than convenient.
-// dispatchPlatform runs after the 202, so it has no response to classify: it collapses every
-// dispatcher error into one generic string in the job result, and the reason token produced
-// here is the ONLY place the specific defect is recorded. For the synchronous two a wrong or
+// dispatchPlatform runs after the 202, so it has no response to classify: the job result
+// carries only a CLASSIFICATION of the dispatcher error (DispatchFailureMessage, issue #208),
+// and the reason token produced here is the only specific defect either it or the log records. For the synchronous two a wrong or
 // missing reason costs log quality; for that path it costs the diagnosis outright.
 //
 // It exists because the errors themselves cannot be logged: one
