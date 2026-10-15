@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -338,5 +340,109 @@ func TestAddCampaignNegativeKeywords_CancelledContextIsNotAttempted(t *testing.T
 	}
 	if IsOutcomeUnconfirmed(err) {
 		t.Errorf("a not-attempted batch must not classify as unconfirmed: %v", err)
+	}
+}
+
+// dialFailingOnMutate routes the pre-read to a real server and fails the campaignCriteria:mutate
+// with a genuine connect-time refusal, the shape ProbeNotSent recognises. It reproduces the one
+// ordering that matters: the pre-read SUCCEEDS, so the batch is built and the caller is past
+// every guard, and only then does the mutate fail to leave this process.
+type dialFailingOnMutate struct{ inner http.RoundTripper }
+
+func (d dialFailingOnMutate) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.Contains(r.URL.Path, "campaignCriteria:mutate") {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	}
+	return d.inner.RoundTrip(r)
+}
+
+// TestAddCampaignNegativeKeywords_PreSendDialFailureIsNotAttempted pins the classification of a
+// mutate that never reached Google after a successful pre-read.
+//
+// Unmarked, this error carried no outcome at all, so the dispatcher's DEFINITE arm reported every
+// keyword in the batch as a platform REJECTION over HTTP 200 — Google refusing keywords it was
+// never asked about. It must read as NOT ATTEMPTED: the criteria cannot exist, so the operator
+// must not be sent to verify a campaign nothing was sent to, and the batch is safe to retry
+// whole.
+func TestAddCampaignNegativeKeywords_PreSendDialFailureIsNotAttempted(t *testing.T) {
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"access_token":"tok","expires_in":3600,"token_type":"Bearer"}`)
+	}))
+	t.Cleanup(tokenSrv.Close)
+	// The pre-read answers with no existing negatives, so the whole requested batch is new and
+	// the mutate is genuinely attempted.
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	}))
+	t.Cleanup(apiSrv.Close)
+
+	c := NewClient(testCreds(), testAccount(),
+		WithTokenURL(tokenSrv.URL), WithBaseURL(apiSrv.URL), WithClock(fixedClock()),
+		WithHTTPClient(&http.Client{Transport: dialFailingOnMutate{inner: http.DefaultTransport}}))
+
+	ids, err := c.AddCampaignNegativeKeywords(context.Background(), "777", []Keyword{{Text: "free", MatchType: MatchTypeBroad}})
+	if err == nil {
+		t.Fatalf("expected a refusal, got ids %v", ids)
+	}
+	var notAttempted interface{ NotAttempted() bool }
+	if !errors.As(err, &notAttempted) || !notAttempted.NotAttempted() {
+		t.Fatalf("error does not report NotAttempted: %v — the batch never left this process, so it must not read as a platform rejection", err)
+	}
+	if IsOutcomeUnconfirmed(err) {
+		t.Errorf("a batch that was never sent must not classify as unconfirmed: %v", err)
+	}
+}
+
+// TestValidateNegativeKeywords_FoldsLikeTheDispatcher pins the client's dedupe key to
+// textfold.Key, the key internal/dispatch uses for every negative-keyword comparison.
+//
+// strings.ToLower is NOT that key, and the two disagree in both directions. Under ToLower the
+// dispatcher could approve a batch of two that collapsed to one operation here: Google would
+// acknowledge one id, the dispatcher would still expect two, and the caller would be told
+// UNCONFIRMED while one exclusion was silently never applied — identically on every retry.
+//
+// Cardinality is what is asserted, because cardinality is what the dispatcher pairs on.
+func TestValidateNegativeKeywords_FoldsLikeTheDispatcher(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Keyword
+		want int
+		why  string
+	}{
+		{
+			name: "simple folding keeps a dotted capital I distinct from i",
+			in:   []Keyword{{Text: "İ", MatchType: MatchTypeExact}, {Text: "i", MatchType: MatchTypeExact}},
+			want: 2,
+			why:  "strings.ToLower collapses these two; textfold.Key does not, and the dispatcher counts two",
+		},
+		{
+			name: "simple folding joins the two Greek final sigmas",
+			in:   []Keyword{{Text: "ΟΣ", MatchType: MatchTypeExact}, {Text: "ος", MatchType: MatchTypeExact}},
+			want: 1,
+			why:  "strings.ToLower keeps these apart; textfold.Key joins them, as the dispatcher does",
+		},
+		{
+			name: "plain ASCII case still dedupes",
+			in:   []Keyword{{Text: "Kubernetes", MatchType: MatchTypeBroad}, {Text: "kubernetes", MatchType: MatchTypeBroad}},
+			want: 1,
+			why:  "the original reason the key folds at all must not regress",
+		},
+		{
+			name: "match type is half the key",
+			in:   []Keyword{{Text: "free", MatchType: MatchTypeExact}, {Text: "free", MatchType: MatchTypeBroad}},
+			want: 2,
+			why:  "the same text under two match types is two distinct exclusions",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := validateNegativeKeywords(tc.in)
+			if err != nil {
+				t.Fatalf("validateNegativeKeywords(%v): %v", tc.in, err)
+			}
+			if len(got) != tc.want {
+				t.Errorf("validateNegativeKeywords(%v) kept %d keywords, want %d — %s", tc.in, len(got), tc.want, tc.why)
+			}
+		})
 	}
 }

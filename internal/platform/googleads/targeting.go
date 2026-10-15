@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 // ---------------------------------------------------------------------------
@@ -165,7 +167,16 @@ func validateKeywordList(noun string, keywords []Keyword, max int) ([]Keyword, e
 		// original casing) — otherwise "Kubernetes" and "kubernetes" both pass this
 		// preflight check as distinct, then the whole adGroupCriteria:mutate fails as a
 		// definite 4xx after the budget/campaign/ad group/ad already exist.
-		key := matchType + "\x00" + strings.ToLower(text)
+		//
+		// The fold is textfold.Key, NOT strings.ToLower, because this key has to agree with
+		// the dispatcher's: internal/dispatch keys every negative-keyword comparison on
+		// textfold.Key, and the two folds disagree in BOTH directions — ToLower collapses
+		// "İ" onto "i" where simple folding keeps them distinct, and keeps "ΟΣ" apart from
+		// "ος" where simple folding joins them. Under the old key a dispatcher-approved
+		// batch of two could shrink to one operation here, Google would acknowledge one id,
+		// and the dispatcher — still expecting two — would answer UNCONFIRMED while one
+		// exclusion was silently never applied, the same way on every retry.
+		key := matchType + "\x00" + textfold.Key(text)
 		if _, dup := seen[key]; dup {
 			continue
 		}

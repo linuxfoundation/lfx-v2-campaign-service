@@ -228,6 +228,16 @@ func (c *Client) mutateCampaignNegativeKeywords(ctx context.Context, campaignRes
 
 	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignCriteria:mutate"), mutateRequest{Operations: ops}, false)
 	if err != nil {
+		// ProbeNotSent runs BEFORE the ambiguity check because it proves the stronger fact. A
+		// DNS failure or a connect-time refusal means this process never put the batch on the
+		// wire, so the criteria cannot exist and "verify in Google Ads before retrying" would
+		// send the operator to look at a campaign nothing was sent to. Without this, such a
+		// failure carries no outcome marker at all and the dispatcher's DEFINITE arm reports
+		// every keyword as a platform REJECTION over HTTP 200 — Google refusing keywords it
+		// was never asked about, which is the same false claim the text-limit guard fixed.
+		if ProbeNotSent(err) {
+			return nil, &notAttemptedNegativeKeywordError{err: fmt.Errorf("google-ads negative keywords were not sent (campaign %s: %s): %w", campaignID, definiteFailureNote, err)}
+		}
 		if createOutcomeAmbiguous(err) {
 			return nil, &unconfirmedNegativeKeywordError{err: fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; negative keyword criteria may exist — verify in Google Ads before retrying): %w", campaignID, err)}
 		}
@@ -271,11 +281,15 @@ func (e *unconfirmedNegativeKeywordError) Error() string     { return e.err.Erro
 func (e *unconfirmedNegativeKeywordError) Unwrap() error     { return e.err }
 func (e *unconfirmedNegativeKeywordError) Unconfirmed() bool { return true }
 
-// notAttemptedNegativeKeywordError marks the one failure that happens BEFORE any request is
-// built: an already-cancelled context. IsOutcomeUnconfirmed gives NotAttempted precedence over
-// every shape-based inference precisely for this case — a context error otherwise looks exactly
-// like a request that was cut off in flight, and would be reported as "the criteria may exist"
-// when nothing was ever sent.
+// notAttemptedNegativeKeywordError marks a failure PROVEN to have left the batch unsent, so the
+// criteria cannot exist. Two reach it: an already-cancelled context, caught before the request is
+// built, and a pre-send transport failure (DNS, connect-time refusal) that ProbeNotSent
+// recognises after doRequest returns. IsOutcomeUnconfirmed gives NotAttempted precedence over
+// every shape-based inference precisely for these — both otherwise look exactly like a request
+// cut off in flight, and would be reported as "the criteria may exist" when nothing was ever
+// sent. Anything ProbeNotSent does not recognise stays unclaimed and falls through to the
+// ambiguity check, which is the cheap direction: a cancellation landing after transmission is
+// indistinguishable from one landing before it.
 type notAttemptedNegativeKeywordError struct{ err error }
 
 func (e *notAttemptedNegativeKeywordError) Error() string      { return e.err.Error() }
