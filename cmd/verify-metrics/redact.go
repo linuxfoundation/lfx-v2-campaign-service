@@ -1,0 +1,210 @@
+// Copyright The Linux Foundation and each contributor to LFX.
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/url"
+	"regexp"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
+)
+
+const (
+	redacted = "[REDACTED]"
+	// minSecretLen keeps a short credential value (none is legitimately this short) from
+	// scrubbing ordinary text it happens to match.
+	minSecretLen = 6
+)
+
+// secretKeyRe matches a JSON key, query parameter or header name whose VALUE is a secret.
+// Matched by name so a secret this process never saw (a fresh token in an upstream body, a
+// signature in a download URL) is still withheld.
+var secretKeyRe = regexp.MustCompile(`(?i)(token|secret|password|passwd|signature|^sig$|authorization|api[_-]?key|credential|private|client[_-]?id|developer|cookie)`)
+
+// oauthParamRe pulls the quoted values out of an OAuth 1.0a Authorization header (X Ads).
+var oauthParamRe = regexp.MustCompile(`="([^"]+)"`)
+
+// secretSet is every secret value this run has observed: the decrypted credential document,
+// the Authorization-style headers sent upstream, and the tokens a token exchange returned.
+// Every byte this command prints passes through scrub.
+type secretSet struct {
+	mu     sync.Mutex
+	values map[string]struct{}
+}
+
+func newSecretSet() *secretSet { return &secretSet{values: map[string]struct{}{}} }
+
+func (s *secretSet) add(v string) {
+	v = strings.TrimSpace(v)
+	if len(v) < minSecretLen {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.values[v] = struct{}{}
+	// The same value as it appears in a query string or form body.
+	if e := url.QueryEscape(v); e != v {
+		s.values[e] = struct{}{}
+	}
+}
+
+// addCredentialDocument records every string value of a decrypted credential document. A
+// document that is not JSON is recorded whole.
+func (s *secretSet) addCredentialDocument(plaintext []byte) {
+	var doc any
+	if err := json.Unmarshal(plaintext, &doc); err != nil {
+		s.add(string(plaintext))
+		return
+	}
+	s.addJSONStrings(doc)
+}
+
+func (s *secretSet) addJSONStrings(v any) {
+	switch t := v.(type) {
+	case string:
+		s.add(t)
+	case map[string]any:
+		for _, e := range t {
+			s.addJSONStrings(e)
+		}
+	case []any:
+		for _, e := range t {
+			s.addJSONStrings(e)
+		}
+	}
+}
+
+// issuedTokenKeyRe names the fields of a token exchange response that carry a credential
+// (access_token, refresh_token, id_token) — not token_type or scope, whose values ("bearer")
+// are ordinary words that would otherwise be scrubbed from everything printed.
+var issuedTokenKeyRe = regexp.MustCompile(`(?i)token$`)
+
+// addIssuedTokens records the credential values of a token exchange response.
+func (s *secretSet) addIssuedTokens(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, e := range t {
+			if issuedTokenKeyRe.MatchString(k) {
+				s.addJSONStrings(e)
+				continue
+			}
+			s.addIssuedTokens(e)
+		}
+	case []any:
+		for _, e := range t {
+			s.addIssuedTokens(e)
+		}
+	}
+}
+
+// addHeaderValue records a credential-bearing header: the whole value, the part after an auth
+// scheme ("Bearer x"), and each quoted OAuth 1.0a parameter.
+func (s *secretSet) addHeaderValue(v string) {
+	s.add(v)
+	if _, after, ok := strings.Cut(v, " "); ok {
+		s.add(after)
+	}
+	for _, m := range oauthParamRe.FindAllStringSubmatch(v, -1) {
+		s.add(m[1])
+		if u, err := url.QueryUnescape(m[1]); err == nil {
+			s.add(u)
+		}
+	}
+}
+
+// scrub replaces every recorded secret in text, longest first so a secret that contains
+// another is not left half-replaced.
+func (s *secretSet) scrub(text string) string {
+	s.mu.Lock()
+	vals := make([]string, 0, len(s.values))
+	for v := range s.values {
+		vals = append(vals, v)
+	}
+	s.mu.Unlock()
+	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
+	for _, v := range vals {
+		text = strings.ReplaceAll(text, v, redacted)
+	}
+	return text
+}
+
+// scrubWriter is the only way this command writes output.
+type scrubWriter struct {
+	w       io.Writer
+	secrets *secretSet
+}
+
+func (w *scrubWriter) printf(format string, a ...any) {
+	_, _ = io.WriteString(w.w, w.secrets.scrub(fmt.Sprintf(format, a...)))
+}
+
+// displayURL renders a request URL for output: pkg/redact.URL (userinfo, query and fragment
+// dropped), then the query re-attached parameter by parameter with any secret-named value
+// withheld. The query is worth keeping — X sends its whole stats request there — but a signed
+// download URL (Microsoft's report file) carries its signature there too.
+func displayURL(u *url.URL) string {
+	base := redact.URL(u)
+	if u == nil || u.RawQuery == "" {
+		return base
+	}
+	q := u.Query()
+	keys := make([]string, 0, len(q))
+	for k := range q {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		for _, v := range q[k] {
+			if secretKeyRe.MatchString(k) {
+				v = redacted
+			}
+			parts = append(parts, url.QueryEscape(k)+"="+v)
+		}
+	}
+	return base + "?" + strings.Join(parts, "&")
+}
+
+// redactBody renders a captured body for output. JSON is re-indented with every secret-named
+// key's value withheld; any other text is passed through as is. Both then have the URLs in them
+// reduced by pkg/redact.SnapshotText, the rule the service applies before persisting free text,
+// so a signed URL in a body (Microsoft's poll response names the report file's) cannot leak its
+// signature. The secret-set scrub runs later, on everything printed.
+func redactBody(body []byte) string {
+	var doc any
+	if err := json.Unmarshal(body, &doc); err == nil {
+		if out, merr := json.MarshalIndent(redactJSON(doc), "", "  "); merr == nil {
+			return redact.SnapshotText(string(out))
+		}
+	}
+	return redact.SnapshotText(string(body))
+}
+
+func redactJSON(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			if secretKeyRe.MatchString(k) {
+				out[k] = redacted
+				continue
+			}
+			out[k] = redactJSON(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = redactJSON(e)
+		}
+		return out
+	}
+	return v
+}
