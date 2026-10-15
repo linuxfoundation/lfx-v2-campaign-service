@@ -62,6 +62,19 @@ operator switches it" caveat is true. Demand Gen, Performance Max, Video and Dis
 automated strategies and are refused. The guard still decides on what Google REPORTS, never on
 that default.
 
+**Sibling-parity sweep.** Diffing `WriteBid` against `microsoft_bid.go` branch by branch turned
+up one real gap: the Microsoft path checks the ad group id it read from the row against
+`microsoftCampaignIDRE`, and this path did not. `UpdateAdGroupCPCBid` does refuse a non-numeric id
+— it interpolates it into a resource name — but with a plain error, which the service answers
+"the platform could not be reached; the campaign was not modified": false twice over, since
+nothing was sent and no retry can fix a malformed id in the row. `WriteBid` now runs
+`googleads.ValidateCampaignID` on the recorded ad group id (the canonical positive-int64 check;
+Google ad group ids have the same spelling) and returns `ErrBidUnwritable` before a credential is
+decrypted. Two user-facing sentences had to move with it: `brief_bid.go`'s `ErrBidUnwritable` 409
+now names all three refusal kinds rather than only the adopted-campaign one, and
+`docs/api-catalog.md` dropped the claim that the several-ad-groups 409 names the ad groups to the
+caller — the ids go to the service log.
+
 The allowlist's 400 sentence is now the named constant `negativeKeywordUnsupportedMessage`, so
 the switch and the sentence can be checked against each other — adding a platform to one and not
 the other tells every other platform's caller that the new one is unsupported, which is exactly

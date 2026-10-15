@@ -325,6 +325,32 @@ func TestGoogleAds_WriteBid_BadCampaignIDIsRefused(t *testing.T) {
 	}
 }
 
+// TestGoogleAds_WriteBid_BadAdGroupIDIsRefused is the Microsoft path's recorded-ad-group-id check
+// (microsoftCampaignIDRE against the id from the row), which this path owes the caller for the
+// same reason: the client refuses a non-numeric id too, but with a plain error that the service
+// answers "the platform could not be reached; the campaign was not modified" — false twice over,
+// since nothing was sent and no retry can fix a malformed id in the row. The sentinel has to be
+// ErrBidUnwritable (409), and nothing may be contacted.
+func TestGoogleAds_WriteBid_BadAdGroupIDIsRefused(t *testing.T) {
+	for _, recorded := range []string{"65-4", "abc", "0", "007"} {
+		t.Run(recorded, func(t *testing.T) {
+			d, requests := bidDispatcher(t, bidSearchJSON("MANUAL_CPC"), http.StatusOK, okBidMutate)
+
+			camp := bidCampaign()
+			camp.Result = []byte(`{"customerId":"1234567890","adGroupId":"` + recorded + `","adGroups":[{"name":"g1","id":"` + recorded + `"}]}`)
+
+			err := d.WriteBid(context.Background(), "proj", model.ProviderGoogleAds, camp,
+				model.BidChange{Amount: 1.25, Type: model.BidTypeCPC})
+			if !errors.Is(err, domain.ErrBidUnwritable) {
+				t.Fatalf("err = %v, want ErrBidUnwritable", err)
+			}
+			if len(requests()) != 0 {
+				t.Errorf("a malformed ad group id still contacted the platform: %+v", requests())
+			}
+		})
+	}
+}
+
 // TestGoogleAds_WriteBid_AbsentPlatformCampaignIsRefused: the platform answered and holds no such
 // campaign. There is nothing to write to.
 func TestGoogleAds_WriteBid_AbsentPlatformCampaignIsRefused(t *testing.T) {

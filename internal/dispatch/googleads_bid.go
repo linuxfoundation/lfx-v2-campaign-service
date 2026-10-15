@@ -88,6 +88,18 @@ func (d *GoogleAdsDispatcher) WriteBid(ctx context.Context, projectID string, pl
 			op, campaignID, len(adGroupIDs), strings.Join(adGroupIDs, ", "), domain.ErrBidUnwritable)
 	}
 	adGroupID := adGroupIDs[0]
+	// THE RECORDED ID'S SHAPE, checked here and not left to the client, exactly as the Microsoft
+	// path checks its recorded ad group id against microsoftCampaignIDRE. UpdateAdGroupCPCBid does
+	// refuse a non-numeric id — it interpolates it into a resourceName — but it refuses with a
+	// plain error, which reaches the service as "the platform could not be reached; the campaign
+	// was not modified". That is a false sentence twice over: nothing was sent, and no retry can
+	// ever succeed, because a malformed id in the row is a permanent fault. ValidateCampaignID is
+	// the canonical positive-int64 check rather than a campaign-specific one, and Google ad group
+	// ids have the same spelling.
+	if err := googleads.ValidateCampaignID(adGroupID); err != nil {
+		return fmt.Errorf("%s: campaign %s records the ad group id %q, which is not a Google Ads ad group id, so there is nothing to address: %w",
+			op, campaignID, adGroupID, domain.ErrBidUnwritable)
+	}
 
 	// AMOUNT — the create path's bounds, a pure function of the request, so refused before any
 	// call as a permanent request fault (400).
