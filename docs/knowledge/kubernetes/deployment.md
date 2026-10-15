@@ -235,5 +235,12 @@ lock release lists the legacy index in `requiredIndexes` as `optional` — absen
 present is still validated in full — while the four-column
 `uq_campaigns_brief_platform_variant_slot_version_live` stays required and its absence still fails
 startup with `ErrMissingRequiredIndex`. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex`.
+The contract release also records a migration version this older image does not embed, which
+golang-migrate's `Up()` would otherwise refuse before any index check. `postgres.Migrate`
+therefore starts on a CLEAN schema newer than the image without migrating it or rewriting its
+version, and still runs the invalid- and required-index checks; a DIRTY newer schema is still
+refused. That leans on expand/contract — every release must stay compatible with the next
+release's schema — since nothing marks a newer migration as compatible. Pinned live by
+`TestMigrateStartsOnACleanSchemaNewerThanThisImage`.
 
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -216,6 +217,107 @@ func TestMigrateToleratesTheDroppedLegacySlotIndex(t *testing.T) {
 		}
 		if !postgres.IsPermanentMigrationErr(err) {
 			t.Errorf("ErrMissingRequiredIndex is not permanent")
+		}
+	})
+}
+
+// TestMigrateStartsOnACleanSchemaNewerThanThisImage pins the half of PR #260's rollback
+// promise that TestMigrateToleratesTheDroppedLegacySlotIndex cannot reach. A real image-only
+// rollback leaves the INDEX dropped AND schema_migrations advanced past every version this
+// binary embeds, and golang-migrate's Up() refuses a recorded version its source does not
+// contain ("no migration found for version N") before any index check runs. So the rollback
+// is modelled here the way it happens: the legacy index dropped and the recorded version set
+// one past LatestMigrationVersion — not a literal, so the next migration cannot quietly turn
+// the "future" version into an embedded one.
+//
+// Revert check: make schemaIsNewerThanImage return false unconditionally and the first
+// subtest after the normal path fails with "no migration found for version".
+func TestMigrateStartsOnACleanSchemaNewerThanThisImage(t *testing.T) {
+	const (
+		legacy = "uq_campaigns_brief_platform_variant_live"
+		slot   = "uq_campaigns_brief_platform_variant_slot_version_live"
+	)
+	ctx := context.Background()
+	_ = dbtest.Pool(t) // skip (or fail on CI) exactly as every live test does when unconfigured
+	dsn := freshDatabase(ctx, t)
+
+	latest, err := postgres.LatestMigrationVersion()
+	if err != nil {
+		t.Fatalf("read the embedded migration versions: %v", err)
+	}
+	future := latest + 1
+
+	t.Run("normal path: migrate to head, then a re-run is a clean no-op", func(t *testing.T) {
+		for i := range 2 {
+			if err := postgres.Migrate(dsn); err != nil {
+				t.Fatalf("Migrate #%d: %s", i+1, dbtest.SafeDSNErrFor(dsn, err))
+			}
+		}
+	})
+
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) }) // before freshDatabase's drop
+
+	record := func(t *testing.T, dirty bool) {
+		t.Helper()
+		if _, err := conn.Exec(ctx, "UPDATE schema_migrations SET version = $1, dirty = $2",
+			int64(future), dirty); err != nil {
+			t.Fatalf("record version %d dirty=%t: %v", future, dirty, err)
+		}
+	}
+
+	t.Run("clean newer version, legacy index dropped: startup succeeds", func(t *testing.T) {
+		if _, err := conn.Exec(ctx, "DROP INDEX "+legacy); err != nil {
+			t.Fatalf("drop %s to model the contracted schema: %v", legacy, err)
+		}
+		record(t, false)
+		if err := postgres.Migrate(dsn); err != nil {
+			t.Fatalf("Migrate on a clean schema at version %d (this image embeds up to %d): %s "+
+				"— an image-only rollback to this release boot-loops", future, latest,
+				dbtest.SafeDSNErrFor(dsn, err))
+		}
+		var (
+			version int64
+			dirty   bool
+		)
+		if err := conn.QueryRow(ctx, "SELECT version, dirty FROM schema_migrations").Scan(&version, &dirty); err != nil {
+			t.Fatalf("read the recorded version: %v", err)
+		}
+		if version != int64(future) || dirty {
+			t.Errorf("recorded version is %d dirty=%t after Migrate, want %d clean — the older "+
+				"image must not rewrite the newer release's version", version, dirty, future)
+		}
+	})
+
+	t.Run("dirty newer version: startup still refuses", func(t *testing.T) {
+		record(t, true)
+		err := postgres.Migrate(dsn)
+		var dirtyErr migrate.ErrDirty
+		if !errors.As(err, &dirtyErr) {
+			t.Fatalf("Migrate on a DIRTY schema at version %d: got %s, want migrate.ErrDirty",
+				future, dbtest.SafeDSNErrFor(dsn, err))
+		}
+		if !postgres.IsPermanentMigrationErr(err) {
+			t.Errorf("a dirty newer schema is not classified permanent")
+		}
+		record(t, false)
+	})
+
+	t.Run("clean newer version, slot-version index dropped: startup refuses", func(t *testing.T) {
+		if _, err := conn.Exec(ctx, "DROP INDEX "+slot); err != nil {
+			t.Fatalf("drop %s: %v", slot, err)
+		}
+		err := postgres.Migrate(dsn)
+		if !errors.Is(err, postgres.ErrMissingRequiredIndex) {
+			t.Fatalf("Migrate on a clean newer schema without %s: got %s, want "+
+				"ErrMissingRequiredIndex — skipping Up() must not skip the index validation",
+				slot, dbtest.SafeDSNErrFor(dsn, err))
+		}
+		if !strings.Contains(err.Error(), slot) {
+			t.Errorf("the error does not name %s: %v", slot, err)
 		}
 	})
 }
