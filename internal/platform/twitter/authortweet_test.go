@@ -293,9 +293,8 @@ func TestCreateCampaign_AuthorTweetDefiniteFailure(t *testing.T) {
 // TestCreateCampaign_AuthorTweetPreSendDialFailure proves a pre-send dial
 // failure (the tweet-authoring request never reached X) is reported as a
 // definite, safe-to-retry failure — not UNCONFIRMED — mirroring the reddit
-// client's postsToDeadPortTransport precedent.
+// client's postsToRefusedTransport precedent.
 func TestCreateCampaign_AuthorTweetPreSendDialFailure(t *testing.T) {
-	deadURL := "http://127.0.0.1:1"
 	srv, _ := newAuthorTweetTestServer(t, nil, `{"data":[{"user_id":"u1"}]}`)
 	defer srv.Close()
 
@@ -304,7 +303,7 @@ func TestCreateCampaign_AuthorTweetPreSendDialFailure(t *testing.T) {
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
 		WithWriteDelay(0),
-		WithHTTPClient(&http.Client{Transport: &tweetToDeadPortTransport{base: http.DefaultTransport, deadURL: deadURL}}),
+		WithHTTPClient(&http.Client{Transport: &tweetToRefusedTransport{base: refusedDialTransport(t), deadURL: refusedURL}}),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -321,15 +320,15 @@ func TestCreateCampaign_AuthorTweetPreSendDialFailure(t *testing.T) {
 	}
 }
 
-// tweetToDeadPortTransport redirects ONLY the tweet-authoring request
-// (POST .../tweet) to a port nothing listens on, so its dial is refused — a
+// tweetToRefusedTransport redirects ONLY the tweet-authoring request
+// (POST .../tweet) to refusedURL, whose dial refusedDialTransport refuses — a
 // proven pre-send failure. Every other request passes through untouched.
-type tweetToDeadPortTransport struct {
+type tweetToRefusedTransport struct {
 	base    http.RoundTripper
 	deadURL string
 }
 
-func (t *tweetToDeadPortTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+func (t *tweetToRefusedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/tweet") {
 		dead, err := url.Parse(t.deadURL)
 		if err != nil {

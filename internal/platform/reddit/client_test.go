@@ -1136,15 +1136,9 @@ func TestCreateCampaign_ConnRefusedNotUnconfirmed(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
 	}))
 	defer tokenSrv.Close()
-	// Bind then immediately close a listener to get a definitely-refused port.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	deadAddr := ln.Addr().String()
-	_ = ln.Close()
-
-	c := NewClient(testCreds, testAccount, WithBaseURL("http://"+deadAddr+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	// Every API dial is refused; the token server is dialed normally.
+	c := NewClient(testCreds, testAccount, WithBaseURL(refusedURL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
+		WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}))
 	res, err := c.CreateCampaign(context.Background(), validRedditInput())
 	if err == nil {
 		t.Fatal("expected an error on connection-refused")

@@ -116,12 +116,12 @@ func pagedThrottledServer(t *testing.T, sent *atomic.Int32) *httptest.Server {
 	return srv
 }
 
-func budgetClient(t *testing.T, apiURL string, b *ReportBudgets) *Client {
+func budgetClient(t *testing.T, apiURL string, b *ReportBudgets, opts ...Option) *Client {
 	t.Helper()
 	tok := httptest.NewServer(tokenHandlerReturning("tok"))
 	t.Cleanup(tok.Close)
-	return NewClient(testCreds, testAccount, WithBaseURL(apiURL+"/api/v3"), WithTokenURL(tok.URL),
-		WithNowFunc(fixedRedditClock()), WithReportBudgets(b), withRetryBaseDelay(time.Millisecond))
+	return NewClient(testCreds, testAccount, append([]Option{WithBaseURL(apiURL + "/api/v3"), WithTokenURL(tok.URL),
+		WithNowFunc(fixedRedditClock()), WithReportBudgets(b), withRetryBaseDelay(time.Millisecond)}, opts...)...)
 }
 
 // Every attempt is counted: each page and each 429 retry, not only each report's first page.
@@ -301,12 +301,10 @@ func TestReportBudgets_UnsentAttemptsSpendNothing(t *testing.T) {
 // A pre-send dial failure (here: connection refused) is proven unsent, so its slot is handed back;
 // an outage must not burn the account's reporting budget.
 func TestReportBudgets_PreSendDialFailureReleasesTheSlot(t *testing.T) {
-	dead := httptest.NewServer(http.NotFoundHandler())
-	deadURL := dead.URL
-	dead.Close() // nothing listens there now: every dial is refused
+	refused := WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}) // every API dial is refused
 	b := NewReportBudgets(time.Minute, 100, 100)
 	// One report request (the metrics read), so no sibling attempt can be cancelled mid-send.
-	_, err := budgetClient(t, deadURL, b).GetCampaignMetrics(context.Background(), "t3_a", model.MetricsWindowToday)
+	_, err := budgetClient(t, refusedURL, b, refused).GetCampaignMetrics(context.Background(), "t3_a", model.MetricsWindowToday)
 	if err == nil || !isPreSendDialError(err) {
 		t.Fatalf("error = %v, want a pre-send dial failure", err)
 	}
@@ -351,9 +349,7 @@ func TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts(t *testing.T) {
 		}
 	})
 	t.Run("pre-send dial failure", func(t *testing.T) {
-		dead := httptest.NewServer(http.NotFoundHandler())
-		deadURL := dead.URL
-		dead.Close() // nothing listens there now: every dial is refused
+		refused := WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}) // every API dial is refused
 		b := NewReportBudgets(time.Minute, 100, 100)
 		var reserved, reservedInsights atomic.Int32
 		b.onReserve = func(_ string, insights bool) {
@@ -362,7 +358,7 @@ func TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts(t *testing.T) {
 				reservedInsights.Add(1)
 			}
 		}
-		_, err := budgetClient(t, deadURL, b).GetKeywordPerformance(context.Background(), model.MetricsWindowToday, []string{"t3_a"})
+		_, err := budgetClient(t, refusedURL, b, refused).GetKeywordPerformance(context.Background(), model.MetricsWindowToday, []string{"t3_a"})
 		if err == nil || !isPreSendDialError(err) {
 			t.Fatalf("error = %v, want a pre-send dial failure", err)
 		}

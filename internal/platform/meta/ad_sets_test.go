@@ -396,10 +396,8 @@ func TestUpdateAdSetStatusOnce_PreSendIsNotSent(t *testing.T) {
 		}
 	})
 	t.Run("connection refused", func(t *testing.T) {
-		s := newAdSetServer(t, nil)
-		url := s.srv.URL
-		s.srv.Close()
-		c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{}, WithBaseURL(url))
+		c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{}, WithBaseURL(refusedURL),
+			WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}))
 		if got := ClassifyAdSetWrite(c.UpdateAdSetStatusOnce(context.Background(), "888", StatusActive)); got != AdSetWriteNotSent {
 			t.Fatalf("outcome = %v, want NOT_SENT", got)
 		}
