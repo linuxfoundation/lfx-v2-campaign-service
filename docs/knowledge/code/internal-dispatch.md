@@ -577,6 +577,15 @@ reaches the polled job result as `this project's linkedin-ads connection cannot 
 configured (reason: account_not_selected); nothing was sent` (issue #208's connection-class
 sentence), or the LF-system variant when the row is the fallback.
 
+The inline org-id refusal never passes through `systemScoped`, so it once named the PROJECT's
+connection even when the credentials came from the LF system fallback row — sending an operator
+to fix a row the project does not own. `linkedInMissingOrgIDRefusal` now reads the same
+provenance (`res.isFromSystem()`) and uses the #208 sentence heads: `this project's linkedin-ads
+connection is missing its org id; nothing was sent`, or `the LF system linkedin-ads connection
+is missing its org id; nothing was sent` for the unforced fallback and the forced-system row
+alike. It stays a `PreflightRefusal` (copied verbatim into the job result, so "org id" survives)
+wrapped in `notCreated()`, raised before any request.
+
 One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics (as
 well as create) where Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
 empty account id cannot reach the platform at all; Meta targets the campaign node by platform id
