@@ -127,9 +127,9 @@ ceiling equals the whole budget, so undeclared uploads run strictly ONE AT A TIM
 one is shed with 503.
 
 The floor was tried here and reverted, and the reason is worth keeping because both positions were
-defensible. Charging the floor bought concurrency for the only client that exists — goa's generated
-`RequestEncoder` never sets `ContentLength`, so the shipped briefs client streams this upload
-chunked and lands on this branch by default. But the permit is taken BEFORE the body is read, so a
+defensible. Charging the floor bought concurrency for the generated client — goa's stock
+`RequestEncoder` never sets `ContentLength`, so a briefs client built with it streams this upload
+chunked and lands on this branch. But the permit is taken BEFORE the body is read, so a
 floor charge assumes "small" about a request that may be worst-case, and the aggregate that follows
 is not survivable: 16 admitted uploads each hold a decoded slice of up to ~31.5 MiB live in
 `asset.Bytes` through `sha256Hex` and the whole `CreateAsset` insert — roughly 480 MiB on a 512 MiB
@@ -144,9 +144,12 @@ under-price the case it cannot measure.
 
 So the memory bound wins over throughput here: it is the property this middleware exists to
 provide, and a retryable 503 under concurrent uploads fails safe where an OOM takes the pod down
-for every route. Uploads are low-frequency, so the cost is throughput, not correctness. The honest
-fix is upstream — make the generated client DECLARE its encoded length so ordinary uploads are
-priced by size and this branch becomes rare rather than the default. That is issue #183.
+for every route. Uploads are low-frequency, so the cost is throughput, not correctness. The fix is
+on the client, not here: [pkg/uploadclient](pkg-uploadclient.md)'s `RequestEncoder` makes the
+generated client DECLARE its encoded length, so ordinary uploads are priced by size and this branch
+becomes rare rather than the default (issue #183). `TestUploadClient_*` in `cmd/campaign-service`
+prove both halves end to end against the real chain: declared uploads run concurrently, and a
+chunked one is still charged the whole budget.
 
 Under saturation a request waits a bounded `UploadAdmissionWait` (250 ms, absorbing ordinary
 jitter) and is then shed with an explicit `503` plus `Retry-After` in the service's

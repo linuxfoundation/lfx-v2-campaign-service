@@ -22,6 +22,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
 // testCreds / testAccount are dummy injected values (no real secrets, no env).
@@ -101,6 +103,123 @@ func TestCreateCampaign_OverlongAdGroupNameFailsBeforeAnyPOST(t *testing.T) {
 	}
 	if res != nil {
 		t.Errorf("over-long ad-group name (pre-POST) must return nil result, got %+v", res)
+	}
+}
+
+// TestCreateCampaign_ComposedNameRefusedBeforeAnyRequest pins issue #208: a composed campaign
+// or ad-group name over Reddit's limit is refused before the FIRST upstream request — not the
+// token exchange, not the account-verify GET — and the refusal is a domain.PreflightRefusal,
+// so the async job may report its sentence verbatim. Both servers count every request; the
+// account-verify GET answers 200 so that, were the check after it, the create would proceed
+// to the check and still fail, and only the request count would tell the orders apart.
+func TestCreateCampaign_ComposedNameRefusedBeforeAnyRequest(t *testing.T) {
+	manyGeos := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		manyGeos = append(manyGeos, "us")
+	}
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*CampaignInput)
+		wantMsg string
+	}{
+		{
+			// Per-field caps pass (EventName=120, Project=40); the composed campaign name
+			// does not.
+			name: "campaign name",
+			mutate: func(in *CampaignInput) {
+				in.EventName = strings.Repeat("E", maxEventNameRunes)
+				in.Project = strings.Repeat("p", maxProjectRunes)
+			},
+			wantMsg: "composed campaign name is too long: 212 characters (max 200)",
+		},
+		{
+			name:    "ad group name",
+			mutate:  func(in *CampaignInput) { in.GeoTargets = manyGeos },
+			wantMsg: "composed ad group name is too long: 232 characters (max 200)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
+			}))
+			defer tokenSrv.Close()
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/ad_accounts/t2_test") {
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "t2_test"}})
+					return
+				}
+				http.Error(w, "unexpected", http.StatusNotFound)
+			}))
+			defer apiSrv.Close()
+
+			c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+			in := validRedditInput()
+			tc.mutate(&in)
+
+			res, err := c.CreateCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatalf("CreateCampaign succeeded with an over-long composed %s", tc.name)
+			}
+			if res != nil {
+				t.Errorf("a pre-send refusal must return a nil result, got %+v", res)
+			}
+			if n := requests.Load(); n != 0 {
+				t.Errorf("%d upstream request(s) were sent before the composed-name refusal; want 0", n)
+			}
+			msg, ok := domain.AsPreflightRefusal(err)
+			if !ok {
+				t.Fatalf("the composed-name refusal is not a domain.PreflightRefusal; err = %v", err)
+			}
+			if msg != tc.wantMsg {
+				t.Errorf("refusal = %q, want %q", msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestCreateCampaign_WindowRefusedBeforeAnyRequest pins issue #208 for the window check: an
+// end date that is not after the nudged start is decided from the caller's dates and the clock
+// alone, so it is refused before the token exchange and the account-verify GET, and the
+// refusal is a domain.PreflightRefusal the async job may report verbatim. It used to run after
+// the GET, as a bare fmt.Errorf.
+func TestCreateCampaign_WindowRefusedBeforeAnyRequest(t *testing.T) {
+	var requests atomic.Int32
+	count := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600, "data": map[string]any{"id": "t2_test"}})
+	})
+	tokenSrv := httptest.NewServer(count)
+	defer tokenSrv.Close()
+	apiSrv := httptest.NewServer(count)
+	defer apiSrv.Close()
+
+	c := NewClient(testCreds, testAccount, WithBaseURL(apiSrv.URL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()))
+	in := validRedditInput()
+	// The clock reads 2026-07-01T00:00Z: the past start is nudged to now+redditPastStartBuffer,
+	// and an end at midnight on the same day is not after it.
+	in.StartDate, in.EndDate = "2026-06-01", "2026-07-01"
+
+	res, err := c.CreateCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("CreateCampaign succeeded with an end date that is not after the nudged start")
+	}
+	if res != nil {
+		t.Errorf("a pre-send refusal must return a nil result, got %+v", res)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d upstream request(s) were sent before the window refusal; want 0", n)
+	}
+	msg, ok := domain.AsPreflightRefusal(err)
+	if !ok {
+		t.Fatalf("the window refusal is not a domain.PreflightRefusal; err = %v", err)
+	}
+	wantStart := toRedditTimestamp(fixedRedditClock()().Add(redditPastStartBuffer))
+	want := "campaign end 2026-07-01T00:00:00+00:00 is not after the effective start " + wantStart + " (a past start date was nudged forward)"
+	if msg != want {
+		t.Errorf("refusal = %q, want %q", msg, want)
 	}
 }
 

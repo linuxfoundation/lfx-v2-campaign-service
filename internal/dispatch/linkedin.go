@@ -1163,6 +1163,60 @@ func linkedinRunStatus(status string) (string, error) {
 	}
 }
 
+// linkedinSnapshotConfig returns the copy of cfg that is persisted to config_snapshot
+// (stored UNENCRYPTED and indexed).
+//
+// Every caller string that the client does not shape-check goes through sanitizeSnapshotText
+// — the helper X's tweetText and Microsoft's keywords use — which reduces any link-shaped run
+// to scheme+host and drops one carrying userinfo. The fields that matter are
+// Variants[].IntroText and Headline: operator-authored ad copy where a link gets pasted, and a
+// password-reset or magic-link URL keeps its secret in the PATH as readily as in the query.
+// GeoTargets[].Label, TargetingProfile and TargetingProfiles[].ID/Label are caller labels and
+// selectors bound for the same column and get the same treatment. So are
+// TargetingProfiles[].Skills/Groups: validFacets checks them only on the profile
+// TargetingProfile SELECTS, so an unselected profile's facets reach the snapshot as typed. An
+// ordinary label, id or facet URN has no link-shaped run and passes through unchanged.
+//
+// Kept verbatim, because the client refuses anything that could carry a URL before a campaign
+// (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only), EmployerExclusions
+// (validFacets: facet URNs only, and creation is refused when no profile matches), and
+// AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
+// Variants[].ImageAssetID (a stored asset key), numbers, flags and dates are kept too.
+//
+// cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
+// so every slice that is rewritten is REALLOCATED first: the FULL text must still reach
+// LinkedIn, and only the stored copy is redacted.
+func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
+	snapshot := cfg
+	snapshot.TargetingProfile = sanitizeSnapshotText(cfg.TargetingProfile)
+	if cfg.Variants != nil {
+		snapshot.Variants = make([]linkedin.CreativeVariant, len(cfg.Variants))
+		copy(snapshot.Variants, cfg.Variants)
+		for i := range snapshot.Variants {
+			snapshot.Variants[i].IntroText = sanitizeSnapshotText(cfg.Variants[i].IntroText)
+			snapshot.Variants[i].Headline = sanitizeSnapshotText(cfg.Variants[i].Headline)
+		}
+	}
+	if cfg.GeoTargets != nil {
+		snapshot.GeoTargets = make([]linkedin.GeoTarget, len(cfg.GeoTargets))
+		copy(snapshot.GeoTargets, cfg.GeoTargets)
+		for i := range snapshot.GeoTargets {
+			snapshot.GeoTargets[i].Label = sanitizeSnapshotText(cfg.GeoTargets[i].Label)
+		}
+	}
+	if cfg.TargetingProfiles != nil {
+		snapshot.TargetingProfiles = make([]linkedin.TargetingProfileConfig, len(cfg.TargetingProfiles))
+		copy(snapshot.TargetingProfiles, cfg.TargetingProfiles)
+		for i := range snapshot.TargetingProfiles {
+			snapshot.TargetingProfiles[i].ID = sanitizeSnapshotText(cfg.TargetingProfiles[i].ID)
+			snapshot.TargetingProfiles[i].Label = sanitizeSnapshotText(cfg.TargetingProfiles[i].Label)
+			snapshot.TargetingProfiles[i].Skills = sanitizeSnapshotTexts(cfg.TargetingProfiles[i].Skills)
+			snapshot.TargetingProfiles[i].Groups = sanitizeSnapshotTexts(cfg.TargetingProfiles[i].Groups)
+		}
+	}
+	return snapshot
+}
+
 // campaignFromLinkedIn maps the client result to the persistence model: upstream id,
 // name, result blob, the budget/schedule/ConfigSnapshot (via applyCampaignConfig), and
 // a status derived from what was confirmed created — one of `created`,
@@ -1210,8 +1264,9 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 		c.Status = campaignStatusUnconfirmed
 	}
 	// Persist the budget/schedule/config the caller supplied (LinkedIn honors a
-	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config.
-	applyCampaignConfig(ctx, c, cfg.BudgetUSD, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, cfg)
+	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config with its
+	// caller free text redacted — see linkedinSnapshotConfig.
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, linkedinSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: leaving Result empty would make an orphaned campaign harder to
