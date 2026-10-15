@@ -176,8 +176,11 @@ func (c *Client) ListAccountCampaignsWithCurrency(ctx context.Context, accountID
 	// spend raises a false alert (PR #316 review). Neither read is known to be the right one, so
 	// the budget currency is unknown for the whole read: no campaign budget is converted and no
 	// ad-set fallback is read, leaving pacing unknown while delivery metrics are kept. Insights
-	// with no usable currency (no rows, an invalid code, rows disagreeing) is not a disagreement.
-	if ic := insights.currency(); currencyKnown && ic != "" && ic != strings.ToUpper(strings.TrimSpace(currency)) {
+	// Every readable row counts, not only a currency every row agreed on (PR #316 review): rows
+	// that disagree with EACH OTHER withhold the published label, but a USD account with one USD
+	// and one JPY row still has JPY-labelled spend to pace against USD-scaled budgets. Insights
+	// with no readable currency (no rows, only invalid codes) is not a disagreement.
+	if currencyKnown && insights.conflictsWith(currency) {
 		currencyKnown = false
 	}
 
@@ -557,6 +560,9 @@ type metaAccountInsights struct {
 	// set once any row's value was not an ISO 4217 code or disagreed with another row's.
 	accountCurrency  string
 	currencyUnusable bool
+	// readable is every valid ISO 4217 code any row carried, kept even once currencyUnusable is
+	// set: a row disagreeing with the budgets' currency must be seen whatever the other rows said.
+	readable map[string]struct{}
 	// sawRow is set once any insights row was observed, whatever its account_currency held.
 	sawRow bool
 }
@@ -569,6 +575,12 @@ func (r *metaAccountInsights) observeCurrency(raw json.RawMessage) {
 	var code string
 	if len(raw) == 0 || json.Unmarshal(raw, &code) != nil {
 		code = ""
+	}
+	if model.NormalizeCurrencyCode(code) != "" {
+		if r.readable == nil {
+			r.readable = make(map[string]struct{}, 1)
+		}
+		r.readable[code] = struct{}{}
 	}
 	switch {
 	case r.currencyUnusable:
@@ -587,6 +599,18 @@ func (r *metaAccountInsights) currency() string {
 		return ""
 	}
 	return r.accountCurrency
+}
+
+// conflictsWith reports that some row carried a readable currency other than code — the budgets'
+// currency — whether or not the rows agreed among themselves.
+func (r *metaAccountInsights) conflictsWith(code string) bool {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	for c := range r.readable {
+		if c != code {
+			return true
+		}
+	}
+	return false
 }
 
 // noCurrencyEvidence reports that the read said nothing about the account's currency: no row was

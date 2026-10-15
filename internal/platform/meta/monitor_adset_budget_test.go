@@ -1153,25 +1153,29 @@ func TestListAccountCampaigns_UpdatedBeforeCreatedIsUnknown(t *testing.T) {
 // Agreeing reads (the control) still convert both.
 func TestListAccountCampaigns_InsightsCurrencyMismatchLeavesBudgetsUnknown(t *testing.T) {
 	settled := `"created_time":"2025-11-01T00:00:00+0000","updated_time":"2025-12-01T00:00:00+0000"`
-	insights := func(code string) string {
+	insights := func(code111, code222 string) string {
 		return `{"data":[` +
-			`{"campaign_id":"111","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code + `"},` +
-			`{"campaign_id":"222","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code + `"}],"paging":{}}`
+			`{"campaign_id":"111","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code111 + `"},` +
+			`{"campaign_id":"222","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code222 + `"}],"paging":{}}`
 	}
 	for _, tc := range []struct {
-		name, insightsCode string
-		mismatch           bool
+		name, code111, code222 string
+		mismatch               bool
 	}{
-		{"insights JPY, account USD", "JPY", true},
-		{"insights EUR, account USD", "EUR", true},
-		{"agreeing currencies still convert", "USD", false},
+		{"insights JPY, account USD", "JPY", "JPY", true},
+		{"insights EUR, account USD", "EUR", "EUR", true},
+		// Rows disagreeing with each other withhold the label, but the JPY row still conflicts
+		// with the USD budgets whichever row carries it (PR #316 review).
+		{"one USD and one JPY row, account USD", "USD", "JPY", true},
+		{"one JPY and one USD row, account USD", "JPY", "USD", true},
+		{"agreeing currencies still convert", "USD", "USD", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, rec := monitorServer(t, monitorFixture{
 				campaigns: []string{monitorList(
 					monitorCampaign("111", StatusActive, `"daily_budget":"1000",`+settled),
 					monitorCampaign("222", StatusActive, settled))},
-				insights: []string{insights(tc.insightsCode)},
+				insights: []string{insights(tc.code111, tc.code222)},
 				currency: usdAccount,
 				adSets:   []string{monitorList(monitorAdSetRow("9001", "222", "ACTIVE", `"daily_budget":"1500","created_time":"2025-11-01T00:00:00+0000"`))},
 			})

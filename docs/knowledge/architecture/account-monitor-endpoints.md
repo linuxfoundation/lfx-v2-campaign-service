@@ -192,7 +192,8 @@ renderer formats with a symbol when it is present and without one otherwise.
   knows — offset 1 (JPY, KRW, …) as well as 100 — when it equals that read's currency. It
   withholds, and logs, a code outside `currencyMinorUnitOffset` (budgets left unconverted; no
   three-decimal currency is in the map) and one the two reads disagree on, which would label
-  budgets converted at another currency's scale. That disagreement also leaves every budget
+  budgets converted at another currency's scale. That disagreement — any row's readable code
+  other than the account read, even when the rows also disagree among themselves — also leaves every budget
   unknown — no campaign budget converted, no ad-set fallback read — so pacing is unknown while
   delivery is kept: spend is in the insights currency (PR #316 review). The offset-100-only
   restriction of #338 is gone.
