@@ -1020,9 +1020,10 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 	// exactly that) — there is no separate "not chosen yet" intent for null to collide with, and
 	// a create has no prior selection to lose. Google Ads and Meta have behaved this way since
 	// LFXV2-3061/3062 and X now matches them rather than inventing a third convention. Note
-	// what is NOT relaxed: an explicit "" is a PRESENT value, so it still fails the Pattern
-	// below — only the missing/null key is accepted, which is why the apivalidation table keeps
-	// its empty-string case as a rejection.
+	// what is NOT relaxed for account_id: an explicit "" is a PRESENT value, so it still fails
+	// account_id's Pattern below — only the missing/null key is accepted, which is why the
+	// apivalidation table keeps "empty account_id" as a rejection. (as_user_id, above, is the
+	// exception: its Pattern admits "" as the deliberate clear, issue #300.)
 	//
 	// account_id is deliberately NOT required (LFXV2-3319), making X credentials-first:
 	// a connection may be created with credentials only and pointed at an account after
