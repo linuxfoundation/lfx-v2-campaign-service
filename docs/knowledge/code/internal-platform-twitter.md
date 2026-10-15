@@ -1377,7 +1377,10 @@ Media Library by `lfxasset<sha256>`. If it is not there, it uploads through the 
 endpoints on `WithMediaUploadBaseURL` (default `https://api.x.com`) and adds it to the library.
 The key goes out as `media_keys` and is recorded in `CampaignResult.MediaKey`. `doBodyRequest`
 is the one body-carrying, never-retrying sender. It classifies outcomes the way `doRequestAbs`
-does. See [X Ads Creative Image Assets](../architecture/x-creative-assets.md).
+does. `ensureImageMedia` holds a per-(account, image) `mediaLocks` entry from the
+`AccountPacers` registry (pacer.go) across lookup, upload and library add. `decodeMediaState`
+rejects a missing or null `data` body, and only an explicit `succeeded` state ends processing.
+See [X Ads Creative Image Assets](../architecture/x-creative-assets.md).
 
 ## Create-time bidding (`CampaignInput.MaxBid`, LFXV2-2665)
 
