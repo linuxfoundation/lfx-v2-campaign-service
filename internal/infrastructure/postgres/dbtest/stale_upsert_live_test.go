@@ -193,10 +193,10 @@ func TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim(t *testing.T) {
 
 // TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim pins PR #260's slot-2 thread. An adopt
 // always writes slot_version 1, so after a cleared slot-2 claim it does not take the stale
-// upsert's four-column arbiter: the upsert goes to its INSERT arm and violates 000022's
-// three-column index on the adopted row instead. That must be the same lost claim the conflict
-// arm reports — the upstream id named, nothing written, the adoption untouched — not an
-// ordinary persist failure that says the (cleared) claim was retained.
+// upsert's four-column arbiter, and with 000022's three-column index dropped (000047) no index
+// stops the upsert's INSERT arm either. UpsertCampaign's ownership check must report the same
+// lost claim the conflict arm reports — the upstream id named, nothing written, the adoption
+// untouched — not an ordinary persist failure that says the (cleared) claim was retained.
 func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.Pool(t)
@@ -204,8 +204,8 @@ func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
 	briefID, project := insertApprovedBrief(ctx, t, pool)
 	p := model.ProviderMicrosoftAds
 
-	// Slot 1 completed and then soft-deleted: the only way a slot-2 claim is admitted while
-	// 000022's index still holds one live campaign per slot.
+	// Slot 1 completed and then soft-deleted, so the slot is EMPTY once the slot-2 claim is
+	// cleared and the adopt (which binds only an empty slot) is admitted.
 	first := createSlotVersion(ctx, t, repo, project, briefID, p, model.FirstSlotVersion)
 	if _, err := pool.Exec(ctx, `UPDATE campaigns SET status = 'deleted' WHERE id = $1`, first.ID); err != nil {
 		t.Fatalf("soft-delete slot 1: %v", err)
@@ -248,46 +248,17 @@ func TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim(t *testing.T) {
 	}
 }
 
-// contractedSchemaRepo migrates a scratch database of its own and then DROPS 000022's
-// three-column one-live-row-per-slot index in it — the schema the contract release will ship —
-// and re-runs the startup Migrate against that schema before building the repository.
-// A scratch database, not the shared one, because every other live test in the package runs
-// against the expand-phase schema and some of them (the ErrSlotVersionUnavailable path) depend
-// on that index existing.
-func contractedSchemaRepo(ctx context.Context, t *testing.T) (*postgres.CampaignRepo, *pgxpool.Pool) {
-	t.Helper()
-	_ = dbtest.Pool(t) // skip (or fail on CI) exactly as every live test does when unconfigured
-	dsn := freshDatabase(ctx, t)
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("migrate the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
-	}
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("connect to the scratch database: %s", dbtest.SafeDSNErrFor(dsn, err))
-	}
-	t.Cleanup(pool.Close) // registered after freshDatabase's reaper, so it runs before the drop
-	if _, err := pool.Exec(ctx, `DROP INDEX uq_campaigns_brief_platform_variant_live`); err != nil {
-		t.Fatalf("drop 000022's index to model the contracted schema: %v", err)
-	}
-	// Then boot on it the way container.go does — Migrate, whose required-index check gates
-	// startup — rather than handing the schema straight to a repository. The lock release is
-	// the rollback target for the release that ships this drop, so it must START here too.
-	if err := postgres.Migrate(dsn); err != nil {
-		t.Fatalf("startup migrate on the contracted schema: %s", dbtest.SafeDSNErrFor(dsn, err))
-	}
-	return postgres.NewCampaignRepo(&postgres.Pool{Pool: pool}), pool
-}
-
 // TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex pins PR #260's contract-phase
-// thread against the CONTRACTED schema. With 000022's index gone, nothing in the schema stops
-// a stale slot-2 INSERT from landing beside an adopted slot-1 row, and the advisory lock only
-// orders the two writes. UpsertCampaign's ownership check must refuse it: this job's claim is
+// thread against the contracted schema 000047 leaves. With 000022's index gone, nothing in the
+// schema stops a stale slot-2 INSERT from landing beside an adopted slot-1 row, and the
+// advisory lock only orders the two writes. UpsertCampaign's ownership check must refuse it: this job's claim is
 // gone and the slot is occupied, so it is ErrDispatchClaimLost and only the adoption is live.
 // The same test also pins the legitimate flow the check must let through on that schema: a
 // new_version claim of slot 2, made while slot 1 is live and complete, finalizes normally.
 func TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex(t *testing.T) {
 	ctx := context.Background()
-	repo, pool := contractedSchemaRepo(ctx, t)
+	pool := dbtest.Pool(t)
+	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
 	p := model.ProviderMicrosoftAds
 
 	t.Run("claim slot 2, clear, adopt slot 1, stale slot-2 upsert", func(t *testing.T) {

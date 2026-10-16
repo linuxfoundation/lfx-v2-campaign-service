@@ -70,13 +70,11 @@ var _ domain.CampaignRepository = (*CampaignRepo)(nil)
 // columns and the predicate must match the index EXACTLY -- Postgres infers the arbiter
 // by matching both.
 //
-// Naming the four-column index as the arbiter is also what keeps the expand phase loud.
-// While 000022's three-column index still exists, a slot_version 2 claim does not conflict
-// on the arbiter, so DO NOTHING does not apply; it violates the OTHER unique index and
-// raises 23505, which ClaimCampaignDispatch classifies as ErrSlotVersionUnavailable. A
-// retry of an existing slot version conflicts on the arbiter itself and is swallowed as
-// before. It runs under lockCampaignSlotQuery — see there for what the lock adds that the
-// four-column index cannot, and why it ships a release BEFORE the three-column index goes.
+// Since 000047 dropped 000022's three-column index, the four-column one is the ONLY unique
+// index on the slot, so a claim for the next slot version simply inserts alongside the
+// earlier ones, and a retry of an existing slot version conflicts on the arbiter and is
+// swallowed as before. It runs under lockCampaignSlotQuery — see there for what the lock
+// adds that the index cannot.
 //
 // The conflict target carries the partial index's predicate (`WHERE status <>
 // 'deleted'`) because 000013/000014 replaced the full UNIQUE (brief_id, platform)
@@ -93,19 +91,13 @@ const claimCampaignDispatchQuery = `INSERT INTO campaigns
 	VALUES ($1, $2, $3, $4, $5, $7, '', 'pending', $6, $6)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO NOTHING`
 
-// legacySlotUniqueIndex is 000022's three-column slot index. It stays in place until the
-// release AFTER the per-slot lock ships (see lockCampaignSlotQuery) and, while it does, is
-// the index a slot_version above 1 collides with. Named so the claim can tell that collision
-// from any other unique violation.
-const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
-
 // lockCampaignSlotQuery takes the per-slot advisory lock: transaction-scoped, keyed by
 // (brief, platform, variant) — the slot WITHOUT its slot_version.
 //
 // Why a lock at all. The four-column unique index arbitrates races on ONE slot version, and
-// today 000022's three-column index also refuses a second live row on the slot whatever its
-// version. Once that index is dropped nothing in the schema says "an adopt binds only an
-// EMPTY slot": an adopt (always slot_version 1) and a claim of slot_version 2 do not conflict on
+// until 000047 the three-column index also refused a second live row on the slot whatever its
+// version. With that index gone nothing in the schema says "an adopt binds only an EMPTY
+// slot": an adopt (always slot_version 1) and a claim of slot_version 2 do not conflict on
 // any index, so an adopt racing a new-version claim — or landing on a slot whose only live
 // campaign is version 2 — would leave two live campaigns for one logical slot, one of them
 // bound by an adopt whose whole contract is "this slot had none". So every statement that
@@ -115,14 +107,6 @@ const legacySlotUniqueIndex = "uq_campaigns_brief_platform_variant_live"
 // adopt's check sees every row a previous holder wrote: a claim that got there first makes
 // the adopt a 409, and an adopt that got there first is a live row the claim's caller read
 // (or will read) as the slot's latest.
-//
-// Why it ships BEFORE the index drop (expand/contract, one release apart). Both are needed
-// together only once the three-column index is gone; while it exists it still enforces the
-// empty-slot rule by itself. The drop is staged one release after this lock is deployed so
-// that every binary that can run against the contracted schema — including the one an
-// image-only rollback returns to, since reverting the image does not revert the schema —
-// already takes the lock. Dropping the index in the same release as the lock would leave the
-// previous binary, which takes no slot lock, able to race an adopt against a slot-2 claim.
 //
 // Transaction-scoped (pg_advisory_xact_lock), so it cannot leak past COMMIT or ROLLBACK the
 // way the session locks ClaimCampaignVersion holds can, and it is held only across local
@@ -297,28 +281,6 @@ func (r *CampaignRepo) ClaimCampaignDispatch(ctx context.Context, projectID, bri
 	}
 	claimed, err := r.insertDispatchClaim(ctx, projectID, briefID, platform, variant, slotVersion, jobID, createdBy)
 	if err != nil {
-		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
-			// The transaction rolled back, so no row of ours exists and there is nothing to
-			// release.
-			//
-			// Above slot 1 this is the expand phase refusing a second live campaign on the slot.
-			if slotVersion > model.FirstSlotVersion {
-				return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
-			}
-			// At slot 1 it is a lost RACE, not a refusal. Two claims from binaries that both
-			// take the slot lock cannot get here — the second runs only after the first
-			// committed, and conflicts on the arbiter instead — but a previous binary's claim
-			// during a rollout takes no lock. Postgres pre-checks only the arbiter, so two
-			// concurrent slot-1 claims can both pass it; the loser then waits on the winner's
-			// entry in the legacy index and gets 23505 there once the winner commits, instead
-			// of the arbiter conflict DO NOTHING would have swallowed. Answer it the way the
-			// arbiter conflict is answered: not claimed, here is the winner's row.
-			row, gerr := r.getCampaignBySlot(ctx, projectID, briefID, platform, variant, slotVersion)
-			if gerr != nil {
-				return false, nil, fmt.Errorf("read campaign after lost claim: %w", gerr)
-			}
-			return false, row, nil
-		}
 		// The transaction rolled back, so no row of ours exists and there is nothing to
 		// release. The one exception is a COMMIT whose acknowledgement was lost, which can
 		// leave the row committed after all — the same exposure the claim had when it was a
@@ -958,12 +920,12 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 	//     slot 1, or another job's claim) or a version this job's slot was claimed beside; in
 	//     both cases inserting would put a second live campaign on the slot beside one this
 	//     service already tracks, so it is ErrDispatchClaimLost.
-	// This is the rule 000022's three-column index enforces today for the INSERT arm (one live
-	// row per slot), restated so it still holds once that index is dropped: the advisory lock
-	// alone would let the stale slot-2 INSERT land beside an adopted slot 1. The conflict arm's
-	// job_id guard and the legacy-index classification below stay as the statement-level
-	// backstops. Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim and, against the
-	// contracted schema, TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex.
+	// This is the rule 000022's three-column index used to enforce for the INSERT arm (one live
+	// row per slot). Since 000047 dropped that index this check is the ONLY thing enforcing it:
+	// the advisory lock alone would let the stale slot-2 INSERT land beside an adopted slot 1.
+	// The conflict arm's job_id guard below stays as the statement-level backstop for the same
+	// slot version. Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim and
+	// TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex.
 	var ownClaim, occupied bool
 	if qerr := tx.QueryRow(ctx, slotOwnershipQuery, c.BriefID, string(c.Platform), variant,
 		model.NormalizeSlotVersion(c.SlotVersion), c.JobID).Scan(&ownClaim, &occupied); qerr != nil {
@@ -1016,17 +978,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// The INSERT arm always returns its row, so no row back means the conflict arm's
 		// ownership guard declined: the live row on this slot version is not this job's claim.
 		// Nothing was written, and the upstream id is named so the caller can keep it.
-		//
-		// 000022's three-column index is the SAME loss reached through the other arm. It can
-		// only fire on the INSERT arm (the conflict arm never changes brief, platform or
-		// variant), and the INSERT arm runs only when this slot version has no live row — so a
-		// violation means ANOTHER live row holds the slot at a different version while this
-		// job's claim is gone. The case that reaches it: a slot-2 claim cleared by an operator,
-		// then an adopt (always slot 1) binding the emptied slot; the stale slot-2 upsert does
-		// not conflict on the four-column arbiter and hits the legacy index instead. Reported as
-		// a lost claim, not a persist failure that would claim the cleared claim is "retained".
-		// Pinned by TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim.
-		if errors.Is(err, pgx.ErrNoRows) || isUniqueViolationOn(err, legacySlotUniqueIndex) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s (slot version %d) is no longer held by job %s",
 				domain.ErrDispatchClaimLost, c.Platform, c.PlatformCampaignID,
 				model.NormalizeSlotVersion(c.SlotVersion), derefStr(c.JobID))
@@ -1061,9 +1013,10 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 // (000037). Adoption only ever binds an EMPTY slot, so slot 1 is the right answer, not a
 // simplification. The service refuses with 409 when GetCampaignByPlatform finds a live row,
 // but that read happens outside any lock; what ENFORCES it is AdoptCampaign checking
-// slotLiveRowExistsQuery under the per-slot advisory lock. The ON CONFLICT arm is still
-// needed: it is what keeps the N-1 binary's lock-free adopt and claim from both landing on
-// slot 1 during a rolling deploy.
+// slotLiveRowExistsQuery under the per-slot advisory lock. The ON CONFLICT arm stays as the
+// statement-level backstop: the four-column index is the arbiter every slot statement names,
+// and DO NOTHING is what answers a same-slot-version collision as "already bound" rather than
+// as a raw unique violation.
 // The variant is BOUND ($4), not the literal 'default' it used to be. Adoption establishes
 // the slot from what the platform reports the campaign actually is, and hardcoding 'default'
 // here silently discarded that: an adopted Demand Gen campaign landed in the Search slot,
@@ -1185,16 +1138,8 @@ func (r *CampaignRepo) AdoptCampaign(ctx context.Context, c *model.Campaign, exp
 		// behaviour and it must be classified separately: the DO NOTHING conflict means "this
 		// BRIEF is taken", the unique violation means "this upstream CAMPAIGN is taken", and
 		// reporting the second as the first sends the caller to look at the wrong brief.
-		// Classified by INDEX, not by "any 23505": this INSERT names the four-column slot
-		// index as its arbiter, so a race with a concurrent claim on the same slot can also
-		// raise 23505 — on 000022's legacy slot index, while it exists. Under the slot lock a
-		// claim from this binary cannot interleave, but a previous binary's lock-free claim
-		// can during a rollout. That is "this brief is taken" (ErrConflict), and reporting it
-		// as an upstream campaign bound elsewhere would send the caller to look for a binding
-		// that does not exist.
-		if isUniqueViolationOn(err, legacySlotUniqueIndex) {
-			return nil, fmt.Errorf("%w: brief %s already has a live %s campaign", domain.ErrConflict, c.BriefID, c.Platform)
-		}
+		// Classified by INDEX, not by "any 23505", so a unique violation on some other index
+		// is never misreported as an upstream campaign bound elsewhere.
 		if isPlatformCampaignBindingViolation(err) {
 			// The other brief is deliberately not named, and neither is its project. Both
 			// binding indexes are global (000020 for Google Ads — one shared upstream account
