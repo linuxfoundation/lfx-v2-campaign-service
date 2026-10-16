@@ -62,6 +62,10 @@ func TestDominantBrand(t *testing.T) {
 		"26Q2 - Linux Foundation - OSS Korea - Speakers",
 		"26Q2 - CNCF - OSS Korea - Web Visitors",
 	}, "Synthetic Summit"), "short and long votes for one brand agree")
+	assert.Equal(t, "LF", DominantBrand([]string{
+		"26Q2 - The Linux Foundation - Member Summit - Registrants",
+		"26Q2 - The Linux Foundation - Member Summit - Speakers",
+	}, "Linux Foundation Member Summit 2026"), "a known long-form brand is a brand even when the event title repeats it")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y", "26Q3 - CNCF - X - y"}, ""), "a tie is not a brand")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y"}, ""), "one name is not agreement")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - LF Events - A - b", "26Q3 - LF Events - C - d"}, ""), "a generic segment is not a brand")
@@ -178,8 +182,16 @@ func TestGuardReuse_ARestrictedAudienceNeverReusesABroaderList(t *testing.T) {
 
 func TestSettleQuestions(t *testing.T) {
 	qs := []CustomQuestion{{ID: "mailability"}, {ID: "topics"}}
-	assert.Len(t, SettleQuestions(qs, []CustomAnswer{{QuestionID: "mailability"}}), 1, "an answered question is not asked again")
-	assert.Empty(t, SettleQuestions(qs, make([]CustomAnswer, customMaxAnswerRounds)), "after enough rounds the draft is final")
+	assert.Len(t, SettleQuestions(qs, []CustomAnswer{{QuestionID: "mailability", Answer: "Match reference"}}), 1, "an answered question is not asked again")
+	rounds := make([]CustomAnswer, customMaxAnswerRounds)
+	for i := range rounds {
+		rounds[i] = CustomAnswer{QuestionID: "other", Answer: "yes"}
+	}
+	assert.Empty(t, SettleQuestions(qs, rounds), "after enough rounds the draft is final")
+
+	// A blank answer is left out of the prompt, so it settles nothing.
+	blank := []CustomAnswer{{QuestionID: "mailability", Answer: "  "}, {QuestionID: "topics", Answer: ""}, {QuestionID: "x", Answer: "\t"}}
+	assert.Len(t, SettleQuestions(qs, blank), 2, "blank answers neither settle their questions nor make the draft final")
 }
 
 func TestWithEventYear(t *testing.T) {

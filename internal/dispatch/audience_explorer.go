@@ -204,6 +204,16 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	if serr != nil {
 		return nil, serr
 	}
+	// The page named no brand: take the one this event's own lists are filed under.
+	// Resolved BEFORE classification, which reads the brand: a brand-scoped list
+	// (an education child filed under the brand) is only recognised with it.
+	if strings.TrimSpace(identity.BrandShort) == "" {
+		names := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			names = append(names, c.Name)
+		}
+		identity.BrandShort = audience.DominantBrand(names, identity.Name)
+	}
 
 	// Newest quarter first, so the inspection budget is spent on the lists most
 	// likely to be the current edition's rather than on whatever the search returned
@@ -270,15 +280,6 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	}
 
 	out.MissingSignals = audience.MissingSignals(found)
-
-	// The page named no brand: take the one this event's own lists are filed under.
-	if strings.TrimSpace(out.Event.BrandShort) == "" {
-		names := make([]string, 0, len(candidates))
-		for _, c := range candidates {
-			names = append(names, c.Name)
-		}
-		out.Event.BrandShort = audience.DominantBrand(names, out.Event.Name)
-	}
 	return out, nil
 }
 

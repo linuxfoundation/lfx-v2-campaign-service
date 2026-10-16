@@ -89,11 +89,16 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 				draft.Notes = append(draft.Notes, fmt.Sprintf("Left out %d registered_for names that %s: %s.",
 					len(invented), reason, strings.Join(invented, "; ")))
 			}
+			// The past editions are a REGIONAL audience's default. An audience of roles
+			// alone (speakers, ambassadors) gets none: a registration branch would AND
+			// the role with having registered for a past edition, dropping first-time
+			// speakers.
 			defaults := event.PastEditions
+			regional := draft.Criteria.ContactLocation || draft.Criteria.EventRegistered || draft.Criteria.EducationEnrolled
 			switch {
 			case len(named) > 0:
 				defaults = named
-			case len(draft.Criteria.RegisteredFor) > 0, draft.ExcludePastEditions:
+			case len(draft.Criteria.RegisteredFor) > 0, draft.ExcludePastEditions, !regional:
 				// Every named edition was unknown, or past registrants were ruled out:
 				// adding the warehouse's editions would reach people the operator excluded.
 				defaults = nil

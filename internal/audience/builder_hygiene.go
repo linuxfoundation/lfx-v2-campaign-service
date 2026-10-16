@@ -83,14 +83,17 @@ func DominantBrand(names []string, eventName string) string {
 		}
 		seg := strings.TrimSpace(m[1])
 		key := strings.ToLower(seg)
-		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") || isEventSegment(seg, eventWords) {
-			continue
-		}
+		// A known long-form brand is a brand even when the event title repeats it
+		// ("The Linux Foundation" for "Linux Foundation Member Summit"), so it is
+		// recognised before the event-segment check.
 		if short, ok := brandShortFor[key]; ok {
 			if _, seen := display[short]; !seen {
 				display[short] = strings.ToUpper(short)
 			}
 			counts[short]++
+			continue
+		}
+		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") || isEventSegment(seg, eventWords) {
 			continue
 		}
 		counts[key]++
@@ -246,12 +249,19 @@ const customMaxAnswerRounds = 3
 // SettleQuestions drops questions already answered and, after enough rounds,
 // all of them.
 func SettleQuestions(questions []CustomQuestion, answers []CustomAnswer) []CustomQuestion {
-	if len(answers) >= customMaxAnswerRounds {
-		return []CustomQuestion{}
-	}
+	// A blank answer is no answer: the prompt leaves it out, so it neither settles its
+	// question nor counts toward the rounds that make the draft final.
 	answered := map[string]bool{}
+	rounds := 0
 	for _, a := range answers {
+		if strings.TrimSpace(a.Answer) == "" {
+			continue
+		}
+		rounds++
 		answered[strings.ToLower(strings.TrimSpace(a.QuestionID))] = true
+	}
+	if rounds >= customMaxAnswerRounds {
+		return []CustomQuestion{}
 	}
 	out := make([]CustomQuestion, 0, len(questions))
 	for _, q := range questions {

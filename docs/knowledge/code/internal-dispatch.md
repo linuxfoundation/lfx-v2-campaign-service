@@ -4498,7 +4498,9 @@ family. The check runs even when the warehouse returned no past editions (unconf
 first edition): only this edition's own name is known then, and any other is dropped with a note
 saying it could not be verified. This edition's name is year-qualified (`WithEventYear`) for the
 prompt and the check, as registrations are stored, while the response's `event` reports the name as
-the page declares it, as `discover` does.
+the page declares it, as `discover` does. The past editions are a REGIONAL audience's default only: an audience of
+roles alone (speakers, ambassadors) gets none, since a registration branch would AND the role with a
+past registration.
 
 Interpretation keeps every draft inside the contract preview enforces: an event audience's
 `registered_for` takes its editions capped at `CustomMaxRegisteredFor` (25) by

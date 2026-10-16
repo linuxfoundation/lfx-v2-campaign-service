@@ -139,3 +139,17 @@
   test, the `CustomListFilter` concept bullet, the custom-handler paragraph moved under
   "Audience-builder handlers", and the suppression `ClassifyList` assertion given a page-view filter
   so it pins the rule.
+
+**Fix** — Copilot and Greptile on the fourth-review head:
+
+- **A speakers-only audience gets no past editions by default** (Greptile). The warehouse's editions
+  are a regional audience's default; added to a roles-only audience they ANDed every speaker with a
+  past registration, dropping first-time speakers.
+- **A known long-form brand is a brand even when the title repeats it** (Copilot). "The Linux
+  Foundation" for "Linux Foundation Member Summit" shared two event words and was discarded before
+  the alias mapping ran; the alias is now checked first.
+- **A blank answer settles nothing** (Copilot). It is left out of the prompt, yet it marked its
+  question answered and counted toward the rounds that make the draft final.
+- **Discovery resolves the fallback brand before classifying** (Copilot). It was inferred after
+  every list was classified, so a brand-scoped education list stayed uncertain and education was
+  reported missing.
