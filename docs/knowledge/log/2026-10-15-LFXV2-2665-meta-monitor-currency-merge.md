@@ -6,5 +6,8 @@ own offset from the `?fields=currency` read (`minorToWhole`), and the published 
 still the insights rows' `account_currency`, withheld unless its offset is 100
 (`monitorPublishableCurrency`). The Insights read now returns its `since`/`until` window on
 `metaAccountInsights`. Tests expecting only two upstream reads now expect the third
-(account-currency) read. Lifting the offset-100 restriction is a separate change. See
+(account-currency) read. Lifting the offset-100 restriction is a separate change, since made:
+[the all-offsets entry](2026-10-15-LFXV2-2665-meta-monitor-currency-all-offsets.md) supersedes the
+"withheld unless its offset is 100" rule above — the code is now published for any currency
+`currencyOffsetFor` knows that agrees with the budget currency. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).

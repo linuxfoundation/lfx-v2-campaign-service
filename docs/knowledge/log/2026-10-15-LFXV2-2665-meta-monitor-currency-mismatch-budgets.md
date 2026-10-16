@@ -9,8 +9,11 @@
   be paced against JPY spend and raise a false alert.
 - That disagreement now leaves the budget currency unknown for the whole read: no campaign-level
   budget is converted and no ad-set fallback is read, so pacing is unknown, while spend,
-  impressions and clicks are kept and the currency stays withheld. Insights with no usable code
-  (no rows, malformed, rows disagreeing) is not a disagreement.
+  impressions and clicks are kept and the currency stays withheld. Only absent or unreadable
+  currency evidence (no rows, a malformed code) is not a disagreement: any readable row whose code
+  differs from the account read — including one conflicting row among otherwise agreeing rows —
+  voids the budget currency for the whole read (see
+  [the mixed-currency entry](2026-10-15-LFXV2-2665-meta-monitor-mixed-insights-currency.md)).
 - `TestListAccountCampaigns_InsightsCurrencyMismatchLeavesBudgetsUnknown` covers both budget
   sources (CBO campaign budget, ABO ad-set fallback) with settled, readable
   `created_time`/`updated_time`, so only the mismatch can make the budgets unknown, plus an
