@@ -246,3 +246,6 @@ sweep after review pagination hid them:
 - **Conditions in one registration branch intersect** (Greptile). `exactEditions` unioned separate
   event_name filters inside a branch, so "2025 or 2026" AND "2025" read as both years and check 4
   skipped 2026. The editions are now what every condition allows.
+- **Inline edition suppression reaches referenced registration lists** (Copilot, review body). A
+  referenced list whose own predicates name exact editions is judged by those editions, less any a
+  verified suppression excludes whole; a referenced list without such predicates keeps its name.

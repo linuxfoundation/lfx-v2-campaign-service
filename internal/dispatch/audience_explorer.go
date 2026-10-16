@@ -1932,6 +1932,20 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		if sentAway[id] {
 			continue
 		}
+		// A referenced registration list whose own predicates name exact editions is
+		// judged by those editions, less any a verified suppression excludes whole, so
+		// an inline "registered for 2026" suppression clears a 2026 registrants list.
+		// Without such predicates its name is the evidence, as before.
+		if ref, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr == nil && ref != nil {
+			if editions := audience.RegisteredEditions(ref.FilterBranch); len(editions) > 0 {
+				for _, e := range editions {
+					if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+						inclusionNames = append(inclusionNames, e+" Registrants")
+					}
+				}
+				continue
+			}
+		}
 		if name := nameByID[id]; name != "" {
 			inclusionNames = append(inclusionNames, name)
 		}

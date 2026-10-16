@@ -1221,3 +1221,40 @@ func TestRunQA_CheckFourEditionsAcrossPathsAndInlineSuppressions(t *testing.T) {
 		})
 	}
 }
+
+// A referenced registration list is judged by its own exact predicates, less the
+// editions a verified inline suppression excludes whole; a referenced list with no
+// such predicates keeps its name as evidence.
+func TestRunQA_CheckFourAppliesInlineSuppressionToReferencedLists(t *testing.T) {
+	ue := func(editions ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[],"filterBranches":[` +
+			`{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+			`{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_ANY_OF","values":["` + strings.Join(editions, `","`) + `"]}}]}]}]}`
+	}
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	audienceTree := `{"filterBranchType":"OR","filters":[],"filterBranches":[` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[` + in("801") + `]},` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[` + in("603") + `]}]}`
+	for name, tc := range map[string]struct {
+		send []string
+		fail bool
+	}{
+		"2026 suppressed inline": {send: []string{"700"}, fail: false},
+		"nothing suppressed":     {send: nil, fail: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - Seoul - Registration Push"] = "500"
+			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "801"
+			portal.lists["26Q4 - Seoul - Prospects"] = "603"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.branches = map[string]string{"500": audienceTree, "801": ue("KubeCon 2026"), "700": ue("KubeCon 2026")}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, tc.send)
+			require.NoError(t, err)
+			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
+		})
+	}
+}
