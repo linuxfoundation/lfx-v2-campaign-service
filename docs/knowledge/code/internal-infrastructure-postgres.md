@@ -180,13 +180,129 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   stays for one release (expand/contract), and while it does a claim for `slot_version` 2
   violates it — not the arbiter, so `DO NOTHING` does not apply — and `ClaimCampaignDispatch`
   classifies that `23505` as `domain.ErrSlotVersionUnavailable` — for slot versions above 1
-  only. Postgres pre-checks only the arbiter, so CONCURRENT slot-1 claims can all pass it and
-  the losers then hit `23505` on the legacy index; at slot 1 that is a lost race and is answered
-  like the arbiter conflict (not claimed, winner's row), pinned live by
+  only. Postgres pre-checks only the arbiter, so CONCURRENT slot-1 claims that do not hold the
+  slot lock (a previous binary's, during a rollout) can all pass it and the losers then hit
+  `23505` on the legacy index; at slot 1 that is a lost race and is answered like the arbiter
+  conflict (not claimed, winner's row), pinned live by
   `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`. `AdoptCampaign` classifies `23505` by
   index name for the same reason: the legacy slot index means `ErrConflict`, only
   `uq_campaigns_platform_campaign_live` means `ErrPlatformCampaignAlreadyBound`. Both indexes are in
-  `requiredIndexes` until the follow-up release drops the narrower one.
+  `requiredIndexes`, but the narrower one is marked `optional`: its ABSENCE is a healthy boot, while
+  a PRESENT one is still checked in full (invalid, or the name on the wrong definition, is still
+  refused). This release is the image-only rollback target for the release that drops it, and
+  `container.go` closes the pool on any `Migrate` error — so a hard requirement would turn that
+  rollback into a boot loop on `ErrMissingRequiredIndex`. The four-column slot-version index stays
+  required. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex` (drop the legacy index,
+  run `Migrate`, boot succeeds; drop the slot-version index too, `ErrMissingRequiredIndex` naming
+  only it; a non-unique impostor under the legacy name is `ErrRequiredIndexMismatch`), and
+  `contractedSchemaRepo` re-runs `Migrate` after its drop. `RequiredIndexIsOptional` lets the
+  drop-each-index tests tell the two kinds apart off the real list.
+  The optional index alone does not get a rollback that far: the release that drops it also
+  advances `schema_migrations.version` past every version this image embeds, and golang-migrate
+  v4.19.1's `Up()` refuses a recorded version its source does not contain ("no migration found
+  for version N") before any index check runs. So `Migrate` first reads the recorded version
+  (`schemaIsNewerThanImage`): when it is CLEAN and exactly one above the highest embedded version (read from
+  the migration source, exported as `LatestMigrationVersion`, never hard-coded) it skips `Up()`,
+  leaves the recorded version untouched, logs a warning, and runs `checkNoInvalidIndexes` as usual
+  — so an invalid index, an impostor, or a missing REQUIRED index on the newer schema still
+  refuses boot. A DIRTY newer version, and every other state, takes `Up()` exactly as before (a
+  dirty one is still `migrate.ErrDirty`). The assumption is expand/contract, one release apart
+  (`migrations/README.md`): a release's schema stays compatible with the previous release's
+  binary. Nothing in the chain marks a version as compatible, so the tolerance is bounded to that
+  one hop (PR #260 review): a clean version two or more ahead takes `Up()` and its loud "no
+  migration found" refusal. Within the hop it trusts that discipline, and the required-index check
+  is the part of it that is verified. Pinned live by
+  `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (scratch database at head, legacy index
+  dropped, version set to latest+1 clean → boot succeeds and the version is unchanged; dirty →
+  `ErrDirty`; latest+2 clean → refused; an invalid index → `ErrInvalidIndex`; slot-version index
+  dropped → `ErrMissingRequiredIndex`).
+
+  **Per-slot advisory lock, staged one release BEFORE the index drop.** Once the three-column
+  index is gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
+  writes `slot_version` 1, so its `ON CONFLICT` arm cannot see a live version 2, and an adopt
+  racing a `new_version` claim would conflict on no index. So `ClaimCampaignDispatch` (now a
+  short transaction), `UpsertCampaign` and `AdoptCampaign` each take
+  `pg_advisory_xact_lock(<'slot' namespace>, hashtext(brief_id::uuid::text|platform|variant))`
+  before writing, and `AdoptCampaign` then checks for ANY live row on the slot
+  (`slotLiveRowExistsQuery`) and returns `ErrConflict` if one exists. The lock is held to
+  COMMIT and READ COMMITTED takes a fresh snapshot per statement, so the adopt's check sees
+  everything an earlier holder wrote. Adopt takes the slot lock BEFORE its brief `FOR UPDATE`:
+  the claim's INSERT takes `FOR KEY SHARE` on the brief through the FK, and the reverse order
+  deadlocks (Postgres aborts one with `40P01` — observed live when the adopt took the slot lock
+  AFTER its brief `FOR UPDATE`; with no adopt lock at all there is no wait edge and no cycle,
+  only the unserialized race the lock exists to close).
+  The two-int lock form keeps these keys out of the bigint space `hashCampaignID`'s session
+  locks use; a hash collision between two slots only serializes them. Nothing does platform I/O
+  under the lock.
+
+  **The lock orders writers; it does not decide whose row the upsert may finalize.** A pending
+  claim can be cleared (an operator acting on `StuckDispatchClaims`, via `ClearDispatchClaim` or
+  by hand) while the provider call is in flight, and an adopt — or a later job's
+  claim — can then take the slot. The stale dispatch's upsert used to `DO UPDATE` that row with
+  its own upstream id, untracking the adopted campaign. `upsertCampaignQuery`'s conflict arm now
+  carries `WHERE campaigns.job_id = EXCLUDED.job_id`: the claim INSERT stamps the dispatching
+  job's id, an adopted row has `job_id` NULL, and another job's claim has that job's id, so the
+  stored `job_id` is what identifies the claimant (state predicates such as `status = 'pending'`
+  would also match another job's claim, and would refuse the owner's legitimate re-upsert of its
+  own finalized row). Strict `=`, so a write with no job id never updates an existing row. Zero
+  rows back is `domain.ErrDispatchClaimLost` (error text names the upstream id, slot version and
+  job); nothing is written. Pinned by `TestLiveStaleDispatchUpsertNeverOverwritesAnAdoption` and
+  `TestLiveStaleDispatchUpsertNeverFinalizesAnotherJobsClaim`. A unique violation on 000022's
+  three-column index during the upsert is the same loss: it can only fire on the INSERT arm, which
+  runs only when this slot version has no live row, so another live row holds the slot at a
+  different version (a cleared slot-2 claim, then an adopt at slot 1). It is also
+  `ErrDispatchClaimLost` (`TestLiveStaleSlot2UpsertAfterAnAdoptionIsALostClaim`).
+
+  Both of those are statement-level backstops. The rule itself is an ownership check
+  `UpsertCampaign` runs under the slot lock before writing (`slotOwnershipQuery`): pass when this
+  job's own claim is the live row at its slot version (other live versions are expected — a
+  `new_version` claim of slot N is made only while slot N-1 is live and complete); otherwise
+  pass only when the slot has NO live row at any version (the INSERT arm into an empty slot);
+  anything else is `ErrDispatchClaimLost`. It restates 000022's one-live-row-per-slot rule for
+  the INSERT arm so it survives that index's drop: without it the advisory lock would only
+  ORDER a stale slot-2 INSERT after an adopted slot 1, not refuse it. Pinned against the
+  contracted schema (index dropped in a scratch database) by
+  `TestLiveStaleSlot2UpsertIsALostClaimWithoutTheLegacyIndex`, which also checks a new-version
+  slot 2 beside a live slot 1 still finalizes.
+
+  The same job id keys the RELEASE. `DeleteDispatchClaim(..., slotVersion, jobID)` deletes only a
+  `pending` row whose `job_id` is that job's, so the orchestrator's pre-create release and the
+  claim's read-back rollback are no-ops once the claim was cleared and a successor job holds the
+  slot (released by coordinates alone, they deleted the successor's in-flight claim and let a
+  third job pay for a duplicate). An empty job id is refused. The operator's job-less clear is a
+  separate method, `ClearDispatchClaim` (concrete repo only; no service path calls it). Pinned by
+  `TestLiveStaleClaimReleaseNeverDeletesASuccessorsClaim`.
+
+  The comments inside migrations `000036` and `000037` still say the old index is dropped "a
+  release later". That timeline is superseded by the staging below; the files are applied (shipped
+  in v1.0.17) and the migrations README forbids editing an applied migration, so they are left
+  as written and this concept, with `domain.ErrSlotVersionUnavailable`'s comment, is the
+  authority.
+
+  The lock ships FIRST and the index drop (the contract migration, plus removing
+  `uq_campaigns_brief_platform_variant_live` from `requiredIndexes` — already only `optional`
+  there, so the lock release boots without it — plus retiring
+  `ErrSlotVersionUnavailable` and the legacy-index `23505` handling) ships **one release after
+  this lock is deployed**. That ordering is what makes an image-only rollback safe: reverting the
+  image does not revert the schema (see the deployment concept), and the binary before this one
+  takes no slot lock — so if the drop shipped alongside the lock, a rollback would leave that
+  lock-free binary's adopt preflight free to race a slot-2 claim and bind slot 1 beside it. With
+  the drop a release later, every binary that can run against the contracted schema, including
+  the one a rollback returns to, already takes the lock; and rolling back THIS release leaves the
+  three-column index in place, which enforces the empty-slot rule by itself. Until the drop, the
+  lock is redundant with that index for correctness, which is why it can ship alone. Residual,
+  by design, once the index is gone: an adopt that commits FIRST on a slot whose only campaign
+  was just deleted, followed by a `new_version` claim computed from the pre-delete read, leaves
+  the adopted version 1 plus version 2 — ordered, distinct versions, which is what
+  `new_version` asks for. Pinned live (against the schema this release ships, with the legacy
+  index present) by `TestLiveSlotVersionDuringExpandPhase`,
+  `TestLiveConcurrentSlot1ClaimsHaveOneWinnerAndNoError`,
+  `TestLiveConcurrentNewVersionClaimsHaveOneWinner` (catches a missing lock, race-dependently:
+  unserialized, a loser can hit the legacy index and return `ErrSlotVersionUnavailable`),
+  `TestLiveConcurrentClaimAndAdoptLeaveOneLiveRow`,
+  `TestLiveAdoptRefusesASlotWhoseOnlyLiveCampaignIsALaterVersion` and
+  `TestLiveClaimAndAdoptWaitForTheSlotLock` (deterministic: with the adopt's lock removed the
+  adopt inserts slot 1 while the lock is held and the test fails).
 
   `max_cpc_bid` (added by `000039`, `NUMERIC(18,6)`, nullable, `CHECK > 0`) records the manual
   max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
@@ -700,8 +816,11 @@ Three consequences follow, and they are what the SQL encodes:
   soft-deleted in the first place — `CampaignStatusDeletable` is a whitelist of settled
   statuses.) The upsert's INSERT arm stamps `created_by` too, but only for the case where the
   claim row is gone by the time the upsert runs: an operator clearing an apparently-stuck
-  claim, or a concurrent `DeleteDispatchClaim`. Both arms setting it is what keeps the column
-  populated on every path that can create the row.
+  claim (`ClearDispatchClaim`, or by hand). Another job's `DeleteDispatchClaim` cannot do it — a
+  release deletes only the releasing job's own pending row, so it is a no-op on anyone else's
+  claim — and the owning job releases only on a path that never upserts. If another row holds
+  the slot by then, neither arm runs (`ErrDispatchClaimLost`). Both arms setting it is what keeps
+  the column populated on every path that can create the row.
 - **The claim stamps BOTH actor columns from one placeholder** (`$5, $5`), matching
   `createBriefQuery`. At creation the author IS the last mover, and leaving `updated_by` NULL
   would make "untouched since it was made" indistinguishable from "we never recorded who" —
@@ -1694,7 +1813,8 @@ runtime. `TestCampaignRepo_OnConflictCarriesLivePredicate` covers this statement
 
 `DO NOTHING` is what distinguishes adoption from an upsert. `UpsertCampaign`'s `DO UPDATE`
 arm is correct where it is used, because it overwrites a row describing THE SAME campaign
-this service is provisioning — that is how a retried dispatch converges. Adoption's caller
+this service is provisioning — and only the row whose stored `job_id` is the writer's (see the
+per-slot lock above), so a stale dispatch can never take that arm over an adopted row. Adoption's caller
 names an ARBITRARY upstream campaign, so an updating arm would repoint a live binding at a
 different campaign and orphan the one it used to name; this service never deletes or pauses
 upstream, so that orphan keeps spending with nothing here pointing at it. `RETURNING` is
@@ -1810,7 +1930,10 @@ Two guards live in the same transaction as the insert, and neither can be enforc
   writer's transaction, under a `pg_advisory_xact_lock` on (platform, upstream id), it refuses
   (AlreadyBound) an id a live account-less row of that platform holds, excluding the writer's own
   slot so a retried persist of the legacy row itself is not refused. It never blocks a different
-  upstream id. All six index names are in `platformCampaignBindingIndexes`, which
+  upstream id. Lock order: both writers take the per-slot lock FIRST and this binding lock after
+  it (`AdoptCampaign`: slot → brief `FOR UPDATE` → binding; `UpsertCampaign`: slot → binding,
+  touching the brief only through the INSERT arm's FK check after both), so no transaction holds
+  the binding lock while waiting for a slot. All six index names are in `platformCampaignBindingIndexes`, which
   `isPlatformCampaignBindingViolation` reads for both adoption and `UpsertCampaign` (dispatch).
   Live coverage: `adopt_binding_providers_live_test.go` (concurrent adoption: one success + one
   AlreadyBound per provider; different accounts both bind on the account-keyed three; dispatch

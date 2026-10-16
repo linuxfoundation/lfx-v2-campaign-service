@@ -219,12 +219,25 @@ var JobCreateResponse = Type("job-create-response", func() {
 // PlatformResult is one platform's outcome within a terminal job result. It
 // mirrors exactly what the orchestrator emits so the OpenAPI can describe the
 // result array instead of an opaque Any.
+// ReconcileIdentifier is one identifying field of what a dispatch created, carried on a
+// PlatformResult when its claim was lost and the campaign row that would have recorded it was
+// never written. Only identifiers (ids, names, urns) are carried — never platform text or URLs.
+var ReconcileIdentifier = Type("reconcile-identifier", func() {
+	Attribute("key", String, "Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds, imageUrns; a dotted path for one found in a nested object or list, e.g. abTestVariant.id, adGroups[0].adIds")
+	Attribute("values", ArrayOf(String), "The identifier(s): one element for a single id or name, several for a list such as creativeAssetIds. Absent when entries is set.")
+	Attribute("entries", MapOf(String, String), "For a keyed identifier map such as LinkedIn imageUrns (stored asset id to image urn). Absent when values is set.")
+	Attribute("truncated", Boolean, "True when a value was longer than the 1024-character cap and was cut")
+	Required("key")
+})
+
 var PlatformResult = Type("platform-result", func() {
 	Attribute("platform", String, "Platform this result is for")
 	Attribute("ok", Boolean, "Whether the campaign was created (or reused) successfully")
 	Attribute("campaign_id", String, "Upstream platform campaign id. Present when ok; also set on the specific failure where the upstream campaign was created but recording it failed, so the orphaned id isn't lost.")
 	Attribute("error", String, "Failure reason (present when not ok). For a failed campaign dispatch it says WHY without quoting the platform: a refusal this service raised before anything was sent is given verbatim (e.g. a missing Reddit conversion pixel, or a budget under the platform minimum), with any caller value it names quoted, truncated, or withheld when it looks like a URL; anything else is a fixed sentence per class, naming at most a connection reason token or the HTTP status the platform answered — no connection, connection unusable, credentials undecryptable, token refresh failed, refused or not answered by the platform before anything was created (HTTP status only), or could not be confirmed (something may have been created; verify before retrying). An unclassified failure reads \"platform campaign creation failed\". Never contains a platform response body, URL, query or token. Google Ads dispatch failures are not yet classified beyond the connection classes.")
 	Attribute("hubspot_url", String, "Deep link to this campaign's email in the HubSpot editor. Present only for the email (HubSpot) channel, and only once the portal that created it is known.")
+	Attribute("reconcile", ArrayOf(ReconcileIdentifier), "Present only when this dispatch's claim was lost before its result was recorded: the identifiers of what it created upstream (ids, names, urns, image hashes, X media keys — never state, platform text, URLs or other key-like fields), which this service no longer tracks, sorted by key. The only handle on an id-less partial (no campaign_id).")
+	Attribute("reconcile_truncated", Boolean, "True when the result held more identifiers than one job result may carry, so reconcile is incomplete: top-level identifiers are always kept, and only the most deeply nested or latest entries are cut")
 	Required("platform", "ok")
 })
 

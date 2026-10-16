@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
@@ -168,9 +170,13 @@ func TestLiveLegacyAccountlessRowsCannotBeBoundTwice(t *testing.T) {
 			upstream := uniqueUpstreamID()
 			legacyProject := dbtest.UniqueID(t, "legacy")
 			legacyBrief := insertBriefIn(ctx, t, pool, legacyProject, dbtest.UniqueID(t, "slug"))
-			if _, err := pool.Exec(ctx, `INSERT INTO campaigns (project_id, brief_id, platform, campaign_name, status, platform_campaign_id, result)
-				VALUES ($1, $2, $3, $4, 'created', $5, '{}'::jsonb)`,
-				legacyProject, legacyBrief, string(p.platform), dbtest.UniqueID(t, "campaign"), upstream); err != nil {
+			// The legacy row was written by a dispatch, so it carries that dispatch's job id: the
+			// upsert's conflict arm only ever updates the row its own job claimed (job_id), so the
+			// retried persist below must be that job's.
+			legacyJob := uuid.NewString()
+			if _, err := pool.Exec(ctx, `INSERT INTO campaigns (project_id, brief_id, job_id, platform, campaign_name, status, platform_campaign_id, result)
+				VALUES ($1, $2, $6, $3, $4, 'created', $5, '{}'::jsonb)`,
+				legacyProject, legacyBrief, string(p.platform), dbtest.UniqueID(t, "campaign"), upstream, legacyJob); err != nil {
 				t.Fatalf("seed an account-less legacy row: %v", err)
 			}
 
@@ -191,8 +197,9 @@ func TestLiveLegacyAccountlessRowsCannotBeBoundTwice(t *testing.T) {
 				t.Fatalf("live rows for the legacy id = %d (%v), want only the legacy row", live, err)
 			}
 
-			// The legacy row re-written in its OWN slot is not a second binding.
-			own := &model.Campaign{ProjectID: legacyProject, BriefID: legacyBrief, Platform: p.platform,
+			// The legacy row re-written in its OWN slot, by the job that owns it, is not a second
+			// binding.
+			own := &model.Campaign{ProjectID: legacyProject, BriefID: legacyBrief, JobID: &legacyJob, Platform: p.platform,
 				Variant: model.VariantDefault, SlotVersion: 1, PlatformCampaignID: upstream,
 				CampaignName: dbtest.UniqueID(t, "campaign"), Status: model.CampaignStatusCreated, Result: json.RawMessage(`{}`)}
 			if _, err := repo.UpsertCampaign(ctx, own, nil); err != nil {
