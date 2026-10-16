@@ -109,6 +109,10 @@ const (
 	// display field's 200: these are compared verbatim with the warehouse's names,
 	// so a cut one could never match.
 	customEditionMaxLen = 500
+	// customURLMaxLen bounds a page URL. A URL is matched as a substring, so a cut
+	// one becomes a prefix other pages share and widens the audience: a URL over it
+	// is dropped with a note, never cut.
+	customURLMaxLen = 2000
 	// customPropertyNameMaxLen is a property name's MaxLength in the criteria contract.
 	customPropertyNameMaxLen = 100
 	customMaxAnswers         = 12
@@ -158,7 +162,7 @@ func CustomInterpretPrompt(request string, answers []CustomAnswer, event *Custom
 	lines = append(lines, "END ANSWERS")
 	if event != nil {
 		lines = append(lines, "BEGIN EVENT",
-			"url: "+blockSafe(event.URL, 500),
+			"url: "+blockSafe(event.URL, customURLMaxLen),
 			"name: "+blockSafe(event.Name, customEditionMaxLen),
 			"brand: "+blockSafe(event.BrandShort, 50),
 			"location: "+blockSafe(event.Location, 200),
@@ -266,6 +270,29 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 		return out
 	}
 
+	// wholeURLs keeps each page URL whole, or drops it: never cut, since a prefix of
+	// a URL matches other pages too.
+	var droppedURLs int
+	wholeURLs := func(in []string) []string {
+		out := make([]string, 0, len(in))
+		for _, v := range in {
+			v = strings.Join(strings.Fields(v), " ")
+			if v == "" {
+				continue
+			}
+			if len([]rune(v)) > customURLMaxLen || blockMarkerRE.MatchString(v) {
+				droppedURLs++
+				continue
+			}
+			out = append(out, v)
+		}
+		out = cleanValues(out)
+		if len(out) > CustomMaxPageViewURLs {
+			out = out[:CustomMaxPageViewURLs]
+		}
+		return out
+	}
+
 	c := w.Criteria
 	d := &CustomDraft{
 		Criteria: CustomCriteria{
@@ -277,12 +304,16 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 			GateEventHistory:  c.GateEventHistory,
 			Ambassadors:       c.Ambassadors,
 			EducationTopics:   values(c.EducationTopics),
-			PageViewURLs:      capped(c.PageViewURLs, CustomMaxPageViewURLs),
+			PageViewURLs:      wholeURLs(c.PageViewURLs),
 			RegisteredFor:     editions(c.RegisteredFor),
 			Label:             field(c.Label),
 		},
 		BrandShort:          field(c.BrandShort),
 		ExcludePastEditions: w.IncludePastEditions != nil && !*w.IncludePastEditions,
+	}
+
+	if droppedURLs > 0 {
+		d.Notes = append(d.Notes, fmt.Sprintf("Left out %d page URLs longer than %d characters: a URL is never shortened, since a shorter one matches other pages too.", droppedURLs, customURLMaxLen))
 	}
 
 	for _, f := range c.PropertyFilters {

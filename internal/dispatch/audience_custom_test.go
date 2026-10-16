@@ -33,6 +33,7 @@ type fakePortal struct {
 	lists      map[string]string // name -> id
 	sizes      map[string]int64  // id -> size
 	objTypes   map[string]string // id -> objectTypeId; absent is a contact list ("0-1")
+	branches   map[string]string // id -> raw filterBranch JSON; absent is none
 	properties map[string]string // name -> type
 	// propOptions are an enumeration property's option values, by property name.
 	propOptions map[string][]string
@@ -74,7 +75,11 @@ func (p *fakePortal) serve(t *testing.T) *httptest.Server {
 					if t, ok := p.objTypes[id]; ok {
 						objType = t
 					}
-					_, _ = io.WriteString(w, `{"list":{"listId":"`+id+`","name":"`+name+`","objectTypeId":"`+objType+`","size":`+string(size)+`}}`)
+					branch := ""
+					if b, ok := p.branches[id]; ok {
+						branch = `,"filterBranch":` + b
+					}
+					_, _ = io.WriteString(w, `{"list":{"listId":"`+id+`","name":"`+name+`","objectTypeId":"`+objType+`","size":`+string(size)+branch+`}}`)
 					return
 				}
 			}
@@ -875,4 +880,34 @@ func TestInterpretCustom_ALongEditionNameStaysWhole(t *testing.T) {
 	assert.Equal(t, []string{edition}, out.Draft.Criteria.RegisteredFor, "the long edition name is kept whole and known")
 	require.Len(t, llm.prompts, 2)
 	assert.Contains(t, llm.prompts[1], "name: "+edition, "the model is shown the whole edition name, or it cannot copy it")
+}
+
+// A list only some branches include is a real exclusion at send time: for "A OR B",
+// suppressing A still leaves B minus A. Only a list every branch requires (the whole
+// audience is inside it) is no suppression.
+func TestRunQA_ASendTimeListOneBranchIncludesStillExcludes(t *testing.T) {
+	portal := seoulPortal()
+	portal.lists["26Q4 - Seoul - Combined"] = "500"
+	portal.lists["LF Global Opt-Outs"] = "602"
+	portal.lists["26Q4 - Seoul - Web Visitors"] = "603"
+	inList := func(id string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}]}`
+	}
+	portal.branches = map[string]string{
+		"500": `{"filterBranchType":"OR","filters":[],"filterBranches":[` + inList("602") + `,` + inList("603") + `]}`,
+	}
+	srv := portal.serve(t)
+	defer srv.Close()
+	x := explorerOver(srv, nil)
+
+	out, err := x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"602"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, out.Checks.ExclusionCompleteness.SendTimeCount, "suppressing one OR branch still excludes contacts")
+	assert.True(t, out.Checks.Suppression.AppliedOptOut, "and its name still satisfies the opt-out check")
+
+	// When every branch requires the list, the whole audience is inside it.
+	portal.branches["500"] = `{"filterBranchType":"OR","filters":[],"filterBranches":[` + inList("602") + `]}`
+	out, err = x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"602"})
+	require.NoError(t, err)
+	assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a list the whole audience is inside is no suppression")
 }

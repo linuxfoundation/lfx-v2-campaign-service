@@ -1810,11 +1810,15 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	for _, id := range excludedIDs {
 		alreadyExcluded[id] = true
 	}
-	// The audited list, or a list it includes, sent as a "suppression" would exclude
-	// the audience itself; it is no suppression and must not count toward check 3.
+	// The audited list, or a list EVERY branch of it requires membership of, sent as a
+	// "suppression" would exclude the audience itself; it is no suppression and must not
+	// count toward check 3. A list only some branches include ("A OR B") is a real
+	// exclusion at send time: B minus A remains.
 	notSuppression := map[string]bool{strings.TrimSpace(listID): true}
-	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
-		notSuppression[id] = true
+	if list != nil {
+		for _, id := range audience.RequiredInListIDs(list.FilterBranch) {
+			notSuppression[id] = true
+		}
 	}
 	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
 	for _, id := range audience.UniqueIDs(sendSuppressionIDs) {

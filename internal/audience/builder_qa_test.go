@@ -819,3 +819,35 @@ func TestCheckExclusionCompleteness_CountsSendTimeSuppression(t *testing.T) {
 	none := CheckExclusionCompleteness(nil, 0)
 	assert.Equal(t, VerdictFail, none.Verdict, "nothing on the list and nothing at send time is still a FAIL")
 }
+
+// A list is required only when every path through the tree is inside it.
+func TestRequiredInListIDs(t *testing.T) {
+	in := func(id string) string {
+		return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}`
+	}
+	and := func(filters ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(filters, ",") + `]}`
+	}
+	or := func(branches ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(branches, ",") + `]}`
+	}
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"one branch", or(and(in("1"), in("2"))), []string{"1", "2"}},
+		{"a list in only one OR branch", or(and(in("1")), and(in("2"))), []string{}},
+		{"a list in every OR branch", or(and(in("1"), in("2")), and(in("1"))), []string{"1"}},
+		{"an exclusion is no membership", or(and(`{"filterType":"IN_LIST","operator":"NOT_IN_LIST","listId":9}`)), []string{}},
+		{"unreadable", `{`, nil},
+	}
+	for _, tc := range cases {
+		got := RequiredInListIDs(json.RawMessage(tc.raw))
+		if tc.want == nil {
+			assert.Nil(t, got, tc.name)
+			continue
+		}
+		assert.Equal(t, tc.want, got, tc.name)
+	}
+}

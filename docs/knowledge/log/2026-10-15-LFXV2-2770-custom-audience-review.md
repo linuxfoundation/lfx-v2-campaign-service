@@ -173,3 +173,14 @@
 - The regional rule and the two-word whole-label minimum are stated fully in `internal-dispatch.md`,
   `internal-audience.md` and `GuardReuse`'s godoc, and the long-edition test now also checks the
   prompt shows the whole name and that a long `speakers.event_names` value survives the parser.
+
+**Fix** — Copilot and Greptile after the fifth review:
+
+- **A send-time list that only some branches include is a real exclusion** (Copilot). QA ignored any
+  send-time suppression the audited list referenced as IN_LIST, but a flattened reference proves
+  nothing: for "A OR B", suppressing A still leaves B minus A. `RequiredInListIDs` walks the filter
+  tree, and only a list every path requires (the whole audience is inside it) is ignored.
+- **Page URLs are kept whole or dropped, never cut** (Greptile). They were cut to 200 characters,
+  and a URL is matched as a substring, so a cut one matched other pages too. They now keep up to
+  2,000 characters, and a longer one is dropped with a note; the prompt quotes the event URL at the
+  same length.

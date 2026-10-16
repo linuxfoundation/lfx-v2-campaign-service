@@ -168,3 +168,15 @@ func TestParseCustomDraft_KeepsALongSpeakerEventNameWhole(t *testing.T) {
 	require.NotNil(t, d.Criteria.Speakers)
 	assert.Equal(t, []string{name}, d.Criteria.Speakers.EventNames)
 }
+
+// A page URL is matched as a substring, so it is kept whole or dropped with a note,
+// never cut to a prefix other pages share.
+func TestParseCustomDraft_KeepsPageURLsWholeOrDropsThem(t *testing.T) {
+	long := "events.example.org/" + strings.Repeat("a", 300) + "/synthetic-summit"
+	tooLong := "events.example.org/" + strings.Repeat("b", 2100)
+	raw := `{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":["` + long + `","` + tooLong + `"],"registered_for":[],"label":""},"questions":[],"notes":[]}`
+	d, err := ParseCustomDraft(raw)
+	require.NoError(t, err)
+	assert.Equal(t, []string{long}, d.Criteria.PageViewURLs, "a URL over a display field's 200 characters is kept whole")
+	assert.Contains(t, strings.Join(d.Notes, "\n"), "Left out 1 page URLs")
+}

@@ -4,6 +4,7 @@
 package audience
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -157,6 +158,85 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 	default:
 		best := matches[0]
 		return &best, nil
+	}
+}
+
+// RequiredInListIDs are the lists EVERY contact of a list's filter tree must be a
+// member of: an IN_LIST filter on every path through it (AND accumulates, OR keeps
+// only what all its alternatives require). A flattened reference proves nothing
+// about this. For "A OR B", suppressing A still leaves B minus A, so A is a real
+// exclusion; only a list the whole audience is inside would exclude the audience
+// itself. An unreadable tree requires nothing.
+func RequiredInListIDs(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	set := root.required()
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+type qaBranch struct {
+	FilterBranchType string     `json:"filterBranchType"`
+	FilterBranches   []qaBranch `json:"filterBranches"`
+	Filters          []struct {
+		FilterType string      `json:"filterType"`
+		Operator   string      `json:"operator"`
+		ListID     json.Number `json:"listId"`
+	} `json:"filters"`
+}
+
+func (b qaBranch) required() map[string]struct{} {
+	inList := func(i int) (string, bool) {
+		f := b.Filters[i]
+		id := strings.TrimSpace(f.ListID.String())
+		return id, f.FilterType == "IN_LIST" && f.Operator == "IN_LIST" && id != ""
+	}
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "AND":
+		out := map[string]struct{}{}
+		for i := range b.Filters {
+			if id, ok := inList(i); ok {
+				out[id] = struct{}{}
+			}
+		}
+		for _, c := range b.FilterBranches {
+			for id := range c.required() {
+				out[id] = struct{}{}
+			}
+		}
+		return out
+	case "OR":
+		var alternatives []map[string]struct{}
+		for i := range b.Filters {
+			alt := map[string]struct{}{}
+			if id, ok := inList(i); ok {
+				alt[id] = struct{}{}
+			}
+			alternatives = append(alternatives, alt)
+		}
+		for _, c := range b.FilterBranches {
+			alternatives = append(alternatives, c.required())
+		}
+		if len(alternatives) == 0 {
+			return map[string]struct{}{}
+		}
+		out := alternatives[0]
+		for _, alt := range alternatives[1:] {
+			for id := range out {
+				if _, ok := alt[id]; !ok {
+					delete(out, id)
+				}
+			}
+		}
+		return out
+	default:
+		return map[string]struct{}{}
 	}
 }
 

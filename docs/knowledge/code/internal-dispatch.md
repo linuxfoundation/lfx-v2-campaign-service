@@ -4547,8 +4547,9 @@ endpoint can say, because an operator reads an empty panel as "this event has ne
 names only the legacy v1 endpoint can still resolve — and hands both to the pure rules in
 `builder_qa.go`. The optional `send_suppression_list_ids` (up to 200) name the suppression lists
 the send applies on top of the list — custom and directly attached lists carry none of their own.
-Each is read; an unreadable id, a non-contact list, the audited list itself, a list it includes,
-or one it already excludes is skipped; the rest feed `CheckSuppression` and
+Each is read; an unreadable id, a non-contact list, the audited list itself, a list EVERY branch of it
+requires membership of (`audience.RequiredInListIDs` walks the filter tree; for "A OR B",
+suppressing A still leaves B minus A, so A counts), or one it already excludes is skipped; the rest feed `CheckSuppression` and
 `CheckExclusionCompleteness(filters, len(sendTimeIDs))`, so `exclusion_count` includes them and
 `send_time_count` reports their share. A name it cannot read is a suppression it cannot credit, which is why the legacy
 lookup is not optional decoration. A single request-scoped `map[string]*hubspot.List` cache
