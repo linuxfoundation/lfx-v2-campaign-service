@@ -997,3 +997,13 @@ fields are still copied for throttle detection and logging) with a non-zero code
 not code 1/2, not a 408 and not a throttle; every other `*APIError` is UNCONFIRMED. `ValidateAdSetID` is `ValidateCampaignID`'s rule and
 returns the existing `ErrInvalidAdSetID`. Tests: `ad_sets_test.go`.
 
+
+## Ads under an ad set (`ads.go`, decision D7 first step)
+
+`ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`
+(fields include `creative{id,name}` and the parent ids `adset_id`, `campaign_id`, `account_id`,
+each checked per row; another account is `ErrAdAccountMismatch`), the account currency, and one
+`level=ad` Insights walk filtered by `adset.id`. Every body passes `identityjson.Check` raw
+(`getChecked`). The listing is capped at `adListMaxPages` pages and reports `Truncated` past it;
+the Insights walk fails past `adInsightsMaxPages`. The caller proves the ad set is the campaign's
+first (`GetAdSetState`). See [Meta Ad Read Under an Ad Set](../architecture/meta-ads.md).

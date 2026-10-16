@@ -2206,6 +2206,16 @@ written on either. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 Tests: `meta_ad_sets_test.go`, `meta_ad_set_pause_test.go`.
 
+## Meta ads under an ad set (`meta_ads.go`, decision D7 first step)
+
+`MetaDispatcher` implements `service.MetaAdReader` (`ReadMetaAds`), read-only. Window, `ad_set_id`
+(`ErrMetaAdSetInvalid`) and the stored campaign id (`ErrStoredPlatformIDInvalid`) are checked before
+any credential work; then `metaAdSetScope`; then `GetAdSetState` must report the row's campaign
+under the connection's account (`ErrMetaAdSetNotInCampaign`, 409, nothing else read); then
+`meta.Client.ListAdSetAds`, whose `ErrAdAccountMismatch` maps to
+`ErrCampaignUpstreamIdentityMismatch`. `ReadAt` comes from the `settingsNow` clock. See
+[Meta Ad Read Under an Ad Set](../architecture/meta-ads.md). Tests: `meta_ads_test.go`.
+
 `noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
 a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
 
@@ -3569,8 +3579,11 @@ render the full discovery request URL, pagination cursor included; `VerifyAccoun
 only layer that knows both the service's contract and this client's types, so doing it here is
 what lets `internal/service` classify the outcome without importing
 `internal/platform/linkedin` at all, exactly as it does for `ErrKeyUnavailable` and
-`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest that
-points the client at a closed server and asserts the result `errors.Is`
+`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest whose
+test transport refuses the discovery dial (`platformtest.RefusedDialTransport` from the shared
+`internal/platform/platformtest` test-support package, a real `http.Transport` that fails the
+connect with `ECONNREFUSED` instead of racing the OS for a closed port, issue #206) and
+asserts the result `errors.Is`
 `domain.ErrOrgVerificationInconclusive`, is NOT `linkedin.ErrOrgVerificationInconclusive`, and
 carries neither the request path nor the base URL in its text.
 

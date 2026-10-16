@@ -699,25 +699,37 @@ func errAdSetUnconfirmed() error {
 // bare ErrNotFound some other layer might wrap. Nothing Meta says (Graph 100/33 included) is ever
 // a 404.
 func (s *BriefService) classifyMetaAdSetError(ctx context.Context, verb, projectID, briefID, campaignID string, platform model.Provider, aerr error) error {
-	logFields := []any{"project_id", projectID, "brief_id", briefID, "campaign_id", campaignID, "platform", platform, "op", verb + "_meta_ad_sets"}
+	opName := verb + "_meta_ad_sets"
 	failed := "the campaign's ad sets could not be read from Meta"
 	nothing := ""
-	if verb == "toggle" {
+	switch verb {
+	case "toggle":
 		failed = "the ad set's status could not be changed; nothing was changed on Meta"
 		nothing = " — nothing was changed"
+	case "read_ads":
+		// list-meta-ads (decision D7 first step) shares this mapping; only its wording differs.
+		opName = "read_meta_ads"
+		failed = "the ad set's ads could not be read from Meta"
 	}
+	logFields := []any{"project_id", projectID, "brief_id", briefID, "campaign_id", campaignID, "platform", platform, "op", opName}
 	switch {
 	case errors.Is(aerr, domain.ErrMetaAdSetsUnsupported):
 		return &briefs.BadRequestError{Code: "400", Message: "ad-set operations are supported for Meta campaigns only"}
 	case errors.Is(aerr, domain.ErrMetaAdSetInvalid):
 		return &briefs.BadRequestError{Code: "400", Message: "ad_set_id must be a Meta ad set id: 1-32 digits without a leading zero"}
 	case errors.Is(aerr, domain.ErrMetricsWindowUnsupported):
+		if verb == "read_ads" {
+			return &briefs.BadRequestError{Code: "400", Message: "this window is not supported for Meta ads"}
+		}
 		return &briefs.BadRequestError{Code: "400", Message: "this window is not supported for Meta ad sets"}
 	case errors.Is(aerr, ErrCampaignNotProvisioned):
 		if verb == "toggle" {
 			slog.WarnContext(ctx, "meta ad set activation refused: the campaign records no ad set of its own",
 				append(logFields, "error", safeErrSummary(aerr))...)
 			return &briefs.ConflictError{Code: "409", Message: "this campaign's ad sets cannot be activated here: the campaign records no ad set of its own — it was ADOPTED (adoption does not verify targeting) or never fully provisioned; activate it in Meta Ads Manager. Pausing is always allowed" + nothing}
+		}
+		if verb == "read_ads" {
+			return &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, so it has no ads to read"}
 		}
 		return &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, so it has no ad sets to read"}
 	case errors.Is(aerr, domain.ErrMetaAdSetNotInCampaign):
@@ -739,6 +751,9 @@ func (s *BriefService) classifyMetaAdSetError(ctx context.Context, verb, project
 	case errors.Is(aerr, domain.ErrCampaignUpstreamIdentityMismatch):
 		slog.WarnContext(ctx, "meta ad sets blocked: Meta's record of the campaign no longer matches the recorded identity",
 			append(logFields, "error", safeErrSummary(aerr))...)
+		if verb == "read_ads" {
+			return &briefs.ConflictError{Code: "409", Message: "Meta reports an ad of this ad set under a different ad account than the one this service recorded, so its ads cannot be read safely"}
+		}
 		return &briefs.ConflictError{Code: "409", Message: "Meta reports this campaign's ad sets under a different ad account than the one this service recorded, so they cannot be addressed safely — re-dispatch the campaign" + nothing}
 	case errors.Is(aerr, ErrCampaignAccountMismatch):
 		slog.WarnContext(ctx, "meta ad sets blocked: campaign belongs to a different ad account than the current connection",
