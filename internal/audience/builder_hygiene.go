@@ -90,6 +90,11 @@ func DominantBrand(names []string, eventName string) string {
 		if len(distinct) > 0 && !SharesKeyword(n, distinct) {
 			continue
 		}
+		// An event name of only generic words ("Open Source Summit Japan") has no word
+		// to tell its lists from another event's, so a voter must name it whole.
+		if len(distinct) == 0 && strings.TrimSpace(eventName) != "" && !namesWholeLabel(n, eventName) {
+			continue
+		}
 		m := brandSegmentRE.FindStringSubmatch(n)
 		if len(m) != 2 {
 			continue

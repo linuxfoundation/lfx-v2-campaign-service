@@ -1941,10 +1941,19 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// Every edition a registration branch explicitly includes is evidence, less any a
 	// verified suppression excludes whole; the display name is evidence too unless those
 	// branches are the list's whole membership.
-	addEvidence := func(raw json.RawMessage, name string) {
+	// emptied are lists whose whole membership is excluded: in sentAway, or made only of
+	// registrations whose every edition is away. Used below to tell an audience its
+	// exclusions leave nobody, which check 4 must not report as a pass.
+	emptied := map[string]bool{}
+	for id := range sentAway {
+		emptied[id] = true
+	}
+	addEvidence := func(raw json.RawMessage, name string) (allAway bool) {
 		editions, exclusive := audience.RegistrationEvidence(raw)
+		allAway = exclusive && len(editions) > 0
 		for _, e := range editions {
 			if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+				allAway = false
 				inclusionNames = append(inclusionNames, e+" Registrants")
 			}
 		}
@@ -1953,8 +1962,9 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 				inclusionNames = append(inclusionNames, name)
 			}
 		}
+		return allAway
 	}
-	addEvidence(list.FilterBranch, list.Name)
+	auditedAllAway := addEvidence(list.FilterBranch, list.Name)
 	// A list the send itself suppresses (sentAway, verified above) is not sent to: this
 	// edition's registrants included as "A OR B" and excluded at send time leave only B.
 	// A flattened NOT_IN_LIST reference may be local to one branch, so it is no proof
@@ -1966,7 +1976,9 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		// A referenced list is judged the same way: its registration branches' editions
 		// (less any suppressed whole), and its name unless they are its whole membership.
 		if ref, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr == nil && ref != nil {
-			addEvidence(ref.FilterBranch, nameByID[id])
+			if addEvidence(ref.FilterBranch, nameByID[id]) {
+				emptied[id] = true
+			}
 			continue
 		}
 		if name := nameByID[id]; name != "" {
@@ -1978,6 +1990,25 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
 	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs))
 	currentRegistrants := audience.CheckCurrentRegistrants(eventName, inclusionNames)
+	// When the list's own exclusions (and the send's) leave nobody, removing this
+	// edition's registrants is not a pass: the send would reach no one. Reported so the
+	// operator sees it before sending, as the send-time credit guard does for check 3.
+	if strings.TrimSpace(eventName) != "" {
+		ids := make([]string, 0, len(emptied))
+		for id := range emptied {
+			ids = append(ids, id)
+		}
+		if auditedAllAway || audience.TreeCoveredBy(list.FilterBranch, ids) {
+			currentRegistrants = audience.Check{
+				Verdict: audience.VerdictNeedsVerify,
+				Findings: []audience.Finding{{
+					Severity: audience.SeverityHigh,
+					Message:  "This list's exclusions remove every contact it includes, so the send would reach no one.",
+					Fix:      "Check the list's inclusions and exclusions: remove the exclusion that covers the whole audience, or include contacts it does not cover.",
+				}},
+			}
+		}
+	}
 
 	findings := make([]audience.Finding, 0, 7)
 	findings = append(findings, signalMapping.Findings...)

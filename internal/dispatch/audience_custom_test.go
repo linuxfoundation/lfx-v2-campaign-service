@@ -1379,3 +1379,31 @@ func TestRunQA_TheMastersOwnSuppressionClearsCheckFour(t *testing.T) {
 		})
 	}
 }
+
+// A master whose own exclusion removes every contact it includes has no recipients;
+// check 4 reports that rather than passing because this edition's registrants are gone.
+func TestRunQA_AnEmptiedMasterIsNotAPass(t *testing.T) {
+	ue := `{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+		`{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["KubeCon 2026"]}}]}`
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	reg := or(`{"filterBranchType":"AND","filters":[],"filterBranches":[` + ue + `]}`)
+	portal := seoulPortal()
+	portal.lists["26Q4 - KubeCon 2026 - Master"] = "500"
+	portal.lists["26Q4 - KubeCon 2026 Registrants"] = "801"
+	portal.lists["26Q4 - Combined Suppression"] = "700"
+	portal.branches = map[string]string{
+		"500": or(`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":801},{"filterType":"IN_LIST","operator":"NOT_IN_LIST","listId":700}]}`),
+		"801": reg,
+		"700": reg,
+	}
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+	require.NoError(t, err)
+	assert.Equal(t, audience.VerdictNeedsVerify, out.Checks.CurrentRegistrants.Verdict)
+	require.NotEmpty(t, out.Checks.CurrentRegistrants.Findings)
+	assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "reach no one")
+}

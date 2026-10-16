@@ -270,3 +270,10 @@ sweep after review pagination hid them:
   registration branch, since only send-time suppressions were counted. A list excluded on every path
   (`ExcludedOnEveryPathIDs`) is now treated like a verified suppression for check 4, with its
   covered lists and editions; a branch-local exclusion is not.
+- **An emptied audience is reported, not passed** (Greptile). Once the master's own exclusions count,
+  a master including only this edition's registrants and excluding them all lost every piece of
+  evidence and passed check 4 with no recipients. Check 4 now reports NEEDS VERIFY ("the send would
+  reach no one") when the list's and the send's exclusions leave nobody.
+- **An all-generic event name must appear whole in a brand voter** (Copilot). For "Open Source
+  Summit Japan 2026" no distinctive word remained, so every search hit voted and KubeCon Japan's
+  lists out-voted the event's own; such a name must now appear whole in a voter's list name.
