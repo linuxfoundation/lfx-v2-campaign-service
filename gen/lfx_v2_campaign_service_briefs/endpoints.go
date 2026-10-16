@@ -40,6 +40,7 @@ type Endpoints struct {
 	GetKeywordTargeting    goa.Endpoint
 	RemoveKeywordTargeting goa.Endpoint
 	ListMetaAdSets         goa.Endpoint
+	ListMetaAds            goa.Endpoint
 	ToggleMetaAdSetStatus  goa.Endpoint
 	DeleteCampaign         goa.Endpoint
 	GetJob                 goa.Endpoint
@@ -83,6 +84,7 @@ func NewEndpoints(s Service) *Endpoints {
 		GetKeywordTargeting:    NewGetKeywordTargetingEndpoint(s, a.JWTAuth),
 		RemoveKeywordTargeting: NewRemoveKeywordTargetingEndpoint(s, a.JWTAuth),
 		ListMetaAdSets:         NewListMetaAdSetsEndpoint(s, a.JWTAuth),
+		ListMetaAds:            NewListMetaAdsEndpoint(s, a.JWTAuth),
 		ToggleMetaAdSetStatus:  NewToggleMetaAdSetStatusEndpoint(s, a.JWTAuth),
 		DeleteCampaign:         NewDeleteCampaignEndpoint(s, a.JWTAuth),
 		GetJob:                 NewGetJobEndpoint(s, a.JWTAuth),
@@ -124,6 +126,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.GetKeywordTargeting = m(e.GetKeywordTargeting)
 	e.RemoveKeywordTargeting = m(e.RemoveKeywordTargeting)
 	e.ListMetaAdSets = m(e.ListMetaAdSets)
+	e.ListMetaAds = m(e.ListMetaAds)
 	e.ToggleMetaAdSetStatus = m(e.ToggleMetaAdSetStatus)
 	e.DeleteCampaign = m(e.DeleteCampaign)
 	e.GetJob = m(e.GetJob)
@@ -687,6 +690,29 @@ func NewListMetaAdSetsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.En
 			return nil, err
 		}
 		return s.ListMetaAdSets(ctx, p)
+	}
+}
+
+// NewListMetaAdsEndpoint returns an endpoint function that calls the method
+// "list-meta-ads" of service "lfx-v2-campaign-service-briefs".
+func NewListMetaAdsEndpoint(s Service, authJWTFn security.AuthJWTFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ListMetaAdsPayload)
+		var err error
+		sc := security.JWTScheme{
+			Name:           "jwt",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		var token string
+		if p.BearerToken != nil {
+			token = string(*p.BearerToken)
+		}
+		ctx, err = authJWTFn(ctx, token, &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.ListMetaAds(ctx, p)
 	}
 }
 

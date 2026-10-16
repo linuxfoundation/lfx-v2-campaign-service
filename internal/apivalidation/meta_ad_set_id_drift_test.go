@@ -43,3 +43,27 @@ func TestMetaAdSetIDPattern_MatchesPlatformValidator(t *testing.T) {
 		}
 	}
 }
+
+// TestMetaAdsAdSetIDPattern_MatchesPlatformValidator is the same pin for list-meta-ads, whose
+// ad_set_id is interpolated into GET /{ad_set_id} and GET /{ad_set_id}/ads.
+func TestMetaAdsAdSetIDPattern_MatchesPlatformValidator(t *testing.T) {
+	mux := goahttp.NewMuxer()
+	decode := briefsrv.DecodeListMetaAdsRequest(mux, goahttp.RequestDecoder)
+	var routed *http.Request
+	briefsrv.MountListMetaAdsHandler(mux, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { routed = r }))
+	const brief = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+	cases := []string{"120210000000000888", "1", "0", "01", "12a", " 1", "1 ", "act_1", "-1",
+		strings.Repeat("9", 32), strings.Repeat("9", 33)}
+	for _, id := range cases {
+		routed = nil
+		path := "/projects/cncf/briefs/" + brief + "/campaigns/" + brief + "/meta-ad-sets/" + url.PathEscape(id) + "/ads"
+		mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		if routed == nil {
+			t.Fatalf("id %q: GET %s was not routed", id, path)
+		}
+		_, err := decode(routed)
+		if designOK, platformOK := err == nil, meta.ValidateAdSetID(id) == nil; designOK != platformOK {
+			t.Errorf("id %q: design accepts=%v (%v), meta.ValidateAdSetID accepts=%v", id, designOK, err, platformOK)
+		}
+	}
+}
