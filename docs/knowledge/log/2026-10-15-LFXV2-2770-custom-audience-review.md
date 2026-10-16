@@ -232,3 +232,6 @@ sweep after review pagination hid them:
   `event_name` value as registrants, so a list of people who had NOT registered for this edition
   failed check 4. A negated event branch or a negative comparison now returns nil, and the
   name-based check decides.
+  Tightened further (Copilot): only exact equality comparisons, in a list whose registration
+  events are all "has completed", count; a substring ("contains KubeCon") names no edition and
+  falls back to the name too.

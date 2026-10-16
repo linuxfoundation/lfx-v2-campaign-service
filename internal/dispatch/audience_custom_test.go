@@ -1138,6 +1138,8 @@ func TestRunQA_CheckFourReadsTheRegistrationPredicates(t *testing.T) {
 		// edition's registrants, and the neutral name leaves nothing to flag.
 		"not completed registration for 2026": {listName: "26Q4 - Seoul - Prospects", eventOp: "HAS_NOT_COMPLETED", nameOp: "IS_EQUAL_TO", edition: "KubeCon 2026", fail: false},
 		"event name is not 2026":              {listName: "26Q4 - Seoul - Prospects", eventOp: "HAS_COMPLETED", nameOp: "IS_NOT_EQUAL_TO", edition: "KubeCon 2026", fail: false},
+		// A substring names no edition, so the year-qualified name still decides.
+		"a substring on this edition's list": {listName: "26Q4 - KubeCon 2026 - Event Registration", eventOp: "HAS_COMPLETED", nameOp: "CONTAINS", edition: "KubeCon", fail: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			portal := seoulPortal()

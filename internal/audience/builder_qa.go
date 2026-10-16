@@ -166,17 +166,23 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 // editions' registrants the list holds better than its display name does: a list
 // named for "KubeCon 2026" can select only 2025's registrants.
 //
-// Only a provably POSITIVE match counts. A negated event branch (has NOT completed)
-// or a negative comparison on event_name (is not equal to) selects people who did
-// not register, so it returns nil and the caller falls back to the list's name,
-// which leaves an uncertain case to the name-based check rather than inventing
-// "registrants" the list excludes.
+// Only provably EXACT, POSITIVE editions count: equality comparisons on event_name,
+// in a list whose registration events are all "has completed". A negated branch
+// (has NOT completed) or a negative comparison (is not equal to) selects people who
+// did not register; a substring (contains "KubeCon") names no edition. Any of these
+// returns nil, and the caller falls back to the list's name, leaving an uncertain
+// case to the name-based check rather than inventing or dropping registrants.
 func RegisteredEditions(filters []ListFilter) []string {
-	positive := map[string]bool{"IS_EQUAL_TO": true, "IS_ANY_OF": true, "CONTAINS": true, "CONTAINS_TOKEN": true, "EQ": true}
+	exact := map[string]bool{"IS_EQUAL_TO": true, "IS_ANY_OF": true, "EQ": true}
+	completed := false
 	var out []string
 	for _, f := range filters {
-		if f.FilterType == "UNIFIED_EVENTS" && strings.Contains(strings.ToUpper(f.Operator), "NOT") {
-			return nil
+		if f.FilterType == "UNIFIED_EVENTS" {
+			if f.EventTypeID == registrationEventTypeID && strings.EqualFold(strings.TrimSpace(f.Operator), "HAS_COMPLETED") {
+				completed = true
+			} else if strings.Contains(strings.ToUpper(f.Operator), "NOT") {
+				return nil
+			}
 		}
 		if f.PropertyKey() != "event_name" {
 			continue
@@ -185,10 +191,13 @@ func RegisteredEditions(filters []ListFilter) []string {
 		if op == "" {
 			op = strings.ToUpper(strings.TrimSpace(f.Operator))
 		}
-		if !positive[op] {
+		if !exact[op] {
 			return nil
 		}
 		out = append(out, f.StringValues()...)
+	}
+	if !completed {
+		return nil
 	}
 	return UniqueIDs(out)
 }
