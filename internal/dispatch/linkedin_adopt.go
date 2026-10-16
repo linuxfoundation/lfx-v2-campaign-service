@@ -5,7 +5,6 @@ package dispatch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -89,19 +88,11 @@ func (d *LinkedInDispatcher) LookupCampaign(ctx context.Context, projectID strin
 }
 
 // linkedInAdopted reports whether the row was bound by adoption (linkedin.CampaignResult.Adopted).
-// An unreadable blob reads as not adopted: every path that consults this has its own provenance
-// guard, which an unreadable blob already fails.
+// It reads the one marker model.CampaignAdopted reads, so the activate and bid refusals here
+// and the public `adopted` flag cannot disagree. An unreadable blob reads as not adopted: every
+// path that consults this has its own provenance guard, which an unreadable blob already fails.
 func linkedInAdopted(campaign *model.Campaign) bool {
-	if campaign == nil || len(campaign.Result) == 0 {
-		return false
-	}
-	var blob struct {
-		Adopted bool `json:"adopted"`
-	}
-	if err := json.Unmarshal(campaign.Result, &blob); err != nil {
-		return false
-	}
-	return blob.Adopted
+	return model.CampaignAdopted(campaign)
 }
 
 // errLinkedInAdoptedActivate is the toggle's ACTIVATE refusal for an adopted row.

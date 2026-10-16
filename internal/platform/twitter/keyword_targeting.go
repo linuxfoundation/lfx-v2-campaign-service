@@ -76,7 +76,8 @@ var ErrTargetingCriterionNotFound = errors.New("twitter: no such live targeting 
 var ErrTargetingUnreadable = errors.New("twitter: the line item's targeting criteria could not be read completely")
 
 // ErrWriteNotSent marks a mutation abandoned BEFORE it was sent (the write pacer's wait was cut
-// short). Definite — nothing reached X.
+// short, or the request could not be signed or built — requestNotSentError). Definite — nothing
+// reached X.
 var ErrWriteNotSent = errors.New("twitter: the request was not sent")
 
 // TargetingCriterion is one targeting criterion as X reported it.

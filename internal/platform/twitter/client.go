@@ -37,6 +37,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
@@ -906,6 +907,34 @@ func (e *preSendError) Error() string {
 
 func (e *preSendError) Unwrap() error { return e.err }
 
+// requestNotSentError is a failure while this client was still PREPARING a request — signing it
+// (buildOAuthHeader) or building it (http.NewRequestWithContext) — so httpClient.Do never ran and
+// nothing reached X. It carries ErrWriteNotSent, the marker every write caller and the dispatcher
+// already read as "never transmitted", so such a failure is classified NOT_SENT rather than
+// falling through to a REJECTED X never issued. It is not a preSendError, which names a DIAL
+// failure; ProbeNotSent matches both.
+//
+// Error() renders the method, the caller's path label and the failed stage only: the cause of a
+// URL parse failure embeds the full request URL, query included, and this text is copied into
+// persisted Steps. Unwrap keeps the cause reachable for errors.Is/As.
+//
+// Both stages are deterministic in (method, URL), and the URL is fixed before doRequestAbs's retry
+// loop, so a failure can only occur on the FIRST attempt: no earlier attempt of the same call has
+// been transmitted when this is returned, and the claim needs no attempt guard.
+type requestNotSentError struct {
+	Method string
+	Path   string
+	stage  string
+	// err is unexported for the reason transportError.err is — see there.
+	err error
+}
+
+func (e *requestNotSentError) Error() string {
+	return fmt.Sprintf("x ads api %s %s: %s failed, so the request was not sent", e.Method, e.Path, e.stage)
+}
+
+func (e *requestNotSentError) Unwrap() []error { return []error{ErrWriteNotSent, e.err} }
+
 // safeTransportCause returns a URL-free description of a round-trip error, chosen from
 // a FIXED vocabulary. It is an allowlist with a default-deny, not a peel-and-render, and
 // it mirrors hubspot.safeCause and the microsoft client's equivalent — deliberately, so
@@ -1248,12 +1277,12 @@ func (c *Client) doRequestAbsCounted(ctx context.Context, method, reqURL, logPat
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		authHeader, err := c.buildOAuthHeader(method, reqURL, nil)
 		if err != nil {
-			return nil, err
+			return nil, &requestNotSentError{Method: method, Path: path, stage: "sign request", err: err}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, method, reqURL, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("build request: %w", err)
+			return nil, &requestNotSentError{Method: method, Path: path, stage: "build request", err: err}
 		}
 		req.Header.Set("Authorization", authHeader)
 
@@ -1667,6 +1696,14 @@ func toIso8601Utc(dateStr string) string {
 type campaignElement struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Deleted, CampaignID and FundingInstrumentID are read only for the reuse checks in
+	// findByNameChecked: a deleted element is never reused, and the provenance fields are
+	// compared when X reports them (a line item's parent campaign, a campaign's funding
+	// instrument) so a lookup whose server-side filter was not honoured cannot hand back an
+	// element from somewhere else.
+	Deleted             bool   `json:"deleted"`
+	CampaignID          string `json:"campaign_id"`
+	FundingInstrumentID string `json:"funding_instrument_id"`
 }
 
 // findCampaignByName returns the id of a campaign matching name, or "" if no
@@ -1680,7 +1717,19 @@ func (c *Client) findCampaignByName(ctx context.Context, name string) (string, e
 	// name-based idempotency). q does substring/prefix matching, so findByName
 	// still enforces the EXACT-name comparison locally. count=1000 (max page size,
 	// independent of cursor) keeps any residual paging cheap.
-	return c.findByName(ctx, "campaigns?with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name)
+	//
+	// PROVENANCE. The path is account-scoped, so X resolves the name inside the
+	// connection's account. A same-named campaign that reports a DIFFERENT funding
+	// instrument is refused rather than reused: it bills somewhere this connection is not
+	// configured to bill, so adopting it would spend through the wrong instrument, and
+	// creating beside it would leave two campaigns under one name.
+	fi := c.account.FundingInstrumentID
+	return c.findByNameChecked(ctx, "campaigns?with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name, func(it campaignElement) error {
+		if got := strings.TrimSpace(it.FundingInstrumentID); got != "" && fi != "" && got != fi {
+			return fmt.Errorf("lookup %q: a same-named campaign is on a different funding instrument than this connection's, so it is not reused and no duplicate is created; rename or remove it in X Ads Manager", name)
+		}
+		return nil
+	})
 }
 
 // findLineItemByName returns the id of a line item matching name within a
@@ -1694,7 +1743,16 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 	// q=<name> is the server-side name filter (see findCampaignByName); it makes
 	// the lookup O(matches), not O(account), while findByName still enforces the
 	// exact-name match locally. count=1000 is the max page size.
-	return c.findByName(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name)
+	//
+	// PROVENANCE. A match that reports a parent campaign other than campaignID means the
+	// campaign_ids filter was not honoured, so nothing in the page is known to belong to
+	// this campaign: refused, never reused.
+	return c.findByNameChecked(ctx, "line_items?campaign_ids="+url.QueryEscape(campaignID)+"&with_deleted=false&count="+strconv.Itoa(listPageSize)+"&q="+url.QueryEscape(name), name, func(it campaignElement) error {
+		if got := strings.TrimSpace(it.CampaignID); got != "" && got != campaignID {
+			return fmt.Errorf("lookup %q: a same-named line item reports a different parent campaign than the one looked up, so the lookup's campaign filter cannot be trusted; aborting to avoid reusing or duplicating the wrong line item", name)
+		}
+		return nil
+	})
 }
 
 // findByName pages through a cursor-paginated X Ads list endpoint (campaigns /
@@ -1708,6 +1766,23 @@ func (c *Client) findLineItemByName(ctx context.Context, campaignID, name string
 // follows next_cursor so a match beyond the first page is still found, bounded
 // by maxListPages.
 func (c *Client) findByName(ctx context.Context, path, name string) (string, error) {
+	return c.findByNameChecked(ctx, path, name, nil)
+}
+
+// findByNameChecked is findByName with two reuse rules on top, both of which fail closed:
+//
+//   - AMBIGUITY. X does not enforce name uniqueness, so a name can match more than one live
+//     element. The walk reads every page and refuses when two or more elements carry the
+//     exact name, rather than reusing whichever X happened to list first: the guess could
+//     adopt a campaign another operator created, and creating a third would only add to the
+//     pile. The operator resolves it in X Ads Manager.
+//   - PROVENANCE. check, when non-nil, vets each exact-name match (parent campaign, funding
+//     instrument); its error aborts the lookup. A match X reports as deleted is skipped.
+//
+// Both refusals are lookup errors, so the caller aborts before any create — exactly as it
+// does for a lookup it cannot complete.
+func (c *Client) findByNameChecked(ctx context.Context, path, name string, check func(campaignElement) error) (string, error) {
+	matchID := ""
 	cursor := ""
 	for page := 0; page < maxListPages; page++ {
 		// requestPage keeps the cursor on the wire URL and off the error path — see
@@ -1719,6 +1794,13 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 		}
 		if resp == nil {
 			return "", fmt.Errorf("lookup %q: empty response", name)
+		}
+		// The page's raw body must pass identityjson before it is decoded (PR #358 review):
+		// encoding/json resolves a repeated key — exact or case-folded — last-wins, so a row
+		// carrying `"deleted":false,"deleted":true` would read as deleted, be skipped, and turn
+		// a live match into a not-found the caller answers with a duplicate create.
+		if err := identityjson.Check(resp.raw); err != nil {
+			return "", fmt.Errorf("lookup %q: a page that cannot be trusted, so the name cannot be confirmed absent; aborting to avoid creating a duplicate: %w", name, err)
 		}
 		// Declared INSIDE the loop so it starts nil on every iteration and its nil-ness
 		// is decided by this page's body alone.
@@ -1750,16 +1832,25 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 			return "", fmt.Errorf("lookup %q: 2xx response carried no data field, so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name)
 		}
 		for _, it := range items {
-			if it.Name == name {
-				// A match with no usable id cannot be reused. Returning ("", nil)
-				// here would read as "not found" and drive the caller into a create
-				// POST, risking a duplicate of an element that already exists.
-				// Surface it as a lookup error so the caller aborts instead.
-				if it.ID == "" {
-					return "", fmt.Errorf("lookup %q: matching element has no id; aborting to avoid creating a duplicate", name)
-				}
-				return it.ID, nil
+			if it.Name != name || it.Deleted {
+				continue
 			}
+			// A match with no usable id cannot be reused. Returning ("", nil)
+			// here would read as "not found" and drive the caller into a create
+			// POST, risking a duplicate of an element that already exists.
+			// Surface it as a lookup error so the caller aborts instead.
+			if it.ID == "" {
+				return "", fmt.Errorf("lookup %q: matching element has no id; aborting to avoid creating a duplicate", name)
+			}
+			if check != nil {
+				if err := check(it); err != nil {
+					return "", err
+				}
+			}
+			if matchID != "" && matchID != it.ID {
+				return "", fmt.Errorf("lookup %q: more than one live element carries this exact name, so which one an earlier attempt created cannot be told; nothing is reused or created — remove or rename the extra one in X Ads Manager", name)
+			}
+			matchID = it.ID
 		}
 		// Terminating the walk as "not found" is a CLAIM the caller acts on with a create
 		// POST, so it must not rest on a body that never said the results were exhausted.
@@ -1783,10 +1874,11 @@ func (c *Client) findByName(ctx context.Context, path, name string) (string, err
 				return "", fmt.Errorf("lookup %q: a full page of %d returned no next_cursor X gives a meaning to (absent or empty, not the documented null), so the name cannot be confirmed absent; aborting to avoid creating a duplicate", name, listPageSize)
 			}
 			// Short page: conclusively the last one under X's documented rule, so the
-			// cursor's shape does not matter and this is a genuine not-found.
-			return "", nil
+			// cursor's shape does not matter and this is a genuine not-found (or the
+			// single match the walk already holds).
+			return matchID, nil
 		case cursorExhausted:
-			return "", nil
+			return matchID, nil
 		case cursorMore:
 			cursor = resp.NextCursor
 		}
@@ -3652,19 +3744,76 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		steps = append(steps, "Both an explicit tweet ID and tweet text were supplied; the explicit tweet ID is promoted and the tweet text is ignored")
 	}
 
-	// NOT find-or-create, unlike Steps 2 and 3. Authoring is unconditional, so a
-	// repeat CreateCampaign that REUSES the campaign and line item by name still
-	// publishes a second tweet. The orchestrator's claim short-circuits an ordinary
-	// re-dispatch, so the reachable case is an operator-initiated retry after a
-	// partial failure — which is exactly what the UNCONFIRMED warnings below invite.
+	// Step 4 reuse (LFXV2-2665). A promoted tweet has no name, but its parent line item
+	// is found by its deterministic one, so on a REUSED line item the associations an
+	// earlier attempt made are read back (listPromotedTweets) before anything is authored
+	// or promoted. A FRESH line item was created moments ago by this call and cannot hold
+	// one, so the read runs only on reuse and a first create is unchanged.
 	//
-	// Deferred to the LFXV2-2665 idempotency work rather than solved here, because
-	// the guard needs a promoted_tweets read on the reused line item and a decision
-	// about what to do with a tweet that is published but unattached. What makes the
-	// deferral tolerable is the partial-result fix above: the authored tweet's id now
-	// survives every abort on this path, so the operator retrying has the handle to
-	// the existing tweet instead of only a prose Steps line.
-	if tweetID == "" && composedTweetText != "" {
+	//   - authoring requested, exactly ONE live association: an earlier attempt authored
+	//     and promoted that tweet, so it is reused — no second tweet is published under
+	//     the LF handle and no second creative starts spending. Its copy and image are NOT
+	//     compared with this request (X re-wraps links, so text equality proves nothing);
+	//     a warning step says so, as the campaign and line-item reuse warnings do.
+	//   - authoring requested, TWO OR MORE: which one is this brief's cannot be told, so
+	//     nothing is authored or promoted and the operator is told to verify. Never a guess.
+	//   - explicit TweetID already associated: that association is reused, not re-POSTed
+	//     (the re-POST answers DUPLICATE_PROMOTABLE_ENTITY, which cannot be read as this
+	//     line item's). Two associations of the same tweet are refused the same way.
+	//   - the read fails: when authoring, an existing association cannot be ruled out,
+	//     so nothing is authored or promoted (non-fatal, like every Step 4 degrade); with
+	//     an explicit TweetID the POST still goes out, since nothing is published and a
+	//     repeat is refused by X as DUPLICATE_PROMOTABLE_ENTITY.
+	//
+	// What this still cannot find is a tweet that was PUBLISHED but never PROMOTED (an
+	// authoring outcome that was lost, or an abort between authoring and promotion): it
+	// has no parent to be found through. Those paths return the tweet's id in
+	// AuthoredTweetID with instructions to pass it back as tweetId (authoredTweetStatus),
+	// and an UNCONFIRMED authoring tells the operator to verify before retrying.
+	var promotedReused bool
+	step4Blocked := false
+	if lineItemReused && (tweetID != "" || composedTweetText != "") {
+		existing, lookupErr := c.listPromotedTweets(ctx, lineItemID)
+		switch {
+		case lookupErr != nil && tweetID != "":
+			// An explicit tweet publishes nothing, so there is no second tweet to prevent,
+			// and a re-POST of an association that already exists here is refused by X as
+			// DUPLICATE_PROMOTABLE_ENTITY (handled below) rather than duplicated. Promote.
+			steps = append(steps, fmt.Sprintf("Could not read reused line item %s's existing promoted tweets (%s); promoting tweet %s anyway — X reports an existing association as a duplicate", lineItemID, lookupErr.Error(), tweetID))
+		case lookupErr != nil:
+			step4Blocked = true
+			promotedTweetWarning = fmt.Sprintf("could not read the promoted tweets already on reused line item %s (%s) — nothing was authored or promoted, because an association from an earlier attempt cannot be ruled out; verify in X Ads Manager before retrying", lineItemID, lookupErr.Error())
+			steps = append(steps, fmt.Sprintf("Promoted tweet step skipped: the reused line item's existing promoted tweets could not be read (%s) — verify in X Ads Manager", lookupErr.Error()))
+		case tweetID != "":
+			switch matches := promotedTweetsFor(existing, tweetID); len(matches) {
+			case 0:
+			case 1:
+				promotedReused = true
+				promotedTweetID = matches[0].ID
+				steps = append(steps, fmt.Sprintf("Reusing promoted tweet %s already on reused line item %s (tweet: %s) — not re-posted", promotedTweetID, lineItemID, tweetID))
+			default:
+				step4Blocked = true
+				promotedTweetWarning = fmt.Sprintf("tweet %s is promoted more than once on reused line item %s — nothing was promoted; verify in X Ads Manager", tweetID, lineItemID)
+				steps = append(steps, fmt.Sprintf("Promoted tweet step refused: tweet %s has more than one association on reused line item %s — verify in X Ads Manager", tweetID, lineItemID))
+			}
+		default:
+			switch len(existing) {
+			case 0:
+			case 1:
+				promotedReused = true
+				tweetID = existing[0].TweetID
+				promotedTweetID = existing[0].ID
+				steps = append(steps, fmt.Sprintf("Reusing promoted tweet %s already on reused line item %s (tweet: %s) — no new tweet authored", promotedTweetID, lineItemID, tweetID))
+				steps = append(steps, fmt.Sprintf("Warning: reused existing promoted tweet %s; its copy/image were NOT compared with this request's — verify in X Ads Manager", tweetID))
+			default:
+				step4Blocked = true
+				promotedTweetWarning = fmt.Sprintf("reused line item %s already promotes %d tweets, so which one an earlier attempt authored cannot be told — no tweet was authored or promoted; verify in X Ads Manager", lineItemID, len(existing))
+				steps = append(steps, fmt.Sprintf("Tweet authoring refused: reused line item %s already promotes %d tweets — verify in X Ads Manager", lineItemID, len(existing)))
+			}
+		}
+	}
+
+	if tweetID == "" && composedTweetText != "" && !step4Blocked {
 		// Resolution stays HERE, after the campaign and line item exist, rather than
 		// moving into the up-front validation block. A resolve failure is a non-fatal
 		// degrade — a PAUSED campaign and line item plus instructions to post the
@@ -3722,7 +3871,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		}
 	}
 
-	if tweetID != "" {
+	if tweetID != "" && !step4Blocked && !promotedReused {
 		if err := c.pace(ctx); err != nil {
 			// The campaign AND line item are already created (both PAUSED), and when
 			// this call authored the tweet, so is that. Returning a nil result would
@@ -3739,9 +3888,10 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// The promoted_tweets endpoint does not accept entity_status; the API
 		// creates the association ACTIVE. Delivery is still gated by the PAUSED
 		// line item above, so we intentionally send only the association params.
-		// This POST is always re-issued on a repeated CreateCampaign (unlike the
-		// find-or-create campaign/line-item steps), so a lost first response can
-		// make the retry hit a duplicate — handled below.
+		// On a REUSED line item an association this tweet already has is found above
+		// and reused instead of re-POSTed, so this POST runs only when the read found
+		// none; a duplicate can still come back (a race, or the tweet promoted by a
+		// DIFFERENT line item) and is handled below.
 		resp, err := c.createRequest(ctx, "promoted_tweets", map[string]string{
 			"line_item_id": lineItemID,
 			"tweet_ids":    tweetID,
@@ -3788,7 +3938,7 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 				steps = append(steps, fmt.Sprintf("Promoted tweet creation UNCONFIRMED for tweet %s (2xx with no ID, malformed response) — verify in X Ads Manager before retrying", tweetID))
 			}
 		}
-	} else {
+	} else if tweetID == "" {
 		// No tweet was promoted, so the operator is in the manual workflow. The two
 		// steps below are gated SEPARATELY, because they answer different questions
 		// and only one of them is specific to how we got here.
