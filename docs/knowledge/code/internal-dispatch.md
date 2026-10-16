@@ -2987,7 +2987,7 @@ at all three of `dispatchPlatform`'s call sites (fast-path reuse, claim-conflict
 pinned by its own `TestOrchestrator_*CarriesHubspotURL` test), and `GetJob` returns them as
 `PlatformResult.warnings`. A campaign that asked for no hero reports none. The warning sends the operator
 to the HubSpot editor: staging again reuses the stored campaign and its warnings, so it does not retry
-the upload.
+the upload. The warning asks the operator to check the draft's banner rather than asserting it is absent: a failed upload can leave the template's banner in place.
 
 ## The system account is a connection row, not a second mechanism
 

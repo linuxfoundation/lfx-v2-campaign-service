@@ -2007,8 +2007,12 @@ func TestHubSpot_AFailedHeroIsReportedNotSilent(t *testing.T) {
 	// The address the guard refused must not be echoed into a persisted, API-visible string.
 	// Staging again reuses the stored campaign and its warnings, so the warning must send the
 	// operator to the HubSpot editor, never suggest a re-stage would retry the upload.
-	if !strings.Contains(blob.Warnings[0], "add one in the HubSpot editor") || strings.Contains(blob.Warnings[0], "or stage again") {
+	if !strings.Contains(blob.Warnings[0], "Check the draft's banner in the HubSpot editor") || strings.Contains(blob.Warnings[0], "or stage again") {
 		t.Errorf("the warning must point to the HubSpot editor, not a re-stage: %q", blob.Warnings[0])
+	}
+	// A failed upload does not prove the draft has no banner: the template's may remain.
+	if strings.Contains(blob.Warnings[0], "without a hero banner") {
+		t.Errorf("the warning must not assert the banner is absent: %q", blob.Warnings[0])
 	}
 	if strings.Contains(blob.Warnings[0], "169.254") || strings.Contains(blob.Warnings[0], "a9fe") {
 		t.Errorf("the warning echoes the refused address: %q", blob.Warnings[0])

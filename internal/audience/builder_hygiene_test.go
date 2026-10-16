@@ -56,16 +56,23 @@ func TestDominantBrand(t *testing.T) {
 	assert.Equal(t, "LF", DominantBrand([]string{
 		"26Q2 - The Linux Foundation - OSS Korea - Registrants",
 		"26Q2 - The Linux Foundation - OSS Korea - Speakers",
-	}, "Synthetic Summit"), "a long-form brand votes as its short name, which resolves to the brand master")
+	}, "OSS Korea 2026"), "a long-form brand votes as its short name, which resolves to the brand master")
 	assert.Equal(t, "LF", DominantBrand([]string{
 		"26Q2 - LF - OSS Korea - Registrants",
 		"26Q2 - Linux Foundation - OSS Korea - Speakers",
 		"26Q2 - CNCF - OSS Korea - Web Visitors",
-	}, "Synthetic Summit"), "short and long votes for one brand agree")
+	}, "OSS Korea 2026"), "short and long votes for one brand agree")
 	assert.Equal(t, "LF", DominantBrand([]string{
 		"26Q2 - The Linux Foundation - Member Summit - Registrants",
 		"26Q2 - The Linux Foundation - Member Summit - Speakers",
 	}, "Linux Foundation Member Summit 2026"), "a known long-form brand is a brand even when the event title repeats it")
+	assert.Equal(t, "AAIF", DominantBrand([]string{
+		"26Q3 - AAIF - Synthetic Summit 2026 - Registrants",
+		"26Q3 - AAIF - Synthetic Summit 2026 - Speakers",
+		"26Q3 - LF - Open Source Summit 2025 - Registrants",
+		"26Q3 - LF - Open Source Summit 2025 - Speakers",
+		"26Q3 - LF - Open Source Summit 2025 - Web Visitors",
+	}, "Synthetic Summit 2026"), "only the event's own lists vote; a shared generic word is another event")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y", "26Q3 - CNCF - X - y"}, ""), "a tie is not a brand")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y"}, ""), "one name is not agreement")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - LF Events - A - b", "26Q3 - LF Events - C - d"}, ""), "a generic segment is not a brand")

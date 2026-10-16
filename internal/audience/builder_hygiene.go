@@ -76,9 +76,20 @@ var genericBrandSegments = map[string]bool{"events": true, "lf events": true, "e
 // name, so it agrees with "LF" and resolves through MatchesBrandMaster.
 func DominantBrand(names []string, eventName string) string {
 	eventWords := EventKeywords(eventName)
+	// Only the event's own lists vote: a search hit sharing just a generic word
+	// ("summit") is another event, whose brand says nothing about this one.
+	distinct := map[string]struct{}{}
+	for w := range EventKeywords(StripYear(eventName)) {
+		if _, generic := genericEventWords[w]; !generic {
+			distinct[w] = struct{}{}
+		}
+	}
 	counts := map[string]int{}
 	display := map[string]string{}
 	for _, n := range names {
+		if len(distinct) > 0 && !SharesKeyword(n, distinct) {
+			continue
+		}
 		m := brandSegmentRE.FindStringSubmatch(n)
 		if len(m) != 2 {
 			continue

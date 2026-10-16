@@ -688,7 +688,7 @@ func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL strin
 			// line actionable; the query never is.
 			"source_url", redact.URLUserinfo(imageURL), "error", err)
 		return "", "The hero image could not be added to the email: " + heroFailureReason(err) +
-			" The draft was created without a hero banner; add one in the HubSpot editor. Staging again reuses this draft, so it does not retry the upload."
+			" Check the draft's banner in the HubSpot editor: it may have none, or still carry the template's, so add or replace it there. Staging again reuses this draft, so it does not retry the upload."
 	}
 	return hosted, ""
 }

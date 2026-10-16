@@ -1118,3 +1118,33 @@ func TestRunQA_SeparateSuppressionsCoveringTheAudienceTogetherAreNoSuppression(t
 	require.NoError(t, err)
 	assert.Equal(t, 1, one.Checks.ExclusionCompleteness.SendTimeCount, "one alternative alone leaves the other")
 }
+
+// Check 4 reads the editions a list's registration predicates select, not its name: a
+// list named for "KubeCon 2026" that selects only 2025's registrants is a historical
+// audience, while one whose predicate names 2026 is this edition's own registrants.
+func TestRunQA_CheckFourReadsTheRegistrationPredicates(t *testing.T) {
+	branch := func(edition string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[],"filterBranches":[` +
+			`{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],` +
+			`"filters":[{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["` + edition + `"]}}]}]}]}`
+	}
+	for name, tc := range map[string]struct {
+		edition string
+		fail    bool
+	}{
+		"a past edition under this edition's name": {edition: "KubeCon 2025", fail: false},
+		"this edition's own registrants":           {edition: "KubeCon 2026", fail: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - KubeCon 2026 - Event Registration"] = "500"
+			portal.branches = map[string]string{"500": branch(tc.edition)}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
+		})
+	}
+}

@@ -161,6 +161,20 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 	}
 }
 
+// RegisteredEditions are the exact edition names a list's registration predicates
+// select (its `event_name` filter values), or nil when it has none. They say which
+// editions' registrants the list holds better than its display name does: a list
+// named for "KubeCon 2026" can select only 2025's registrants.
+func RegisteredEditions(filters []ListFilter) []string {
+	var out []string
+	for _, f := range filters {
+		if f.PropertyKey() == "event_name" {
+			out = append(out, f.StringValues()...)
+		}
+	}
+	return UniqueIDs(out)
+}
+
 // RequiredInListIDs are the lists EVERY contact of a list's filter tree must be a
 // member of: an IN_LIST filter on every path through it (AND accumulates, OR keeps
 // only what all its alternatives require). A flattened reference proves nothing

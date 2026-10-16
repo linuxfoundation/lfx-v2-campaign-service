@@ -216,3 +216,15 @@
 - **Test and staff markers win over "master"** (Copilot, review body). "Synthetic Summit - Master
   [test]" was classified as a master, so discovery still expanded it and offered its children. The
   test and staff hints are now checked first.
+
+**Fix** — three Copilot findings that sat only in review bodies ("Previously missed"), found in a
+sweep after review pagination hid them:
+
+- **The hero warning no longer claims the banner is absent.** A failed upload can leave the
+  template's banner on the draft (a hero-only request skips the rebuild), so it now asks the
+  operator to check the banner in the HubSpot editor and add or replace it.
+- **Check 4 reads registration predicates before the name.** `RegisteredEditions` takes a list's
+  `event_name` filter values, so "26Q4 - KubeCon 2026 - Event Registration" built for 2025 is a
+  historical audience; the name stays the fallback for a static or opaque list.
+- **Only the event's own lists vote for its brand.** A search hit sharing just a generic word
+  ("summit") no longer votes in `DominantBrand`.

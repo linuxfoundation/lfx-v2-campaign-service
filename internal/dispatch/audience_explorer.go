@@ -1900,7 +1900,15 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// so judging only its references passed the very list check 4 exists to catch
 	// (seen live on AgntCon Japan's registrants list).
 	inclusionNames := make([]string, 0, 4)
-	if name := strings.TrimSpace(list.Name); name != "" {
+	// When the list's own registration predicates name the editions it selects, they are
+	// the evidence, not its display name: "26Q4 - KubeCon 2026 - Event Registration" built
+	// for registered_for ["KubeCon 2025"] holds only 2025's registrants. The name is the
+	// fallback for a static or otherwise opaque list.
+	if editions := audience.RegisteredEditions(filters); len(editions) > 0 {
+		for _, e := range editions {
+			inclusionNames = append(inclusionNames, e+" Registrants")
+		}
+	} else if name := strings.TrimSpace(list.Name); name != "" {
 		inclusionNames = append(inclusionNames, name)
 	}
 	// A list the send itself suppresses (sentAway, verified above) is not sent to: this
