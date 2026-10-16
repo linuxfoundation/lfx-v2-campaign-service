@@ -597,11 +597,11 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // which is the Meta case spelled out below. Google Ads had both
 // from the start. Meta is the one provider where the halves came apart — it gained discovery
 // in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
-// paragraph below MetaAdsConnectionConfig's own godoc. X is the most recent to earn both, in
-// LFXV2-3319, and unlike Microsoft it was carried across both config gates in the same change.
-// Of the three that remain required, Microsoft (as of LFXV2-3064) has BOTH: Reddit still lacks
-// discovery, while LinkedIn gained a discovery endpoint in that ticket and is missing the
-// OTHER half.
+// paragraph below MetaAdsConnectionConfig's own godoc. X earned both in LFXV2-3319 and
+// Microsoft (whose discovery arrived in LFXV2-3064) was the most recent to be carried across
+// both config gates, in issue #181. Of the two that remain required, Reddit HAS both halves
+// (discovery since LFXV2-2665) and is held back by sequencing alone, while LinkedIn gained a
+// discovery endpoint in LFXV2-3064 and is missing the OTHER half.
 // resolveLinkedInCredentials
 // does tag domain.ErrAccountNotSelected, but LinkedInDispatcher.Dispatch never calls it — the
 // create path resolves inline and answers a missing account id with a bare notCreated, so the
@@ -636,30 +636,28 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // log line carries, which is where an operator tells this apart from a bad credential. The requirement the rule states is that a half-configured
 // connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
-// LinkedIn, Microsoft and Reddit keep Required("account_id"), but no longer all for the
-// same reason, and the difference is what tells you how far each is from being relaxed.
-// Reddit still has NO list to choose from, so relaxing the requirement would create a
-// connection that can never be finished from inside this API: the operator has to obtain the
-// id out-of-band anyway, and the only thing gained is a half-configured row. LinkedIn and
-// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists. What blocks each
-// differs, and two independent gates are easy to conflate here:
+// LinkedIn and Reddit keep Required("account_id"), but not for the same reason, and the
+// difference is what tells you how far each is from being relaxed. Both have a discovery
+// endpoint — the list exists. What blocks each differs, and two independent gates are easy to
+// conflate here:
 //
 //   - THIS Required("account_id") gates the PUBLIC connection APIs. LinkedIn stays required
 //     because it lacks the second half — its create path resolves inline and answers a missing
 //     account id with a bare notCreated, so the choice is never named (paragraph above).
-//     Microsoft has both halves and is therefore behaviourally eligible to have it relaxed.
+//     Reddit has both halves and is therefore behaviourally eligible to have it relaxed.
 //   - accountDiscoveryProviders (internal/bootstrap/sysacct.go) gates only whether an
 //     account-less SYSTEM row is installable by the bootstrap CLI.
 //
 // BOTH gates are per-provider and must be relaxed TOGETHER to make a provider credentials-first;
-// relaxing only one leaves half the flow blocked, which is why X was carried across both in
-// LFXV2-3319. X is now credentials-first on both: it holds both halves (discovery from
-// LFXV2-3319, and a Dispatch that resolves through validateTwitterConnection and tags
-// ErrAccountNotSelected), so it no longer appears in the list above. Microsoft holds both halves
-// too and remains excluded from both gates — that exclusion is a sequencing decision, not a
-// missing capability. Relaxing either gate without both halves is what the next rule forbids.
+// relaxing only one leaves half the flow blocked, which is why X (LFXV2-3319) and Microsoft
+// (issue #181) were each carried across both in one change. Both hold both halves — discovery,
+// and a Dispatch that resolves through validateTwitterConnection / validateMicrosoftConnection,
+// each of which tags ErrAccountNotSelected — so neither appears in the list above. Reddit holds
+// both halves too and remains excluded from both gates — that exclusion is a sequencing
+// decision, not a missing capability. Relaxing either gate without both halves is what the next
+// rule forbids.
 //
-// Add the requirement back for any credentials-first provider — Google Ads, Meta or X — or drop
+// Add the requirement back for any credentials-first provider — Google Ads, Meta, X or Microsoft — or drop
 // it for another provider, only together with that provider's discovery endpoint AND its
 // account_not_selected tagging. Stated as the CLASS rather than a roster: the membership grows,
 // and a fixed list is what sends a later edit to treat the newest member as unrelated.
@@ -1068,9 +1066,11 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	// preference. Declaring the same rule here refuses a malformed id at connection time
 	// rather than storing it on an active connection that can never dispatch.
 	//
-	// account_id is Required, so "" is a malformed value and the pattern rejects it — this
-	// provider has no credentials-first state (see the force-system guard's note that
-	// LinkedIn, Reddit and Microsoft callers must resend the id they already stored).
+	// account_id is OPTIONAL as of issue #181, which made Microsoft credentials-first: a
+	// connection may be created with credentials only and pointed at an account after
+	// GET .../connection-microsoft-ads/accounts enumerates the choices. Only the missing KEY
+	// moved — an explicit "" is a PRESENT value and the pattern still rejects it, exactly as
+	// on X. See the Required() note at the end of this type for why Microsoft qualified.
 	//
 	// It carries customer_id's STRICTER rule, not accountIDRE's bare `[0-9]+`, for the reason
 	// stated below and for one more: an account_id is an identity, and microsoft.numberID —
@@ -1091,7 +1091,7 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	//
 	// The runtime validators stay regardless — a row written by bootstrap, by a migration, or
 	// before this pattern existed never passed through Goa at all.
-	Attribute("account_id", String, "Microsoft Advertising account ID (positive integer)", func() {
+	Attribute("account_id", String, "Microsoft Advertising account ID (positive integer). Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-microsoft-ads/accounts and set it with PUT.", func() {
 		Example("1234567")
 		Pattern(`^[1-9][0-9]{0,17}$`)
 		MaxLength(18)
@@ -1116,7 +1116,16 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 		Pattern(`^([1-9][0-9]{0,17})?$`)
 		MaxLength(18)
 	})
-	Required("account_id")
+	// account_id is deliberately NOT required (issue #181), making Microsoft credentials-first
+	// the way X became in LFXV2-3319. Microsoft earned it by holding BOTH halves — discovery
+	// (microsoft.ListAdAccounts / MicrosoftDispatcher.ListAccounts, LFXV2-3064) and a create
+	// path that NAMES the missing choice, because Dispatch itself resolves through
+	// validateMicrosoftConnection, which tags an empty account id with
+	// domain.ErrAccountNotSelected. It was relaxed in the SAME change that admitted Microsoft
+	// to accountDiscoveryProviders (internal/bootstrap/sysacct.go): the two gates are relaxed
+	// together or not at all. customer_id was already optional and stays so — it is not a
+	// choice discovery has to make (discoveryCustomerIDs walks every customer the credential
+	// reaches) and the client omits the CustomerId header when it is empty.
 })
 
 var MicrosoftAdsConnection = Type("microsoft-ads-connection", func() {

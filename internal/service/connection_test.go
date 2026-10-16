@@ -902,6 +902,92 @@ func TestCreateTwitterAds_WithoutAccountID(t *testing.T) {
 	}
 }
 
+// TestCreateMicrosoftAds_WithoutAccountID is the Microsoft counterpart, added by issue #181
+// alongside the removal of Required("account_id") from MicrosoftAdsConnectionConfig and
+// Microsoft's admission to the bootstrap CLI's accountDiscoveryProviders.
+//
+// Microsoft qualified the way X did — BOTH halves: discovery (MicrosoftDispatcher.ListAccounts)
+// and a create path that NAMES the missing choice, because Dispatch itself resolves through
+// validateMicrosoftConnection, which tags an empty account id with ErrAccountNotSelected.
+//
+// The assertions are the Google Ads three, plus the customer_id one Microsoft adds:
+//
+//  1. Accepted with the key OMITTED (nil), the shape the bootstrap flow sends.
+//  2. status is ACTIVE. validateMicrosoftConnection refuses a non-active connection, so any
+//     other status would make GET .../connection-microsoft-ads/accounts unreachable.
+//  3. account_id round-trips as "".
+//  4. customer_id is NOT a second choice credentials-first defers: it was already optional,
+//     and a credentials-only connection may carry one or not. Both shapes are created here.
+func TestCreateMicrosoftAds_WithoutAccountID(t *testing.T) {
+	for name, customerID := range map[string]*string{
+		"no customer configured": nil,
+		"customer configured":    strPtr("9999999"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestService(t, newFakeRepo())
+			res, err := s.CreateMicrosoftAds(context.Background(), &conn.CreateMicrosoftAdsPayload{
+				ProjectID: "cncf",
+				// AccountID is nil EXPLICITLY — the absence is the subject of this test.
+				Config: &conn.MicrosoftAdsConnectionConfig{
+					Label: strPtr("TLF Main"), AccountID: nil, CustomerID: customerID,
+				},
+				Credentials: &conn.MicrosoftAdsCredentials{
+					ClientID: "ci", ClientSecret: "cs", RefreshToken: "rt", DeveloperToken: "dt",
+				},
+			})
+			if err != nil {
+				t.Fatalf("a credentials-only connection must be creatable: %v", err)
+			}
+			if res.AccountID != "" {
+				t.Errorf("account_id = %q, want the empty string", res.AccountID)
+			}
+			if res.Status != string(model.StatusActive) {
+				t.Errorf("status = %q, want %q — validateMicrosoftConnection refuses a non-active "+
+					"connection, so any other status would make the account unchoosable",
+					res.Status, model.StatusActive)
+			}
+			if !res.HasCredentials {
+				t.Error("expected has_credentials = true: the credentials are exactly what WAS supplied")
+			}
+			if customerID != nil && (res.CustomerID == nil || *res.CustomerID != *customerID) {
+				t.Errorf("customer_id did not round-trip: %v, want %q", res.CustomerID, *customerID)
+			}
+		})
+	}
+}
+
+// TestUpdateMicrosoftAds_BindsDiscoveredAccountToCredentialsOnlyRow is step three of the
+// Microsoft credentials-first flow: the PUT that stores the id discovery returned. The
+// credential assertion is on the Update ARGUMENT for the reason the Google Ads test gives.
+func TestUpdateMicrosoftAds_BindsDiscoveredAccountToCredentialsOnlyRow(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderMicrosoftAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderMicrosoftAds, Status: model.StatusActive,
+		AccountID: "", Version: 2, EncryptedCredentials: []byte("ciphertext"),
+	}
+	s := newTestService(t, repo)
+	ifMatch := "2"
+
+	res, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.MicrosoftAdsConnectionConfig{AccountID: strPtr("1234567"), CustomerID: strPtr("9999999")},
+		IfMatch:   &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMicrosoftAds: %v", err)
+	}
+	if res.AccountID != "1234567" {
+		t.Errorf("account_id = %q, want the discovered id to be bound", res.AccountID)
+	}
+	if res.CustomerID == nil || *res.CustomerID != "9999999" {
+		t.Errorf("customer_id = %v, want 9999999", res.CustomerID)
+	}
+	if repo.gotUpdateCreds != nil {
+		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column to the repository",
+			repo.gotUpdateCreds)
+	}
+}
+
 // TestUpdateGoogleAds_BindsDiscoveredAccountToCredentialsOnlyRow is the second half of the
 // credentials-first bootstrap, and the step the existing update tests never exercised: they
 // only cover missing and stale If-Match. Here the stored row is the state a POST-with-
@@ -1459,7 +1545,7 @@ func TestCreateConnection_UUIDProjectIDRejectedBeforeAnyWrite_AllProviders(t *te
 		{"microsoft", func(s *ConnectionService, pid string) error {
 			_, err := s.CreateMicrosoftAds(context.Background(), &conn.CreateMicrosoftAdsPayload{
 				ProjectID:   pid,
-				Config:      &conn.MicrosoftAdsConnectionConfig{AccountID: "123456789"},
+				Config:      &conn.MicrosoftAdsConnectionConfig{AccountID: strPtr("123456789")},
 				Credentials: &conn.MicrosoftAdsCredentials{RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt"},
 			})
 			return err

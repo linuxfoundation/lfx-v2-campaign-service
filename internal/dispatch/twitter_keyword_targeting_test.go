@@ -302,3 +302,37 @@ func TestTwitter_RemoveKeywordTargeting_CriterionGoneBeforeItsDeleteIsNotSent(t 
 		t.Fatalf("outcomes = %+v, deletes %v", out, s.deleted())
 	}
 }
+
+// xCriteriaDupID is xCriteria with k1's id declared twice. Its last-wins reading IS xCriteria, so
+// without the identityjson guard ownership and the last-keyword gate would both pass on it.
+var xCriteriaDupID = strings.Replace(xCriteria, `{"id":"k1",`, `{"id":"k9","id":"k1",`, 1)
+
+// A criteria list identityjson refuses is the remove lever's read failure — definite, and NO
+// DELETE is issued.
+func TestTwitter_RemoveKeywordTargeting_UntrustworthyListDeletesNothing(t *testing.T) {
+	s := newXKWTStub(t, xKWTLineItem, xCriteriaDupID, nil)
+	_, err := removeX(s, xBidCampaign(), "k1")
+	if !errors.Is(err, domain.ErrKeywordTargetingUnaddressable) || !errors.Is(err, twitter.ErrTargetingUnreadable) {
+		t.Fatalf("want the unreadable-list refusal, got %v", err)
+	}
+	if twitter.IsOutcomeUnconfirmed(err) {
+		t.Errorf("a read refusal must be definite: %v", err)
+	}
+	if d := s.deleted(); len(d) != 0 {
+		t.Fatalf("an untrustworthy list issued DELETE(s): %v", d)
+	}
+}
+
+// The DELETE was sent: an echo identityjson refuses (here last-wins would confirm the delete) is
+// the item's UNCONFIRMED outcome, never a definite failure.
+func TestTwitter_RemoveKeywordTargeting_UntrustworthyEchoIsUnconfirmed(t *testing.T) {
+	s := newXKWTStub(t, xKWTLineItem, xCriteria, map[string]kwtReply{"k1": {http.StatusOK, `{"data":{"id":"k1","deleted":false,"deleted":true}}`}})
+	_, err := removeX(s, xBidCampaign(), "k1")
+	var u interface{ Unconfirmed() bool }
+	if !errors.As(err, &u) || !u.Unconfirmed() {
+		t.Fatalf("want UNCONFIRMED, got %T: %v", err, err)
+	}
+	if d := s.deleted(); len(d) != 1 {
+		t.Errorf("want exactly one DELETE, got %v", d)
+	}
+}
