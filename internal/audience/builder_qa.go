@@ -191,7 +191,10 @@ func RegisteredEditions(raw json.RawMessage) []string {
 		}
 		out = append(out, editions...)
 	})
-	if !ok || !sawRegistration {
+	// And EVERY path must run through such a branch: an OR alternative that is a list
+	// membership or any other condition ("2025 registrants OR an imported list") can
+	// hold any edition's registrants, so the editions alone are not the evidence.
+	if !ok || !sawRegistration || !root.everyPathRegistered() {
 		return nil
 	}
 	return UniqueIDs(out)
@@ -325,6 +328,40 @@ func (b qaBranch) exactEditions() ([]string, bool) {
 		editions = kept
 	}
 	return editions, len(editions) > 0
+}
+
+// everyPathRegistered reports whether every path through the tree requires an exact
+// completed-registration branch: an AND path does when any of its conditions is one;
+// an OR only when every alternative does (a direct filter there is an alternative
+// that does not).
+func (b qaBranch) everyPathRegistered() bool {
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "UNIFIED_EVENTS":
+		if b.EventTypeID != registrationEventTypeID {
+			return false
+		}
+		_, exact := b.exactEditions()
+		return exact
+	case "AND":
+		for _, c := range b.FilterBranches {
+			if c.everyPathRegistered() {
+				return true
+			}
+		}
+		return false
+	case "OR":
+		if len(b.Filters) > 0 || len(b.FilterBranches) == 0 {
+			return false
+		}
+		for _, c := range b.FilterBranches {
+			if !c.everyPathRegistered() {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func (b qaBranch) coveredEditions() []string {

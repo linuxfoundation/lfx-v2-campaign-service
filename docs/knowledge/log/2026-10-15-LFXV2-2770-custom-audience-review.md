@@ -249,3 +249,8 @@ sweep after review pagination hid them:
 - **Inline edition suppression reaches referenced registration lists** (Copilot, review body). A
   referenced list whose own predicates name exact editions is judged by those editions, less any a
   verified suppression excludes whole; a referenced list without such predicates keeps its name.
+- **Editions replace a name only when every path is a registration** (Greptile). A list "2025
+  registration OR an imported membership list" yielded only 2025, so a referenced "KubeCon 2026
+  Registrants" list passed check 4 though the membership branch may hold 2026 registrants.
+  `RegisteredEditions` now also requires every path through the tree to run through an exact
+  completed-registration branch.

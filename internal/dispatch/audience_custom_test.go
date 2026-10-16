@@ -1258,3 +1258,34 @@ func TestRunQA_CheckFourAppliesInlineSuppressionToReferencedLists(t *testing.T) 
 		})
 	}
 }
+
+// Edition evidence replaces a list's name only when every path runs through an exact
+// registration branch: an OR alternative that is a list membership can hold this
+// edition's registrants, so the name decides.
+func TestRunQA_EditionsReplaceTheNameOnlyWhenEveryPathIsARegistration(t *testing.T) {
+	ue := `{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+		`{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["KubeCon 2025"]}}]}`
+	tree := `{"filterBranchType":"OR","filters":[],"filterBranches":[` +
+		`{"filterBranchType":"AND","filters":[],"filterBranches":[` + ue + `]},` +
+		`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":905}]}]}`
+	for name, audited := range map[string]bool{"the audited list": true, "a referenced list": false} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - KubeCon 2026 Registrants"] = "801"
+			portal.lists["26Q4 - Imported Contacts"] = "905"
+			portal.lists["26Q4 - Seoul - Registration Push"] = "500"
+			portal.branches = map[string]string{"801": tree}
+			id := "801"
+			if !audited {
+				portal.branches["500"] = `{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":801}]}]}`
+				id = "500"
+			}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", id, "KubeCon 2026", false, false, nil)
+			require.NoError(t, err)
+			assert.Equal(t, audience.VerdictFail, out.Checks.CurrentRegistrants.Verdict, "the membership branch may hold 2026 registrants; the name decides")
+		})
+	}
+}
