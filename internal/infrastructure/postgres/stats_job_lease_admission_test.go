@@ -222,6 +222,9 @@ func TestStatsJobLease_HeldKeyIsNotAdmittedAfterTheRequestOrLeaseEnds(t *testing
 // then opens the gate. A cancel on a timer instead races the session connect that precedes the
 // lock query — under load the connect can outlast the timer, and the request then ends before
 // any lock is taken, which is a different (and correct) refusal than the one this test asserts.
+// The gated statement still runs under the lease's statsJobLeasePingTimeout (2s), so the steps
+// from the gate wait being seen to the gate opening (one poll tick, cancel, one rollback) must
+// fit in it; they take milliseconds.
 func TestLiveStatsJobLease_NewLockIsNotAdmittedAfterTheRequestEnds(t *testing.T) {
 	pool := liveLeasePool(t)
 	acc := "xadmit-" + liveLeaseSuffix()

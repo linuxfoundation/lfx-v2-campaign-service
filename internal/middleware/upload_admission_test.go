@@ -312,7 +312,7 @@ func TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly(t *testing.T) {
 	select {
 	case code := <-second:
 		close(release)
-		t.Fatalf("the second upload finished with %d while the permit was held: it shed instead of waiting", code)
+		t.Fatalf("the second upload finished with %d while the permit was held: it shed or was admitted concurrently instead of waiting", code)
 	case <-time.After(80 * time.Millisecond):
 	}
 	close(release)
