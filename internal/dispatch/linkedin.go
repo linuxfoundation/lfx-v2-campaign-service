@@ -323,7 +323,7 @@ func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.Campaign
 	orgID := strings.TrimSpace(res.providerConfig["org_id"])
 	accountID := strings.TrimSpace(res.accountID)
 	if orgID == "" {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is missing org id", domain.CallerValue(brief.ProjectID)))
+		return nil, notCreated(linkedInMissingOrgIDRefusal(res))
 	}
 
 	var cfg linkedinConfig
@@ -669,6 +669,25 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 			domain.ErrConnectionNotUsable, domain.ErrAccountNotSelected, projectID)
 	}
 	return res, creds, nil
+}
+
+// linkedInMissingOrgIDRefusal is Dispatch's refusal for a connection with no org id, worded
+// for the row Dispatch actually READ. With forcing off, a project with no LinkedIn row of its
+// own is served from the LF system fallback, and the org id it lacks is then the system row's:
+// naming "this project's" connection would send the operator to repair a connection the
+// project does not have, while the row that needs the fix belongs to LF. res.isFromSystem() is
+// the same provenance systemScoped reads for the connection-class defects, and the two
+// sentence heads are the ones DispatchFailureMessage uses for those classes (issue #208), so a
+// missing org id reads like every other connection fault on the same row.
+//
+// It stays a PreflightRefusal rather than an ErrConnectionNotUsable classification: the job
+// result copies it verbatim, which keeps "org id" in the sentence, and every value in it is a
+// service-owned constant. Raised before any request, so the caller wraps it in notCreated().
+func linkedInMissingOrgIDRefusal(res *resolved) error {
+	if res.isFromSystem() {
+		return domain.PreflightRefusalf("the LF system %s connection is missing its org id; nothing was sent", model.ProviderLinkedInAds)
+	}
+	return domain.PreflightRefusalf("this project's %s connection is missing its org id; nothing was sent", model.ProviderLinkedInAds)
 }
 
 // resolveLinkedInDiscoveryCredentials is resolveLinkedInCredentials WITHOUT the account-id

@@ -256,28 +256,38 @@ type Service interface {
 	// failed row write answers 500 with the platform holding the new bid, logged
 	// as a divergence, and re-applying the same bid reconciles it. ONE MANUAL CPC
 	// BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy.
-	// Microsoft Advertising: the default CpcBid of the ONE ad group this service
-	// created for the campaign (keywords are created without their own bids, so
-	// they inherit it). Reddit: the bid_value of the ONE ad group this service
-	// created. Meta: the bid_amount (a bid cap, in the account currency's minor
-	// units) of the ONE ad set this service created. X: the bid_amount_local_micro
-	// of the ONE line item this service created. A campaign whose row records none
-	// (an adopted campaign, or one whose creation never reached it) is refused
-	// (409): the service will not choose which of several to re-bid. LinkedIn: the
-	// campaign's own unitCost (a decimal amount, written in USD at whole cents — a
-	// sub-cent amount is refused 400 rather than rounded); an ADOPTED LinkedIn
-	// campaign is refused (409). REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS
-	// NOT A COST PER CLICK. A manual bid only does something under a bid strategy
-	// that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's
-	// MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with
-	// billing_event AND optimization_goal both LINK_CLICKS (a Meta bid cap is per
-	// optimization event and, billed on impressions, per 1,000 impressions — so
-	// only that pairing is a max cost per click); X's MAX with pay_by LINK_CLICK;
-	// LinkedIn's costType CPC with optimizationTargetType NONE or
-	// ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or
-	// target strategy (Microsoft MaxClicks, MaxConversions, TargetCpa, TargetRoas,
-	// MaxConversionValue, TargetImpressionShare, a portfolio strategy the read
-	// cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta
+	// Google Ads: the cpc_bid_micros of the ad group this service created for the
+	// campaign (keywords are created without their own bids, so they inherit it);
+	// it is the one platform whose row can record SEVERAL ad groups, and because
+	// siblings carry independent max CPC bids a row recording more than one is
+	// refused (409) rather than resolved — set the bid on the ad group you mean in
+	// Google Ads. Microsoft Advertising: the default CpcBid of the ONE ad group
+	// this service created for the campaign (keywords are created without their
+	// own bids, so they inherit it). Reddit: the bid_value of the ONE ad group
+	// this service created. Meta: the bid_amount (a bid cap, in the account
+	// currency's minor units) of the ONE ad set this service created. X: the
+	// bid_amount_local_micro of the ONE line item this service created. A campaign
+	// whose row records none (an adopted campaign, or one whose creation never
+	// reached it) is refused (409): the service will not choose which of several
+	// to re-bid. LinkedIn: the campaign's own unitCost (a decimal amount, written
+	// in USD at whole cents — a sub-cent amount is refused 400 rather than
+	// rounded); an ADOPTED LinkedIn campaign is refused (409). REFUSED (409) WHEN
+	// THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does
+	// something under a bid strategy that reads it — Google's MANUAL_CPC;
+	// Microsoft's EnhancedCpc or ManualCpc; Reddit's MANUAL_BIDDING with bid_type
+	// CPC; Meta's LOWEST_COST_WITH_BID_CAP with billing_event AND
+	// optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event
+	// and, billed on impressions, per 1,000 impressions — so only that pairing is
+	// a max cost per click); X's MAX with pay_by LINK_CLICK; LinkedIn's costType
+	// CPC with optimizationTargetType NONE or ENHANCED_CONVERSION (its two
+	// manual-bidding modes). Under an automated or target strategy (Google
+	// TARGET_CPA, TARGET_ROAS, TARGET_SPEND, MAXIMIZE_CLICKS,
+	// MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, TARGET_IMPRESSION_SHARE,
+	// MANUAL_CPM, MANUAL_CPV, or any portfolio strategy — Google offers no
+	// portfolio MANUAL_CPC, so a campaign on one never reports MANUAL_CPC and is
+	// refused by the same check; Microsoft MaxClicks, MaxConversions, TargetCpa,
+	// TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio strategy
+	// the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta
 	// LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO,
 	// TARGET; LinkedIn MAX_*, TARGET_COST_PER_*, CAP_COST_AND_*, or any CPM/CPV
 	// campaign) the platform would ignore it or, worse, the write would be read as
@@ -303,27 +313,31 @@ type Service interface {
 	// created with AUTOMATIC bidding (the default) is refused (409) until an
 	// operator moves it to a manual per-click bid in the platform's own UI:
 	// Microsoft MaxClicks, Meta LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO,
-	// LinkedIn WEBSITE_VISIT + MAX_CLICK. Either way the guard decides on what the
-	// platform REPORTS, never on what was created. On every adapter but LinkedIn
-	// the amount is in the AD ACCOUNT's own currency, not USD, and this service
-	// neither knows nor converts it; the LinkedIn adapter writes USD and refuses
-	// (409) a campaign whose bid is in any other or an unreported currency.
-	// Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any
-	// other platform is refused with 400. **409** when the change is refused
-	// BEFORE the platform is written, so nothing has changed: the campaign is
-	// unprovisioned; it belongs to a different ad account than the project's
-	// connection now resolves to, or does not record which ad account it was
-	// created under; its bid strategy is automated, a target, or unreported; or
-	// the bid could not be addressed (no recorded ad group, ad set or line item,
-	// one reporting another campaign or deleted, or one bidding in a unit other
-	// than `bid_type`). None is retryable. **400** for a request fault: a
-	// non-positive, non-finite or out-of-range bid, an unknown bid type, a
-	// platform with no bid-write capability wired, or a bid the campaign's
-	// platform refuses on its own minimum or maximum — the response names what it
-	// was. **503** when the platform could not be reached or did not confirm —
-	// including a throttled Meta, X or LinkedIn write, which is never retried
-	// in-call; the row is unchanged. Setting the same bid twice converges, but
-	// verify the bid in the ad platform before retrying.
+	// LinkedIn WEBSITE_VISIT + MAX_CLICK. GOOGLE ADS, which `bidding` does not
+	// cover, is the exception: a SEARCH campaign this service creates defaults to
+	// MANUAL_CPC, so the guard is expected to pass there without any operator
+	// change — while a Demand Gen, Performance Max, Video or Display campaign
+	// defaults to an automated strategy and is refused. Either way the guard
+	// decides on what the platform REPORTS, never on what was created. On every
+	// adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not
+	// USD, and this service neither knows nor converts it; the LinkedIn adapter
+	// writes USD and refuses (409) a campaign whose bid is in any other or an
+	// unreported currency. Google Ads, Microsoft Advertising, Reddit, Meta, X and
+	// LinkedIn today: a campaign on any other platform is refused with 400.
+	// **409** when the change is refused BEFORE the platform is written, so
+	// nothing has changed: the campaign is unprovisioned; it belongs to a
+	// different ad account than the project's connection now resolves to, or does
+	// not record which ad account it was created under; its bid strategy is
+	// automated, a target, or unreported; or the bid could not be addressed (no
+	// recorded ad group, ad set or line item, one reporting another campaign or
+	// deleted, or one bidding in a unit other than `bid_type`). None is retryable.
+	// **400** for a request fault: a non-positive, non-finite or out-of-range bid,
+	// an unknown bid type, a platform with no bid-write capability wired, or a bid
+	// the campaign's platform refuses on its own minimum or maximum — the response
+	// names what it was. **503** when the platform could not be reached or did not
+	// confirm — including a throttled Meta, X or LinkedIn write, which is never
+	// retried in-call; the row is unchanged. Setting the same bid twice converges,
+	// but verify the bid in the ad platform before retrying.
 	UpdateCampaignBid(context.Context, *UpdateCampaignBidPayload) (res *Campaign, err error)
 	// Pause or remove Google Ads or Microsoft Advertising keywords on one
 	// campaign. A MUTATION on a live paid campaign: pausing or removing a keyword
@@ -372,48 +386,58 @@ type Service interface {
 	// retrying, because retrying an irreversible REMOVE that already ran cannot
 	// undo it.
 	ApplyKeywordActions(context.Context, *ApplyKeywordActionsPayload) (res *KeywordActions, err error)
-	// Add negative keywords to one live campaign (LFXV2-2665). Three platforms,
-	// each at its own level: Microsoft Advertising at CAMPAIGN level
-	// (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in the
-	// excluded_keywords of the ONE ad group this service created (a
-	// whole-targeting PATCH, behind REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off
-	// is 400 before Reddit is contacted); X as one negated keyword targeting
-	// criterion (operator_type NE) per keyword on the ONE line item this service
-	// created. A campaign on any other platform is refused with 400 before
-	// anything is contacted. Match types per platform: Microsoft Exact or Phrase;
-	// X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); Reddit Broad only,
-	// because Reddit's excluded keywords carry no match type. Any other is 400. A
-	// MUTATION on a live paid campaign — a negative keyword stops the campaign
-	// serving on matching queries, so it only narrows delivery — and it carries
-	// the keyword levers' guard set, all before the platform is mutated: the
-	// batch's syntax, the campaign's provisioning, the campaign's ad account
-	// against the project's current connection (a campaign that does not record
-	// its ad account is refused, never assumed), and on Reddit and X a READ
-	// proving the ad group / line item is live and reported under THIS campaign.
-	// Reddit also requires `revision`, the fingerprint get-keyword-targeting
-	// returned, and refuses (409) when the ad group's targeting has changed since,
-	// and a blank one is 400; Microsoft and X refuse a present revision, even an
-	// empty one (400). Like apply-keyword-actions it persists nothing — the
-	// negatives live on the platform — so it takes no If-Match and returns no
-	// ETag. Every write is sent ONCE and never retried on a 429. The 200 carries
-	// one result per requested keyword, in request order, each with its own
-	// outcome. A negative already there is ALREADY_PRESENT, a success, and is not
-	// sent again. Microsoft adds each negative independently; Reddit's one PATCH
+	// Add negative keywords to one live campaign (LFXV2-2665). Four platforms,
+	// each at its own level: Google Ads at CAMPAIGN level
+	// (campaignCriteria:mutate, negative KEYWORD criteria — the same level and
+	// resource its create path attaches an exclusion list through); Microsoft
+	// Advertising at CAMPAIGN level (AddNegativeKeywordsToEntities, EntityType
+	// Campaign); Reddit in the excluded_keywords of the ONE ad group this service
+	// created (a whole-targeting PATCH, behind
+	// REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off is 400 before Reddit is
+	// contacted); X as one negated keyword targeting criterion (operator_type NE)
+	// per keyword on the ONE line item this service created. A campaign on any
+	// other platform is refused with 400 before anything is contacted. Match types
+	// per platform: Google Ads Broad, Phrase or Exact (BROAD/PHRASE/EXACT);
+	// Microsoft Exact or Phrase; X Broad, Phrase or Exact
+	// (BROAD_/PHRASE_/EXACT_KEYWORD); Reddit Broad only, because Reddit's excluded
+	// keywords carry no match type. Any other is 400. A MUTATION on a live paid
+	// campaign — a negative keyword stops the campaign serving on matching
+	// queries, so it only narrows delivery — and it carries the keyword levers'
+	// guard set, all before the platform is mutated: the batch's syntax, the
+	// campaign's provisioning, the campaign's ad account against the project's
+	// current connection (a campaign that does not record its ad account is
+	// refused, never assumed), and on Reddit and X a READ proving the ad group /
+	// line item is live and reported under THIS campaign. Reddit also requires
+	// `revision`, the fingerprint get-keyword-targeting returned, and refuses
+	// (409) when the ad group's targeting has changed since, and a blank one is
+	// 400; Google Ads, Microsoft and X refuse a present revision, even an empty
+	// one (400). Like apply-keyword-actions it persists nothing — the negatives
+	// live on the platform — so it takes no If-Match and returns no ETag. Every
+	// write is sent ONCE and never retried on a 429. The 200 carries one result
+	// per requested keyword, in request order, each with its own outcome. A
+	// negative already there is ALREADY_PRESENT, a success, and is not sent again.
+	// On Google Ads that is established by a READ of the campaign's existing
+	// negatives before anything is written, and it is not an optimisation:
+	// Google's campaignCriteria:mutate is ATOMIC, so one duplicate would fail the
+	// whole batch and take every acceptable keyword with it. For the same
+	// atomicity every Google keyword actually SENT shares one outcome — all
+	// APPLIED, all FAILED or all UNCONFIRMED; there is no partial result and none
+	// is invented. Microsoft adds each negative independently; Reddit's one PATCH
 	// carries every new one, so they share its outcome (confirmed by a re-read)
 	// while ALREADY_PRESENT ones keep theirs — a batch with any ALREADY_PRESENT
 	// item always answers per item; X sends one POST per keyword, at most 20 per
 	// request (X's one-write-per-second account pacing), each APPLIED, FAILED
 	// (NOT_SENT, REJECTED) or UNCONFIRMED. **400** for a malformed batch (empty or
-	// over 60 — over 20 on X —, a text over 100 characters or outside the allowed
-	// characters, consecutive punctuation, a match type the platform does not
-	// offer, the same keyword twice, a missing or misplaced revision), an
-	// unsupported platform, or Reddit writes switched off. A malformed batch is
-	// 400 even when the campaign is also unprovisioned. **409** when refused
-	// before anything is written: unprovisioned, a different ad account, an
-	// unrecorded ad account (re-dispatch), an unusable connection, an ad group /
-	// line item this service did not record or the platform no longer reports
-	// under this campaign, a stale Reddit revision, or a Reddit ad group whose
-	// excluded keywords would exceed Reddit's 2,000. **503** only when the
+	// over 60 — over 20 on X —, a text over 100 characters — over 80 on Google Ads
+	// — or outside the allowed characters, consecutive punctuation, a match type
+	// the platform does not offer, the same keyword twice, a missing or misplaced
+	// revision), an unsupported platform, or Reddit writes switched off. A
+	// malformed batch is 400 even when the campaign is also unprovisioned. **409**
+	// when refused before anything is written: unprovisioned, a different ad
+	// account, an unrecorded ad account (re-dispatch), an unusable connection, an
+	// ad group / line item this service did not record or the platform no longer
+	// reports under this campaign, a stale Reddit revision, or a Reddit ad group
+	// whose excluded keywords would exceed Reddit's 2,000. **503** only when the
 	// platform answered nothing per keyword. The MESSAGE separates a DEFINITE
 	// failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a
 	// timeout, a rate limit, an unreadable answer — verify the campaign's negative
@@ -633,13 +657,14 @@ type AddNegativeKeywordsPayload struct {
 	BriefID string
 	// Campaign UUID
 	CampaignID string
-	// The negative keywords to add: at campaign level on Microsoft Advertising, on
-	// the campaign's one ad group on Reddit, on its one line item on X.
+	// The negative keywords to add: at campaign level on Google Ads and Microsoft
+	// Advertising, on the campaign's one ad group on Reddit, on its one line item
+	// on X.
 	NegativeKeywords []*NegativeKeywordInput
 	// Reddit only, and required there: the revision get-keyword-targeting
 	// returned; an empty or blank one is 400. The add is refused (409) when the ad
-	// group's targeting no longer has that fingerprint. Microsoft Advertising and
-	// X refuse the field (400) whenever it is present, even empty.
+	// group's targeting no longer has that fingerprint. Google Ads, Microsoft
+	// Advertising and X refuse the field (400) whenever it is present, even empty.
 	Revision *string
 }
 
@@ -1743,12 +1768,12 @@ type MetaAdSets struct {
 
 type NegativeKeywordInput struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
-	// 100 characters.
+	// 100 characters — at most 80 on Google Ads, its own keyword text limit.
 	Text string
-	// How the negative keyword is compared with a search query. Microsoft
-	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
-	// (Reddit's excluded keywords carry no match type). Any other value for the
-	// platform is 400.
+	// How the negative keyword is compared with a search query. Google Ads: Broad,
+	// Phrase or Exact. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or
+	// Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type).
+	// Any other value for the platform is 400.
 	MatchType string
 }
 
@@ -1758,19 +1783,22 @@ type NegativeKeywordResult struct {
 	Text string
 	// The match type as sent to the platform
 	MatchType string
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
-	// or ad group / line item (Reddit / X) already had it, so the requested state
-	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
-	// have been added, verify in the ad platform before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Google Ads,
+	// Microsoft) or ad group / line item (Reddit / X) already had it, so the
+	// requested state holds; FAILED — definitely not added (see error_code);
+	// UNCONFIRMED — may have been added, verify in the ad platform before retrying.
 	Outcome string
-	// The platform's id for a negative keyword this request added: Microsoft's
-	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
-	// an excluded keyword has no id, and for every outcome other than APPLIED.
+	// The platform's id for a negative keyword this request added: Google's
+	// campaign criterion id, Microsoft's NegativeKeyword id, or X's targeting
+	// criterion id. Absent on Reddit, where an excluded keyword has no id. Present
+	// for ALREADY_PRESENT on Google Ads, which reads the campaign's existing
+	// negatives and reports the criterion id it already holds; absent for
+	// ALREADY_PRESENT elsewhere, and for FAILED and UNCONFIRMED everywhere.
 	NegativeKeywordID *string
 	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
-	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
-	// it was never sent) or REJECTED (the platform refused it); their own text is
-	// never returned.
+	// error code, when it named one. Google Ads, Reddit and X: NOT_SENT (the
+	// request carrying it was never sent) or REJECTED (the platform refused it);
+	// their own text is never returned.
 	ErrorCode *string
 }
 
