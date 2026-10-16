@@ -742,8 +742,8 @@ ads-api.reddit.com refuses automated fetches); it has not been exercised against
   list written (`SameKeywords`) is an UNCONFIRMED `transportError`. The dispatcher still re-reads
   to confirm.
 
-On main the `GetAdGroupTargeting` read this write is built from decodes with `encoding/json` and
-no `identityjson` check; open PR #359 proposes adding one.
+The `GetAdGroupTargeting` read this write is built from runs `identityjson.Check` over the raw
+body before decoding (#359); a refused body is `ErrTargetingUnreadable`, so no PATCH is sent.
 
 **Tests** (`excluded_keywords_test.go`): `TestExcludedKeywords_Shapes` (absent, `null`, a `null`
 element skipped, a string or a number list refused, and the positive read unaffected by any of

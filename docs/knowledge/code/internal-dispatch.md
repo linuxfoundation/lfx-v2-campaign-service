@@ -4329,8 +4329,9 @@ removal does).
   verify-before-retry arm. On Reddit, `ALREADY_PRESENT` items found before the PATCH are kept
   whatever happens to the write. Microsoft errors only on a whole-call failure.
 
-On main, the pre-reads (`GetAdGroupTargeting`, `ListLineItemTargetingCriteria`) and the X create
-echo are decoded without an `identityjson` check; open PR #359 proposes adding one.
+The pre-reads (`GetAdGroupTargeting`, `ListLineItemTargetingCriteria`) and the X create echo are
+checked with `identityjson` before they are decoded (#359): a refused pre-read is a definite
+failure with nothing sent, and a refused X echo is UNCONFIRMED, because the write was sent.
 
 **Tests.**
 - `reddit_negative_keywords_test.go`: `TestReddit_AddNegativeKeywords_OffByDefault` (`"TRUE"` is not

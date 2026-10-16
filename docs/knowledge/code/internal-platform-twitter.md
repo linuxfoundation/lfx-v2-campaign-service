@@ -1316,8 +1316,8 @@ against a live ad account.
 - **Echo check.** A 2xx is success only when it reports a criterion with a usable id, under THIS
   line item, of the requested type, `NE`, not deleted, and for this keyword compared with
   `textfold.Equal` (X may return the value case-normalised). Anything else — including
-  `"data": null` — is an UNCONFIRMED `transportError`. On main the echo is decoded with
-  `encoding/json` and no `identityjson` check; open PR #359 proposes adding one.
+  `"data": null` — is an UNCONFIRMED `transportError`. The echo is checked with
+  `identityjson` before decoding (#359); a refused echo is UNCONFIRMED, since the write was sent.
 - **Known gap (pre-existing).** `doRequestAbs` has two pre-send exits that carry no not-sent
   marker — a `buildOAuthHeader` failure and an `http.NewRequestWithContext` failure — so they are
   neither `ErrWriteNotSent` nor UNCONFIRMED, and the dispatcher reports them `REJECTED`. Recorded

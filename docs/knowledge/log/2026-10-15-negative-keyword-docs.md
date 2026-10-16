@@ -25,6 +25,5 @@ Added, each checked against origin/main code:
   `AddCampaignNegativeKeywords`, and the tests that pin it.
 - `architecture/keyword-targeting-reddit-x.md` — links from its Code list to these sections.
 
-The text describes main. Open PR #359 (`fix/keyword-reads-identityjson`) proposes `identityjson`
-checks on the Reddit and X pre-reads and the X create echo; those checks are not described as
-existing. No concept description changed, so no index bullet changed. No code changed.
+The text describes main, which now includes #359's `identityjson` checks on the Reddit and X
+pre-reads and the X create echo; they are described as present. No concept description changed, so no index bullet changed. No code changed.
