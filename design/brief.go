@@ -51,7 +51,7 @@ var BriefData = Type("brief-data", func() {
 	// lookup can name — see the note on `stage`.
 	Attribute("event_slug", String, "Event/course slug. Part of a brief's composite identity, not unique on its own: see delivery_type and stage.")
 	Attribute("delivery_type", String, "Delivery surface this brief was authored for.", func() {
-		Enum("paid-marketing", "email")
+		Enum("paid-marketing", "email", "survey")
 		Example("email")
 	})
 	// The Enum is here on BriefData -- the WRITE side -- and not only on find-brief, because a
@@ -69,8 +69,8 @@ var BriefData = Type("brief-data", func() {
 	// unrecognised stage to Registration Push under a 200 by documented contract, because copy
 	// generation should never be blocked by a misspelling. Storage is the opposite -- a
 	// misspelling there is unrecoverable, so it must fail at the edge.
-	Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
-		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
+	Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
+		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo")
 		Example("Registration Push")
 	})
 	Attribute("url", String, "Event/course page URL")
@@ -1567,12 +1567,12 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// only surface whose brief could be saved, so an omitted pair addresses exactly the
 			// row such a caller would have found before.
 			Attribute("delivery_type", String, "Delivery surface the brief was authored for.", func() {
-				Enum("paid-marketing", "email")
+				Enum("paid-marketing", "email", "survey")
 				Default("paid-marketing")
 				Example("email")
 			})
-			Attribute("stage", String, "Stage within an email series. Empty for paid, which has no series.", func() {
-				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event")
+			Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
+				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo")
 				Default("")
 				Example("Registration Push")
 			})
@@ -1999,7 +1999,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// told it succeeded. `emailstage.Resolve` is where that fallback lives, and the
 			// response does not report which stage was actually used — a caller that needs to
 			// know must compare what it sent against `Names()`.
-			Attribute("stage", String, "Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
+			Attribute("stage", String, "Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
 				Example("Post-Event")
 			})
 			// OPTIONAL, same free-text/lenient-fallback shape as stage: absent or unrecognised

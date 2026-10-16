@@ -748,7 +748,9 @@ type Brief struct {
 	EventSlug string
 	// Delivery surface this brief was authored for.
 	DeliveryType string
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage string
 	// Event/course page URL
 	URL *string
@@ -778,7 +780,9 @@ type BriefInput struct {
 	EventSlug string
 	// Delivery surface this brief was authored for.
 	DeliveryType *string
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string
 	// Event/course page URL
 	URL *string
@@ -1302,7 +1306,9 @@ type FindBriefPayload struct {
 	EventSlug string
 	// Delivery surface the brief was authored for.
 	DeliveryType string
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage string
 }
 
@@ -1315,11 +1321,11 @@ type GenerateEmailCopyPayload struct {
 	ProjectID string
 	// Brief UUID
 	BriefID string
-	// Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule
-	// Announcement, Registration Push, Discount Offer, Final Countdown,
-	// Post-Event. Matching is CASE-SENSITIVE and any other value resolves to
-	// Registration Push rather than failing, so a misspelling yields registration
-	// copy under a 200 rather than an error.
+	// Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement,
+	// Registration Push, Discount Offer, Final Countdown, Post-Event. Survey
+	// stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an
+	// unrecognised value resolves to Registration Push rather than failing, so a
+	// misspelling yields registration copy under a 200 rather than an error.
 	Stage *string
 	// Requests a differently-styled draft of the same stage's copy. Currently one
 	// value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward

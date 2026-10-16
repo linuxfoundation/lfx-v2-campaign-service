@@ -1476,14 +1476,15 @@ paths:
                     enum:
                         - paid-marketing
                         - email
+                        - survey
                   example: email
                 - name: stage
                   in: query
-                  description: Stage within an email series. Empty for paid, which has no series.
+                  description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                   allowEmptyValue: true
                   schema:
                     type: string
-                    description: Stage within an email series. Empty for paid, which has no series.
+                    description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                     default: ""
                     example: Registration Push
                     enum:
@@ -1494,6 +1495,8 @@ paths:
                         - Discount Offer
                         - Final Countdown
                         - Post-Event
+                        - Survey Promo
+                        - Report Promo
                   example: Registration Push
                 - name: project_id
                   in: path
@@ -5880,11 +5883,11 @@ paths:
             parameters:
                 - name: stage
                   in: query
-                  description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                  description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                   allowEmptyValue: true
                   schema:
                     type: string
-                    description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                    description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                     example: Post-Event
                   example: Post-Event
                 - name: variant
@@ -17849,6 +17852,7 @@ components:
                     enum:
                         - paid-marketing
                         - email
+                        - survey
                 event_details:
                     description: Extracted event/course details
                     example: Sint eos perferendis neque.
@@ -17886,7 +17890,7 @@ components:
                     example: Aut eius dolorum temporibus tempore id repellat.
                 stage:
                     type: string
-                    description: Stage within an email series. Empty for paid, which has no series.
+                    description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                     example: Registration Push
                     enum:
                         - ""
@@ -17896,6 +17900,8 @@ components:
                         - Discount Offer
                         - Final Countdown
                         - Post-Event
+                        - Survey Promo
+                        - Report Promo
                 status:
                     type: string
                     description: Lifecycle status
@@ -17955,6 +17961,7 @@ components:
                     enum:
                         - paid-marketing
                         - email
+                        - survey
                 event_details:
                     description: Extracted event/course details
                     example: Aut qui voluptatem omnis.
@@ -17985,7 +17992,7 @@ components:
                         - membership
                 stage:
                     type: string
-                    description: Stage within an email series. Empty for paid, which has no series.
+                    description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                     example: Registration Push
                     enum:
                         - ""
@@ -17995,6 +18002,8 @@ components:
                         - Discount Offer
                         - Final Countdown
                         - Post-Event
+                        - Survey Promo
+                        - Report Promo
                 targeting:
                     description: Targeting recommendation
                     example: Minima itaque.

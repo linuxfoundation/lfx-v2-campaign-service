@@ -895,9 +895,10 @@ paths:
                   enum:
                     - paid-marketing
                     - email
+                    - survey
                 - name: stage
                   in: query
-                  description: Stage within an email series. Empty for paid, which has no series.
+                  description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                   required: false
                   type: string
                   default: ""
@@ -909,6 +910,8 @@ paths:
                     - Discount Offer
                     - Final Countdown
                     - Post-Event
+                    - Survey Promo
+                    - Report Promo
                 - name: project_id
                   in: path
                   description: Project UUID or slug that scopes the connection
@@ -3948,7 +3951,7 @@ paths:
             parameters:
                 - name: stage
                   in: query
-                  description: 'Event-lifecycle stage the email belongs to. One of: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Matching is CASE-SENSITIVE and any other value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                  description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                   required: false
                   type: string
                 - name: variant
@@ -12656,6 +12659,7 @@ definitions:
                 enum:
                     - paid-marketing
                     - email
+                    - survey
             event_details:
                 description: Extracted event/course details
                 example: Sint eos perferendis neque.
@@ -12693,7 +12697,7 @@ definitions:
                 example: Aut eius dolorum temporibus tempore id repellat.
             stage:
                 type: string
-                description: Stage within an email series. Empty for paid, which has no series.
+                description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                 example: Registration Push
                 enum:
                     - ""
@@ -12703,6 +12707,8 @@ definitions:
                     - Discount Offer
                     - Final Countdown
                     - Post-Event
+                    - Survey Promo
+                    - Report Promo
             status:
                 type: string
                 description: Lifecycle status
@@ -12763,6 +12769,7 @@ definitions:
                 enum:
                     - paid-marketing
                     - email
+                    - survey
             event_details:
                 description: Extracted event/course details
                 example: Aut qui voluptatem omnis.
@@ -12793,7 +12800,7 @@ definitions:
                     - membership
             stage:
                 type: string
-                description: Stage within an email series. Empty for paid, which has no series.
+                description: Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.
                 example: Registration Push
                 enum:
                     - ""
@@ -12803,6 +12810,8 @@ definitions:
                     - Discount Offer
                     - Final Countdown
                     - Post-Event
+                    - Survey Promo
+                    - Report Promo
             targeting:
                 description: Targeting recommendation
                 example: Minima itaque.

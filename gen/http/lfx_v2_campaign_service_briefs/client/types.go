@@ -258,7 +258,9 @@ type CreateBriefResponseBody struct {
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
@@ -293,7 +295,9 @@ type FindBriefResponseBody struct {
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
@@ -328,7 +332,9 @@ type GetBriefResponseBody struct {
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
@@ -363,7 +369,9 @@ type UpdateBriefResponseBody struct {
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
@@ -398,7 +406,9 @@ type ApproveBriefResponseBody struct {
 	EventSlug *string `form:"event_slug,omitempty" json:"event_slug,omitempty" xml:"event_slug,omitempty"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
@@ -4402,7 +4412,9 @@ type BriefInputRequestBody struct {
 	EventSlug string `form:"event_slug" json:"event_slug" xml:"event_slug"`
 	// Delivery surface this brief was authored for.
 	DeliveryType *string `form:"delivery_type,omitempty" json:"delivery_type,omitempty" xml:"delivery_type,omitempty"`
-	// Stage within an email series. Empty for paid, which has no series.
+	// Stage within a send series. Empty for paid, which has no series. An email
+	// brief's stage names one send in the event's series; a survey brief's names
+	// the asset it promotes.
 	Stage *string `form:"stage,omitempty" json:"stage,omitempty" xml:"stage,omitempty"`
 	// Event/course page URL
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
@@ -8635,13 +8647,13 @@ func ValidateCreateBriefResponseBody(body *CreateBriefResponseBody) (err error) 
 		}
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 	}
 	if body.Status != nil {
@@ -8685,13 +8697,13 @@ func ValidateFindBriefResponseBody(body *FindBriefResponseBody) (err error) {
 		}
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 	}
 	if body.Status != nil {
@@ -8735,13 +8747,13 @@ func ValidateGetBriefResponseBody(body *GetBriefResponseBody) (err error) {
 		}
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 	}
 	if body.Status != nil {
@@ -8785,13 +8797,13 @@ func ValidateUpdateBriefResponseBody(body *UpdateBriefResponseBody) (err error) 
 		}
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 	}
 	if body.Status != nil {
@@ -8835,13 +8847,13 @@ func ValidateApproveBriefResponseBody(body *ApproveBriefResponseBody) (err error
 		}
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 	}
 	if body.Status != nil {
@@ -13974,13 +13986,13 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_slug", body.EventSlug, utf8.RuneCountInString(body.EventSlug), 1, true))
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 	}
 	return
@@ -13996,13 +14008,13 @@ func validateBriefInputRequestBody(body *BriefInputRequestBody, path string) (er
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".event_slug", body.EventSlug, utf8.RuneCountInString(body.EventSlug), 1, true))
 	}
 	if body.DeliveryType != nil {
-		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".delivery_type", *body.DeliveryType, []any{"paid-marketing", "email"}))
+		if !(*body.DeliveryType == "paid-marketing" || *body.DeliveryType == "email" || *body.DeliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".delivery_type", *body.DeliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 	}
 	return

@@ -18,15 +18,20 @@ const (
 	ProgramMembership ProgramType = "membership"
 )
 
-// DeliveryType is the surface a brief was authored for. Paid and email are PARALLEL channels on
-// one event rather than alternatives, which is why it participates in the brief's unique key
-// (000030) instead of merely describing it.
+// DeliveryType is the surface a brief was authored for. Paid, email and survey are PARALLEL
+// channels rather than alternatives, which is why it participates in the brief's unique key
+// (000030, widened by 000047) instead of merely describing it.
 type DeliveryType string
 
 // Delivery types.
 const (
 	DeliveryPaidMarketing DeliveryType = "paid-marketing"
 	DeliveryEmail         DeliveryType = "email"
+	// DeliverySurvey is the survey/report promotion surface. Its brief is authored from a
+	// free-text source document and a promoted URL rather than from a scraped event page, and
+	// its stages name WHICH ASSET is promoted rather than which send in a series it is --
+	// see emailstage.SurveyNames.
+	DeliverySurvey DeliveryType = "survey"
 )
 
 // Valid reports whether d is a known delivery type.
@@ -43,7 +48,7 @@ const (
 // REAL paid brief's slot and silently filing a typo there aims the write at another brief.
 func (d DeliveryType) Valid() bool {
 	switch d {
-	case DeliveryPaidMarketing, DeliveryEmail:
+	case DeliveryPaidMarketing, DeliveryEmail, DeliverySurvey:
 		return true
 	default:
 		return false

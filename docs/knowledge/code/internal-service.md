@@ -2357,3 +2357,24 @@ job's aggregate status are decided before it runs. `TestOrchestrator_PreCreateFa
 now asserts that the job result carries `(reason: account_not_selected)` and not the error text.
 Google Ads reaches the generic classes only (connection, unconfirmed, fallback); its client
 errors are not marked yet.
+
+### The survey delivery surface
+
+`emailstage` owns two stage taxonomies, not one. `Names()`/`Templates` are the event surface's six
+lifecycle stages; `SurveyNames()`/`SurveyTemplates` are the survey surface's two asset stages
+(`Survey Promo`, `Report Promo`), added with migration `000047`. They are deliberately separate
+maps: pooling them would admit `(email, "Survey Promo")` and `(survey, "Final Countdown")` — pairs
+that occupy a real slot in the brief's unique key while naming an identity no generator can serve.
+
+`briefIdentityPairProblem` is the HTTP-edge copy of the column's pair CHECK and judges the two
+together rather than each alone. `generate-email-copy` never learns a brief's delivery type, so the
+STAGE selects the map: `emailstage.IsSurveyStage` routes to `ResolveSurvey`, and without that a
+survey stage would resolve against the event templates and return Registration Push copy under
+a 200.
+
+A survey brief's facts come from `event_details.sourceText` — the survey instrument or report text
+the operator pasted — rendered into the prompt's facts block as `Source document` and bounded by
+`maxFactSourceTextRunes`. Its call-to-action destination is the brief's own `url`, which is the
+promoted asset, so it flows through `resolveRegistrationURL` unchanged. The prompts are ported from
+the LF Research survey/report tool and reproduce its specification verbatim, including the 100-word
+body cap and the anti-invention rule.

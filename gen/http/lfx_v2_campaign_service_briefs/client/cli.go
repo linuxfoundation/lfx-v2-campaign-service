@@ -98,8 +98,8 @@ func BuildFindBriefPayload(lfxV2CampaignServiceBriefsFindBriefProjectID *string,
 	var deliveryType string
 	{
 		deliveryType = lfxV2CampaignServiceBriefsFindBriefDeliveryType
-		if !(deliveryType == "paid-marketing" || deliveryType == "email") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("delivery_type", deliveryType, []any{"paid-marketing", "email"}))
+		if !(deliveryType == "paid-marketing" || deliveryType == "email" || deliveryType == "survey") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("delivery_type", deliveryType, []any{"paid-marketing", "email", "survey"}))
 		}
 		if err != nil {
 			return nil, err
@@ -108,8 +108,8 @@ func BuildFindBriefPayload(lfxV2CampaignServiceBriefsFindBriefProjectID *string,
 	var stage string
 	{
 		stage = lfxV2CampaignServiceBriefsFindBriefStage
-		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event"}))
+		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event" || stage == "Survey Promo" || stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
 		}
 		if err != nil {
 			return nil, err

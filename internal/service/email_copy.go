@@ -52,9 +52,18 @@ type emailCopyEventDetails struct {
 	// them, so an email about a three-day conference with a published agenda, a stated audience and
 	// six themes was written from its name, its city and its dates. See eventFactsBlock.
 	//
-	// Description is the event's own summary of itself, 1-3 sentences of scraped prose. It is the
-	// only unbounded value here and the reason the block has its own size bound.
+	// Description is the event's own summary of itself, 1-3 sentences of scraped prose.
 	Description string `json:"description"`
+	// SourceText is the SURVEY surface's primary input: the survey instrument or report text the
+	// copy must be written from, pasted by the operator rather than scraped. Empty on every event
+	// brief.
+	//
+	// It is the largest value this blob can carry, which is why it has the most generous per-field
+	// bound and is rendered last -- see eventFactsBlock. The anti-invention rule makes this block
+	// the ONLY place a survey's facts can come from, so truncating it mid-document costs findings
+	// the email should have carried; the bound is set to leave the rest of the block room rather
+	// than to be reached in practice.
+	SourceText string `json:"sourceText"`
 	// Themes is the key the UI writes for the event's subject matter, and the one that carries it on
 	// every brief this service sees. Merged with `Topics` above by topicList rather than one winning.
 	Themes []string `json:"themes"`
@@ -202,6 +211,12 @@ const (
 	// bounds below already sum under it, which TestEventFactsBlockHonoursItsBound measures rather
 	// than taking on faith from this comment.
 	maxEventFactsBlockRunes = 3600 // runes
+	// maxFactSourceTextRunes bounds the survey surface's source document. Generous relative to the
+	// other per-field bounds because it is the whole factual basis of a survey email, and sized
+	// under maxEventFactsBlockRunes so the block backstop is not what cuts it: a survey brief
+	// carries none of the event fields (no speakers, sponsors or venue), so this is effectively
+	// the block's whole budget on that surface.
+	maxFactSourceTextRunes = 3000 // runes
 	// maxFactDescriptionRunes bounds the event's own description of itself -- the one genuinely long
 	// fact, and most of the reason this block exists. 900 runes is roughly 150 words: more than any
 	// event page's summary paragraph, far less than its about page.
@@ -379,9 +394,13 @@ func (d emailCopyEventDetails) eventFactsBlock() string {
 	add("Topics", factText(joinFactList(d.topicList()), maxFactTextRunes))
 	add("Speakers", factText(joinFactList(d.Speakers), maxFactTextRunes))
 	add("Sponsors", factText(joinFactList(d.sponsorNames()), maxFactTextRunes))
-	// Last deliberately: the only unbounded-at-source value, and so the only one the block-level
+	// Last deliberately: the two unbounded-at-source values, and so the only ones the block-level
 	// backstop below could ever cut.
 	add("About this event", factText(d.Description, maxFactDescriptionRunes))
+	// Labelled as the source DOCUMENT, not as a fact about an event: on the survey surface this is
+	// the instrument or report the copy is written from, and the stage prompt refers to it by that
+	// name.
+	add("Source document", factText(d.SourceText, maxFactSourceTextRunes))
 	if len(lines) == 0 {
 		return ""
 	}
@@ -596,7 +615,14 @@ Constraints:
 	// replacing it: the JSON schema and the length limits hold for every stage, only the intent
 	// changes. An unknown NON-EMPTY stage resolves to the default; an ABSENT stage never reaches
 	// here at all -- it returned the frozen legacySystemPrompt above.
+	// Resolved against the surface the stage belongs to. generate-email-copy takes the stage as
+	// free text and is never told the brief's delivery type, so the stage itself is what selects
+	// the map: resolving "Survey Promo" against the event templates would silently return
+	// Registration Push and write event copy for a survey, under a 200.
 	tpl := emailstage.Resolve(vars.stage)
+	if emailstage.IsSurveyStage(vars.stage) {
+		tpl = emailstage.ResolveSurvey(vars.stage)
+	}
 	systemPrompt += fmt.Sprintf(`
 
 STAGE: %s

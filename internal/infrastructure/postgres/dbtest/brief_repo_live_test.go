@@ -1026,3 +1026,65 @@ func assertJSONEqual(t *testing.T, column string, got json.RawMessage, want stri
 		t.Errorf("%s = %s, want %s", column, gotNorm, wantNorm)
 	}
 }
+
+// TestLivePairCheckMatchesSurveyStageNames is TestLivePairCheckMatchesEmailStageNames for the
+// SURVEY arm of the same constraint, added with 000047.
+//
+// It is a separate test rather than a loop over both surfaces because the failure it describes is
+// different. The email arm's risk is a stage drifting out of a long-standing list; the survey
+// arm's is the arm being absent entirely -- a database that stopped at 000046 has no survey arm at
+// all, so every survey brief fails its write as a 500 while the API enum accepts the stage
+// happily. Scoping to the arm is what tells those two apart.
+func TestLivePairCheckMatchesSurveyStageNames(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.Pool(t)
+
+	var def string
+	err := pool.QueryRow(ctx,
+		`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		 WHERE conname = 'campaign_briefs_delivery_stage_pair_valid'`).Scan(&def)
+	if err != nil {
+		t.Fatalf("read the pair constraint from the live schema: %v", err)
+	}
+
+	// Scope to the survey arm. Postgres renders the arm as `delivery_type = 'survey'::text`
+	// followed by its own ARRAY, so the first ARRAY after that marker is the survey stage list --
+	// the same scoping reason the email test gives, applied to the other arm.
+	marker := strings.Index(def, "'survey'::text")
+	if marker < 0 {
+		t.Fatalf("the live pair CHECK has no survey arm: migration 000047 has not run against "+
+			"this database, so every survey brief fails its write as a 500 while the API enum "+
+			"accepts the stage. constraint: %s", def)
+	}
+	arm := def[marker:]
+	arrayStart := strings.Index(arm, "ARRAY[")
+	if arrayStart < 0 {
+		t.Fatalf("the live pair CHECK's survey arm has no ARRAY of stages. constraint: %s", def)
+	}
+	arrayEnd := strings.Index(arm[arrayStart:], "]")
+	if arrayEnd < 0 {
+		t.Fatalf("the live pair CHECK's survey stage ARRAY is unterminated. constraint: %s", def)
+	}
+	armArray := arm[arrayStart : arrayStart+arrayEnd]
+
+	for _, stage := range emailstage.SurveyNames() {
+		if !strings.Contains(armArray, "'"+stage+"'") {
+			t.Errorf("the live pair CHECK's survey arm omits %q, which emailstage.SurveyNames() "+
+				"declares — a brief naming it passes the API enum and then fails the constraint "+
+				"as a 500. constraint: %s", stage, def)
+		}
+	}
+
+	// The reverse, same reasoning as the email arm: a stage dropped from the taxonomy must not
+	// linger in the schema, or the database keeps accepting an identity the service cannot serve.
+	inSchema := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(armArray, -1)
+	if len(inSchema) != len(emailstage.SurveyNames()) {
+		var got []string
+		for _, m := range inSchema {
+			got = append(got, m[1])
+		}
+		t.Errorf("the live pair CHECK's survey arm names stages %v, want %v — a stage removed "+
+			"from emailstage still lingers in the schema, or one was added without a migration.",
+			got, emailstage.SurveyNames())
+	}
+}

@@ -2232,6 +2232,16 @@ func briefIdentityPairProblem(delivery model.DeliveryType, stage string) error {
 		}
 		return fmt.Errorf("%w: an email brief names one send in the series, so its stage must be one of %v, got %q",
 			domain.ErrBriefIdentityPairInvalid, emailstage.Names(), stage)
+	case model.DeliverySurvey:
+		// A SEPARATE list, not a widened one: a survey brief's stage names the asset being
+		// promoted, so `(survey, "Final Countdown")` is as wrong as `(email, "Survey Promo")`.
+		// The column's pair CHECK (000047) enforces the same split, and this is the HTTP-edge
+		// copy of it.
+		if slices.Contains(emailstage.SurveyNames(), stage) {
+			return nil
+		}
+		return fmt.Errorf("%w: a survey brief names the asset it promotes, so its stage must be one of %v, got %q",
+			domain.ErrBriefIdentityPairInvalid, emailstage.SurveyNames(), stage)
 	default:
 		// Anything else, INCLUDING the empty string. An earlier revision accepted `""` as paid, to
 		// spare a direct Go caller that leaves the field at its zero value -- but both call sites
