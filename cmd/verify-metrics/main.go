@@ -215,7 +215,10 @@ func (a *app) run(ctx context.Context, args []string) int {
 		out.printf("gate:     %s forced to \"true\" in this process only; the deployment's value is unchanged\n", flagName)
 	}
 	if os.Getenv(constants.EnvForceSystemAdsAccount) == "true" {
-		out.printf("note:     %s=true in this environment, so the LF system account is used whatever -project says\n",
+		// The flag redirects creates, not metrics reads: every metrics read resolves its account
+		// from the row's recorded provenance, or the project-then-system fallback when that is
+		// unknown (PR #362 review). -project lf-system is how to read under the system scope.
+		out.printf("note:     %s=true in this environment, but metrics reads ignore it: they follow the campaign row's recorded account, or the project-then-system fallback; pass -project lf-system to read under the LF system scope\n",
 			constants.EnvForceSystemAdsAccount)
 	}
 

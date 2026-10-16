@@ -54,15 +54,20 @@ func allowedRequest(method, path string) bool {
 	return false
 }
 
-// exchange is one upstream request and what came back, as captured for -raw.
+// exchange is one upstream request and what came back, as captured for -raw. Every field set
+// after the exchange is listed is written under recorder.mu: a request can outlive the read that
+// made it (an asynchronous token refresh past the caller's timeout), and print renders under the
+// same lock (PR #362 review).
 type exchange struct {
 	method, url string
 	token       bool // an OAuth token exchange: bodies withheld entirely
 	reqBody     []byte
-	status      int
-	refused     bool
-	err         string
-	resp        *cappedBuffer
+	// done is set once the request was refused, failed or answered; until then it is pending.
+	done    bool
+	status  int
+	refused bool
+	err     string
+	resp    *cappedBuffer
 }
 
 // recorder is the HTTP layer every platform client in a run is built on: it enforces
@@ -99,8 +104,18 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 	}
+	// displayURL withholds a secret-named query value, but an upstream body can echo it on its
+	// own (a download failure naming its `sig`), so it is recorded for the scrub too (PR #362
+	// review).
+	for name, vals := range req.URL.Query() {
+		if secretKeyRe.MatchString(name) {
+			for _, v := range vals {
+				r.secrets.add(v)
+			}
+		}
+	}
 	if !allowedRequest(req.Method, req.URL.Path) {
-		ex.refused = true
+		r.update(func() { ex.refused, ex.done = true, true })
 		if req.Body != nil {
 			_ = req.Body.Close()
 		}
@@ -110,17 +125,18 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		// A copy, so the request itself is not consumed. Token exchange bodies are never
 		// copied: they are the client secret and refresh token.
 		if rc, err := req.GetBody(); err == nil {
-			ex.reqBody, _ = io.ReadAll(io.LimitReader(rc, maxCapture))
+			body, _ := io.ReadAll(io.LimitReader(rc, maxCapture))
 			_ = rc.Close()
+			r.update(func() { ex.reqBody = body })
 		}
 	}
 
 	resp, err := r.base.RoundTrip(req)
 	if err != nil {
-		ex.err = err.Error()
+		r.update(func() { ex.err, ex.done = err.Error(), true })
 		return nil, err
 	}
-	ex.status = resp.StatusCode
+	r.update(func() { ex.status, ex.done = resp.StatusCode, true })
 	if ex.token {
 		// Record the issued tokens so they are scrubbed wherever they reappear. The body is
 		// read whole (a token response is small) and handed back unchanged.
@@ -141,9 +157,17 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return resp, nil
 	}
-	ex.resp = &cappedBuffer{}
-	resp.Body = &teeBody{ReadCloser: resp.Body, copy: ex.resp}
+	buf := &cappedBuffer{}
+	r.update(func() { ex.resp = buf })
+	resp.Body = &teeBody{ReadCloser: resp.Body, copy: buf}
 	return resp, nil
+}
+
+// update applies one change to an exchange under the recorder's lock.
+func (r *recorder) update(f func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	f()
 }
 
 // print writes every captured exchange, redacted. It runs after the read, success or failure:
@@ -155,6 +179,9 @@ func (r *recorder) print(out *scrubWriter) {
 	for i, ex := range r.exchanges {
 		out.printf("[%d] %s %s", i+1, ex.method, ex.url)
 		switch {
+		case !ex.done:
+			out.printf(" -> pending (no answer when the read ended)\n")
+			continue
 		case ex.refused:
 			out.printf(" -> REFUSED (not a read)\n")
 			continue
@@ -168,22 +195,22 @@ func (r *recorder) print(out *scrubWriter) {
 			continue
 		}
 		if len(ex.reqBody) > 0 {
-			out.printf("    request body:\n%s\n", indent(redactBody(ex.reqBody)))
+			out.printf("    request body:\n%s\n", indent(redactBody(ex.reqBody, out.secrets)))
 		}
 		if ex.resp != nil {
-			out.printf("    response body:\n%s\n", indent(renderResponse(ex.resp)))
+			out.printf("    response body:\n%s\n", indent(renderResponse(ex.resp, out.secrets)))
 		}
 	}
 }
 
 // renderResponse decodes a zip (Microsoft's report download) into its files before redaction.
-func renderResponse(b *cappedBuffer) string {
-	body := b.buf.Bytes()
+func renderResponse(b *cappedBuffer, secrets *secretSet) string {
+	body, truncated := b.snapshot()
 	note := ""
-	if b.truncated {
+	if truncated {
 		note = fmt.Sprintf("\n(truncated: only the first %d bytes were kept)", maxCapture)
 	}
-	if bytes.HasPrefix(body, []byte("PK\x03\x04")) && !b.truncated {
+	if bytes.HasPrefix(body, []byte("PK\x03\x04")) && !truncated {
 		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 		if err == nil {
 			var sb strings.Builder
@@ -196,13 +223,13 @@ func renderResponse(b *cappedBuffer) string {
 				}
 				data, _ := io.ReadAll(io.LimitReader(rc, maxCapture))
 				_ = rc.Close()
-				sb.WriteString(redactBody(data))
+				sb.WriteString(redactBody(data, secrets))
 				sb.WriteString("\n")
 			}
 			return sb.String()
 		}
 	}
-	return redactBody(body) + note
+	return redactBody(body, secrets) + note
 }
 
 func indent(s string) string {
@@ -233,6 +260,14 @@ func (c *cappedBuffer) write(p []byte) {
 		c.truncated = true
 	}
 	c.buf.Write(p)
+}
+
+// snapshot copies what was kept so far, under the buffer's lock: the platform client may still
+// be reading the body while it is rendered.
+func (c *cappedBuffer) snapshot() ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return bytes.Clone(c.buf.Bytes()), c.truncated
 }
 
 // teeBody copies what the platform client reads into the capture buffer.

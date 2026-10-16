@@ -54,6 +54,30 @@ func (s *secretSet) add(v string) {
 	if e := url.QueryEscape(v); e != v {
 		s.values[e] = struct{}{}
 	}
+	// And as it appears inside a JSON string, with and without HTML escaping: a credential with
+	// a quote or backslash echoed in an upstream body is printed escaped (PR #362 review).
+	for _, e := range jsonEscapings(v) {
+		if e != v {
+			s.values[e] = struct{}{}
+		}
+	}
+}
+
+// jsonEscapings returns v as the body of a JSON string literal, as encoding/json writes it with
+// and without HTML escaping.
+func jsonEscapings(v string) []string {
+	out := make([]string, 0, 2)
+	if b, err := json.Marshal(v); err == nil {
+		out = append(out, string(b[1:len(b)-1]))
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(v) == nil {
+		b := bytes.TrimRight(buf.Bytes(), "\n")
+		out = append(out, string(b[1:len(b)-1]))
+	}
+	return out
 }
 
 // addCredentialDocument records every string value of a decrypted credential document. A
@@ -174,11 +198,16 @@ func displayURL(u *url.URL) string {
 }
 
 // redactBody renders a captured body for output. JSON is re-indented with every secret-named
-// key's value withheld; any other text is passed through as is. Both then have the URLs in them
-// reduced by pkg/redact.SnapshotText, the rule the service applies before persisting free text,
-// so a signed URL in a body (Microsoft's poll response names the report file's) cannot leak its
-// signature. The secret-set scrub runs later, on everything printed.
-func redactBody(body []byte) string {
+// key's value withheld and every recorded secret scrubbed from each DECODED string — before
+// re-encoding can escape a quote or backslash in it out of the secret set's reach (PR #362
+// review). Every string also has the URLs in it reduced by pkg/redact.SnapshotText, the rule the
+// service applies before persisting free text, so a signed URL in a body (Microsoft's poll
+// response names the report file's) cannot leak its signature. A body that looks like JSON but
+// does not decode whole — cut off by the capture cap or an interrupted read — is WITHHELD: as
+// raw text, an escaped `\u0026` would end SnapshotText's URL run before a later `sig=`. Any
+// other text is passed through SnapshotText. The secret-set scrub also runs on everything
+// printed.
+func redactBody(body []byte, secrets *secretSet) string {
 	// UseNumber: a raw dump must not round an int64 id or count through float64.
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
@@ -192,14 +221,20 @@ func redactBody(body []byte) string {
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
-		if enc.Encode(redactJSON(doc)) == nil {
+		if enc.Encode(redactJSON(doc, secrets)) == nil {
 			return redact.SnapshotText(strings.TrimRight(buf.String(), "\n"))
 		}
+	}
+	if t := bytes.TrimSpace(body); len(t) > 0 && (t[0] == '{' || t[0] == '[') {
+		return withheldIncompleteJSON
 	}
 	return redact.SnapshotText(string(body))
 }
 
-func redactJSON(v any) any {
+// withheldIncompleteJSON stands in for a JSON-looking body that did not decode whole.
+const withheldIncompleteJSON = "(withheld: a JSON body that did not decode whole — an escape cut off mid-value could carry a secret past redaction)"
+
+func redactJSON(v any, secrets *secretSet) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(t))
@@ -208,17 +243,21 @@ func redactJSON(v any) any {
 				out[k] = redacted
 				continue
 			}
-			out[k] = redactJSON(e)
+			out[k] = redactJSON(e, secrets)
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, e := range t {
-			out[i] = redactJSON(e)
+			out[i] = redactJSON(e, secrets)
 		}
 		return out
 	case string:
-		return redact.SnapshotText(t)
+		t = redact.SnapshotText(t)
+		if secrets != nil {
+			t = secrets.scrub(t)
+		}
+		return t
 	}
 	return v
 }

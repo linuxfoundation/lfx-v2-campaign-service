@@ -175,7 +175,7 @@ func TestDisplayURL_WithholdsSecretQueryValues(t *testing.T) {
 func TestRedactBody(t *testing.T) {
 	body := `{"data":{"access_token":"tok-123456789","nested":[{"client_secret":"cs-abcdefgh","clicks":4}],
 		"ReportDownloadUrl":"https://blob.example.net/r.zip?sig=SIGVALUE123"}}`
-	got := redactBody([]byte(body))
+	got := redactBody([]byte(body), nil)
 	for _, leak := range []string{"tok-123456789", "cs-abcdefgh", "SIGVALUE123"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("redactBody leaked %q:\n%s", leak, got)
@@ -191,7 +191,7 @@ func TestRedactBody(t *testing.T) {
 func TestRedactBody_MultiParameterSignedURL(t *testing.T) {
 	body := `{"ReportRequestStatus":{"Status":"Success","ReportDownloadUrl":` +
 		`"https://bingads.blob.core.windows.net/r/abc.zip?sv=2020-08-04&st=2026&se=2026&sr=b&sp=r&sig=SUPERSECRETSIG%3D"}}`
-	got := redactBody([]byte(body))
+	got := redactBody([]byte(body), nil)
 	for _, leak := range []string{"SUPERSECRETSIG", "sig=", "/r/abc.zip"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("redactBody leaked %q:\n%s", leak, got)
@@ -203,8 +203,149 @@ func TestRedactBody_MultiParameterSignedURL(t *testing.T) {
 }
 
 func TestRedactBody_KeepsIntegerPrecision(t *testing.T) {
-	if got := redactBody([]byte(`{"id":9007199254740993}`)); !strings.Contains(got, "9007199254740993") {
+	if got := redactBody([]byte(`{"id":9007199254740993}`), nil); !strings.Contains(got, "9007199254740993") {
 		t.Errorf("redactBody rounded an int64: %s", got)
+	}
+}
+
+// A known credential with a quote and a backslash, echoed under an ordinary key, is printed
+// JSON-escaped; it must be scrubbed from the DECODED string before re-encoding (PR #362 review).
+func TestRedactBody_ScrubsAnEscapedEchoedCredential(t *testing.T) {
+	const cred = `abc"def\ghi123`
+	s := newSecretSet()
+	s.add(cred)
+	body, _ := json.Marshal(map[string]any{"echo": "upstream saw " + cred, "clicks": 4})
+	got := redactBody(body, s)
+	for _, leak := range []string{`abc\"def`, `def\\ghi`, `abc"def`} {
+		if strings.Contains(got, leak) {
+			t.Errorf("redactBody leaked %q:\n%s", leak, got)
+		}
+	}
+	if !strings.Contains(got, "upstream saw "+redacted) || !strings.Contains(got, `"clicks": 4`) {
+		t.Errorf("redactBody = %s, want the credential replaced and the rest kept", got)
+	}
+}
+
+// The secret set also knows a credential's JSON-escaped form, so the final scrub catches it in
+// any printed text — an error message quoting a JSON body, for one.
+func TestSecretSet_ScrubsTheJSONEscapedForm(t *testing.T) {
+	const cred = `abc"def\ghi<123>`
+	s := newSecretSet()
+	s.add(cred)
+	for _, in := range []string{`x abc\"def\\ghi\u003c123\u003e y`, `x abc\"def\\ghi<123> y`} {
+		if got := s.scrub(in); strings.Contains(got, "def") {
+			t.Errorf("scrub(%q) = %q, want the escaped credential replaced", in, got)
+		}
+	}
+}
+
+// A JSON-looking body cut off mid-value (the capture cap, an interrupted read) is withheld:
+// as raw text, an escaped `\u0026` ends SnapshotText's URL run before `sig=` (PR #362 review).
+func TestRedactBody_WithholdsIncompleteJSON(t *testing.T) {
+	body := `{"ReportRequestStatus":{"Status":"Success","ReportDownloadUrl":"https://bingads.blob.core.windows.net/r/a.zip?sv=2020\u0026sig=NEWSIGNATURE`
+	got := redactBody([]byte(body), nil)
+	if strings.Contains(got, "NEWSIGNATURE") || got != withheldIncompleteJSON {
+		t.Errorf("redactBody = %q, want the incomplete body withheld", got)
+	}
+	if got := redactBody([]byte("plain text error"), nil); got != "plain text error" {
+		t.Errorf("redactBody(plain text) = %q, want it kept", got)
+	}
+}
+
+// A secret-named query value is withheld from the displayed URL AND recorded, so a failure body
+// that echoes it on its own (a download naming its `sig`) is scrubbed too (PR #362 review).
+func TestRecorder_ScrubsAnEchoedSecretQueryValue(t *testing.T) {
+	const sig = "DOWNLOADSIG0123456789"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, "<Error><Code>AuthenticationFailed</Code><Detail>signature "+sig+" did not match</Detail></Error>")
+	}))
+	defer srv.Close()
+	secrets := newSecretSet()
+	rec := newRecorder(secrets)
+	resp, err := rec.client().Get(srv.URL + "/r/a.zip?sv=2020&sig=" + sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	var out bytes.Buffer
+	rec.print(&scrubWriter{w: &out, secrets: secrets})
+	if strings.Contains(out.String(), sig) || !strings.Contains(out.String(), "AuthenticationFailed") {
+		t.Errorf("print leaked the signature or dropped the body:\n%s", out.String())
+	}
+}
+
+// blockingTransport holds every request until release is closed.
+type blockingTransport struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	close(b.started)
+	<-b.release
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"access_token":"late-token-0123456"}`)), Header: http.Header{}, Request: req}, nil
+}
+
+// A token refresh can outlive the read that started it. print must render it as pending, under
+// the same lock the late answer is recorded with — run with -race (PR #362 review).
+func TestRecorder_PrintsAPendingExchangeWithoutARace(t *testing.T) {
+	bt := &blockingTransport{started: make(chan struct{}), release: make(chan struct{})}
+	secrets := newSecretSet()
+	rec := newRecorder(secrets)
+	rec.base = bt
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req, _ := http.NewRequest(http.MethodPost, "https://example.invalid/api/v1/access_token", strings.NewReader("grant_type=refresh_token"))
+		if resp, err := rec.client().Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	<-bt.started
+	var out bytes.Buffer
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		rec.print(&scrubWriter{w: &out, secrets: secrets})
+	}()
+	close(bt.release)
+	<-finished
+	<-done
+	if !strings.Contains(out.String(), "-> pending") && !strings.Contains(out.String(), "-> 200") {
+		t.Errorf("print = %s, want the exchange as pending or answered", out.String())
+	}
+	if strings.Contains(out.String(), "-> 0") {
+		t.Errorf("print rendered an unfinished request as status 0:\n%s", out.String())
+	}
+	out.Reset()
+	rec.print(&scrubWriter{w: &out, secrets: secrets})
+	if !strings.Contains(out.String(), "-> 200") {
+		t.Errorf("print after the answer = %s, want -> 200", out.String())
+	}
+}
+
+// Deterministic: printed while the request is still out, the exchange reads as pending.
+func TestRecorder_PrintsAnUnansweredExchangeAsPending(t *testing.T) {
+	bt := &blockingTransport{started: make(chan struct{}), release: make(chan struct{})}
+	secrets := newSecretSet()
+	rec := newRecorder(secrets)
+	rec.base = bt
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if resp, err := rec.client().Get("https://example.invalid/api/v3/me"); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	<-bt.started
+	var out bytes.Buffer
+	rec.print(&scrubWriter{w: &out, secrets: secrets})
+	close(bt.release)
+	<-done
+	if !strings.Contains(out.String(), "-> pending") {
+		t.Errorf("print = %s, want the unanswered exchange shown as pending", out.String())
 	}
 }
 
@@ -217,7 +358,7 @@ func TestRenderResponse_UnpacksZip(t *testing.T) {
 	_ = zw.Close()
 	b := &cappedBuffer{}
 	b.write(zbuf.Bytes())
-	got := renderResponse(b)
+	got := renderResponse(b, nil)
 	if !strings.Contains(got, "zip entry report.csv") || !strings.Contains(got, "123,10,2,1.50") {
 		t.Errorf("zip not unpacked:\n%s", got)
 	}
@@ -395,6 +536,20 @@ func TestRun_RedditAgainstFakePlatform_IgnoresFlagAndRedacts(t *testing.T) {
 	}
 	if writes.Load() != 0 {
 		t.Errorf("the fake platform saw %d non-read request(s)", writes.Load())
+	}
+}
+
+// LFX_FORCE_SYSTEM_ADS_ACCOUNT does not redirect metrics reads (they follow the row's recorded
+// account), so the note must not claim the system account is used (PR #362 review).
+func TestRun_ForceSystemFlagNoteDoesNotClaimTheSystemAccount(t *testing.T) {
+	t.Setenv(constants.EnvRedditMetricsEnabled, "")
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	srv, _ := fakeReddit(t, http.StatusOK)
+	var stdout, stderr bytes.Buffer
+	_ = redditTestApp(t, srv, &stdout, &stderr).run(context.Background(),
+		[]string{"-provider", "reddit-ads", "-project", "my-project", "-campaign", "t3_c"})
+	if !strings.Contains(stdout.String(), "metrics reads ignore it") || strings.Contains(stdout.String(), "is used whatever") {
+		t.Errorf("stdout = %s, want the note to say metrics reads ignore the flag", stdout.String())
 	}
 }
 

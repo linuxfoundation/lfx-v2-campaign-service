@@ -25,9 +25,12 @@ go run ./cmd/verify-metrics -provider reddit-ads -project <slug|uuid|lf-system> 
   `google-ads` is refused with a usage error (exit 2): its metrics read is not gated, and its
   client is out of scope for this tool. `hubspot` is refused too.
 - `-project`: the connection scope key exactly as the service keys it (slug or UUID). `lf-system`
-  is an alias for `model.SystemProjectID` (`system:linuxfoundation`). A project with no
-  connection falls back to the system row exactly as the service does, and
-  `LFX_FORCE_SYSTEM_ADS_ACCOUNT=true` in the environment is honoured (and reported).
+  is an alias for `model.SystemProjectID` (`system:linuxfoundation`), and is how to read under
+  the LF system scope. A project with no connection falls back to the system row exactly as the
+  service does. `LFX_FORCE_SYSTEM_ADS_ACCOUNT` does NOT redirect metrics reads: every one resolves
+  through `resolveExisting`, which follows the row's recorded account provenance (or the
+  project-then-system fallback when it is unknown); with the flag set, the output notes that it
+  is ignored.
 - `-campaign`: the PLATFORM's campaign id, not this service's campaign UUID. If the project holds
   a campaign row with that platform id, its provenance blob is passed along so the dispatcher's
   account-match guard runs as it does in the service; otherwise the read goes by platform id with
@@ -73,10 +76,17 @@ call); the deployment's value is untouched.
 Every byte printed goes through a scrubber holding every secret the run observed: each string
 value of the credential document the dispatcher decrypted (recorded by wrapping the encryptor), every
 credential-bearing request header (Bearer tokens, OAuth 1.0a parameters, Microsoft's developer
-token), and the tokens a token exchange issued. Token exchanges are printed as a status line only.
+token), every secret-named query value a request carried (so a body echoing a download's `sig`
+on its own is scrubbed too), and the tokens a token exchange issued — each also in its
+query-escaped and JSON-escaped forms. Token exchanges are printed as a status line only.
 URLs go through `pkg/redact.URL` with secret-named query values (`sig`, `*token*`, …) withheld;
-bodies have secret-named JSON keys withheld and every URL in a decoded string value reduced by
-`pkg/redact.SnapshotText` before re-encoding (without HTML escaping, which would otherwise split a
-multi-parameter signed URL at its first `&` and leave the signature behind). Numbers are decoded
+bodies have secret-named JSON keys withheld, and every decoded string value has its URLs reduced by
+`pkg/redact.SnapshotText` and every recorded secret scrubbed before re-encoding — so a credential
+with a quote or backslash cannot be escaped out of the scrubber's reach — and the result is
+encoded without HTML escaping, which would otherwise split a multi-parameter signed URL at its
+first `&` and leave the signature behind. A body that looks like JSON but does not decode whole
+(cut off by the capture cap or an interrupted read) is withheld rather than printed as raw text.
+An exchange still unanswered when the read ends (an asynchronous token refresh past the timeout)
+is printed as pending; every exchange update is made under the lock the printer holds. Numbers are decoded
 with `UseNumber`, so the raw dump never rounds an int64. A token exchange response over the 256 KiB
 capture cap is refused rather than handed back truncated.
