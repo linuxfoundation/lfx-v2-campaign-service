@@ -310,3 +310,75 @@ func TestTwitter_AddNegativeKeywords_RefusalsPostNothing(t *testing.T) {
 		}
 	})
 }
+
+// TestTwitterNegativeKey_AgreesAcrossBothSources pins the one property this key exists for: the
+// PRESENT side (X's raw TargetingValue, normalised by nobody) and the REQUEST side (normalised by
+// validateNegativeKeywordBatch through NormalizeNegativeKeywordText) must produce the same key for
+// the same keyword.
+//
+// Without the collapse inside twitterNegativeKey these rows disagree, and the criterion reads as
+// ABSENT and is sent again — a duplicate negated criterion on the line item. That is cheaper than
+// the Google equivalent, where the same disagreement fails an ATOMIC batch, but it is the same
+// defect: the key is built from two sources that do not arrive in the same shape.
+//
+// The NBSP case is the one no reader would predict: strings.Fields splits on it, and X is under no
+// obligation to store one as a plain space.
+func TestTwitterNegativeKey_AgreesAcrossBothSources(t *testing.T) {
+	for _, tc := range []struct{ name, stored, requested string }{
+		{"identical", "free download", "free download"},
+		{"leading and trailing space on the stored criterion", " free download ", "free download"},
+		{"a doubled internal space on the stored criterion", "free  download", "free download"},
+		{"a non-breaking space on the stored criterion", "free download", "free download"},
+		{"a tab on the stored criterion", "free\tdownload", "free download"},
+		{"case difference, which the fold already covered", "Free Download", "free download"},
+		{"both divergences at once", "  Free   DOWNLOAD ", "free download"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The request side as the dispatcher actually builds it: validated first, so the
+			// test cannot pass by normalising the input itself.
+			batch, err := validateNegativeKeywordBatch("x", []model.NegativeKeyword{
+				{Text: tc.requested, MatchType: negativeMatchPhrase},
+			}, maxTwitterNegativeKeywords, negativeMatchExact, negativeMatchPhrase, negativeMatchBroad)
+			if err != nil {
+				t.Fatalf("the requested text must survive validation: %v", err)
+			}
+			want := twitterNegativeKey(twitter.TargetingPhraseKeyword, batch[0].Text)
+			got := twitterNegativeKey(twitter.TargetingPhraseKeyword, tc.stored)
+			if got != want {
+				t.Errorf("stored %q keys as %q, requested %q keys as %q — the criterion would read as absent and be sent again as a duplicate",
+					tc.stored, got, tc.requested, want)
+			}
+		})
+	}
+}
+
+// TestTwitterNegativeKey_StillSeparatesDifferentKeywords is the other half: the collapse must not
+// make the key match MORE than X's own notion of one keyword. Over-matching reports a keyword
+// ALREADY_PRESENT and never sends it, silently dropping an exclusion the caller asked for — worse
+// than the duplicate the collapse prevents, because nothing surfaces it.
+func TestTwitterNegativeKey_StillSeparatesDifferentKeywords(t *testing.T) {
+	for _, tc := range []struct{ name, a, b string }{
+		{"different words", "free download", "paid download"},
+		{"a word boundary that the collapse must not erase", "free download", "freedownload"},
+		{"a prefix is not the whole text", "free", "freedom"},
+		{"punctuation is part of the text", "free-download", "free download"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if twitterNegativeKey(twitter.TargetingPhraseKeyword, tc.a) == twitterNegativeKey(twitter.TargetingPhraseKeyword, tc.b) {
+				t.Errorf("%q and %q must not share a key: one would be reported ALREADY_PRESENT and never sent", tc.a, tc.b)
+			}
+		})
+	}
+}
+
+// TestTwitterNegativeKey_TargetingTypeStillSeparates keeps the other half of the key honest: the
+// same text at two targeting types is two different criteria, and X holds both.
+func TestTwitterNegativeKey_TargetingTypeStillSeparates(t *testing.T) {
+	text := "free download"
+	if twitterNegativeKey(twitter.TargetingPhraseKeyword, text) == twitterNegativeKey(twitter.TargetingExactKeyword, text) {
+		t.Fatal("PHRASE_KEYWORD and EXACT_KEYWORD must not share a key")
+	}
+	if twitterNegativeKey(twitter.TargetingBroadKeyword, text) == twitterNegativeKey(twitter.TargetingPhraseKeyword, text) {
+		t.Fatal("BROAD_KEYWORD and PHRASE_KEYWORD must not share a key")
+	}
+}

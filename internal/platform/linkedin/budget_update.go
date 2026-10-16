@@ -150,7 +150,8 @@ func ValidateBudgetAmount(budgetUSD float64, lifetime bool) (wire string, rounde
 //
 // The campaign is addressed under the resolved ad account (adAccounts/{acct}/adCampaigns/{id}),
 // not as a bare top-level campaign id, which is what keeps the read inside the account the
-// project's connection resolves to.
+// project's connection resolves to. The response must echo the requested campaign id; one
+// naming another campaign, or naming none, is refused.
 func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*CampaignBudget, error) {
 	if err := c.validateCredentialShape(); err != nil {
 		return nil, err
@@ -186,9 +187,18 @@ func (c *Client) GetCampaignBudget(ctx context.Context, campaignID string) (*Cam
 	// The platform must have answered about the campaign that was asked for. A response
 	// describing a different id is not a budget this caller may act on — the same
 	// acknowledged-a-different-resource check the Google Ads mutate makes, applied on the
-	// read side where it is still free to refuse.
-	if got := resp.ID.String(); got != "" && got != campaignID {
-		return nil, fmt.Errorf("linkedin: read campaign %s budget returned campaign %s instead", campaignID, got)
+	// read side where it is still free to refuse. A response with NO id (absent, null or
+	// empty) is refused too: it proves nothing about which campaign it describes, so its
+	// fields — a missing dailyBudget read as "this campaign does not use it" — would drive the
+	// pacing guard from an answer about nothing in particular. GetCampaignSettings reads the
+	// same resource and already requires the echo, as the Reddit and X budget reads do.
+	if got := resp.ID.String(); got != campaignID {
+		if got == "" {
+			got = "no campaign id"
+		} else {
+			got = "campaign " + got
+		}
+		return nil, fmt.Errorf("linkedin: read campaign %s budget returned %s instead", campaignID, got)
 	}
 
 	out := &CampaignBudget{Status: resp.Status}
