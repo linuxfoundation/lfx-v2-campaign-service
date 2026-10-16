@@ -4419,7 +4419,11 @@ override (2026-10-15): editions the request or the answers named (the model copi
 of its editions (in the warehouse's spelling, any other name dropped with a note), and a draft whose
 model set `include_past_editions: false`, or whose every named edition was unknown, gets none. So
 an operator who asked for one edition, or ruled out past registrants, is never sent the whole
-family.
+family. The check runs even when the warehouse returned no past editions (unconfigured, failed, or a
+first edition): only this edition's own name is known then, and any other is dropped with a note
+saying it could not be verified. This edition's name is year-qualified (`WithEventYear`) for the
+prompt and the check, as registrations are stored, while the response's `event` reports the name as
+the page declares it, as `discover` does.
 
 Interpretation keeps every draft inside the contract preview enforces: an event audience's
 `registered_for` takes its editions capped at `CustomMaxRegisteredFor` (25) by

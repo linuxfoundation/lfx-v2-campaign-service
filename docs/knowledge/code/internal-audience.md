@@ -360,6 +360,11 @@ The plan is validated first, so a brief that cannot be planned leaves no row beh
 
 ## Also here: the exploratory half (LFXV2-2770)
 
+Every suppression-hint check reads the name with its separators normalised too
+(`hasSuppressionHint`, used by `DiscoveryHidden`, `ClassifyList`, `MatchesBrandMaster` and
+`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `DominantBrand` votes a long-form brand
+("The Linux Foundation") as its short name from `brandAliases`.
+
 The files above are the **record** half — `plan.go` and `filters.go` materialise the audience a
 BRIEF commits to, and their failures fail the brief. The `builder_*.go` files are the
 **exploratory** half: what an operator assembles and inspects before any brief commits to
@@ -474,9 +479,11 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   branches — `city`/`ip_city` (+ `country_dropdown`/`ip_country` when broadened), each gated by
   the brand master list; and event-history branches qualified INSIDE the `UNIFIED_EVENTS` node on
   the event's own `event_city`/`user_city` (+ country), gated only when `GateEventHistory` is set.
-  `RegisteredFor` adds a branch for exact edition names (this edition's registrants), gated like
-  the other event history when `GateEventHistory` is set. Every suppression-hint check reads the
-  name with its separators normalised too (`hasSuppressionHint`), so `Opt_Out` is an opt-out.
+  `RegisteredFor` adds a branch for the named editions' registrants (an event draft defaults to the
+  warehouse's past editions), gated like the other event history when `GateEventHistory` is set.
+  An audience of roles or properties alone has one base branch, which carries the gate under
+  `GateEventHistory` too. `AllBranchesGated` reads these base branches rather than restating the
+  rules, so preview's upper bound cannot drift from what is built.
 - **Restrictions reach EVERY branch.** Extra property filters are ANDed into each branch; the
   speaker restriction is an `IN_LIST` on an existing speakers list or, absent one, each branch is
   copied once per speaker signal the portal's registration event defines

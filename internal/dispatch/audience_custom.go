@@ -77,13 +77,17 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		// Past editions come from the warehouse, verbatim: they are exact filter values,
 		// and registered_for's default. Editions the request or the answers named are
 		// used instead, but only as exact names of this event or one of its editions,
-		// and an audience that excludes past registrants gets none.
-		if len(event.PastEditions) > 0 {
+		// and an audience that excludes past registrants gets none. The guard runs even
+		// when the warehouse returned nothing: a guessed name matches nobody either way.
+		{
 			named, invented := knownEditions(draft.Criteria.RegisteredFor, append([]string{event.Name}, event.PastEditions...))
 			if len(invented) > 0 {
-				draft.Notes = append(draft.Notes, fmt.Sprintf(
-					"Left out %d registered_for names that are not this event's or one of its past editions' exact names: %s.",
-					len(invented), strings.Join(invented, "; ")))
+				reason := "are not this event's or one of its past editions' exact names"
+				if len(event.PastEditions) == 0 {
+					reason = "could not be verified: no past editions were found for this event"
+				}
+				draft.Notes = append(draft.Notes, fmt.Sprintf("Left out %d registered_for names that %s: %s.",
+					len(invented), reason, strings.Join(invented, "; ")))
 			}
 			defaults := event.PastEditions
 			switch {
@@ -106,7 +110,7 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 	draft.Questions = audience.SettleQuestions(draft.Questions, answers)
 	out := &audience.CustomInterpretOutcome{Draft: *draft}
 	if event != nil {
-		out.Event = &audience.EventIdentity{Name: event.Name, BrandShort: event.BrandShort, Dates: event.Dates}
+		out.Event = &audience.EventIdentity{Name: event.PageName, BrandShort: event.BrandShort, Dates: event.Dates}
 	}
 
 	ctx = x.builder.BeginBuild(ctx)
@@ -493,6 +497,7 @@ func (x *AudienceExplorer) customEventContext(ctx context.Context, eventURL stri
 		// registrations are stored: a yearless page title would be copied into an
 		// exact registered_for filter and match none of them.
 		Name:       audience.WithEventYear(identity.Name, identity.Dates),
+		PageName:   identity.Name,
 		BrandShort: identity.BrandShort,
 		Location:   sanitizeExtractedField(details.Location),
 		Dates:      identity.Dates,

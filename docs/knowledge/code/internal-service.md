@@ -1844,6 +1844,13 @@ declares. Everything about WHICH lists an audience is made of lives in
 [internal/audience](internal-audience.md), and everything that calls HubSpot lives in
 [internal/dispatch](internal-dispatch.md).
 
+`audience_custom.go` adds the three custom-audience handlers (`interpret-custom-audience`,
+`preview-custom-audience`, `create-custom-audience`). `customErr` maps this path's 400s with the
+SPECIFIC reason (unknown property names, the criteria rule broken) instead of the shared
+"check the event URL or list reference" text, which names neither thing a custom request has; a
+missing model is a 503 that points the operator at the criteria form. Property types are never
+read from the caller — `Enumeration` is set by the orchestration from the portal.
+
 The split matters most for error mapping. A 404 on a list an operator typed is an ANSWER they
 act on; the same failure reported as a 500 sends them looking for an outage that does not exist.
 
@@ -2189,13 +2196,6 @@ unchanged version, checked with `VerifyClaimedVersion` after an APPLIED write. H
 and adopted rows record nothing. `classifyMetaAdSetError` maps every failure to fixed text; its only 404 besides a
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
-
-`audience_custom.go` adds the three custom-audience handlers (`interpret-custom-audience`,
-`preview-custom-audience`, `create-custom-audience`). `customErr` maps this path's 400s with the
-SPECIFIC reason (unknown property names, the criteria rule broken) instead of the shared
-"check the event URL or list reference" text, which names neither thing a custom request has; a
-missing model is a 503 that points the operator at the criteria form. Property types are never
-read from the caller — `Enumeration` is set by the orchestration from the portal.
 
 ## LinkedIn audience read (`connection_linkedin_audience.go`, LFXV2-2665)
 

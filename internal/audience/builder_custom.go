@@ -487,8 +487,9 @@ func CustomListFilter(c CustomCriteria) (json.RawMessage, error) {
 	return json.Marshal(filterBranch{FilterBranchType: "OR", FilterBranches: branches, Filters: []filter{}})
 }
 
-// customBaseBranches are the location and event-history branches, or one empty
-// AND branch when the audience is defined by roles or properties alone.
+// customBaseBranches are the location and event-history branches, or one AND
+// branch when the audience is defined by roles or properties alone; that branch
+// is empty except for the gate, which it carries under GateEventHistory.
 func customBaseBranches(c CustomCriteria) []filterBranch {
 	cities, countries := cleanValues(c.Cities), cleanValues(c.Countries)
 	gate := strings.TrimSpace(c.GateListID)
@@ -831,23 +832,19 @@ func (e *UnknownPropertiesError) Error() string {
 func (e *UnknownPropertiesError) Unwrap() error { return ErrInvalidRequest }
 
 // AllBranchesGated reports whether every branch carries the gate list, so the
-// gate's size bounds the audience.
+// gate's size bounds the audience. It reads the branches customBaseBranches
+// builds rather than restating its gating rules, so a new branch shape cannot
+// leave the two disagreeing. Restrictions copy each base branch's filters, so
+// the base branches decide.
 func AllBranchesGated(c CustomCriteria) bool {
-	if strings.TrimSpace(c.GateListID) == "" {
+	gate := strings.TrimSpace(c.GateListID)
+	if gate == "" {
 		return false
 	}
-	if len(cleanValues(c.PageViewURLs)) > 0 {
-		return false
-	}
-	// Event history (location registrations, education, named editions) is gated
-	// only under the stricter mailable reading; contact location always is.
-	history := c.EventRegistered || c.EducationEnrolled || len(cleanValues(c.RegisteredFor)) > 0
-	if history && !c.GateEventHistory {
-		return false
-	}
-	if !c.ContactLocation && !history {
-		// The single roles/properties branch is gated only under the stricter reading.
-		return c.GateEventHistory
+	for _, b := range customBaseBranches(c) {
+		if !slices.ContainsFunc(b.Filters, func(f filter) bool { return f.FilterType == "IN_LIST" && f.ListID == gate }) {
+			return false
+		}
 	}
 	return true
 }

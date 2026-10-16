@@ -68,8 +68,10 @@ var genericBrandSegments = map[string]bool{"events": true, "lf events": true, "e
 //
 // eventName keeps the event itself out: some lists file the EVENT in that slot
 // ("26Q3 - AGNTCon + MCPCon Japan - APAC Registrants"), and the live test read
-// the event's own name back as its brand. A segment sharing a word with the event
-// name is the event, not a brand.
+// the event's own name back as its brand. A segment is the event's own name when
+// isEventSegment says so: it shares two or more event words, or every word of a
+// one-word event. A long-form brand ("The Linux Foundation") votes as its short
+// name, so it agrees with "LF" and resolves through MatchesBrandMaster.
 func DominantBrand(names []string, eventName string) string {
 	eventWords := EventKeywords(eventName)
 	counts := map[string]int{}
@@ -82,6 +84,13 @@ func DominantBrand(names []string, eventName string) string {
 		seg := strings.TrimSpace(m[1])
 		key := strings.ToLower(seg)
 		if genericBrandSegments[key] || strings.ContainsAny(seg, "0123456789") || isEventSegment(seg, eventWords) {
+			continue
+		}
+		if short, ok := brandShortFor[key]; ok {
+			if _, seen := display[short]; !seen {
+				display[short] = strings.ToUpper(short)
+			}
+			counts[short]++
 			continue
 		}
 		counts[key]++
@@ -106,6 +115,17 @@ func DominantBrand(names []string, eventName string) string {
 	}
 	return display[ranked[0].k]
 }
+
+// brandShortFor maps a brand's long-form names (brandAliases) to its short name.
+var brandShortFor = func() map[string]string {
+	out := map[string]string{}
+	for short, longs := range brandAliases {
+		for _, l := range longs {
+			out[l] = short
+		}
+	}
+	return out
+}()
 
 // isEventSegment reports whether a brand-slot segment is the event's own name
 // rather than a brand. It is when it shares two or more of the event's words
@@ -150,9 +170,11 @@ func GuardReuse(similar []CustomSimilarList, c CustomCriteria) []CustomSimilarLi
 	for _, s := range similar {
 		if s.Recommendation == CustomReuseAsIs || s.Recommendation == CustomReuseUpdate {
 			sharesEvent := len(keywords) > 0 && SharesKeyword(s.Name, keywords)
-			if len(keywords) == 0 {
+			if len(keywords) == 0 && len(EventKeywords(StripYear(c.Label))) >= 2 {
 				// A label made only of generic and location words ("Open Source Summit
-				// Japan") has no single distinctive word, so it must match as a whole.
+				// Japan") has no single distinctive word, so it must match as a whole. A
+				// one-word label ("Seoul") never does: as a bare substring it would match
+				// another event's list in the same city.
 				sharesEvent = namesWholeLabel(s.Name, c.Label)
 			}
 			generalAudience := locationAudience && containsAny(s.Name, audienceWords)

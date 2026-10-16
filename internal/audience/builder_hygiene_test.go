@@ -53,6 +53,15 @@ func TestDominantBrand(t *testing.T) {
 		"26Q3 - KubeCon - Registrants",
 		"26Q3 - KubeCon - Speakers",
 	}, "KubeCon"), "a one-word event's own name in the brand slot is not a brand")
+	assert.Equal(t, "LF", DominantBrand([]string{
+		"26Q2 - The Linux Foundation - OSS Korea - Registrants",
+		"26Q2 - The Linux Foundation - OSS Korea - Speakers",
+	}, "Synthetic Summit"), "a long-form brand votes as its short name, which resolves to the brand master")
+	assert.Equal(t, "LF", DominantBrand([]string{
+		"26Q2 - LF - OSS Korea - Registrants",
+		"26Q2 - Linux Foundation - OSS Korea - Speakers",
+		"26Q2 - CNCF - OSS Korea - Web Visitors",
+	}, "Synthetic Summit"), "short and long votes for one brand agree")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y", "26Q3 - CNCF - X - y"}, ""), "a tie is not a brand")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - AAIF - X - y"}, ""), "one name is not agreement")
 	assert.Empty(t, DominantBrand([]string{"26Q3 - LF Events - A - b", "26Q3 - LF Events - C - d"}, ""), "a generic segment is not a brand")
@@ -77,8 +86,6 @@ func TestGuardReuse_TheLiveTokyoRanking(t *testing.T) {
 	assert.Equal(t, "2", out[0].ListID, "reuse sorts first")
 }
 
-// A restricted audience is narrower than any list whose name does not show the
-// restriction, so the model's "reuse" of a general list is held to "update".
 // A city both events share is not an event word: another event's list in the same
 // city is still another event's list.
 func TestGuardReuse_ASharedCityDoesNotMakeAnotherEventsListReusable(t *testing.T) {
@@ -101,6 +108,13 @@ func TestGuardReuse_ASharedCityDoesNotMakeAnotherEventsListReusable(t *testing.T
 		{ListRow: ListRow{ListID: "8", Name: "25Q4 - KubeCon Seoul 2025 Registrants"}, Recommendation: CustomReuseAsIs},
 	}, seoul)
 	assert.Equal(t, CustomReuseNone, other[0].Recommendation, "a shared city is not an event word")
+
+	// A one-word label leaves no word to match, and is never matched as a bare substring.
+	oneWord := CustomCriteria{Cities: []string{"Seoul"}, ContactLocation: true, Label: "Seoul"}
+	got1 := GuardReuse([]CustomSimilarList{
+		{ListRow: ListRow{ListID: "9", Name: "25Q4 - KubeCon Seoul 2025 Registrants"}, Recommendation: CustomReuseAsIs},
+	}, oneWord)
+	assert.Equal(t, CustomReuseNone, got1[0].Recommendation, "a one-word label does not make another event's list reusable")
 }
 
 // A label of only generic words has no distinctive one left, so the whole label must
@@ -119,6 +133,8 @@ func TestGuardReuse_AnAllGenericLabelMatchesAsAWhole(t *testing.T) {
 	assert.Equal(t, CustomReuseNone, got["2"], "another region's edition is a different event")
 }
 
+// A restricted audience is narrower than any list whose name does not show the
+// restriction, so the model's "reuse" of a general list is held to "update".
 func TestGuardReuse_ARestrictedAudienceNeverReusesABroaderList(t *testing.T) {
 	general := CustomSimilarList{ListRow: ListRow{ListID: "2", Name: "26Q3 - Seoul - Mailable Contacts"}, Recommendation: CustomReuseAsIs}
 	speakers := CustomSimilarList{ListRow: ListRow{ListID: "5", Name: "26Q3 - OSS Korea 2026 Speakers - Current"}, Recommendation: CustomReuseAsIs}
@@ -181,7 +197,9 @@ func TestSuppressionHints_MatchWithSeparatorsNormalised(t *testing.T) {
 		assert.True(t, hidden, "%q is offered for inclusion", name)
 		assert.Equal(t, "suppression", reason, name)
 		assert.False(t, ReusableCandidate(name), "%q is offered for reuse", name)
-		assert.Equal(t, SignalUncertain, ClassifyList(name, nil, EventIdentity{}).Signal, "%q classified as an inclusion signal", name)
+		// With a page-view filter the list would read as an inclusion signal; only the
+		// suppression rule keeps it out.
+		assert.Equal(t, SignalUncertain, ClassifyList(name, []ListFilter{{FilterType: "PAGE_VIEW"}}, EventIdentity{}).Signal, "%q classified as an inclusion signal", name)
 	}
 	assert.True(t, MatchesEventSuppression("OSS Korea 2026 - Do_Not_Email", EventKeywords("OSS Korea")), "an event's underscored suppression is found")
 	assert.False(t, MatchesBrandMaster("26Q2 - LF - Opt_Out Master-list", "LF"), "an opt-out list is never the brand gate")

@@ -771,5 +771,28 @@ func TestInterpretCustom_ThisEditionIsNamedWithItsYear(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Synthetic Summit 2026"}, out.Draft.Criteria.RegisteredFor, "this edition's full name is a known edition")
 	require.NotNil(t, out.Event)
-	assert.Equal(t, "Synthetic Summit 2026", out.Event.Name)
+	assert.Equal(t, "Synthetic Summit", out.Event.Name, "the API reports the event as the page declares it, as discover does")
+}
+
+// With no past editions from the warehouse (unconfigured, failed, or a first
+// edition) a named edition is still checked: only this edition's own name is
+// known, and a guessed one is dropped with a note saying it could not be verified.
+func TestInterpretCustom_NamedEditionsAreCheckedWithoutAWarehouse(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":["Synthetic Summit 2026","Synthetic Summit Tokyo 2025"],"label":""},"questions":[],"notes":[]}`,
+	}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Synthetic Summit 2026"}, out.Draft.Criteria.RegisteredFor, "a guessed edition never reaches the exact filter")
+	notes := strings.Join(out.Draft.Notes, "\n")
+	assert.Contains(t, notes, "Synthetic Summit Tokyo 2025")
+	assert.Contains(t, notes, "could not be verified")
 }

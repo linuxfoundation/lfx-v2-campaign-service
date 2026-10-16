@@ -58,8 +58,12 @@ Reply with ONE JSON object and nothing else:
 // CustomEventContext is an event page's metadata, quoted into the prompt for an
 // event audience. Every field came from a third-party page and is treated as data.
 type CustomEventContext struct {
-	URL        string
+	URL string
+	// Name is this edition's name with its year ("Synthetic Summit 2026"), as its
+	// registrations are stored; PageName is the title as the page declares it,
+	// which is what the API reports back as the event.
 	Name       string
+	PageName   string
 	BrandShort string
 	Location   string
 	Dates      []string

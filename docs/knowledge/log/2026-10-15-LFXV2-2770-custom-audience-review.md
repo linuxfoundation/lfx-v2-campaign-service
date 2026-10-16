@@ -121,3 +121,21 @@
   history branch, the one roles/properties branch never took `gate_event_history`, so create could
   include speakers outside the brand master list. It now carries the gate under that reading, and
   `AllBranchesGated` counts it.
+
+**Fix** — the maintainer's fourth review, and one Copilot "previously missed" item:
+
+- **A one-word label is never matched as a bare substring.** The all-generic whole-label fallback
+  let `Label: "Seoul"` keep another event's Seoul list as reuse; it now needs at least two words.
+- **Named editions are checked without a warehouse too.** The guard ran only when past editions
+  came back, so a guessed name passed unverified for a first edition or an unconfigured warehouse.
+  It now always runs, and the note says the name could not be verified.
+- **`AllBranchesGated` reads the built base branches** instead of restating the gating rules, which
+  had needed matching edits in two places twice in one round.
+- **The interpret response reports the event as the page declares it**, as `discover` does; the
+  year-qualified name stays internal (prompt and edition check).
+- **A long-form brand votes as its short name** (Copilot). Lists filed under "The Linux Foundation"
+  made `DominantBrand` return a phrase `MatchesBrandMaster` could not resolve; it now counts as "LF".
+- Comments and docs: `DominantBrand` and `customBaseBranches` godocs, a test comment back on its
+  test, the `CustomListFilter` concept bullet, the custom-handler paragraph moved under
+  "Audience-builder handlers", and the suppression `ClassifyList` assertion given a page-view filter
+  so it pins the rule.
