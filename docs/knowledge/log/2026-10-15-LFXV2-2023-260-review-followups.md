@@ -10,6 +10,6 @@
 - [The rollback entry](2026-10-15-LFXV2-2023-newer-schema-rollback.md) still says the tolerance
   "is not bounded to known-compatible versions". That sentence is superseded: since
   [the one-hop entry](2026-10-15-LFXV2-2023-newer-schema-one-hop.md) the skip-`Up()` path takes a
-  CLEAN recorded version exactly one past the embedded head, and a DIRTY one or one two or more
-  versions ahead goes through `Up()` and is refused.
+  CLEAN recorded version exactly one past the embedded head, and a DIRTY one, or one that is two or
+  more versions ahead, goes through `Up()` and is refused.
 - No code behaviour changed.
