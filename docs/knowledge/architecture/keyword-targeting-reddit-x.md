@@ -53,6 +53,10 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
   `adGroupId`) or line item (X `LineItemID`); the platform must report it live and under THIS
   campaign (an unreported owner is refused like a different one); on X every named criterion
   must be a live, positive keyword criterion of that line item, read before the first DELETE.
+  Both reads run `identityjson.Check` over the RAW body (every page on X) before decoding: a
+  duplicated key, malformed UTF-8 or an unpaired surrogate escape would otherwise resolve
+  silently (last-wins), so it is `ErrTargetingUnreadable` (409, definite) and nothing is written.
+  On X a refused DELETE or negative-keyword POST echo is UNCONFIRMED, since the write was sent.
 - **Provenance and account identity before any call.** The read uses the toggle's check (an
   unrecorded creating account proceeds); the removal fails closed on it, as every mutation does.
 - **Reddit concurrency.** The read returns `revision`, `sha256:` of the whole targeting object's

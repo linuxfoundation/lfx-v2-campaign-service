@@ -485,3 +485,26 @@ func TestMicrosoft_ToggleStatus_PauseGateFailureIsNotSuccess(t *testing.T) {
 		t.Fatal("a pause whose gate PUT failed must not be reported as done")
 	}
 }
+
+// An ownership read identityjson refuses is a definite read failure and NO mutation is sent. The
+// body's last-wins reading lists 701 as a live keyword of the ad group, so without the guard the
+// pause would go out.
+func TestMicrosoft_ApplyKeywordActions_UntrustworthyReadNeverMutates(t *testing.T) {
+	d, calls, _ := msLeverDispatcher(t, func(_ string, path string) (int, string) {
+		if path == "Keywords/QueryByAdGroupId" {
+			return http.StatusOK, `{"Keywords":[{"Id":999,"Id":701,"Status":"Active"},{"Id":702,"Status":"Paused"}]}`
+		}
+		return http.StatusOK, `{"PartialErrors":[]}`
+	})
+	_, err := d.ApplyKeywordActions(context.Background(), "proj", model.ProviderMicrosoftAds, msKeywordCampaign(), []model.KeywordAction{{AdGroupID: "654", CriterionID: "701", Action: model.KeywordActionPause}})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	var u interface{ Unconfirmed() bool }
+	if errors.As(err, &u) && u.Unconfirmed() {
+		t.Errorf("a refused read must not be unconfirmed: %v", err)
+	}
+	if m := msMutations(calls()); len(m) != 0 {
+		t.Errorf("a mutation was sent: %+v", m)
+	}
+}

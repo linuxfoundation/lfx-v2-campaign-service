@@ -2801,7 +2801,11 @@ sentinel, so no grep or reflection separates LinkedIn (tagged in a resolver `Dis
 from X (whose `Dispatch` calls the validator itself). `TestAccountDiscoveryProvidersIsASubsetOfAccountListers`
 therefore pins only the invariant that survives — every member holds the first half — and
 deliberately does not assert equality, because the sets are unequal on purpose and forcing that
-judgement to be relitigated as a test failure is what produced the serial corrections.
+judgement to be relitigated as a test failure is what produced the serial corrections. Since issue
+#181 (which admitted Microsoft) its candidate roster is itself derived: it walks
+`model.AllProviders()` filtered by `IsPaidAds()` and fails when a paid-ads provider has no entry in
+its dispatcher table, so a provider added later cannot be left out of the lister set it checks
+against, and it refuses a non-paid-ads member outright.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"

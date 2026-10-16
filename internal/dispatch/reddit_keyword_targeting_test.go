@@ -345,3 +345,32 @@ func TestReddit_RemoveKeywordTargeting_AmbiguityIsUnconfirmed(t *testing.T) {
 		}
 	})
 }
+
+// A targeting read identityjson refuses is a definite read failure, and the removal issues NO
+// PATCH. Each body's last-wins reading is the clean targeting the caller's revision was read
+// from, so without the guard ownership and the revision would both pass and the write-back would
+// PATCH a targeting the bytes never unambiguously said.
+func TestReddit_RemoveKeywordTargeting_UntrustworthyReadWritesNothing(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	rev := readRedditRevision(t, `["a","b"]`)
+	clean := redditTargetingBody(`["a","b"]`)
+	for name, body := range map[string]string{
+		"duplicate keywords inside targeting": strings.Replace(clean, `"keywords":`, `"keywords":["z"],"keywords":`, 1),
+		"duplicate data-level campaign_id":    strings.Replace(clean, `"campaign_id":"t3_c"`, `"campaign_id":"t3_other","campaign_id":"t3_c"`, 1),
+		"duplicate data-level id":             strings.Replace(clean, `"id":"t5_ag"`, `"id":"t5_other","id":"t5_ag"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newRedditKWTStub(t, kwtReply{http.StatusOK, `{"data":{"id":"t5_ag","targeting":{"keywords":["b"]}}}`}, kwtReply{http.StatusOK, body})
+			_, err := removeReddit(s, redditBudgetCampaign(), rev, "a")
+			if !errors.Is(err, domain.ErrKeywordTargetingUnaddressable) || !errors.Is(err, reddit.ErrTargetingUnreadable) {
+				t.Fatalf("want an unreadable-targeting refusal, got %v", err)
+			}
+			if reddit.IsOutcomeUnconfirmed(err) {
+				t.Errorf("a read refusal must be definite: %v", err)
+			}
+			if n := len(s.patches()); n != 0 {
+				t.Fatalf("an untrustworthy read issued %d PATCH(es)", n)
+			}
+		})
+	}
+}

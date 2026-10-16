@@ -25,6 +25,12 @@ answer (`AuthenticatedPortalID`) gets the full `Check`, whose portal id every
 caller compares against a recorded one. `"sent":1000,"sent":0` or a doubled `hubId` describes two
 answers, and the decoder would pick one silently.
 
+The keyword levers' pre-reads use it too (2026-10-15): Reddit `GetAdGroupTargeting` (refusal →
+`ErrTargetingUnreadable`), X `ListLineItemTargetingCriteria` (every page; → `ErrTargetingUnreadable`)
+and Microsoft `GetAdGroupKeywords` — each a definite read failure, because the ownership gate or
+the whole-targeting write-back acts on that read. The X DELETE and negative-keyword POST echoes are
+checked too, but those writes were SENT, so a refused echo is UNCONFIRMED, never a refusal.
+
 encoding/json has three silent behaviours that turn a malformed answer into a plausible one, and
 `Check` refuses each:
 

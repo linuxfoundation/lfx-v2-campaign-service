@@ -485,9 +485,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // endpoint until LFXV2-2665, so an account-less row was unrecoverable from inside this API.
 // LinkedIn does have one — call discovery, rerun bootstrap with the chosen id — so its row is
 // recoverable, and its create failure now names the missing choice too (see the current state
-// below). Microsoft and LinkedIn are excluded by neither: they have both halves and their
-// absence is sequencing alone. X held both too and was ADMITTED in
-// LFXV2-3319 (see the current state below). That is exactly the failure requiredConfigKeys
+// below). LinkedIn is excluded by neither: it has both halves and its absence is sequencing
+// alone. X and Microsoft held both halves and were ADMITTED — X in LFXV2-3319, Microsoft in
+// issue #181 (see the current state below). That is exactly the failure requiredConfigKeys
 // above exists to prevent, applied to the one column that is not part of ProviderConfig.
 //
 // **Membership is NOT "the dispatcher implements the service-side AccountLister".** (The
@@ -515,8 +515,9 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //
 // The bar for adding a provider here is those two halves together, not either alone.
 //
-// CURRENT STATE after LFXV2-3064 (LinkedIn and Microsoft discovery endpoints) and LFXV2-3319
-// (X discovery, and X's admission to this map) — the providers outside this map are not outside
+// CURRENT STATE after LFXV2-3064 (LinkedIn and Microsoft discovery endpoints), LFXV2-3319
+// (X discovery, and X's admission to this map) and issue #181 (Microsoft's admission) — the
+// providers outside this map are not outside
 // it for the same reason, and the difference is what tells you how far each is from qualifying:
 //
 //   - Reddit has BOTH halves as of LFXV2-2665, which added reddit.ListAdAccounts and
@@ -551,12 +552,15 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 //     admitted: admission changes what this CLI accepts and is a separate decision, made in its
 //     own change rather than riding along with the create-path fix.
 //   - Microsoft has BOTH halves. validateMicrosoftConnection is called by Dispatch itself and
-//     tags the missing choice, and discovery landed with this ticket. Its absence from this map
-//     is therefore a SEQUENCING decision, not a missing capability — adding it changes what this
-//     CLI accepts and belongs in its own commit rather than riding along with the endpoints.
-//     Note this map is a DIFFERENT gate from design/connection.go's Required("account_id"),
-//     which governs the public connection APIs; a provider can be eligible for one and not yet
-//     admitted to the other, which is exactly Microsoft's position.
+//     tags the missing choice (ErrConnectionNotUsable + ErrAccountNotSelected), and discovery
+//     (MicrosoftDispatcher.ListAccounts) landed with LFXV2-3064. It was held out as a
+//     SEQUENCING decision and ADMITTED in issue #181, in the same change that dropped
+//     Required("account_id") from MicrosoftAdsConnectionConfig — the two gates relaxed
+//     together, as X's were. customer_id is NOT a second choice this defers: it is optional at
+//     both gates and absent from requiredConfigKeys, discovery walks every customer the
+//     credential reaches without it, and the client omits the CustomerId header when it is
+//     empty. An operator who does use one supplies it with -config customer_id=… on either
+//     run; a later -account-id rotation keeps it, because an omitted -config keeps every column.
 //
 // Stating which half is missing matters because the halves are earned separately, and an
 // enumeration of members goes stale silently — this comment described a Google/Meta-only world
@@ -579,9 +583,10 @@ func requireConfig(provider model.Provider, cfg map[string]string) error {
 // dispatcher including Reddit mentions that sentinel. Prefer adding a case to those tests over
 // correcting a member list here a fifth time.
 var accountDiscoveryProviders = map[model.Provider]bool{
-	model.ProviderGoogleAds:  true,
-	model.ProviderMetaAds:    true,
-	model.ProviderTwitterAds: true,
+	model.ProviderGoogleAds:    true,
+	model.ProviderMetaAds:      true,
+	model.ProviderTwitterAds:   true,
+	model.ProviderMicrosoftAds: true,
 }
 
 // requireAccountID checks the value about to be WRITTEN, for the same reason requireConfig

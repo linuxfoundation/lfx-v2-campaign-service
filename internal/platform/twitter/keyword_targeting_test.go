@@ -158,3 +158,64 @@ func TestDeleteTargetingCriterion_Classification(t *testing.T) {
 		}
 	})
 }
+
+// Modelled on TestGetAudienceInsights_DuplicateKeysAtAnyLevel: a page encoding/json would decode
+// WITHOUT error into one of two answers refuses the WHOLE list, wherever the duplicate sits. Each
+// body's last-wins reading is a valid criterion of this line item, so only the guard refuses it.
+func TestListLineItemTargetingCriteria_UntrustworthyPageRefusesTheList(t *testing.T) {
+	const page1 = `{"data":[{"id":"k1","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"a","operator_type":"EQ"}],"next_cursor":"c2"}`
+	for name, page2 := range map[string]string{
+		"duplicate id on page 2":              `{"data":[{"id":"k9","id":"k2","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"b","operator_type":"EQ"}],"next_cursor":null}`,
+		"duplicate line_item_id":              `{"data":[{"id":"k2","line_item_id":"li9","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"b","operator_type":"EQ"}],"next_cursor":null}`,
+		"case-folded duplicate operator_type": `{"data":[{"id":"k2","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"b","OPERATOR_TYPE":"NE","operator_type":"EQ"}],"next_cursor":null}`,
+		"duplicate envelope data":             `{"data":[],"data":[{"id":"k2","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"b","operator_type":"EQ"}],"next_cursor":null}`,
+		"unpaired surrogate in a keyword":     `{"data":[{"id":"k2","line_item_id":"li1","targeting_type":"BROAD_KEYWORD","targeting_value":"\uDC00","operator_type":"EQ"}],"next_cursor":null}`,
+		"invalid UTF-8 in a keyword":          "{\"data\":[{\"id\":\"k2\",\"line_item_id\":\"li1\",\"targeting_type\":\"BROAD_KEYWORD\",\"targeting_value\":\"b\xff\",\"operator_type\":\"EQ\"}],\"next_cursor\":null}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, seen := targetingServer(t, tcReply{http.StatusOK, page1}, tcReply{http.StatusOK, page2})
+			got, err := c.ListLineItemTargetingCriteria(context.Background(), "li1")
+			if !errors.Is(err, ErrTargetingUnreadable) || got != nil {
+				t.Fatalf("want ErrTargetingUnreadable and no list, got %+v, %v", got, err)
+			}
+			if IsOutcomeUnconfirmed(err) {
+				t.Errorf("a pure read's refusal must be definite: %v", err)
+			}
+			if n := len(seen()); n != 2 {
+				t.Errorf("want both pages read, got %d requests", n)
+			}
+		})
+	}
+	t.Run("on page 1 the second page is never requested", func(t *testing.T) {
+		c, seen := targetingServer(t, tcReply{http.StatusOK, `{"data":[],"next_cursor":"c2","next_cursor":null}`}, tcReply{http.StatusOK, `{"data":[],"next_cursor":null}`})
+		if _, err := c.ListLineItemTargetingCriteria(context.Background(), "li1"); !errors.Is(err, ErrTargetingUnreadable) || len(seen()) != 1 {
+			t.Fatalf("want ErrTargetingUnreadable after one request, got %v after %d", err, len(seen()))
+		}
+	})
+}
+
+// The DELETE was sent, so an echo identityjson refuses is UNCONFIRMED — never a definite refusal,
+// and never retried. Each echo's last-wins reading would be a confirmed deletion.
+func TestDeleteTargetingCriterion_UntrustworthyEchoIsUnconfirmed(t *testing.T) {
+	for name, body := range map[string]string{
+		"duplicate deleted":  `{"data":{"id":"k1","deleted":false,"deleted":true}}`,
+		"duplicate id":       `{"data":{"id":"k2","id":"k1","deleted":true}}`,
+		"case-folded id":     `{"data":{"ID":"k2","id":"k1","deleted":true}}`,
+		"unpaired surrogate": `{"data":{"id":"k1","deleted":true,"note":"\uD800"}}`,
+		"invalid UTF-8":      "{\"data\":{\"id\":\"k1\",\"deleted\":true,\"note\":\"\xff\"}}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, seen := targetingServer(t, tcReply{http.StatusOK, body})
+			err := c.DeleteTargetingCriterion(context.Background(), "k1")
+			if err == nil || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("want UNCONFIRMED, got %v", err)
+			}
+			if errors.Is(err, ErrTargetingCriterionNotFound) || errors.Is(err, ErrWriteNotSent) {
+				t.Errorf("a sent write's untrustworthy echo is neither absent nor unsent: %v", err)
+			}
+			if n := len(seen()); n != 1 {
+				t.Errorf("want exactly one DELETE (no retry), got %d", n)
+			}
+		})
+	}
+}

@@ -942,7 +942,11 @@ request layer, checked against Microsoft's reference on 2026-10-05:
 - **`GetAdGroupKeywords` refuses a body without `Keywords`, or with `"Keywords": null`** —
   Microsoft documents an empty array for an empty ad group, so absence (or null) is an
   unanswered read, not "no keywords"; only `[]` confirms emptiness. Entries carry `Id`
-  and `Status`; `IsDeleted()` reads `Status == "Deleted"`.
+  and `Status`; `IsDeleted()` reads `Status == "Deleted"`. The RAW body goes through
+  `identityjson.Check` before any decode — the campaign lookup and settings reads' guard — so a
+  duplicated `Keywords`, `Id` or `Status` (case-folded included), malformed UTF-8 or an unpaired
+  surrogate escape is a definite read failure, and `ApplyKeywordActions` sends no mutation on a
+  last-wins reading of the ownership read.
 
 None of the four has been exercised against a live Microsoft Advertising account; the transport
 and the 200-with-PartialErrors envelope are the ones the status toggle and creates already use.

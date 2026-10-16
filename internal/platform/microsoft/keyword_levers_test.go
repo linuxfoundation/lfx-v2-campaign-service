@@ -550,3 +550,34 @@ func TestAddCampaignNegativeKeywords_AlreadyExistsIsMatchedStrictly(t *testing.T
 		t.Fatalf("outcomes = %s, want a 4335 with a different symbolic code to stay FAILED", negOutcomes(out))
 	}
 }
+
+// A body encoding/json would decode WITHOUT error into one of two answers is refused before any
+// decode: the ownership check runs on this read before any mutation. Each body's last-wins
+// reading is a plausible ad group (keyword 701 live), so only the guard refuses it.
+func TestGetAdGroupKeywords_RefusesAnUntrustworthyBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"duplicate Keywords":        `{"Keywords":[],"Keywords":[{"Id":701,"Status":"Active"}]}`,
+		"duplicate Id":              `{"Keywords":[{"Id":999,"Id":701,"Status":"Active"}]}`,
+		"duplicate Status":          `{"Keywords":[{"Id":701,"Status":"Deleted","Status":"Active"}]}`,
+		"case-folded Status":        `{"Keywords":[{"Id":701,"status":"Deleted","Status":"Active"}]}`,
+		"unpaired surrogate escape": `{"Keywords":[{"Id":701,"Status":"Active","Text":"\uD800"}]}`,
+		"invalid UTF-8":             "{\"Keywords\":[{\"Id\":701,\"Status\":\"Active\",\"Text\":\"\xff\"}]}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, calls := kwRecorder(t, func(string, string) (int, string) { return http.StatusOK, body })
+			got, err := c.GetAdGroupKeywords(context.Background(), "654")
+			if err == nil || got != nil || !strings.Contains(err.Error(), "cannot be trusted") {
+				t.Fatalf("want an identityjson refusal, got %+v, %v", got, err)
+			}
+			if IsOutcomeUnconfirmed(err) {
+				t.Errorf("a pure read's refusal must be definite: %v", err)
+			}
+			if strings.Contains(err.Error(), "999") || strings.Contains(err.Error(), "Deleted") {
+				t.Errorf("the refusal carries response bytes: %v", err)
+			}
+			if n := len(calls()); n != 1 {
+				t.Errorf("want exactly one read, got %d", n)
+			}
+		})
+	}
+}
