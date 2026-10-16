@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 // tweetRecorder captures what the authoring endpoint saw. Both fields are written
@@ -303,7 +305,7 @@ func TestCreateCampaign_AuthorTweetPreSendDialFailure(t *testing.T) {
 		AccountConfig{AccountID: "acc1", FundingInstrumentID: "fi1"},
 		WithBaseURL(srv.URL),
 		WithWriteDelay(0),
-		WithHTTPClient(&http.Client{Transport: &tweetToRefusedTransport{base: refusedDialTransport(t), deadURL: refusedURL}}),
+		WithHTTPClient(&http.Client{Transport: &tweetToRefusedTransport{base: platformtest.RefusedDialTransport(t), refusedURL: platformtest.RefusedURL}}),
 	)
 	c.nonceFn = func() string { return "n" }
 	c.timeFn = staticTime
@@ -321,16 +323,16 @@ func TestCreateCampaign_AuthorTweetPreSendDialFailure(t *testing.T) {
 }
 
 // tweetToRefusedTransport redirects ONLY the tweet-authoring request
-// (POST .../tweet) to refusedURL, whose dial refusedDialTransport refuses — a
+// (POST .../tweet) to platformtest.RefusedURL, whose dial refusedDialTransport refuses — a
 // proven pre-send failure. Every other request passes through untouched.
 type tweetToRefusedTransport struct {
-	base    http.RoundTripper
-	deadURL string
+	base       http.RoundTripper
+	refusedURL string
 }
 
 func (t *tweetToRefusedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/tweet") {
-		dead, err := url.Parse(t.deadURL)
+		dead, err := url.Parse(t.refusedURL)
 		if err != nil {
 			return nil, err
 		}

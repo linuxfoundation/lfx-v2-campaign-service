@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 type tcReply struct {
@@ -148,7 +150,7 @@ func TestDeleteTargetingCriterion_Classification(t *testing.T) {
 	// A connect-time failure proves the DELETE never left the process: NOT_SENT, not a refusal
 	// (PR #274 review).
 	t.Run("a refused connection is not sent", func(t *testing.T) {
-		c := testClient(refusedURL, WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)})) // the dial is refused
+		c := testClient(platformtest.RefusedURL, WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)})) // the dial is refused
 		err := c.DeleteTargetingCriterion(context.Background(), "k1")
 		if !errors.Is(err, ErrWriteNotSent) || IsOutcomeUnconfirmed(err) {
 			t.Fatalf("want ErrWriteNotSent and not unconfirmed, got %v", err)

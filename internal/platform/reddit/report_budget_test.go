@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 // fakeLedgerClock drives a ledger's clock; its sleep advances the clock instead of waiting.
@@ -301,10 +302,10 @@ func TestReportBudgets_UnsentAttemptsSpendNothing(t *testing.T) {
 // A pre-send dial failure (here: connection refused) is proven unsent, so its slot is handed back;
 // an outage must not burn the account's reporting budget.
 func TestReportBudgets_PreSendDialFailureReleasesTheSlot(t *testing.T) {
-	refused := WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}) // every API dial is refused
+	refused := WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)}) // every API dial is refused
 	b := NewReportBudgets(time.Minute, 100, 100)
 	// One report request (the metrics read), so no sibling attempt can be cancelled mid-send.
-	_, err := budgetClient(t, refusedURL, b, refused).GetCampaignMetrics(context.Background(), "t3_a", model.MetricsWindowToday)
+	_, err := budgetClient(t, platformtest.RefusedURL, b, refused).GetCampaignMetrics(context.Background(), "t3_a", model.MetricsWindowToday)
 	if err == nil || !isPreSendDialError(err) {
 		t.Fatalf("error = %v, want a pre-send dial failure", err)
 	}
@@ -349,7 +350,7 @@ func TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts(t *testing.T) {
 		}
 	})
 	t.Run("pre-send dial failure", func(t *testing.T) {
-		refused := WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}) // every API dial is refused
+		refused := WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)}) // every API dial is refused
 		b := NewReportBudgets(time.Minute, 100, 100)
 		var reserved, reservedInsights atomic.Int32
 		b.onReserve = func(_ string, insights bool) {
@@ -358,7 +359,7 @@ func TestReportBudgets_KeywordReadSpendsOnlyOnSentAttempts(t *testing.T) {
 				reservedInsights.Add(1)
 			}
 		}
-		_, err := budgetClient(t, refusedURL, b, refused).GetKeywordPerformance(context.Background(), model.MetricsWindowToday, []string{"t3_a"})
+		_, err := budgetClient(t, platformtest.RefusedURL, b, refused).GetKeywordPerformance(context.Background(), model.MetricsWindowToday, []string{"t3_a"})
 		if err == nil || !isPreSendDialError(err) {
 			t.Fatalf("error = %v, want a pre-send dial failure", err)
 		}

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 // TestCreateCampaign_AuthorsPostFromImageURL exercises the author-a-post path:
@@ -593,8 +595,8 @@ func TestCreateCampaign_AuthorPostPreSendIsDefinite(t *testing.T) {
 		WithNowFunc(fixedRedditClock()),
 		// The POST /profiles/.../posts dial is REFUSED (a proven pre-send failure).
 		WithHTTPClient(&http.Client{Transport: &postsToRefusedTransport{
-			base:    refusedDialTransport(t),
-			deadURL: refusedURL,
+			base:       platformtest.RefusedDialTransport(t),
+			refusedURL: platformtest.RefusedURL,
 		}}),
 	)
 
@@ -647,17 +649,17 @@ func TestCreateCampaign_AuthorPostPreSendIsDefinite(t *testing.T) {
 }
 
 // postsToRefusedTransport redirects ONLY the promoted-post authoring request
-// (POST /profiles/.../posts) to refusedURL, whose dial refusedDialTransport
+// (POST /profiles/.../posts) to platformtest.RefusedURL, whose dial refusedDialTransport
 // refuses — a proven pre-send failure. Every other request is passed through
 // untouched so the campaign and ad group still get created normally.
 type postsToRefusedTransport struct {
-	base    http.RoundTripper
-	deadURL string
+	base       http.RoundTripper
+	refusedURL string
 }
 
 func (t *postsToRefusedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/profiles/") && strings.HasSuffix(r.URL.Path, "/posts") {
-		dead, err := url.Parse(t.deadURL)
+		dead, err := url.Parse(t.refusedURL)
 		if err != nil {
 			return nil, err
 		}

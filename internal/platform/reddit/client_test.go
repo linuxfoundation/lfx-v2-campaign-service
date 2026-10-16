@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 // testCreds / testAccount are dummy injected values (no real secrets, no env).
@@ -1137,8 +1138,8 @@ func TestCreateCampaign_ConnRefusedNotUnconfirmed(t *testing.T) {
 	}))
 	defer tokenSrv.Close()
 	// Every API dial is refused; the token server is dialed normally.
-	c := NewClient(testCreds, testAccount, WithBaseURL(refusedURL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
-		WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}))
+	c := NewClient(testCreds, testAccount, WithBaseURL(platformtest.RefusedURL+"/api/v3"), WithTokenURL(tokenSrv.URL), WithNowFunc(fixedRedditClock()),
+		WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)}))
 	res, err := c.CreateCampaign(context.Background(), validRedditInput())
 	if err == nil {
 		t.Fatal("expected an error on connection-refused")

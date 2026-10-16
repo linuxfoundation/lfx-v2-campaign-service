@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 // adSetReply is one canned answer.
@@ -396,8 +398,8 @@ func TestUpdateAdSetStatusOnce_PreSendIsNotSent(t *testing.T) {
 		}
 	})
 	t.Run("connection refused", func(t *testing.T) {
-		c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{}, WithBaseURL(refusedURL),
-			WithHTTPClient(&http.Client{Transport: refusedDialTransport(t)}))
+		c := NewClient(Credentials{AccessToken: "tok"}, AccountConfig{}, WithBaseURL(platformtest.RefusedURL),
+			WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)}))
 		if got := ClassifyAdSetWrite(c.UpdateAdSetStatusOnce(context.Background(), "888", StatusActive)); got != AdSetWriteNotSent {
 			t.Fatalf("outcome = %v, want NOT_SENT", got)
 		}
