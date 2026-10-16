@@ -2114,6 +2114,9 @@ func TestDiscover_ASuppressionRollupIsNotExpanded(t *testing.T) {
 	}{
 		"suppression rollup": {parent: "26Q3 - Synthetic Summit 2026 - Opt-Outs", offered: false},
 		"ordinary rollup":    {parent: "26Q3 - Synthetic Summit 2026 - Inclusions", offered: true},
+		"master rollup":      {parent: "26Q3 - Synthetic Summit 2026 - Master", offered: true},
+		"test master rollup": {parent: "26Q3 - Synthetic Summit 2026 - Master [test]", offered: false},
+		"staff master":       {parent: "26Q3 - Synthetic Summit 2026 - Staff Master", offered: false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			hits := `{"listId":"7201","name":"` + tc.parent + `","objectTypeId":"0-1"}`

@@ -26,9 +26,11 @@ var discoveryHiddenHints = []struct {
 	reason string
 	hints  []string
 }{
-	{"master", []string{"master"}},
+	// Test and staff come before master: "Synthetic Summit - Master [test]" is a test
+	// list, and discovery still expands a master rollup's children.
 	{"test", []string{"[psh-test]", "[test", "test]", "e2e test", "(test)", "- test -"}},
 	{"staff", []string{"staff"}},
+	{"master", []string{"master"}},
 }
 
 // uploadSuffixRE matches a list named after an uploaded file ("Japan_final1.xlsx").

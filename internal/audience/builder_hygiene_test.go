@@ -219,3 +219,16 @@ func TestSuppressionHints_MatchWithSeparatorsNormalised(t *testing.T) {
 	_, hidden := DiscoveryHidden("26Q3 - Seoul - Contest Winners", false)
 	assert.False(t, hidden, "test-list matching keeps its punctuation: a contest is not a test list")
 }
+
+// A test or staff marker wins over "master", so such a rollup is never expanded.
+func TestDiscoveryHidden_TestAndStaffWinOverMaster(t *testing.T) {
+	for name, want := range map[string]string{
+		"Synthetic Summit - Master [test]": "test",
+		"Synthetic Summit - Staff Master":  "staff",
+		"Synthetic Summit - Master":        "master",
+	} {
+		reason, hidden := DiscoveryHidden(name, false)
+		assert.True(t, hidden, name)
+		assert.Equal(t, want, reason, name)
+	}
+}

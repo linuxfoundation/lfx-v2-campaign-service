@@ -213,3 +213,6 @@
 - **A suppression, test or staff rollup is not expanded in discovery** (Copilot). Discovery expanded
   rollups before its hygiene check, so a child of an "Opt-Outs" rollup was offered for inclusion.
   Such a parent is now classified, and hidden, as itself; a master rollup is still expanded.
+- **Test and staff markers win over "master"** (Copilot, review body). "Synthetic Summit - Master
+  [test]" was classified as a master, so discovery still expanded it and offered its children. The
+  test and staff hints are now checked first.
