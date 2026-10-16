@@ -117,11 +117,17 @@ func ProbeInconclusive(err error) bool {
 // ProbeNotSent reports whether err PROVES the FAILING request never left this process — a DNS failure, or a
 // connect-time dial refusal — so the probe's outcome belongs to no platform at all.
 //
-// It is the third member of the probe vocabulary and the only one that is not about the
-// operator's answer: an inconclusive probe reads identically either way. It exists for the
-// metrics arm alone — see internal/dispatch/probe.go and domain.ErrConnectionProbeNotAttempted
-// — so an unresolvable host does not land on Google's upstream-call series as a near-zero-
-// latency error sample and invent a provider outage out of a local network fault.
+// It is the third member of the probe vocabulary. Its FIRST caller is the metrics arm — see
+// internal/dispatch/probe.go and domain.ErrConnectionProbeNotAttempted — so an unresolvable host
+// does not land on Google's upstream-call series as a near-zero-latency error sample and invent a
+// provider outage out of a local network fault.
+//
+// In THIS package it is no longer metrics-only, and that is deliberate rather than reuse by
+// accident: mutateCampaignNegativeKeywords asks it to separate NOT_SENT from REJECTED on a
+// per-keyword outcome the operator reads over HTTP 200. The question is identical — did this
+// request leave the process — and the proof is the same proof; only the consequence is larger.
+// The sibling packages' copies of this docblock still describe a metrics-only helper, because in
+// those packages it still is one.
 //
 // It defaults FALSE for anything it does not recognise, the OPPOSITE of ProbeInconclusive's
 // default and for the same reason that one defaults true: each defaults to the answer that is

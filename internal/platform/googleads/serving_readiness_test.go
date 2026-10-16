@@ -46,7 +46,7 @@ func TestValidateNegativeKeywords(t *testing.T) {
 	t.Run("errors name the negative list, not the positive one", func(t *testing.T) {
 		cases := map[string][]Keyword{
 			"empty text":         {{Text: "  ", MatchType: MatchTypeBroad}},
-			"over-limit text":    {{Text: strings.Repeat("a", maxKeywordTextRunes+1), MatchType: MatchTypeBroad}},
+			"over-limit text":    {{Text: strings.Repeat("a", MaxKeywordTextRunes+1), MatchType: MatchTypeBroad}},
 			"bad match type":     {{Text: "free", MatchType: "FUZZY"}},
 			"too many negatives": make([]Keyword, maxNegativeKeywords+1),
 		}
