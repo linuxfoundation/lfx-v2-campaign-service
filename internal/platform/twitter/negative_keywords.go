@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
@@ -88,6 +89,10 @@ func (c *Client) CreateNegativeKeywordCriterion(ctx context.Context, lineItemID,
 	}
 	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
 		return "", unconfirmed("acknowledged without the created criterion")
+	}
+	// The POST was SENT: an echo identityjson refuses is UNCONFIRMED, never a refusal.
+	if identityjson.Check(resp.raw) != nil {
+		return "", unconfirmed("the 2xx response cannot be trusted: it carries a duplicated key, malformed UTF-8 or an unpaired surrogate escape")
 	}
 	var echo targetingCriterionWire
 	if jerr := json.Unmarshal(resp.Data, &echo); jerr != nil {

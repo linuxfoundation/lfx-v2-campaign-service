@@ -266,3 +266,30 @@ func TestRemoveAdGroupKeywords_429IsUnconfirmedAndNotRetried(t *testing.T) {
 		t.Errorf("want exactly one PATCH (no retry after a 429), got %d", n)
 	}
 }
+
+// A body encoding/json would decode WITHOUT error into one of two answers is refused before any
+// decode: the targeting read feeds a whole-object write-back, so a last-wins keyword list or ad
+// group id would PATCH a targeting the bytes never unambiguously said.
+func TestGetAdGroupTargeting_RefusesAnUntrustworthyBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"duplicate keywords inside targeting": `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":{"keywords":["z"],"keywords":["a","b"]}}}`,
+		"duplicate data-level id":             `{"data":{"id":"t5_other","id":"t5_ag","campaign_id":"t3_c","targeting":{"keywords":["a","b"]}}}`,
+		"duplicate data-level campaign_id":    `{"data":{"id":"t5_ag","campaign_id":"t3_other","campaign_id":"t3_c","targeting":{"keywords":["a","b"]}}}`,
+		"unpaired surrogate escape":           `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":{"keywords":["\uD800","b"]}}}`,
+		"invalid UTF-8":                       "{\"data\":{\"id\":\"t5_ag\",\"campaign_id\":\"t3_c\",\"targeting\":{\"keywords\":[\"a\xff\",\"b\"]}}}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := budgetTestClient(t, http.StatusOK, body)
+			got, err := c.GetAdGroupTargeting(context.Background(), "t5_ag")
+			if !errors.Is(err, ErrTargetingUnreadable) || got != nil {
+				t.Fatalf("want ErrTargetingUnreadable, got %+v, %v", got, err)
+			}
+			if IsOutcomeUnconfirmed(err) {
+				t.Errorf("a pure read's refusal must be definite: %v", err)
+			}
+			if strings.Contains(err.Error(), "t5_other") || strings.Contains(err.Error(), "t3_other") || strings.Contains(err.Error(), `"z"`) {
+				t.Errorf("the refusal carries response bytes: %v", err)
+			}
+		})
+	}
+}

@@ -686,7 +686,14 @@ request can address. The dispatcher settles it instead, with `accountIDNotUsable
 `GetAdGroupTargeting` reads the ad group's `targeting` object (the GET `GetAdGroupBid` makes),
 keeping every member as raw bytes, returning `targeting.keywords` and a `Revision` — `sha256:` of
 the object's canonical JSON. An absent, null or non-object targeting, or a `keywords` that is not
-a string array (null elements are kept, not keywords), is `ErrTargetingUnreadable`.
+a string array (null elements are kept, not keywords), is `ErrTargetingUnreadable` — and so is a
+body `identityjson.Check` refuses over the RAW bytes before any decode (a duplicated key at any
+level, e.g. `keywords` inside `targeting` or the data-level `id`/`campaign_id`; malformed UTF-8; an
+unpaired surrogate escape), the guard the campaign settings and lookup reads already apply. The
+read feeds the whole-object write-back of both `RemoveAdGroupKeywords` and
+`AddAdGroupExcludedKeywords`, so a last-wins reading would PATCH a targeting the bytes never
+unambiguously said. A pure read: the refusal is definite, carries no response bytes, and no PATCH
+follows.
 `RemoveAdGroupKeywords` PATCHes `targeting` back with every read member — and every keyword element
 it does not remove — unchanged, matching keywords exactly and sending the body pre-encoded with
 HTML escaping off (`preEncodedBody`, honoured by the request loop), because Reddit replaces the

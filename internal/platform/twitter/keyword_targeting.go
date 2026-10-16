@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -125,8 +127,9 @@ func (w targetingCriterionWire) criterion() TargetingCriterion {
 //
 // The list is all-or-error, because the caller proves ownership and enforces the last-keyword
 // guard from it: a body with no result set, a full page without a cursor X gives a meaning to,
-// the page cap reached, an element without a usable id, or one reported under ANOTHER line item
-// (the scope did not hold) are all ErrTargetingUnreadable — never a shorter list.
+// the page cap reached, an element without a usable id, one reported under ANOTHER line item
+// (the scope did not hold), or a page identityjson refuses (a duplicated key, malformed UTF-8, an
+// unpaired surrogate escape) are all ErrTargetingUnreadable — never a shorter list.
 func (c *Client) ListLineItemTargetingCriteria(ctx context.Context, lineItemID string) ([]TargetingCriterion, error) {
 	if _, _, err := c.lineItemPath(lineItemID); err != nil {
 		return nil, err
@@ -142,6 +145,12 @@ func (c *Client) ListLineItemTargetingCriteria(ctx context.Context, lineItemID s
 		}
 		if resp == nil {
 			return nil, fmt.Errorf("twitter: list line item %s targeting criteria: empty response: %w", lineItemID, ErrTargetingUnreadable)
+		}
+		// Every page, as raw bytes, before it is decoded: a duplicated id, line_item_id or
+		// operator_type would resolve last-wins and the ownership / last-keyword gate would act on
+		// one of two answers.
+		if err := identityjson.Check(resp.raw); err != nil {
+			return nil, fmt.Errorf("twitter: list line item %s targeting criteria: %w: %w", lineItemID, ErrTargetingUnreadable, err)
 		}
 		var items []targetingCriterionWire
 		if len(resp.Data) > 0 {
@@ -219,6 +228,10 @@ func (c *Client) DeleteTargetingCriterion(ctx context.Context, criterionID strin
 	}
 	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
 		return &transportError{Method: http.MethodDelete, Path: "targeting criterion", err: fmt.Errorf("delete of targeting criterion %s was acknowledged without the deleted criterion", criterionID)}
+	}
+	// The write was SENT: an echo identityjson refuses is UNCONFIRMED, never a refusal.
+	if cerr := identityjson.Check(resp.raw); cerr != nil {
+		return &transportError{Method: http.MethodDelete, Path: "targeting criterion", err: fmt.Errorf("delete of targeting criterion %s was acknowledged with a response that cannot be trusted: %w", criterionID, cerr)}
 	}
 	var echo targetingCriterionWire
 	if jerr := json.Unmarshal(resp.Data, &echo); jerr != nil {

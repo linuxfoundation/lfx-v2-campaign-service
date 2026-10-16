@@ -865,3 +865,13 @@ Both bid encoders (`CreateBidMinorUnits`, `bidToMinorUnits`) refuse a scaled val
 int64's limit BEFORE converting it, as `budgetToMinorUnits` does, and the create path refuses a bid
 whose 5× required daily budget cannot be represented (`bidCapMinor > MaxInt64/5`) before forming
 the product, so a huge fallback offset cannot wrap the comparison negative (PR #332 review).
+
+## Ads under an ad set (`ads.go`, decision D7 first step)
+
+`ListAdSetAds(ctx, adSetID, campaignID, accountID, window)` is read-only: `GET /{ad_set}/ads`
+(fields include `creative{id,name}` and the parent ids `adset_id`, `campaign_id`, `account_id`,
+each checked per row; another account is `ErrAdAccountMismatch`), the account currency, and one
+`level=ad` Insights walk filtered by `adset.id`. Every body passes `identityjson.Check` raw
+(`getChecked`). The listing is capped at `adListMaxPages` pages and reports `Truncated` past it;
+the Insights walk fails past `adInsightsMaxPages`. The caller proves the ad set is the campaign's
+first (`GetAdSetState`). See [Meta Ad Read Under an Ad Set](../architecture/meta-ads.md).

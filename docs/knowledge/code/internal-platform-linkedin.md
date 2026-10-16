@@ -432,7 +432,10 @@ because the dispatcher hands exactly that sentence to an API client.
 rather than becoming zero — nil is what a caller reads as "this campaign does not use this
 field" — while a field that is PRESENT but unparseable sets `AmountUnparseable` instead of
 silently reading as absent; those are opposite facts and only one of them is safe to write
-against. A response echoing a different campaign id is refused.
+against. A response echoing a different campaign id is refused, and so is one echoing **no**
+id (absent, `null` or `""`): it proves nothing about which campaign its fields describe, and an
+absent `dailyBudget` would otherwise read as "this campaign does not use it". This matches
+`GetCampaignSettings` on the same resource and the Reddit and X budget reads.
 
 `UpdateCampaignBudget(ctx, campaignID, amount string, lifetime bool)` sends a single
 `PARTIAL_UPDATE` setting exactly one of the two fields, with the caller's wire string passed
