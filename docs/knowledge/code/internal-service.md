@@ -2223,6 +2223,15 @@ and adopted rows record nothing. `classifyMetaAdSetError` maps every failure to 
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 
+## Meta ads under an ad set (`meta_ads.go`, decision D7 first step)
+
+`ListMetaAds` serves `list-meta-ads` through the optional `MetaAdReader` capability
+(`Orchestrator.ReadMetaAds` under `metricsCallTimeout`, upstream op `read_meta_ads`). Read-only:
+no If-Match, no ETag, nothing persisted. `window` and `ad_set_id` (`metaAdSetIDOK`) are 400 before
+the row is loaded; the capability is checked before provisioning. Errors go through
+`classifyMetaAdSetError` with verb `read_ads` (its own 503 and not-provisioned wording). See
+[Meta Ad Read Under an Ad Set](../architecture/meta-ads.md).
+
 
 ## LinkedIn audience read (`connection_linkedin_audience.go`, LFXV2-2665)
 

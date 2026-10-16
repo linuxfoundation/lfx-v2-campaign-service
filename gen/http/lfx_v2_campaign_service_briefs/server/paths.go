@@ -129,6 +129,11 @@ func ListMetaAdSetsLfxV2CampaignServiceBriefsPath(projectID string, briefID stri
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/meta-ad-sets", projectID, briefID, campaignID)
 }
 
+// ListMetaAdsLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service list-meta-ads HTTP endpoint.
+func ListMetaAdsLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string, adSetID string) string {
+	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/meta-ad-sets/%v/ads", projectID, briefID, campaignID, adSetID)
+}
+
 // ToggleMetaAdSetStatusLfxV2CampaignServiceBriefsPath returns the URL path to the lfx-v2-campaign-service-briefs service toggle-meta-ad-set-status HTTP endpoint.
 func ToggleMetaAdSetStatusLfxV2CampaignServiceBriefsPath(projectID string, briefID string, campaignID string, adSetID string) string {
 	return fmt.Sprintf("/projects/%v/briefs/%v/campaigns/%v/meta-ad-sets/%v/status", projectID, briefID, campaignID, adSetID)

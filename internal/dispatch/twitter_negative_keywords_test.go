@@ -311,6 +311,19 @@ func TestTwitter_AddNegativeKeywords_RefusalsPostNothing(t *testing.T) {
 	})
 }
 
+// The negative lever reads the same criteria list for its already-present check, so a list
+// identityjson refuses is its read failure too — definite, and NO POST is issued.
+func TestTwitter_AddNegativeKeywords_UntrustworthyListPostsNothing(t *testing.T) {
+	s := newXNegStub(t, xKWTLineItem, xCriteriaDupID, nil)
+	_, err := addXNegatives(s, xBidCampaign(), "", broad("free"))
+	if !errors.Is(err, domain.ErrKeywordTargetingUnaddressable) || !errors.Is(err, twitter.ErrTargetingUnreadable) {
+		t.Fatalf("want the unreadable-list refusal, got %v", err)
+	}
+	if n := len(s.sent()); n != 0 {
+		t.Fatalf("an untrustworthy list issued %d POST(s)", n)
+	}
+}
+
 // TestTwitterNegativeKey_AgreesAcrossBothSources pins the one property this key exists for: the
 // PRESENT side (X's raw TargetingValue, normalised by nobody) and the REQUEST side (normalised by
 // validateNegativeKeywordBatch through NormalizeNegativeKeywordText) must produce the same key for

@@ -293,10 +293,12 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	// Microsoft report a campaign-level conversion count; Meta and X expose conversions only
 	// as per-action-type structures with no scalar to read, Reddit's reporting contract is
 	// undocumented, and the email channel has no conversion concept at all. On those four the
-	// attribute is ABSENT rather than 0 — a 0 would be indistinguishable from a campaign that
-	// genuinely converted nobody, which is the same substitution the row `status` field and
-	// `pacing.pct` already refuse to make elsewhere in this contract.
-	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do), and ALSO absent on Microsoft whenever the ConversionsQualified column is missing from the report or ANY row's conversion cell is blank — that column is only populated for accounts wired for Universal Event Tracking, and a partial column summed as though it were complete would report a campaign's conversions as lower than they are. Absent means \"not measured here\", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37.0) })
+	// attribute is ABSENT rather than 0, and it is also absent when a LinkedIn or Microsoft
+	// read came back incomplete (see model.CampaignMetrics.Conversions). A 0 in either case
+	// would be indistinguishable from a campaign that genuinely converted nobody, which is the
+	// same substitution the row `status` field and `pacing.pct` already refuse to make
+	// elsewhere in this contract.
+	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT means \"not measured\" — the platform cannot report it, or (LinkedIn, Microsoft) the read was incomplete. The first case covers channels that do not report a campaign-level conversion count at all (Meta, X, Reddit and the email channel never do). The second covers the two conversion-capable channels whose read can come back partial: LinkedIn whenever ANY returned analytics element omits externalWebsiteConversions, and Microsoft whenever the ConversionsQualified column is missing from the report or ANY row's conversion cell is blank (that column is only populated for accounts wired for Universal Event Tracking). On either, summing only the elements or rows that did carry a value would publish a partial count as a complete one and report a campaign's conversions as lower than they are, so the whole total is withdrawn instead. Absence therefore does NOT by itself identify a platform that cannot report conversions, and it is NOT the same as a measured 0: a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37.0) })
 	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 	// An EXPLICIT object example, because the attribute-level examples above cannot produce a
@@ -1300,6 +1302,54 @@ var MetaAdSets = Type("meta-ad-sets", func() {
 			},
 		},
 		"ad_set_count": 1,
+	})
+})
+
+// MetaAd is one ad under a Meta ad set, read live (decision D7 first step). Never persisted.
+var MetaAd = Type("meta-ad", func() {
+	Attribute("id", String, "The Meta ad id", func() { Example("120210000000000999") })
+	Attribute("listed", Boolean, "false for an ad that DELIVERED in the window but that Meta's ad listing did not return (typically deleted or archived since, or beyond the listing cap when `truncated` is true): its counters are this ad set's spend, so they are reported, but every descriptive field is absent.", func() { Example(true) })
+	Attribute("name", String, "The ad's name as Meta holds it. Absent when not reported.", func() { Example("KubeCon NA — Leads — Image A") })
+	Attribute("status", String, "The ad's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED, ARCHIVED). Absent when not reported.", func() { Example("ACTIVE") })
+	Attribute("effective_status", String, "The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED, PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without notice. Absent when not reported.", func() { Example("ACTIVE") })
+	Attribute("creative_id", String, "The id of the ad's creative. Absent when not reported.", func() { Example("120210000000000777") })
+	Attribute("creative_name", String, "The creative's name. Absent when not reported.", func() { Example("KubeCon NA — Image A") })
+	Attribute("impressions", Int64, "Impressions over the window. 0 when Meta reported no delivery for this ad.", func() { Example(920) })
+	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(21) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of `currency`.", func() { Example(6170000) })
+	Attribute("ctr", Float64, "clicks/impressions, 0 when impressions is 0.", func() { Example(0.0228) })
+	Required("id", "listed", "impressions", "clicks", "cost_micros", "ctr")
+})
+
+// MetaAds is the live ad read for one ad set of a Meta campaign.
+var MetaAds = Type("meta-ads", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform_campaign_id", String, "The Meta campaign id the ad set was proven to belong to.", func() { Example("120210000000000555") })
+	Attribute("ad_set_id", String, "The Meta ad set id the ads were read under.", func() { Example("120210000000000888") })
+	Attribute("window", String, "The reporting window the counters cover.", metricsWindowEnum)
+	Attribute("currency", String, "The ad account's ISO 4217 currency; `cost_micros` is denominated in it.", func() { Example("USD") })
+	Attribute("read_at", String, "When Meta was read (RFC3339, UTC).", func() { Format(FormatDateTime) })
+	Attribute("truncated", Boolean, "true when the ad LISTING reported more ads than the page cap allows (5 pages of 100): `ads` then holds the ads that were read, not every ad of the ad set. Delivery is never truncated — the Insights read is all or nothing.", func() { Example(false) })
+	Attribute("ads", ArrayOf(MetaAd), "Every ad the listing returned, in Meta's order, then any unlisted ad that delivered in the window, by id. Empty when the ad set has none.")
+	Attribute("ad_count", Int, "len(ads).", func() { Example(1) })
+	Required("campaign_id", "platform_campaign_id", "ad_set_id", "window", "currency", "read_at", "truncated", "ads", "ad_count")
+	Example(map[string]any{
+		"campaign_id":          "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"platform_campaign_id": "120210000000000555",
+		"ad_set_id":            "120210000000000888",
+		"window":               "last_30_days",
+		"currency":             "USD",
+		"read_at":              "2026-10-15T09:30:00Z",
+		"truncated":            false,
+		"ads": []map[string]any{
+			{
+				"id": "120210000000000999", "listed": true, "name": "KubeCon NA — Leads — Image A",
+				"status": "ACTIVE", "effective_status": "ACTIVE",
+				"creative_id": "120210000000000777", "creative_name": "KubeCon NA — Image A",
+				"impressions": 920, "clicks": 21, "cost_micros": 6170000, "ctr": 0.0228,
+			},
+		},
+		"ad_count": 1,
 	})
 })
 
@@ -2516,6 +2566,37 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets")
+			Header("bearer_token:Authorization")
+			Param("window")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("list-meta-ads", func() {
+		Description("Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad's name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; there is no per-ad pause or edit. " +
+			"Before anything is read the campaign must record which ad account it was created under and that account must be the connection's (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). " +
+			"Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection's ad account, every Insights row must name this ad set and campaign and the account's currency, and an explicit null counter is refused while an absent one is 0. " +
+			"**404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta's 100/33 is a 503 like every other unverifiable upstream answer.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// Interpolated into the Graph path, so the Pattern is the transport's half of the
+			// path-injection guard meta.ValidateAdSetID repeats (TestMetaAdsAdSetIDPattern_MatchesPlatformValidator).
+			Attribute("ad_set_id", String, "The Meta ad set id: digits, no leading zero, at most 32.", func() {
+				Pattern(`^[1-9][0-9]*$`)
+				MaxLength(32)
+				Example("120210000000000888")
+			})
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id", "brief_id", "campaign_id", "ad_set_id")
+		})
+		Result(MetaAds)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/ads")
 			Header("bearer_token:Authorization")
 			Param("window")
 			Response(StatusOK)
