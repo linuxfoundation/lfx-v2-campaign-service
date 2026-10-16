@@ -888,7 +888,7 @@ func MatchesBrandMaster(name, brandShort string) bool {
 	if !strings.Contains(lower, "master-list") && !strings.Contains(lower, "master list") && !strings.Contains(lower, "masterlist") {
 		return false
 	}
-	if hasSuppressionHint(name) {
+	if hasSuppressionHint(name) || TestOrStaffList(name) {
 		return false
 	}
 	brand := strings.ToLower(strings.TrimSpace(brandShort))

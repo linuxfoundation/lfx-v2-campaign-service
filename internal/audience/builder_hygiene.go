@@ -33,6 +33,20 @@ var discoveryHiddenHints = []struct {
 	{"master", []string{"master"}},
 }
 
+// TestOrStaffList reports whether a list is named as a test or staff list, by the
+// same hints DiscoveryHidden uses. Such a list is never picked automatically as a
+// gate or a suppression: "26Q4 - CNCF - Master-list [test]" holds test contacts, so
+// gating on it narrows the audience to them, and a test suppression in place of the
+// real one leaves the real one off the send.
+func TestOrStaffList(name string) bool {
+	for _, group := range discoveryHiddenHints {
+		if (group.reason == "test" || group.reason == "staff") && containsAny(name, group.hints) {
+			return true
+		}
+	}
+	return false
+}
+
 // uploadSuffixRE matches a list named after an uploaded file ("Japan_final1.xlsx").
 var uploadSuffixRE = regexp.MustCompile(`(?i)\.(csv|xlsx?|tsv)\s*$`)
 

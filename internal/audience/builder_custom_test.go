@@ -274,6 +274,19 @@ func TestUnknownPropertiesError(t *testing.T) {
 	assert.Contains(t, (&UnknownPropertiesError{Names: []string{"x"}}).Error(), "property x")
 }
 
+// A test or staff list is never picked automatically as a gate or a suppression.
+func TestAutoPicksRejectTestAndStaffLists(t *testing.T) {
+	assert.False(t, MatchesBrandMaster("26Q4 - CNCF - Master-list [test]", "CNCF"), "a test master is not the brand gate")
+	assert.False(t, MatchesBrandMaster("26Q4 - CNCF - Staff Master-list", "CNCF"), "a staff master is not the brand gate")
+	assert.True(t, MatchesBrandMaster("26Q2 - CNCF - Master-list", "CNCF"))
+	assert.False(t, MatchesBrandOptOut("LF Opt-Outs [psh-test]", "LF"), "a test opt-out is not the brand's")
+	assert.True(t, MatchesBrandOptOut("LF Global Opt-Outs", "LF"))
+	kw := EventKeywords("KubeCon Japan 2026")
+	assert.False(t, MatchesEventSuppression("KubeCon Japan Suppression (test)", kw), "a test suppression is not the event's")
+	assert.True(t, MatchesEventSuppression("KubeCon Japan Suppression", kw))
+	assert.False(t, TestOrStaffList("26Q3 - LF - Contest Winners"), "Contest is not a test list")
+}
+
 func TestMatchesBrandMaster(t *testing.T) {
 	assert.True(t, MatchesBrandMaster("26Q2 - The Linux Foundation - Master-list", "LF"))
 	assert.True(t, MatchesBrandMaster("26Q2 - CNCF - Master list", "cncf"))

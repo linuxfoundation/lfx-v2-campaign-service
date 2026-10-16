@@ -364,7 +364,9 @@ Every suppression-hint check reads the name with its separators normalised too
 (`hasSuppressionHint`, used by `DiscoveryHidden`, `ClassifyList`, `MatchesBrandMaster` and
 `MatchesEventSuppression`), so `Opt_Out` is an opt-out. `DiscoveryHidden` classifies test and
 staff before master, so a test or staff master rollup ("… Master [test]") is hidden rather than
-expanded as a master. `DominantBrand` votes a long-form brand ("The Linux Foundation") as its
+expanded as a master. `TestOrStaffList` applies the same test and staff hints to every
+automatic pick (`MatchesBrandMaster`, `MatchesBrandOptOut`, `MatchesEventSuppression`), so a
+test or staff list is never filled in as a gate or a suppression. `DominantBrand` votes a long-form brand ("The Linux Foundation") as its
 short name from `brandAliases`, and only lists sharing a distinctive event word vote; when every
 word of the event name is generic ("Open Source Summit Japan 2026"), a voter's list name must
 contain the whole event name, so another event's lists sharing generic words cannot win.

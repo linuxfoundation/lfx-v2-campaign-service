@@ -92,7 +92,7 @@ func BrandOptOutLabel(brandShort string) string {
 // another brand's.
 func MatchesBrandOptOut(name, brandShort string) bool {
 	brand := strings.ToLower(strings.TrimSpace(brandShort))
-	if brand == "" {
+	if brand == "" || TestOrStaffList(name) {
 		return false
 	}
 	lower := strings.ToLower(name)
@@ -124,7 +124,7 @@ func EventSuppressionLabel(eventName string) string {
 // would suppress exactly the people the send is for, producing an empty or
 // near-empty audience that still looks like a successful build.
 func MatchesEventSuppression(name string, keywords map[string]struct{}) bool {
-	return SharesKeyword(name, keywords) && hasSuppressionHint(name)
+	return SharesKeyword(name, keywords) && hasSuppressionHint(name) && !TestOrStaffList(name)
 }
 
 // ExistingMasterProbes are the searches for master lists already built for this

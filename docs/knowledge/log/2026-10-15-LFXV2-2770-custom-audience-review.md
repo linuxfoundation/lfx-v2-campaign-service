@@ -288,3 +288,7 @@ sweep after review pagination hid them:
   check 4, though auditing that list directly passed. Each included list's every-path exclusions
   now clear the editions they cover from that list's registration evidence only; a sibling branch
   of the master that includes the registrants directly still fails.
+- **Test and staff lists are never auto-picked** (Greptile). `MatchesBrandMaster` accepted
+  "26Q4 - CNCF - Master-list [test]" as the brand gate, so create could gate on test contacts.
+  `TestOrStaffList` (the `DiscoveryHidden` test and staff hints) now rejects such names in every
+  fuzzy auto-pick: the brand master gate, the brand opt-out and the event suppression.
