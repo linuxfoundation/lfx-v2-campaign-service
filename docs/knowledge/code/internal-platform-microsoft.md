@@ -947,6 +947,20 @@ request layer, checked against Microsoft's reference on 2026-10-05:
 None of the four has been exercised against a live Microsoft Advertising account; the transport
 and the 200-with-PartialErrors envelope are the ones the status toggle and creates already use.
 
+**Negative-keyword add: what the dispatcher adds, and the tests that pin it.** The dispatcher
+(`MicrosoftDispatcher.AddNegativeKeywords`, [internal/dispatch](internal-dispatch.md), "Reddit, X
+and Microsoft negative-keyword adapters") validates with `ValidateNegativeKeywords`, refuses a
+non-empty `revision`, takes the campaign id from the row only, and fails closed on provenance
+before the account check. It makes no read before the add, so duplicates against the campaign are
+caught only by Microsoft's 4335 (`ALREADY_PRESENT`). There is no last-keyword guard: a negative
+only narrows delivery. `AddCampaignNegativeKeywords` also re-runs `ValidateNegativeKeywords`
+itself and refuses a non-numeric campaign id before any request. On main the add's 200 body is
+decoded with `encoding/json` and no `identityjson` check. Tests in `keyword_levers_test.go`:
+`TestValidateNegativeKeywords_Bounds`, `TestAddCampaignNegativeKeywords_RequestShapeAndOutcomes`,
+`_AlreadyExistsWithAnotherErrorIsFailed`, `_EntityErrorIsDefinite`, `_AmbiguityIsUnconfirmed`,
+`_InvalidInputSendsNothing`, `_ZeroCollectionCodeIsAbsent`, `_EntityCodeWithAnIDFallsThrough` and
+`_AlreadyExistsIsMatchedStrictly`. The dispatcher's are in `internal/dispatch/microsoft_keywords_test.go`.
+
 ## Ad-group max CPC bid read + write (LFXV2-2665)
 
 `bid.go` backs `MicrosoftDispatcher.WriteBid`. The bid lives on the AD GROUP (`AdGroup.CpcBid`,

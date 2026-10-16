@@ -132,7 +132,12 @@ this concept.
   `DeleteTargetingCriterion`; `negative_keywords.go` — `CreateNegativeKeywordCriterion`.
 - `internal/dispatch/reddit_keyword_targeting.go`, `internal/dispatch/twitter_keyword_targeting.go`;
   negatives in `reddit_negative_keywords.go`, `twitter_negative_keywords.go`, with the shared batch
-  check in `negative_keywords.go`; service `brief_negative_keywords.go`.
+  check in `negative_keywords.go`; service `brief_negative_keywords.go`. Per-file detail — the
+  request shapes, guard order, classification and the tests that pin each — is in
+  [internal/dispatch](../code/internal-dispatch.md) ("Reddit, X and Microsoft negative-keyword
+  adapters"), [internal/platform/reddit](../code/internal-platform-reddit.md) ("Ad-group excluded
+  keywords") and [internal/platform/twitter](../code/internal-platform-twitter.md) ("Line-item
+  negative keywords").
 - `internal/service/brief_keyword_targeting.go`; orchestrator `ReadKeywordTargeting` /
   `RemoveKeywordTargeting` (`opReadKeywordTargeting`, `opRemoveKeywordTargeting`).
 - Routes inherit the `briefs(/.*)?` HTTPRoute match and `/briefs/**` RuleSet rule; pinned by

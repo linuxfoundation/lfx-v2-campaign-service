@@ -698,6 +698,52 @@ final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at 
 the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
 definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
+## Ad-group excluded keywords (`excluded_keywords.go`, LFXV2-2665)
+
+The client half of `RedditDispatcher.AddNegativeKeywords` (see [internal/dispatch](internal-dispatch.md),
+"Reddit, X and Microsoft negative-keyword adapters"). A Reddit negative keyword lives in the same
+ad-group `targeting` object as the positive keywords, as the member `excluded_keywords`: a plain
+string list with no match type and no per-entry id, `maxItems` 2,000 (`MaxExcludedKeywords`). The
+file's header cites the v3 OpenAPI schema it was read from (a SHA-256-pinned copy, because
+ads-api.reddit.com refuses automated fetches); it has not been exercised against a live ad account.
+
+- **Accessors on the `GetAdGroupTargeting` read.** `ExcludedKeywords()` returns the strings in
+  Reddit's order — empty when the member is absent or `null`, a `null` element skipped — and
+  `ExcludedKeywordElements()` counts every ELEMENT, a `null` one included, because the write keeps
+  every element it read and Reddit's `maxItems` is measured on the array. A member that is not an
+  array of strings is `ErrTargetingUnreadable`, decided only when one of these is called, so the
+  positive-keyword read does not depend on a shape only the negative write needs.
+  `FingerprintExceptExcluded()` fingerprints every other member, for the dispatcher's post-write
+  comparison.
+- **Request shape.** `AddAdGroupExcludedKeywords(ctx, adGroupID, base, add)` sends one
+  `PATCH /ad_accounts/{account}/ad_groups/{id}` with `{"data":{"targeting":{...}}}`: every member of
+  `base` byte for byte, and `excluded_keywords` as the elements already read (a `null` kept) with
+  the new strings appended. The body is encoded with HTML escaping off and sent pre-encoded, as the
+  keyword removal's is.
+- **Refused before any request:** an invalid ad-group id; a `base` that is nil or a read of a
+  different ad group (`ErrTargetingUnreadable`); an unreadable `excluded_keywords`; an empty `add`;
+  an `add` naming a keyword `base` already excludes, or the same keyword twice (exact string
+  comparison — the caller decides `ALREADY_PRESENT`); more than 2,000 elements after the append,
+  `null` elements counted.
+- **Sent once, never retried on a 429** (`requestNoThrottleRetry`), for `RemoveAdGroupKeywords`'
+  reason: the write replaces the whole targeting from a pre-read snapshot. A 429, transport
+  failure, 3xx or 5xx is UNCONFIRMED (`IsOutcomeUnconfirmed`). `IsPlatformRefusal(err)` — new in
+  this file — is true for any other 4xx: Reddit's own DEFINITE refusal, which the dispatcher reports
+  per item as `REJECTED`.
+- **Echo check.** A 2xx with no body is taken as the written list. A body that is not an ad-group
+  object, names another ad group, or carries a targeting whose `excluded_keywords` differs from the
+  list written (`SameKeywords`) is an UNCONFIRMED `transportError`. The dispatcher still re-reads
+  to confirm.
+
+On main the `GetAdGroupTargeting` read this write is built from decodes with `encoding/json` and
+no `identityjson` check; open PR #359 proposes adding one.
+
+**Tests** (`excluded_keywords_test.go`): `TestExcludedKeywords_Shapes` (absent, `null`, a `null`
+element skipped, a string or a number list refused, and the positive read unaffected by any of
+them); `TestAddAdGroupExcludedKeywords_RefusesBeforeAnyRequest` (nothing to add, already excluded,
+over 2,000, `null` elements counted toward 2,000, a base read of another ad group — each with only
+the read sent).
+
 ## Adoption read (`campaign_lookup.go`, LFXV2-2665)
 
 `GetCampaign` is the read `RedditDispatcher.LookupCampaign` makes to adopt an existing campaign:
