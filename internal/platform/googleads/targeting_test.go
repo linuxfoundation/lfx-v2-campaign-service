@@ -43,7 +43,7 @@ func TestValidateKeywords(t *testing.T) {
 	})
 
 	t.Run("over-limit text is an error", func(t *testing.T) {
-		if _, err := validateKeywords([]Keyword{{Text: strings.Repeat("a", maxKeywordTextRunes+1), MatchType: MatchTypeBroad}}); err == nil {
+		if _, err := validateKeywords([]Keyword{{Text: strings.Repeat("a", MaxKeywordTextRunes+1), MatchType: MatchTypeBroad}}); err == nil {
 			t.Error("expected an error for keyword text over the rune limit")
 		}
 	})

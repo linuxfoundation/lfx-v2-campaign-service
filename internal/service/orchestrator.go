@@ -351,10 +351,12 @@ type BudgetWriter interface {
 //     automated or unreported; it must never send a strategy field itself.
 //
 // The bid is written AT THE LEVEL THE CREATE PATH PUT IT — for the platforms wired today, the
-// one ad group (Microsoft, Reddit), ad set (Meta) or line item (X) this service created for the
-// campaign, named by the row's recorded result. A row recording none is refused rather than
-// resolved by listing children upstream: choosing which of several to re-bid is a decision this
-// endpoint does not make.
+// ad group (Google Ads, Microsoft, Reddit), ad set (Meta) or line item (X) this service created
+// for the campaign, named by the row's recorded result. A row recording none is refused rather
+// than resolved by listing children upstream: choosing which of several to re-bid is a decision
+// this endpoint does not make. A row recording SEVERAL is refused for the same reason — Google
+// Ads is the first platform whose create path can record more than one ad group, and siblings
+// carry independent bids, so there is no single bid the request names.
 type BidWriter interface {
 	// WriteBid sets the campaign's manual max CPC bid on the platform. campaign is the
 	// persisted row, supplied so the adapter can reach PlatformCampaignID, the creation
