@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -176,7 +178,8 @@ func decodeStringArray(raw json.RawMessage) ([]string, []json.RawMessage, error)
 // GetAdGroupTargeting reads one ad group's targeting via GET /ad_accounts/{account}/ad_groups/{id}
 // — the read GetAdGroupBid makes. A PURE READ: its failure is always definite. A 404 is
 // (nil, nil). A 2xx naming a different ad group is an error; a targeting that cannot be read as
-// an object with a keyword list is ErrTargetingUnreadable.
+// an object with a keyword list, or a body identityjson refuses (a duplicated key, malformed
+// UTF-8, an unpaired surrogate escape), is ErrTargetingUnreadable.
 func (c *Client) GetAdGroupTargeting(ctx context.Context, adGroupID string) (*AdGroupTargeting, error) {
 	path, adGroupID, err := c.adGroupBidPath(adGroupID)
 	if err != nil {
@@ -192,6 +195,12 @@ func (c *Client) GetAdGroupTargeting(ctx context.Context, adGroupID string) (*Ad
 	}
 	if resp == nil || len(resp.Data) == 0 || string(resp.Data) == "null" {
 		return nil, fmt.Errorf("reddit: read ad group %s targeting: the response carried no ad group", adGroupID)
+	}
+	// The raw body, before any decode: a duplicated key (the data-level id, or "keywords" inside
+	// targeting) would otherwise resolve last-wins, and the write-back would PATCH a targeting
+	// built from one of two answers. Same guard as the campaign settings and lookup reads.
+	if err := identityjson.Check(resp.raw); err != nil {
+		return nil, fmt.Errorf("reddit: read ad group %s targeting: %w: %w", adGroupID, ErrTargetingUnreadable, err)
 	}
 	var wire adGroupTargetingWire
 	if err := json.Unmarshal(resp.Data, &wire); err != nil {

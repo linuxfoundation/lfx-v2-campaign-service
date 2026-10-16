@@ -68,3 +68,27 @@ func TestCreateNegativeKeywordCriterion_UnprovenEchoIsUnconfirmed(t *testing.T) 
 		t.Errorf("a 400 is a definite refusal, got %v", err)
 	}
 }
+
+// The POST was sent, so an echo identityjson refuses is UNCONFIRMED — never a definite refusal,
+// and never retried. Each echo's last-wins reading would be a confirmed negative keyword.
+func TestCreateNegativeKeywordCriterion_UntrustworthyEchoIsUnconfirmed(t *testing.T) {
+	const tail = `"targeting_type":"BROAD_KEYWORD","targeting_value":"free","operator_type":"NE"}}`
+	for name, body := range map[string]string{
+		"duplicate id":           `{"data":{"id":"n0","id":"n1","line_item_id":"li1",` + tail,
+		"duplicate line_item_id": `{"data":{"id":"n1","line_item_id":"li2","line_item_id":"li1",` + tail,
+		"case-folded operator":   `{"data":{"id":"n1","line_item_id":"li1","OPERATOR_TYPE":"EQ",` + tail,
+		"unpaired surrogate":     `{"data":{"id":"n1","line_item_id":"li1","note":"\uDBFF",` + tail,
+		"invalid UTF-8":          "{\"data\":{\"id\":\"n1\",\"line_item_id\":\"li1\",\"note\":\"\xc3\"," + tail,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, seen := targetingServer(t, tcReply{http.StatusOK, body})
+			id, err := c.CreateNegativeKeywordCriterion(context.Background(), "li1", TargetingBroadKeyword, "free")
+			if id != "" || !IsOutcomeUnconfirmed(err) {
+				t.Fatalf("want UNCONFIRMED and no id, got %q, %v", id, err)
+			}
+			if n := len(seen()); n != 1 {
+				t.Errorf("want exactly one POST (no retry), got %d", n)
+			}
+		})
+	}
+}
