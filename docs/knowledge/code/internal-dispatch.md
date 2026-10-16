@@ -4273,7 +4273,9 @@ calls `microsoft.ValidateNegativeKeywords`, the same rules with Exact/Phrase.
 Every refusal in that table happens before the write, so it changes nothing. Guard order:
 - *Reddit:* the gate; the batch; `revision` present; the recorded ad group; provenance; the
   account; the ownership read; `revision` equal to that read's; `excluded_keywords` legible; the
-  already-present set; the 2,000-element cap.
+  already-present set; the 2,000-element cap; a fingerprint of every other targeting member
+  (`FingerprintExceptExcluded`, unreadable → `ErrKeywordTargetingUnaddressable`), kept for the
+  post-write comparison.
 - *X:* the batch; no `revision`; then `ownedTwitterLineItem` — a platform campaign id, provenance,
   a recorded line item, the account, the line item read live and under this campaign; then the
   complete criteria list.
