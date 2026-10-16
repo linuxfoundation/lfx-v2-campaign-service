@@ -139,7 +139,7 @@ renderer formats with a symbol when it is present and without one otherwise.
 
 | Platform | Source | Extra call? |
 | -------- | ------ | ----------- |
-| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless its minor-unit offset is 100 | No |
+| Meta | `account_currency` on each row of the insights read (`meta.Client.ListAccountCampaignsWithCurrency`); every row must agree; withheld unless it is the ad account's currency the budgets were converted in, with a known minor-unit offset. With no insights rows in the window (no delivery yet) the budgets' own `?fields=currency` read is published, under the same offset rule | No |
 | LinkedIn | `currencyCode` on every `dailyBudget`/`totalBudget` in the campaign list (`linkedin.Client.ListAccountCampaignsWithCurrency`); spend is `costInLocalCurrency`, in the same currency | No |
 | Reddit | `GET /ad_accounts/{id}` (`reddit.Client.readMonitorAccountCurrency`), beside the report fan-out, 3s budget, no 429 retry | One |
 | X | the `GET accounts/:account_id` the monitor already makes for the timezone, cached with it (`twitter.Client.AccountCurrency`) | No (within the cache's minute) |
@@ -186,10 +186,17 @@ renderer formats with a symbol when it is present and without one otherwise.
   `PacingUnknown` (`linkedin.AccountCampaignRow.PacingUnknown`, honoured by
   `rules.EvaluateLinkedInMonitor`): which budgets are in the spend's currency cannot be told. The
   single-campaign metrics read and the audience read still report `costInUsd`.
-- **Meta withholds zero-decimal currencies.** The Meta monitor converts budgets from minor units by
-  dividing by 100 (`minorUnitsToWhole`), so a JPY/KRW/… account's budgets are wrong by that factor;
-  `monitorPublishableCurrency` publishes the code only when `currencyOffsetFor` gives 100, and logs
-  the rest. #316 makes the conversion currency-aware; the restriction goes when it merges.
+- **Meta publishes the currency its budgets were converted in.** Budgets are converted with the
+  account currency's own offset (one `?fields=currency` read per request, `minorToWhole`), so
+  `monitorPublishableCurrency` publishes the insights code for every currency `currencyOffsetFor`
+  knows — offset 1 (JPY, KRW, …) as well as 100 — when it equals that read's currency. It
+  withholds, and logs, a code outside `currencyMinorUnitOffset` (budgets left unconverted; no
+  three-decimal currency is in the map) and one the two reads disagree on, which would label
+  budgets converted at another currency's scale. That disagreement — any row's readable code
+  other than the account read, even when the rows also disagree among themselves — also leaves every budget
+  unknown — no campaign budget converted, no ad-set fallback read — so pacing is unknown while
+  delivery is kept: spend is in the insights currency (PR #316 review). The offset-100-only
+  restriction of #338 is gone.
 - **Identity and failure.** The two new reads (Reddit, Microsoft) and X's currency are taken only
   from a body `identityjson` trusts that names the requested account. Any failure — transport,
   status, untrusted body, another account's id — leaves `currency` absent and never fails the
@@ -278,6 +285,52 @@ N-1 days. It now renders through `reportRange`, the same renderer
 `GetCampaignMetrics` uses, ending at today's 23:00 hour — see the Reddit
 scope audit below.) See `fetchAccountCampaignInsights`'s doc comment in
 `internal/platform/meta/monitor.go` for the same note next to the code.
+
+A fifth and sixth, both pacing-correctness bugs inherited from the BFF and fixed on
+2026-10-13 (LFXV2-2665). **Ad-set budgets**: the BFF read only the CAMPAIGN's
+`daily_budget`/`lifetime_budget`, but `CreateCampaign` puts the budget on the AD SET, so
+every campaign this service creates had no budget, read `pacing_unknown`, and could never
+raise an under- or overspend item. When an admitted campaign has neither campaign-level
+budget, the read now makes ONE account-level paged call,
+`GET /act_{id}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time`,
+and sums the ad sets' budgets per campaign when every one of them is `ACTIVE` (a CBO campaign
+keeps its own budget). Any ad set in another `effective_status` — paused, under a paused campaign,
+archived, in review — makes its campaign `pacing_unknown`: the campaign's Insights spend still
+includes what that ad set spent in the window before it stopped, and when it stopped is not on the
+read, so summing only the active budgets compared spend from more ad sets than the expectation
+covered (a false overspend). It fails closed: daily and
+lifetime ad sets mixed under one campaign, an active ad set with no budget or an explicit
+`null` one, and any answer that cannot be trusted whole — the 20 × 500 page cap hit, a body
+that fails `identityjson`, an unattributable or repeated row — leave the campaigns that
+needed it `pacing_unknown`, never paced against a partial sum — a syntax-invalid 2xx body
+included, which the client hands back undecoded (`rawBody`) so it lands here rather than as a
+transport error; only a failed request fails the endpoint. **Account currency**: the BFF divided every minor-unit budget by 100, so a
+JPY/KRW budget read 100x too small (and its campaign as wildly overspending). One
+`?fields=currency` read per request now supplies the offset the create path uses (1 for
+zero-decimal currencies); a currency outside the supported map leaves budgets unknown.
+The FLIGHT is on the ad set too, so the same read supplies it: when every active ad set
+shares one `start_time`/`end_time` window it becomes the row's flight and a lifetime budget is
+paced on it; differing or unreadable windows leave the budget `pacing_unknown`, daily or
+lifetime, since both are paced against the flight's days. An unknown budget arrives as 0/0, which the rules already report
+as not computable, and a negative campaign-level budget is unreadable rather than "no budget".
+Meta's action-item text now prints money as "N.NN in account currency", like X's, instead of `$`.
+**Lifetime pacing paces the window** (CBO and ABO alike): spend is the last `days` only, so the
+expectation is now the lifetime budget spread over the flight (end date inclusive — a Meta
+`stop_time`/`end_time` at exactly midnight ends the flight on the day before, `endDateOnly`) times the
+window's flight days — LinkedIn's proration — instead of the plan since the flight started, which
+read a 9,000 / 90-day campaign on day 60 with `days=7` at ~12% when it was on plan. A window the
+flight does not overlap is `pacing_unknown`, and so is an open-ended lifetime flight (no end date:
+no length to spread the budget over — reading it as "ends today" expected the whole budget at
+once). **Daily pacing counts the flight's days too**: `BudgetDay` times the days of the window the
+flight ran on (start and end inclusive; an unreported date is the window's own edge), not
+`BudgetDay × days` — a campaign started 7 days ago at full budget read ~23% on `days=30`. **One
+window**: the read stamps the Insights `since`/`until` it SENT on every row
+(`MetricsWindowStart`/`MetricsWindowEnd`), and `EvaluateMetaMonitor` takes no clock and paces
+against exactly those days; it used to take a `now` captured before the read, which a request
+crossing UTC midnight put one day away from the spend. A row with no window is
+`pacing_unknown`. Flight timestamps are parsed whole (Graph's `-0700` layout or RFC 3339) and
+anything else — `"2026-10-01garbage"` included — is an unreadable date. See
+[2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md](../log/2026-10-13-LFXV2-2665-meta-monitor-budget-currency.md).
 
 ## Correctness bugs found during local differential verification
 

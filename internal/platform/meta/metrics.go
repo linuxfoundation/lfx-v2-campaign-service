@@ -5,6 +5,7 @@ package meta
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -77,10 +78,15 @@ type insightsResponse struct {
 	// "0 impressions, 0 clicks, $0 spend" for a campaign that may be spending — the most
 	// misleading answer available, since a caller cannot tell it from a real zero.
 	// Mirrors the ad-discovery path in client.go, which fails closed on the same shape.
+	//
+	// The metrics are raw, not string, for the same reason: an explicit `null` decoded into a
+	// string field reads as "", indistinguishable from an omitted (zero) field, so an
+	// unreadable value was reported as a measured zero (PR #316 review). rawCounter keeps
+	// absent (0) and null (an error) apart.
 	Data *[]struct {
-		Impressions string `json:"impressions"`
-		Clicks      string `json:"clicks"`
-		Spend       string `json:"spend"`
+		Impressions json.RawMessage `json:"impressions"`
+		Clicks      json.RawMessage `json:"clicks"`
+		Spend       json.RawMessage `json:"spend"`
 	} `json:"data"`
 }
 
@@ -151,8 +157,8 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	}
 
 	row := (*resp.Data)[0]
-	impressions, errImpressions := parseMetricInt(row.Impressions)
-	clicks, errClicks := parseMetricInt(row.Clicks)
+	impressions, errImpressions := rawCounter(row.Impressions, parseMetricInt)
+	clicks, errClicks := rawCounter(row.Clicks, parseMetricInt)
 	if errImpressions != nil || errClicks != nil {
 		return nil, &transportError{
 			Method: http.MethodGet,
@@ -162,12 +168,12 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 	}
 	// Spend is decimal (e.g. "12.34"), unlike Google Ads' integer cost_micros —
 	// Meta reports it in whole currency units, not minor units. See parseSpendMicros.
-	costMicros, err := parseSpendMicros(row.Spend)
+	costMicros, err := rawCounter(row.Spend, parseSpendMicros)
 	if err != nil {
 		return nil, &transportError{
 			Method: http.MethodGet,
 			Path:   path,
-			Err:    fmt.Errorf("decode campaign metrics row: %w", err),
+			Err:    fmt.Errorf("decode campaign metrics row: spend: %w", err),
 		}
 	}
 

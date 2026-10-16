@@ -1473,6 +1473,8 @@ func (d *MetaDispatcher) ReadAccountMonitor(ctx context.Context, projectID strin
 			TotalBudget:        r.LifetimeBudget,
 			StartDate:          r.StartDate,
 			EndDate:            r.EndDate,
+			MetricsWindowStart: r.MetricsSince,
+			MetricsWindowEnd:   r.MetricsUntil,
 			FetchFailed:        r.FetchFailed,
 			FailureClass:       r.FailureClass,
 		})

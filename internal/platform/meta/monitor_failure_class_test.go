@@ -19,8 +19,10 @@ func TestListAccountCampaigns_FailedRowIsDecode(t *testing.T) {
 		`],"paging":{}}`
 	srv, _ := monitorPageResponses(t,
 		[]string{`{"data":[` +
-			`{"id":"111","name":"One","status":"ACTIVE"},` +
-			`{"id":"222","name":"Two","status":"ACTIVE"}` +
+			// Campaign-level (CBO) budgets: a campaign with none would send the read to the
+			// ad-set budget fallback, which this fixture does not serve.
+			`{"id":"111","name":"One","status":"ACTIVE","daily_budget":"1000"},` +
+			`{"id":"222","name":"Two","status":"ACTIVE","daily_budget":"1000"}` +
 			`],"paging":{}}`},
 		[]string{insights},
 	)

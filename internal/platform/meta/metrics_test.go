@@ -383,3 +383,22 @@ func TestGetCampaignMetrics_MalformedValuesAreNotEchoed(t *testing.T) {
 		})
 	}
 }
+
+// An explicit null metric is unreadable, not a zero (PR #316 review): decoded into a string
+// field it read as "", the same as an omitted field, and was reported as a measured 0.
+func TestGetCampaignMetrics_NullMetricIsAnError(t *testing.T) {
+	for _, field := range []string{"impressions", "clicks", "spend"} {
+		t.Run(field, func(t *testing.T) {
+			row := map[string]string{"impressions": `"5"`, "clicks": `"1"`, "spend": `"1.00"`}
+			row[field] = "null"
+			body := `{"data":[{"impressions":` + row["impressions"] + `,"clicks":` + row["clicks"] + `,"spend":` + row["spend"] + `}]}`
+			c := newMetricsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			})
+			if m, err := c.GetCampaignMetrics(context.Background(), "23847290", WindowToday); err == nil {
+				t.Fatalf("null %s read as %+v, want an error", field, m)
+			}
+		})
+	}
+}

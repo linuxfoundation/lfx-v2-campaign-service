@@ -1529,6 +1529,15 @@ func isMutatingMethod(method string) bool {
 	}
 }
 
+// rawBody is an `out` for do that receives a 2xx body's bytes UNDECODED. Every other `out` is
+// json.Unmarshal'd inside do, where a syntax-invalid 2xx becomes a transportError — the right
+// answer for a create (it may have committed) but not for a read whose caller can degrade an
+// unreadable answer more narrowly than failing the whole call. fetchAccountAdSetBudgets is that
+// caller: a body it cannot decode leaves only the ad-set budgets unknown (PR #316 review).
+// Everything before the decode — status, throttle, size and read-error classification — is
+// unchanged.
+type rawBody struct{ b []byte }
+
 // doRequest performs a Graph API call and decodes the JSON body into out.
 // It honors ctx via http.NewRequestWithContext. A 429 (rate-limited) response is
 // retried up to retryMax times with a bounded backoff (honoring Retry-After when
@@ -1888,6 +1897,11 @@ func (c *Client) do(ctx context.Context, method, path string, body map[string]an
 			return apiErr
 		}
 
+		if sink, ok := out.(*rawBody); ok {
+			// The caller classifies the bytes itself — see rawBody.
+			sink.b = raw
+			return nil
+		}
 		if out != nil {
 			if err := json.Unmarshal(raw, out); err != nil {
 				// A 2xx we can't decode is AMBIGUOUS: Meta committed the mutation but we
@@ -3293,8 +3307,9 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 		// A daily budget under BidCapDailyBudgetMultiple x the bid is refused by Meta at the
 		// ad-set POST, after the campaign exists — so refuse it here, in exact minor units. The
 		// product is checked BEFORE it is formed (PR #332 review): with a large fallback offset a
-		// legal bid encodes near int64's limit, and an overflowing 5x would wrap negative and pass
-		// every budget. A required budget that int64 cannot hold is refused as too large.
+		// legal bid could encode near int64's limit, and an overflowing 5x would wrap negative and
+		// pass every budget. CreateBidMinorUnits' exact bound (MaxExactMinorUnits) now keeps every
+		// encoded bid far below that; this stays as the backstop if that bound ever changes.
 		if !in.LifetimeBudget && bidCapMinor > math.MaxInt64/BidCapDailyBudgetMultiple {
 			return nil, &bidAmountError{msg: fmt.Sprintf("the bid is too large: the daily budget Meta requires for it (%d times the bid) cannot be represented at the ad account currency's minor-unit scale", BidCapDailyBudgetMultiple)}
 		}

@@ -121,8 +121,9 @@ func TestManualBidSupported(t *testing.T) {
 
 // TestCreateCampaign_BidCapBudgetMinimumIsComparedInEncodedMinorUnits (PR #332 review): Meta's
 // daily-budget minimum for a click-billed bid cap (5 x bid_amount) is compared in the ENCODED minor
-// units of the account currency, so a JPY account (offset 1) with bid 1 and budget 4.6 — encoded
-// to 5 — passes, while 4.4 (encoded 4) is refused; USD (offset 100) compares in cents.
+// units of the account currency, so a JPY account (offset 1) with bid 1 passes at budget 5 and is
+// refused at 4; USD (offset 100) compares in cents. (A fractional JPY budget is refused by the
+// budget encoder itself since #235, before this minimum is checked.)
 func TestCreateCampaign_BidCapBudgetMinimumIsComparedInEncodedMinorUnits(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -130,8 +131,8 @@ func TestCreateCampaign_BidCapBudgetMinimumIsComparedInEncodedMinorUnits(t *test
 		budget, bid float64
 		refused     bool
 	}{
-		{"JPY 4.6 encodes to 5 = 5 x 1", 1, 4.6, 1, false},
-		{"JPY 4.4 encodes to 4 < 5 x 1", 1, 4.4, 1, true},
+		{"JPY 5 = 5 x 1", 1, 5, 1, false},
+		{"JPY 4 < 5 x 1", 1, 4, 1, true},
 		{"USD 6.25 = 5 x 1.25", 100, 6.25, 1.25, false},
 		{"USD 6.24 < 5 x 1.25", 100, 6.24, 1.25, true},
 	}
@@ -156,27 +157,27 @@ func TestCreateCampaign_BidCapBudgetMinimumIsComparedInEncodedMinorUnits(t *test
 	}
 }
 
-// TestBidEncoders_RefuseAScaledValuePastInt64 (PR #332 review): both bid encoders refuse a scaled
-// value that does not fit an int64 BEFORE converting it — an out-of-range float64 → int64 conversion
-// is implementation-defined — mirroring budgetToMinorUnits.
-func TestBidEncoders_RefuseAScaledValuePastInt64(t *testing.T) {
-	const hugeOffset = int64(1e13) // 1e6 x 1e13 = 1e19 > MaxInt64 (~9.22e18)
-	if _, err := CreateBidMinorUnits(1e6, hugeOffset); !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "too large to encode") {
+// TestBidEncoders_RefuseAProductPastTheExactBound (PR #332 review, PR #316): both bid encoders
+// refuse an amount whose minor-unit product exceeds MaxExactMinorUnits BEFORE any conversion — past
+// it a float64 cannot carry the product exactly — rather than converting an out-of-range value.
+func TestBidEncoders_RefuseAProductPastTheExactBound(t *testing.T) {
+	const hugeOffset = int64(1e13) // 1e6 x 1e13 = 1e19, past MaxExactMinorUnits and int64
+	if _, err := CreateBidMinorUnits(1e6, hugeOffset); !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "too large to represent exactly") {
 		t.Fatalf("CreateBidMinorUnits = %v, want a too-large refusal", err)
 	}
-	if _, err := bidToMinorUnits(1e6, hugeOffset); !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "too large to encode") {
+	if _, err := bidToMinorUnits(1e6, hugeOffset); !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "too large to represent exactly") {
 		t.Fatalf("bidToMinorUnits = %v, want a too-large refusal", err)
 	}
 	// Just inside the bound still encodes.
-	if minor, err := CreateBidMinorUnits(1e6, int64(1e12)); err != nil || minor != 1e18 {
-		t.Fatalf("CreateBidMinorUnits(1e6, 1e12) = %d, %v; want 1e18", minor, err)
+	if minor, err := CreateBidMinorUnits(1e6, int64(1e8)); err != nil || minor != 1e14 {
+		t.Fatalf("CreateBidMinorUnits(1e6, 1e8) = %d, %v; want 1e14", minor, err)
 	}
 }
 
 // TestCreateCampaign_BidCapBudgetMinimumCannotOverflow (PR #332 review): with a fallback offset of
-// 2e12, a 1e6 bid encodes to 2e18 minor units and 5x that wraps int64 negative — under which ANY
-// budget would pass. The required budget is checked before it is formed and refused as too large,
-// before the ad set is created.
+// 2e12, a 1e6 bid would encode to 2e18 minor units and 5x that would wrap int64 negative — under
+// which ANY budget would pass. The exact encoder (PR #316) now refuses that bid itself, past
+// MaxExactMinorUnits, before the 5x minimum is formed and before the ad set is created.
 func TestCreateCampaign_BidCapBudgetMinimumCannotOverflow(t *testing.T) {
 	adsetCap := newBodyCapture()
 	srv := metaFieldServer(t, adsetCap, newBodyCapture())
@@ -184,8 +185,8 @@ func TestCreateCampaign_BidCapBudgetMinimumCannotOverflow(t *testing.T) {
 	in := metaFieldInput()
 	in.Budget, in.BidCap = 1, 1e6
 	_, err := biddingClient(srv.URL, int64(2e12)).CreateCampaign(context.Background(), in)
-	if !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "cannot be represented") {
-		t.Fatalf("err = %v, want the unrepresentable-required-budget refusal", err)
+	if !errors.Is(err, ErrBidAmountInvalid) || !strings.Contains(err.Error(), "too large to represent exactly") {
+		t.Fatalf("err = %v, want the too-large bid refusal", err)
 	}
 	if adsetCap.get() != nil {
 		t.Fatal("an ad set was sent for a refused bid")

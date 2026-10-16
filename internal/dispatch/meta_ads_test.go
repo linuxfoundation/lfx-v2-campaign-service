@@ -24,7 +24,7 @@ func adReadRoutes() map[string]settingsRoute {
 			`{"id":"901","name":"Image A","status":"ACTIVE","effective_status":"ACTIVE","creative":{"id":"701","name":"Creative A"},"adset_id":"888","campaign_id":"555","account_id":"777"},` +
 			`{"id":"902","name":"Image B","status":"PAUSED","effective_status":"PAUSED","adset_id":"888","campaign_id":"555","account_id":"777"}` +
 			`],"paging":{}}`},
-		"GET /act_777": {status: 200, body: `{"currency":"USD"}`},
+		"GET /act_777": {status: 200, body: `{"currency":"USD","id":"act_777"}`},
 		"GET /act_777/insights": {status: 200, body: `{"data":[` +
 			`{"ad_id":"901","adset_id":"888","campaign_id":"555","account_currency":"USD","impressions":"1000","clicks":"20","spend":"7.25"}` +
 			`],"paging":{}}`},

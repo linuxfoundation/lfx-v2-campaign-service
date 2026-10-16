@@ -93,7 +93,9 @@ func BidAmountReason(err error) (string, bool) {
 }
 
 // bidToMinorUnits converts a bid in the account's currency to the minor-unit integer bid_amount
-// carries, with budgetToMinorUnits's rounding (half away from zero). It is not an FX conversion.
+// carries. It is not an FX conversion. Like budgetToMinorUnits it REFUSES an amount finer than
+// one minor unit rather than rounding it (#235): a ¥1.4 bid silently written as ¥1 is a change to
+// money the caller never asked for.
 func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 	switch {
 	case math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0:
@@ -102,25 +104,31 @@ func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s exceeds the largest bid this service sets on Meta (%s)",
 			strconv.FormatFloat(amount, 'f', -1, 64), strconv.FormatFloat(metaMaxBid, 'f', -1, 64))}
 	}
-	// Range-check the SCALED value before converting, as budgetToMinorUnits does: an out-of-range
-	// float64 → int64 conversion is implementation-defined, and a huge fallback offset can push a
-	// legal bid past int64 (PR #332 review).
-	scaled := math.Round(amount * float64(offset))
-	if scaled >= float64(math.MaxInt64) {
-		return 0, bidTooLargeForOffset(amount, offset)
-	}
-	minor := int64(scaled)
-	if minor < 1 {
+	// Exact, like budgetToMinorUnits (PR #316 review): the product is computed in rational
+	// arithmetic, never as a binary float product, and is the authority for every refusal below.
+	// Its upper bound is MaxExactMinorUnits (999,999,999,999,999 — 15 digits, not 2^53; see that
+	// constant): metaMaxBid caps the AMOUNT, not the product, and a large currency offset can
+	// still push amount*offset past what a decoded float64 can carry exactly.
+	switch minor, verdict := minorUnitsExact(amount, offset); verdict {
+	case minorTooLarge:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is too large to represent exactly: at most %d minor units of the ad account's currency",
+			strconv.FormatFloat(amount, 'f', -1, 64), MaxExactMinorUnits)}
+	case minorTooSmall:
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is smaller than one minor unit of the ad account's currency, the smallest bid Meta accepts",
 			strconv.FormatFloat(amount, 'f', -1, 64))}
+	case minorFractional:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is finer than the ad account currency's smallest unit; %s",
+			strconv.FormatFloat(amount, 'f', -1, 64), wholeAmountsAdvice(offset))}
+	default:
+		return minor, nil
 	}
-	return minor, nil
 }
 
 // CreateBidMinorUnits encodes a CREATE-time bid cap (CampaignInput.BidCap) in minor units at the
-// account currency's offset. Unlike bidToMinorUnits — the lever's encoder, which rounds half away
-// from zero like the budget — it REFUSES an amount that is not a whole number of minor units
-// (LFXV2-2665): rounding would send one bid to Meta and record another on the campaign row.
+// account currency's offset. It uses the same exact encoder as bidToMinorUnits (minorUnitsExact,
+// PR #316) and, like it, REFUSES an amount that is not a whole number of minor units
+// (LFXV2-2665): rounding would send one bid to Meta and record another on the campaign row. Only
+// the wording of that refusal differs, naming the create's minor-unit scale.
 func CreateBidMinorUnits(amount float64, offset int64) (int64, error) {
 	switch {
 	case math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0:
@@ -131,28 +139,18 @@ func CreateBidMinorUnits(amount float64, offset int64) (int64, error) {
 	case offset < 1:
 		return 0, fmt.Errorf("meta: currency offset %d is not a usable minor-unit scale", offset)
 	}
-	scaled := math.Round(amount * float64(offset))
-	// Refused BEFORE the int64 conversion (PR #332 review), exactly as budgetToMinorUnits refuses its
-	// scaled value: converting an out-of-range float64 is implementation-defined. Kept to the same
-	// int64 bound as the budget so PR #316's exact-minor-units helper can replace both together.
-	if scaled >= float64(math.MaxInt64) {
-		return 0, bidTooLargeForOffset(amount, offset)
-	}
-	minor := int64(scaled)
-	if float64(minor)/float64(offset) != amount {
+	switch minor, verdict := minorUnitsExact(amount, offset); verdict {
+	case minorTooLarge:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is too large to represent exactly: at most %d minor units of the ad account's currency",
+			strconv.FormatFloat(amount, 'f', -1, 64), MaxExactMinorUnits)}
+	case minorTooSmall:
+		return 0, &bidAmountError{msg: "the bid is smaller than one minor unit of the ad account's currency, the smallest bid Meta accepts"}
+	case minorFractional:
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is not a whole number of the ad account currency's minor units (1/%d); it is refused rather than rounded",
 			strconv.FormatFloat(amount, 'f', -1, 64), offset)}
+	default:
+		return minor, nil
 	}
-	if minor < 1 {
-		return 0, &bidAmountError{msg: "the bid is smaller than one minor unit of the ad account's currency, the smallest bid Meta accepts"}
-	}
-	return minor, nil
-}
-
-// bidTooLargeForOffset refuses a bid whose minor-unit encoding does not fit an int64 at offset.
-func bidTooLargeForOffset(amount float64, offset int64) error {
-	return &bidAmountError{msg: fmt.Sprintf("the bid %s is too large to encode at the ad account currency's minor-unit scale (offset %d)",
-		strconv.FormatFloat(amount, 'f', -1, 64), offset)}
 }
 
 // BidCapDailyBudgetMultiple is Meta's minimum DAILY budget for a click-billed bid cap, as a

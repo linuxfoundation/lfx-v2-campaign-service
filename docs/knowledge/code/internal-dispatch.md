@@ -1050,7 +1050,9 @@ read only under a daily `BudgetType`), `budget_type`, `campaign_name` compared;
 (Microsoft campaigns have none and the create path records none). Meta: campaign + the
 recorded ad set (budget, flight and bid strategy live on the ad set) + the account currency
 when there is an amount; minor units are compared through the account's own offset with the
-recorded side encoded as `round(amount × offset)`, exactly what `budgetToMinorUnits` sent; a
+recorded side encoded exactly as `budgetToMinorUnits` sends it (`meta.MinorUnitsExact`, exact
+decimal arithmetic), falling back to `round(amount × offset)` only for a fractional pre-#235 row,
+which is what that era's encoder sent; a
 CBO campaign's ad-set budget is `unknown`, not substituted with the shared campaign budget.
 Reddit: one campaign read (the create path puts goal, flight and bid strategy on the campaign,
 so no ad group is read); the budget is read only when `is_campaign_budget_optimization` is
