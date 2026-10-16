@@ -247,33 +247,100 @@ func TestUploadAdmission_NonUploadRoutesAreNotGated(t *testing.T) {
 // TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly proves the bounded wait is real:
 // a request arriving while a permit is momentarily held should succeed once it frees, not shed
 // on contact.
+//
+// Every step is a handshake, and every wait the test itself does is bounded. The first handler
+// blocks on its own first-call flag rather than on whether the test is already receiving: a
+// non-blocking send let it skip the block whenever it ran before the test reached the receive,
+// and the test then waited for a signal that never came, until go test's timeout. The second
+// handler records whether the first had been released by the time it was admitted, so a
+// semaphore that let the two overlap fails here instead of passing on the shared 200. The
+// permit is released only after the second request has been priced: pricing is the statement
+// before sem.Acquire, with nothing that blocks between them, so a second request that started
+// late cannot take a free permit and pass without exercising the wait.
 func TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly(t *testing.T) {
 	const budget, weight = 10, 10
+	// The middleware's wait is generous so scheduling delay under load cannot turn the brief
+	// contention into a shed; the claim is that the second request WAITS, not how long.
+	const admissionWait = 5 * time.Second
+	const stepTimeout = 10 * time.Second
 
+	var calls, priced atomic.Int32
+	var overlapped atomic.Bool
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	h := UploadAdmission(budget, noBodyCap, flat(weight), 2*time.Second)(
+	secondPriced := make(chan struct{})
+	price := func(int64) int64 {
+		if priced.Add(1) == 2 {
+			close(secondPriced) // the second request has reached admission
+		}
+		return weight
+	}
+	h := UploadAdmission(budget, noBodyCap, price, admissionWait)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			select {
-			case entered <- struct{}{}:
+			if calls.Add(1) == 1 {
+				close(entered)
 				<-release
-			default:
+			} else {
+				select {
+				case <-release:
+				default:
+					overlapped.Store(true) // admitted while the first still held the permit
+				}
 			}
 			w.WriteHeader(http.StatusOK)
 		}))
 
-	go func() { h.ServeHTTP(httptest.NewRecorder(), uploadReq()) }()
-	<-entered
-	go func() {
-		time.Sleep(80 * time.Millisecond)
-		close(release)
-	}()
+	serve := func() <-chan int {
+		done := make(chan int, 1)
+		go func() {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, uploadReq())
+			done <- rec.Code
+		}()
+		return done
+	}
+	await := func(done <-chan int, what string) int {
+		t.Helper()
+		select {
+		case code := <-done:
+			return code
+		case <-time.After(stepTimeout):
+			t.Fatalf("%s did not finish within %s", what, stepTimeout)
+			return 0
+		}
+	}
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, uploadReq())
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200: the bounded wait did not absorb a brief contention",
-			rec.Code)
+	first := serve()
+	select {
+	case <-entered:
+	case <-time.After(stepTimeout):
+		t.Fatalf("the first upload was not admitted within %s", stepTimeout)
+	}
+
+	second := serve()
+	select {
+	case <-secondPriced:
+	case <-time.After(stepTimeout):
+		close(release)
+		t.Fatalf("the second upload did not reach admission within %s", stepTimeout)
+	}
+	// The second request cannot finish while the permit is held, except by shedding.
+	select {
+	case code := <-second:
+		close(release)
+		t.Fatalf("the second upload finished with %d while the permit was held: it shed or was admitted concurrently instead of waiting", code)
+	case <-time.After(80 * time.Millisecond):
+	}
+	close(release)
+
+	if code := await(second, "the waiting upload"); code != http.StatusOK {
+		t.Errorf("status = %d, want 200: the bounded wait did not absorb a brief contention", code)
+	}
+	if code := await(first, "the first upload"); code != http.StatusOK {
+		t.Errorf("first upload status = %d, want 200", code)
+	}
+	if overlapped.Load() {
+		t.Error("the second upload was admitted while the first held the only permit")
 	}
 }
 
