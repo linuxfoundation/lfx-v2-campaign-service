@@ -37,8 +37,10 @@ Each has an obvious wrong answer that renders as a real result, which is why `Ro
   claimed `parseMetricInt` already guaranteed non-negative, which it does not.
 
 `TestGetCampaignMetrics_RoasWithheldWhenNotAMeasurement` covers all three as named subtests,
-and the `roas` attribute description in `design/brief.go` enumerates all three — a user-facing
-string that lists its cases has to list the last one too.
+and both places that enumerate the cases in prose list all three: the `roas` attribute description
+in `design/brief.go` and the doc comment on `model.CampaignMetrics.Roas`. A user-facing string that
+lists its cases has to list the last one too — and the internal comment the adapter is written
+against has to agree with it, or the next reader takes the shorter list for the contract.
 
 ## The one assumption a test cannot check
 
@@ -54,11 +56,21 @@ The magnitude guard the two doubles share is now the single predicate `isUsableM
 rather than the same four-condition test written twice in one function, so they are held to one
 standard by construction; each call site keeps its own error sentence.
 
+Enumerating that class across the package rather than only across the function turned up a THIRD
+copy, pre-existing: `keywordRowMetrics` in `keywords.go` applied the same four conditions to its
+keyword-row conversion count, under a comment that said "same reasoning as GetCampaignMetrics".
+A cross-reference in a comment is what drift looks like before it happens — the two tests were
+already identical, and nothing but prose was holding them together. It now calls the predicate.
+Consolidating a guard in one function while an identical one sits in a sibling function is not
+consolidation; the sweep dimension is the package, not the diff.
+
 ## The value's nil is weaker than the count's nil, and says so
 
 `model.CampaignMetrics.Conversions` carries an AUDITED contract: which of the seven adapters
-populate it was verified vendor reference by vendor reference, so a nil there is a statement about
-the platform. `ConversionValue` claims less. Google Ads is the only adapter that populates it
+populate it was verified vendor reference by vendor reference. Its nil is still stated over the
+READ rather than the platform — #357 made that explicit, because LinkedIn and Microsoft withdraw a
+whole total on an incomplete response — but behind it sits a finding about each channel.
+`ConversionValue` claims less than either half of that. Google Ads is the only adapter that populates it
 today, and the other six were NOT audited for a value field — so its doc comment states that nil
 means only "not measured on this read", and that adding another platform later is adapter work
 which changes no contract. Reusing the stronger wording would have let a consumer infer, from this
@@ -83,4 +95,4 @@ the email channel reports neither.
 `internal/platform/googleads/metrics.go` (SELECT, both struct fields, the magnitude guard, the
 derivation), `internal/domain/model/campaign.go`, `internal/dispatch/googleads.go`,
 `design/brief.go` + `make apigen`, `internal/service/brief.go` (both `briefs.CampaignMetrics`
-mapping sites).
+mapping sites), `internal/platform/googleads/keywords.go` (the third guard call site).

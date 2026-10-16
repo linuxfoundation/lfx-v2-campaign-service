@@ -1072,8 +1072,11 @@ otherwise divide into a negative ROAS that renders as a real, terrible result.
 Google Ads is currently the only adapter that populates either field, and that
 is a scope boundary rather than a finding about the other six platforms — the
 doc comment on `model.CampaignMetrics.ConversionValue` says so explicitly, so
-that a nil there is never read as the audited vendor-capability claim that a nil
-`Conversions` carries. Neither field is consumed by `internal/service/rules`:
+that a nil there is never read as the kind of claim a nil `Conversions` carries.
+`Conversions` states its nil over the read as well, but backs it with a
+vendor-by-vendor audit — four channels cannot report a campaign-level count,
+and two more withdraw a total on an incomplete response. `ConversionValue` was
+audited for neither, so its nil asserts nothing about any platform. Neither field is consumed by `internal/service/rules`:
 no rule evaluates a return on ad spend, so nothing fires or fails to fire on
 them. They are reporting surface only, on the `campaign-metrics` response.
 

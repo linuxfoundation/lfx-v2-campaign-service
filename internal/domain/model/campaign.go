@@ -550,8 +550,10 @@ type CampaignMetrics struct {
 	// is asserting something this type does not tell it.
 	//
 	// A POINTER for the nil-versus-zero reason Conversions is one, but read its nil MORE
-	// CONSERVATIVELY. On Conversions, nil is a statement about the vendor API, audited field
-	// by field. Here it is only a statement about THIS READ: today Google Ads is the single
+	// CONSERVATIVELY still. Conversions states its nil over the read too, and backs that with
+	// a vendor-by-vendor audit: for four channels nil is a verified capability finding, for
+	// the other two an incomplete response. Here NEITHER half applies — no audit was done, so
+	// a nil carries no finding about any platform at all. Today Google Ads is the single
 	// adapter that populates it (from metrics.conversions_value, typed DOUBLE in the field
 	// reference and always in that adapter's SELECT list, so an absent member is a measured
 	// 0.0 and materialises as a non-nil zero). The other six leave it nil, and that is a scope
@@ -568,9 +570,14 @@ type CampaignMetrics struct {
 	// different currencies — the one figure in this struct that is.
 	//
 	// Derived by the ADAPTER, not by consumers, and nil wherever the division would not be a
-	// measurement: no conversion value, or no spend. A window that earned value without
-	// spending has an UNDEFINED return on ad spend rather than an infinite or a zero one, and
-	// those two substitutions fail in opposite directions — so the pointer withholds instead.
+	// measurement. Three cases reach nil, and the enumeration here matches the one the `roas`
+	// attribute in design/brief.go publishes: no conversion value, no spend in the window, or
+	// a reported cost BELOW zero. A window that earned value without spending has an UNDEFINED
+	// return on ad spend rather than an infinite or a zero one, and those two substitutions
+	// fail in opposite directions — so the pointer withholds instead. A negative cost is
+	// upstream corruption rather than a small number (parseMetricInt wraps strconv.ParseInt,
+	// which accepts a leading minus), and dividing by it yields a negative ROAS that renders
+	// as a real, terrible result.
 	//
 	// It is derived once, upstream, because the alternative is each consumer dividing the same
 	// two fields and eventually disagreeing about the zero-cost case, which surfaces as two
