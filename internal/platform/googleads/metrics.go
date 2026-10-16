@@ -178,10 +178,13 @@ func parseMetricInt(s string) (int64, error) {
 }
 
 // isUsableMetricDouble reports whether v is a magnitude this package is willing to
-// report as a measurement. It exists so the conversion COUNT and the conversion
-// VALUE are held to one standard by construction rather than by two inline tests a
-// later edit can drift apart; each caller keeps its own error sentence, since the
-// two fields fail for the same reason but are not the same field.
+// report as a measurement. It exists so every double this package reports is held to
+// one standard by construction rather than by inline tests a later edit can drift
+// apart. Three call sites share it: the campaign conversion COUNT and conversion
+// VALUE in GetCampaignMetrics, and the keyword-row conversion count in keywords.go,
+// which carried a fourth copy of the same four conditions and a comment saying it
+// matched this one. Each caller keeps its own error sentence — the fields fail for
+// the same reason but are not the same field.
 //
 // NaN and ±Inf both survive JSON decoding of a bare number in some encoders, and a
 // negative figure is upstream corruption rather than a small number — the same guard
