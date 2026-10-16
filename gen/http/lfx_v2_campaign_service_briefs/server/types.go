@@ -510,6 +510,16 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -535,6 +545,16 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -676,6 +696,16 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -702,6 +732,16 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -728,6 +768,16 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -754,6 +804,16 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -4476,6 +4536,7 @@ func NewAdoptCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Ado
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4493,6 +4554,7 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4617,6 +4679,7 @@ func NewUpdateCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Up
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4635,6 +4698,7 @@ func NewToggleCampaignStatusResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4653,6 +4717,7 @@ func NewUpdateCampaignBudgetResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4671,6 +4736,7 @@ func NewUpdateCampaignBidResponseBody(res *lfxv2campaignservicebriefs.Campaign) 
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
