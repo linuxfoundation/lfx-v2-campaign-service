@@ -510,6 +510,16 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -535,6 +545,16 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -572,15 +592,21 @@ type GetCampaignMetricsResponseBody struct {
 	// partial conversions under data-driven, position-based and offline
 	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
 	// round it to a whole number, and in particular do not treat a value below 1
-	// as zero. ABSENT when the channel does not report a campaign-level conversion
-	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
-	// Microsoft whenever the ConversionsQualified column is missing from the
-	// report or ANY row's conversion cell is blank — that column is only populated
-	// for accounts wired for Universal Event Tracking, and a partial column summed
-	// as though it were complete would report a campaign's conversions as lower
-	// than they are. Absent means "not measured here", which is NOT the same as a
-	// measured 0, and a consumer must not render it as zero or fold it into a
-	// conversion total.
+	// as zero. ABSENT means "not measured" — the platform cannot report it, or
+	// (LinkedIn, Microsoft) the read was incomplete. The first case covers
+	// channels that do not report a campaign-level conversion count at all (Meta,
+	// X, Reddit and the email channel never do). The second covers the two
+	// conversion-capable channels whose read can come back partial: LinkedIn
+	// whenever ANY returned analytics element omits externalWebsiteConversions,
+	// and Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank (that column is only populated
+	// for accounts wired for Universal Event Tracking). On either, summing only
+	// the elements or rows that did carry a value would publish a partial count as
+	// a complete one and report a campaign's conversions as lower than they are,
+	// so the whole total is withdrawn instead. Absence therefore does NOT by
+	// itself identify a platform that cannot report conversions, and it is NOT the
+	// same as a measured 0: a consumer must not render it as zero or fold it into
+	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
@@ -676,6 +702,16 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -702,6 +738,16 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -728,6 +774,16 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -754,6 +810,16 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -4012,15 +4078,21 @@ type CampaignMetricsResponseBody struct {
 	// partial conversions under data-driven, position-based and offline
 	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
 	// round it to a whole number, and in particular do not treat a value below 1
-	// as zero. ABSENT when the channel does not report a campaign-level conversion
-	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
-	// Microsoft whenever the ConversionsQualified column is missing from the
-	// report or ANY row's conversion cell is blank — that column is only populated
-	// for accounts wired for Universal Event Tracking, and a partial column summed
-	// as though it were complete would report a campaign's conversions as lower
-	// than they are. Absent means "not measured here", which is NOT the same as a
-	// measured 0, and a consumer must not render it as zero or fold it into a
-	// conversion total.
+	// as zero. ABSENT means "not measured" — the platform cannot report it, or
+	// (LinkedIn, Microsoft) the read was incomplete. The first case covers
+	// channels that do not report a campaign-level conversion count at all (Meta,
+	// X, Reddit and the email channel never do). The second covers the two
+	// conversion-capable channels whose read can come back partial: LinkedIn
+	// whenever ANY returned analytics element omits externalWebsiteConversions,
+	// and Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank (that column is only populated
+	// for accounts wired for Universal Event Tracking). On either, summing only
+	// the elements or rows that did carry a value would publish a partial count as
+	// a complete one and report a campaign's conversions as lower than they are,
+	// so the whole total is withdrawn instead. Absence therefore does NOT by
+	// itself identify a platform that cannot report conversions, and it is NOT the
+	// same as a measured 0: a consumer must not render it as zero or fold it into
+	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
@@ -4634,6 +4706,7 @@ func NewAdoptCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Ado
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4651,6 +4724,7 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4775,6 +4849,7 @@ func NewUpdateCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Up
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4793,6 +4868,7 @@ func NewToggleCampaignStatusResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4811,6 +4887,7 @@ func NewUpdateCampaignBudgetResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4829,6 +4906,7 @@ func NewUpdateCampaignBidResponseBody(res *lfxv2campaignservicebriefs.Campaign) 
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
