@@ -184,3 +184,7 @@
   and a URL is matched as a substring, so a cut one matched other pages too. They now keep up to
   2,000 characters, and a longer one is dropped with a note; the prompt quotes the event URL at the
   same length.
+- **Check 4 ignores this edition's registrants when the send suppresses them** (Copilot). A list
+  including them as one branch and excluding them at send time still failed check 4; a verified
+  send-time suppression is now left out of the inclusions check 4 reads. A branch-local
+  `NOT_IN_LIST`, or an unverifiable send-time id, proves nothing and is not used.

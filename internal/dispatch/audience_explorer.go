@@ -1853,7 +1853,18 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	if name := strings.TrimSpace(list.Name); name != "" {
 		inclusionNames = append(inclusionNames, name)
 	}
+	// A list the send itself suppresses, verified above, is not sent to: this edition's
+	// registrants included as "A OR B" and excluded at send time leave only B. Only a
+	// verified send-time id counts here; a flattened NOT_IN_LIST reference may be local
+	// to one branch, so it is no proof the list is excluded from the whole audience.
+	sentAway := make(map[string]bool, len(sendTimeIDs))
+	for _, id := range sendTimeIDs {
+		sentAway[id] = true
+	}
 	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
+		if sentAway[id] {
+			continue
+		}
 		if name := nameByID[id]; name != "" {
 			inclusionNames = append(inclusionNames, name)
 		}

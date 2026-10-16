@@ -911,3 +911,31 @@ func TestRunQA_ASendTimeListOneBranchIncludesStillExcludes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a list the whole audience is inside is no suppression")
 }
+
+// This edition's registrants included as one branch and suppressed at send time are
+// not sent to, so check 4 does not fail on them; an unverifiable send-time id does
+// not count, and the registrants list is still flagged.
+func TestRunQA_ASendTimeSuppressedRegistrantsListPassesCheckFour(t *testing.T) {
+	portal := seoulPortal()
+	portal.lists["26Q3 - Seoul - Registration Push"] = "500"
+	portal.lists["26Q3 - AGNTCon + MCPCon Japan 2026 Registrants"] = "29895"
+	portal.lists["26Q3 - Seoul - Prospects"] = "603"
+	inList := func(id string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}]}`
+	}
+	portal.branches = map[string]string{
+		"500": `{"filterBranchType":"OR","filters":[],"filterBranches":[` + inList("29895") + `,` + inList("603") + `]}`,
+	}
+	srv := portal.serve(t)
+	defer srv.Close()
+	x := explorerOver(srv, nil)
+	const event = "AGNTCon + MCPCon Japan 2026"
+
+	suppressed, err := x.RunQA(context.Background(), "proj-1", "500", event, false, false, []string{"29895"})
+	require.NoError(t, err)
+	assert.NotEqual(t, audience.VerdictFail, suppressed.Checks.CurrentRegistrants.Verdict, "the send excludes this edition's registrants")
+
+	unverified, err := x.RunQA(context.Background(), "proj-1", "500", event, false, false, []string{"404404"})
+	require.NoError(t, err)
+	assert.Equal(t, audience.VerdictFail, unverified.Checks.CurrentRegistrants.Verdict, "an unreadable send-time id proves nothing")
+}

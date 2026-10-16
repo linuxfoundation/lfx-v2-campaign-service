@@ -4556,7 +4556,7 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 (seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
-fetched from HubSpot once per `RunQA` call, not once per reference.
+fetched from HubSpot once per `RunQA` call, not once per reference. A verified send-time suppression is also left out of the inclusions check 4 (`current_registrants`) reads: the send does not reach that list.
 
 ## Account-monitor currency (LFXV2-2665)
 
