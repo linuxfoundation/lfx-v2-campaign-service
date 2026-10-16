@@ -14217,7 +14217,7 @@ definitions:
                 example: "104670127234"
             roas:
                 type: number
-                description: 'Return on ad spend: conversion_value divided by cost over the same window and in the same currency, so it is DIMENSIONLESS and is the only figure here comparable across accounts in different currencies. Derived upstream so every consumer gets the same answer. ABSENT whenever that division would not be a measurement — no conversion value, or no spend in the window. A campaign that earned value without spending has an UNDEFINED return on ad spend, not an infinite one and not a zero one; rendering absent as 0 would state the opposite of what happened.'
+                description: 'Return on ad spend: conversion_value divided by cost over the same window and in the same currency, so it is DIMENSIONLESS and is the only figure here comparable across accounts in different currencies. Derived upstream so every consumer gets the same answer. ABSENT whenever that division would not be a measurement — no conversion value, no spend in the window, or a reported cost below zero. A campaign that earned value without spending has an UNDEFINED return on ad spend, not an infinite one and not a zero one; rendering absent as 0 would state the opposite of what happened.'
                 example: 2.41
                 format: double
             window:

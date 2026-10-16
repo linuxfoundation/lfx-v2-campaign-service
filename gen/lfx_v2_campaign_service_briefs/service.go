@@ -981,10 +981,10 @@ type CampaignMetrics struct {
 	// and in the same currency, so it is DIMENSIONLESS and is the only figure here
 	// comparable across accounts in different currencies. Derived upstream so
 	// every consumer gets the same answer. ABSENT whenever that division would not
-	// be a measurement — no conversion value, or no spend in the window. A
-	// campaign that earned value without spending has an UNDEFINED return on ad
-	// spend, not an infinite one and not a zero one; rendering absent as 0 would
-	// state the opposite of what happened.
+	// be a measurement — no conversion value, no spend in the window, or a
+	// reported cost below zero. A campaign that earned value without spending has
+	// an UNDEFINED return on ad spend, not an infinite one and not a zero one;
+	// rendering absent as 0 would state the opposite of what happened.
 	Roas *float64
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.

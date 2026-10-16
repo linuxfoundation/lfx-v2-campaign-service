@@ -36,7 +36,23 @@ Each has an obvious wrong answer that renders as a real result, which is why `Ro
   then asking what the `<0` half of that test was actually excluding — the first draft's comment
   claimed `parseMetricInt` already guaranteed non-negative, which it does not.
 
-`TestGetCampaignMetrics_RoasWithheldWhenNotAMeasurement` covers all three as named subtests.
+`TestGetCampaignMetrics_RoasWithheldWhenNotAMeasurement` covers all three as named subtests,
+and the `roas` attribute description in `design/brief.go` enumerates all three — a user-facing
+string that lists its cases has to list the last one too.
+
+## The one assumption a test cannot check
+
+The REST member name `conversionsValue` is assumed to be the lowerCamelCase of the GAQL column,
+exactly as `cost_micros` → `costMicros` already is in the same struct. It is flagged in the struct
+with the file's existing UNVERIFIED ASSUMPTION banner rather than left implicit, because the
+failure is silent in the worst way: an absent member is deliberately decoded as a MEASURED 0.0, so
+a wrong key would not error — it would report `conversionValue` 0 and `roas` 0 on every campaign.
+Fixtures are written against the same assumption they would be testing, so only a live response
+settles it.
+
+The magnitude guard the two doubles share is now the single predicate `isUsableMetricDouble`
+rather than the same four-condition test written twice in one function, so they are held to one
+standard by construction; each call site keeps its own error sentence.
 
 ## The value's nil is weaker than the count's nil, and says so
 

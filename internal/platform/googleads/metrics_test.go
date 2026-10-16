@@ -579,3 +579,40 @@ func TestGetCampaignMetrics_MalformedConversionValueIsAnError(t *testing.T) {
 		}
 	}
 }
+
+// The sibling of TestGetCampaignMetrics_FractionalConversionsArePreserved, for the same
+// reason and with more at stake: metrics.conversions_value is a DOUBLE in WHOLE units of
+// the account's currency, so its fractional part is CENTS. Rounding here would not just
+// misreport a value, it would feed a rounded numerator into the ROAS division and move a
+// figure consumers compare across accounts.
+func TestGetCampaignMetrics_FractionalConversionValueIsPreserved(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want float64
+	}{
+		{"cents below one unit are not rounded to zero", "0.99", 0.99},
+		{"cents are kept on a whole-unit amount", "120.05", 120.05},
+		{"an exact half unit is not rounded", "2.5", 2.5},
+		{"an exact zero stays zero", "0", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","conversions":1,"conversionsValue":`+tc.raw+`}}]}`)
+			})
+			m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+			if err != nil {
+				t.Fatalf("GetCampaignMetrics: %v", err)
+			}
+			if m.ConversionValue == nil {
+				t.Fatalf("ConversionValue is nil for conversionsValue:%s", tc.raw)
+			}
+			if *m.ConversionValue != tc.want {
+				t.Errorf("conversionsValue:%s became %v, want %v: rounding drops cents and "+
+					"shifts the ROAS derived from this numerator",
+					tc.raw, *m.ConversionValue, tc.want)
+			}
+		})
+	}
+}
