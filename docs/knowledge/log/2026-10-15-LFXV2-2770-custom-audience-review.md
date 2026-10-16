@@ -235,3 +235,11 @@ sweep after review pagination hid them:
   Tightened further (Copilot): only exact equality comparisons, in a list whose registration
   events are all "has completed", count; a substring ("contains KubeCon") names no edition and
   falls back to the name too.
+- **Edition evidence is read from the filter tree, on every registration path** (Copilot, review
+  body). With "registered for 2025 OR any registration", the flattened read took only 2025 and
+  passed check 4 for 2026. `RegisteredEditions` now walks the tree and returns editions only when
+  every registration branch is a completed registration with an exact event_name equality.
+- **An inline registration suppression excludes its edition** (Copilot, review body).
+  `CoveredEditions` reads a verified suppression's tree for a lone completed-registration branch
+  with only an exact event_name equality, and check 4 leaves those editions out; one narrowed by any
+  other condition covers nothing.

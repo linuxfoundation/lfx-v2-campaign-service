@@ -1154,3 +1154,70 @@ func TestRunQA_CheckFourReadsTheRegistrationPredicates(t *testing.T) {
 		})
 	}
 }
+
+// Edition evidence must hold on every registration path, and a verified suppression's
+// inline registration predicate excludes its edition whole only when nothing else
+// narrows it.
+func TestRunQA_CheckFourEditionsAcrossPathsAndInlineSuppressions(t *testing.T) {
+	ue := func(nameOp string, editions []string, extra string) string {
+		filters := ""
+		if len(editions) > 0 {
+			filters = `{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"` + nameOp + `","values":["` + strings.Join(editions, `","`) + `"]}}`
+		}
+		if extra != "" {
+			if filters != "" {
+				filters += ","
+			}
+			filters += extra
+		}
+		return `{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` + filters + `]}`
+	}
+	and := func(b ...string) string {
+		return `{"filterBranchType":"AND","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	narrowing := `{"filterType":"PROPERTY","property":"registration_type","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["Speaker"]}}`
+	for name, tc := range map[string]struct {
+		listName, audience, wrapper string
+		send                        []string
+		fail                        bool
+	}{
+		"a constrained and an unrestricted path": {
+			listName: "26Q4 - KubeCon 2026 Registrants",
+			audience: or(and(ue("IS_EQUAL_TO", []string{"KubeCon 2025"}, "")), and(ue("", nil, ""))),
+			fail:     true,
+		},
+		"this edition excluded by an inline suppression": {
+			listName: "26Q4 - KubeCon Registrants",
+			audience: or(and(ue("IS_ANY_OF", []string{"KubeCon 2025", "KubeCon 2026"}, ""))),
+			wrapper:  or(and(ue("IS_EQUAL_TO", []string{"KubeCon 2026"}, ""))),
+			send:     []string{"700"},
+			fail:     false,
+		},
+		"an inline suppression narrowed by another condition": {
+			listName: "26Q4 - KubeCon Registrants",
+			audience: or(and(ue("IS_ANY_OF", []string{"KubeCon 2025", "KubeCon 2026"}, ""))),
+			wrapper:  or(and(ue("IS_EQUAL_TO", []string{"KubeCon 2026"}, narrowing))),
+			send:     []string{"700"},
+			fail:     true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists[tc.listName] = "500"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.branches = map[string]string{"500": tc.audience}
+			if tc.wrapper != "" {
+				portal.branches["700"] = tc.wrapper
+			}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, tc.send)
+			require.NoError(t, err)
+			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
+		})
+	}
+}

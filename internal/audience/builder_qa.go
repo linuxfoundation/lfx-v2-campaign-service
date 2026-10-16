@@ -162,44 +162,52 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 }
 
 // RegisteredEditions are the exact edition names a list's registration predicates
-// select (its `event_name` filter values), or nil when it has none. They say which
-// editions' registrants the list holds better than its display name does: a list
-// named for "KubeCon 2026" can select only 2025's registrants.
+// select, read from its filter tree, or nil when they do not name every one. They say
+// which editions' registrants the list holds better than its display name does: a
+// list named for "KubeCon 2026" can select only 2025's registrants.
 //
-// Only provably EXACT, POSITIVE editions count: equality comparisons on event_name,
-// in a list whose registration events are all "has completed". A negated branch
-// (has NOT completed) or a negative comparison (is not equal to) selects people who
-// did not register; a substring (contains "KubeCon") names no edition. Any of these
-// returns nil, and the caller falls back to the list's name, leaving an uncertain
-// case to the name-based check rather than inventing or dropping registrants.
-func RegisteredEditions(filters []ListFilter) []string {
-	exact := map[string]bool{"IS_EQUAL_TO": true, "IS_ANY_OF": true, "EQ": true}
-	completed := false
-	var out []string
-	for _, f := range filters {
-		if f.FilterType == "UNIFIED_EVENTS" {
-			if f.EventTypeID == registrationEventTypeID && strings.EqualFold(strings.TrimSpace(f.Operator), "HAS_COMPLETED") {
-				completed = true
-			} else if strings.Contains(strings.ToUpper(f.Operator), "NOT") {
-				return nil
-			}
-		}
-		if f.PropertyKey() != "event_name" {
-			continue
-		}
-		op := strings.ToUpper(strings.TrimSpace(f.Operation.Operator))
-		if op == "" {
-			op = strings.ToUpper(strings.TrimSpace(f.Operator))
-		}
-		if !exact[op] {
-			return nil
-		}
-		out = append(out, f.StringValues()...)
+// Only provably EXACT, POSITIVE editions on EVERY registration path count: each
+// registration event branch must be "has completed" with an exact equality on
+// event_name. A path without that constraint (unrestricted registration, a negated
+// branch, a negative or substring comparison) can include any edition's registrants,
+// so the result is nil and the caller keeps the name-based check.
+func RegisteredEditions(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
 	}
-	if !completed {
+	var out []string
+	sawRegistration := false
+	ok := true
+	root.walk(func(b qaBranch) {
+		if !strings.EqualFold(b.FilterBranchType, "UNIFIED_EVENTS") || b.EventTypeID != registrationEventTypeID {
+			return
+		}
+		sawRegistration = true
+		editions, exact := b.exactEditions()
+		if !exact {
+			ok = false
+			return
+		}
+		out = append(out, editions...)
+	})
+	if !ok || !sawRegistration {
 		return nil
 	}
 	return UniqueIDs(out)
+}
+
+// CoveredEditions are the editions whose registrants a list's tree includes whole: a
+// completed-registration branch with an exact event_name equality and NO other
+// condition, standing alone as one OR alternative. A suppression with that shape
+// excludes every registrant of those editions; one narrowed by anything else covers
+// none of them.
+func CoveredEditions(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	return UniqueIDs(root.coveredEditions())
 }
 
 // RequiredInListIDs are the lists EVERY contact of a list's filter tree must be a
@@ -258,12 +266,84 @@ func TreeCoveredBy(raw json.RawMessage, covered []string) bool {
 
 type qaBranch struct {
 	FilterBranchType string     `json:"filterBranchType"`
+	EventTypeID      string     `json:"eventTypeId"`
+	Operator         string     `json:"operator"`
 	FilterBranches   []qaBranch `json:"filterBranches"`
 	Filters          []struct {
 		FilterType string      `json:"filterType"`
 		Operator   string      `json:"operator"`
 		ListID     json.Number `json:"listId"`
+		Property   string      `json:"property"`
+		Operation  struct {
+			Operator string   `json:"operator"`
+			Values   []string `json:"values"`
+		} `json:"operation"`
 	} `json:"filters"`
+}
+
+func (b qaBranch) walk(visit func(qaBranch)) {
+	visit(b)
+	for _, c := range b.FilterBranches {
+		c.walk(visit)
+	}
+}
+
+// exactEditions reads a registration event branch: its editions, and whether it is a
+// completed registration constrained by an exact event_name equality and nothing
+// that could widen or negate it.
+func (b qaBranch) exactEditions() ([]string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(b.Operator), "HAS_COMPLETED") {
+		return nil, false
+	}
+	var editions []string
+	for _, f := range b.Filters {
+		if !strings.EqualFold(strings.TrimSpace(f.Property), "event_name") {
+			continue
+		}
+		op := strings.ToUpper(strings.TrimSpace(f.Operation.Operator))
+		if op != "IS_EQUAL_TO" && op != "IS_ANY_OF" {
+			return nil, false
+		}
+		editions = append(editions, f.Operation.Values...)
+	}
+	return editions, len(editions) > 0
+}
+
+func (b qaBranch) coveredEditions() []string {
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "OR":
+		var out []string
+		for _, c := range b.FilterBranches {
+			out = append(out, c.coveredEditions()...)
+		}
+		return out
+	case "AND":
+		if len(b.Filters) == 0 && len(b.FilterBranches) == 1 {
+			return b.FilterBranches[0].coveredEditions()
+		}
+		return nil
+	case "UNIFIED_EVENTS":
+		if b.EventTypeID != registrationEventTypeID {
+			return nil
+		}
+		// Every filter must be the exact event_name equality: any other condition
+		// narrows the branch below an edition's whole registration.
+		for _, f := range b.Filters {
+			if !strings.EqualFold(strings.TrimSpace(f.Property), "event_name") {
+				return nil
+			}
+		}
+		if len(b.FilterBranches) > 0 {
+			return nil
+		}
+		editions, exact := b.exactEditions()
+		if !exact {
+			return nil
+		}
+		return editions
+	default:
+		return nil
+	}
 }
 
 func (b qaBranch) covered() map[string]struct{} {

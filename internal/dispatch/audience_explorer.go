@@ -1837,6 +1837,9 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// ComposeMaster's combined suppression is "R OR OptOut").
 	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
 	sentAway := map[string]bool{}
+	// editionsAway are registration editions a verified suppression's own tree excludes
+	// whole (an inline "registered for KubeCon 2026" predicate), for check 4.
+	editionsAway := map[string]bool{}
 	for _, id := range audience.UniqueIDs(sendSuppressionIDs) {
 		if notSuppression[id] {
 			continue
@@ -1868,6 +1871,11 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		for _, c := range covered {
 			sentAway[c] = true
 		}
+		if l != nil {
+			for _, e := range audience.CoveredEditions(l.FilterBranch) {
+				editionsAway[strings.ToLower(strings.TrimSpace(e))] = true
+			}
+		}
 		if alreadyExcluded[id] {
 			continue
 		}
@@ -1887,6 +1895,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		if audience.TreeCoveredBy(list.FilterBranch, union) {
 			sendTimeIDs = sendTimeIDs[:0]
 			sentAway = map[string]bool{}
+			editionsAway = map[string]bool{}
 		}
 	}
 	exclusionNames := x.exclusionNames(ctx, client, cache, append(excludedIDs, sendTimeIDs...), nameByID)
@@ -1904,8 +1913,12 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// the evidence, not its display name: "26Q4 - KubeCon 2026 - Event Registration" built
 	// for registered_for ["KubeCon 2025"] holds only 2025's registrants. The name is the
 	// fallback for a static or otherwise opaque list.
-	if editions := audience.RegisteredEditions(filters); len(editions) > 0 {
+	if editions := audience.RegisteredEditions(list.FilterBranch); len(editions) > 0 {
 		for _, e := range editions {
+			// An edition a verified suppression excludes whole is not sent to.
+			if editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+				continue
+			}
 			inclusionNames = append(inclusionNames, e+" Registrants")
 		}
 	} else if name := strings.TrimSpace(list.Name); name != "" {
