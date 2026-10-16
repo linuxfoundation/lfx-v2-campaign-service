@@ -882,3 +882,16 @@ func TestTreeCoveredBy(t *testing.T) {
 	assert.False(t, TreeCoveredBy(json.RawMessage(`{`), []string{"1"}))
 	assert.False(t, TreeCoveredBy(tree, nil))
 }
+
+// Conditions inside one registration branch all hold, so two event_name equalities
+// allow only the editions both name.
+func TestCoveredEditions_IntersectsConditionsInOneBranch(t *testing.T) {
+	name := func(values ...string) string {
+		return `{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_ANY_OF","values":["` + strings.Join(values, `","`) + `"]}}`
+	}
+	branch := `{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[],"filterBranches":[` +
+		`{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+		name("KubeCon 2025", "KubeCon 2026") + `,` + name("KubeCon 2025") + `]}]}]}`
+	assert.Equal(t, []string{"KubeCon 2025"}, CoveredEditions(json.RawMessage(branch)), "only 2025 satisfies both conditions")
+	assert.Equal(t, []string{"KubeCon 2025"}, RegisteredEditions(json.RawMessage(branch)))
+}

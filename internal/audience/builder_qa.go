@@ -295,7 +295,10 @@ func (b qaBranch) exactEditions() ([]string, bool) {
 	if !strings.EqualFold(strings.TrimSpace(b.Operator), "HAS_COMPLETED") {
 		return nil, false
 	}
+	// The branch's conditions ALL hold, so several event_name equalities narrow each
+	// other: the editions are what every one of them allows, never their union.
 	var editions []string
+	seen := false
 	for _, f := range b.Filters {
 		if !strings.EqualFold(strings.TrimSpace(f.Property), "event_name") {
 			continue
@@ -304,7 +307,22 @@ func (b qaBranch) exactEditions() ([]string, bool) {
 		if op != "IS_EQUAL_TO" && op != "IS_ANY_OF" {
 			return nil, false
 		}
-		editions = append(editions, f.Operation.Values...)
+		if !seen {
+			editions = UniqueIDs(append([]string(nil), f.Operation.Values...))
+			seen = true
+			continue
+		}
+		allowed := make(map[string]bool, len(f.Operation.Values))
+		for _, v := range f.Operation.Values {
+			allowed[strings.ToLower(strings.TrimSpace(v))] = true
+		}
+		kept := editions[:0]
+		for _, e := range editions {
+			if allowed[strings.ToLower(strings.TrimSpace(e))] {
+				kept = append(kept, e)
+			}
+		}
+		editions = kept
 	}
 	return editions, len(editions) > 0
 }

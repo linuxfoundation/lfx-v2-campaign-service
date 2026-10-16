@@ -243,3 +243,6 @@ sweep after review pagination hid them:
   `CoveredEditions` reads a verified suppression's tree for a lone completed-registration branch
   with only an exact event_name equality, and check 4 leaves those editions out; one narrowed by any
   other condition covers nothing.
+- **Conditions in one registration branch intersect** (Greptile). `exactEditions` unioned separate
+  event_name filters inside a branch, so "2025 or 2026" AND "2025" read as both years and check 4
+  skipped 2026. The editions are now what every condition allows.
