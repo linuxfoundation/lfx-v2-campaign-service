@@ -188,3 +188,10 @@
   including them as one branch and excluding them at send time still failed check 4; a verified
   send-time suppression is now left out of the inclusions check 4 reads. A branch-local
   `NOT_IN_LIST`, or an unverifiable send-time id, proves nothing and is not used.
+- **Check 4 credits everything the send provably excludes** (Greptile, Copilot). Send-time ids are
+  verified independently of check 3's dedup, so one a list already excludes in one branch still
+  counts, and a verified suppression wrapper's fully covered children (`CoveredListIDs`: a list
+  that alone is one alternative of an OR, as ComposeMaster's "R OR OptOut" combined suppression)
+  are credited too. An intersection ("R AND OptOut") covers nothing.
+- **Property-filter values are kept whole or dropped** (Greptile), as page URLs are: a CONTAINS on a
+  cut value matches contacts the full value would not.

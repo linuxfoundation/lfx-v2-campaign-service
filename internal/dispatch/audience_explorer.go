@@ -1820,9 +1820,16 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 			notSuppression[id] = true
 		}
 	}
+	// Every send-time id is VERIFIED first (readable, a contact list, not the audience
+	// itself), independently of whether the list's own filters already exclude it: that
+	// dedup is for check 3's count only, and a flattened NOT_IN_LIST can be local to one
+	// branch. sentAway is what the send provably does not reach, for check 4: each
+	// verified suppression, plus every list its own filter tree fully covers (one hop:
+	// ComposeMaster's combined suppression is "R OR OptOut").
 	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
+	sentAway := map[string]bool{}
 	for _, id := range audience.UniqueIDs(sendSuppressionIDs) {
-		if alreadyExcluded[id] || notSuppression[id] {
+		if notSuppression[id] {
 			continue
 		}
 		l, _, rerr := x.listWithFilters(ctx, client, cache, id)
@@ -1832,6 +1839,15 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		// A company or deal list cannot exclude a contact, so it is no suppression
 		// (AttachExisting refuses one on the same test).
 		if l != nil && l.ObjectTypeID != "" && l.ObjectTypeID != "0-1" {
+			continue
+		}
+		sentAway[id] = true
+		if l != nil {
+			for _, covered := range audience.CoveredListIDs(l.FilterBranch) {
+				sentAway[covered] = true
+			}
+		}
+		if alreadyExcluded[id] {
 			continue
 		}
 		if _, done := nameByID[id]; !done {
@@ -1853,14 +1869,10 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	if name := strings.TrimSpace(list.Name); name != "" {
 		inclusionNames = append(inclusionNames, name)
 	}
-	// A list the send itself suppresses, verified above, is not sent to: this edition's
-	// registrants included as "A OR B" and excluded at send time leave only B. Only a
-	// verified send-time id counts here; a flattened NOT_IN_LIST reference may be local
-	// to one branch, so it is no proof the list is excluded from the whole audience.
-	sentAway := make(map[string]bool, len(sendTimeIDs))
-	for _, id := range sendTimeIDs {
-		sentAway[id] = true
-	}
+	// A list the send itself suppresses (sentAway, verified above) is not sent to: this
+	// edition's registrants included as "A OR B" and excluded at send time leave only B.
+	// A flattened NOT_IN_LIST reference may be local to one branch, so it is no proof
+	// the list is excluded from the whole audience and is not used here.
 	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
 		if sentAway[id] {
 			continue

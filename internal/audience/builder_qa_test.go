@@ -851,3 +851,18 @@ func TestRequiredInListIDs(t *testing.T) {
 		assert.Equal(t, tc.want, got, tc.name)
 	}
 }
+
+// A list is covered only when membership of it alone puts a contact in the tree.
+func TestCoveredListIDs(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	assert.Equal(t, []string{"1", "2"}, CoveredListIDs(json.RawMessage(or(and(in("1")), and(in("2"))))), "a union covers each member")
+	assert.Equal(t, []string{}, CoveredListIDs(json.RawMessage(or(and(in("1"), in("2"))))), "an intersection covers neither")
+	assert.Equal(t, []string{"3"}, CoveredListIDs(json.RawMessage(or(and(in("3")), and(in("1"), in("2"))))))
+	assert.Nil(t, CoveredListIDs(json.RawMessage(`{`)))
+}

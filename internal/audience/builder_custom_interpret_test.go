@@ -180,3 +180,16 @@ func TestParseCustomDraft_KeepsPageURLsWholeOrDropsThem(t *testing.T) {
 	assert.Equal(t, []string{long}, d.Criteria.PageViewURLs, "a URL over a display field's 200 characters is kept whole")
 	assert.Contains(t, strings.Join(d.Notes, "\n"), "Left out 1 page URLs")
 }
+
+// A comparison value is kept whole or dropped with a note, never cut to a prefix that
+// matches more contacts.
+func TestParseCustomDraft_KeepsComparisonValuesWholeOrDropsThem(t *testing.T) {
+	long := "https://www.example.org/" + strings.Repeat("a", 300)
+	tooLong := strings.Repeat("b", 2100)
+	raw := `{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[{"property":"website","operator":"contains","values":["` + long + `","` + tooLong + `"]}],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":[],"label":""},"questions":[],"notes":[]}`
+	d, err := ParseCustomDraft(raw)
+	require.NoError(t, err)
+	require.Len(t, d.Criteria.PropertyFilters, 1)
+	assert.Equal(t, []string{long}, d.Criteria.PropertyFilters[0].Values)
+	assert.Contains(t, strings.Join(d.Notes, "\n"), "Left out 1 property-filter values")
+}

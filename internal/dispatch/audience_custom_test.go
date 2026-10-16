@@ -939,3 +939,52 @@ func TestRunQA_ASendTimeSuppressedRegistrantsListPassesCheckFour(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, audience.VerdictFail, unverified.Checks.CurrentRegistrants.Verdict, "an unreadable send-time id proves nothing")
 }
+
+// Check 4 reads what the send provably does not reach: a verified send-time
+// suppression even when one branch of the list already excludes it, and every list a
+// suppression wrapper fully covers. A wrapper that only intersects a list covers none
+// of it.
+func TestRunQA_CheckFourCreditsEverythingTheSendExcludes(t *testing.T) {
+	const event = "AGNTCon + MCPCon Japan 2026"
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	notIn := func(id string) string { return `{"filterType":"IN_LIST","operator":"NOT_IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	for name, tc := range map[string]struct {
+		audience, wrapper string
+		send              string
+		want              audience.Verdict
+		sameVerdict       bool
+	}{
+		"R OR (P AND NOT R), R suppressed": {audience: or(and(in("29895")), and(in("603"), notIn("29895"))), send: "29895"},
+		"R OR P, wrapper R OR OptOut":      {audience: or(and(in("29895")), and(in("603"))), wrapper: or(and(in("29895")), and(in("602"))), send: "700"},
+		"R OR P, wrapper R AND OptOut":     {audience: or(and(in("29895")), and(in("603"))), wrapper: and(in("29895"), in("602")), send: "700", want: audience.VerdictFail, sameVerdict: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q3 - Seoul - Registration Push"] = "500"
+			portal.lists["26Q3 - AGNTCon + MCPCon Japan 2026 Registrants"] = "29895"
+			portal.lists["26Q3 - Seoul - Prospects"] = "603"
+			portal.lists["LF Global Opt-Outs"] = "602"
+			portal.lists["26Q3 - Combined Suppression"] = "700"
+			portal.branches = map[string]string{"500": tc.audience}
+			if tc.wrapper != "" {
+				portal.branches["700"] = tc.wrapper
+			}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", event, false, false, []string{tc.send})
+			require.NoError(t, err)
+			if tc.sameVerdict {
+				assert.Equal(t, tc.want, out.Checks.CurrentRegistrants.Verdict, "an intersection covers none of the registrants")
+				return
+			}
+			assert.NotEqual(t, audience.VerdictFail, out.Checks.CurrentRegistrants.Verdict, "the send excludes every current registrant")
+		})
+	}
+}

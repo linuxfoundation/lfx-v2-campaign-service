@@ -181,6 +181,24 @@ func RequiredInListIDs(raw json.RawMessage) []string {
 	return out
 }
 
+// CoveredListIDs are the lists whose WHOLE membership a list's filter tree includes:
+// a list that is, alone, one alternative of an OR ("R OR OptOut" covers R and OptOut).
+// An AND of several conditions covers nothing ("R AND OptOut" is only part of R). It
+// is how a suppression wrapper proves its children are excluded at send time.
+func CoveredListIDs(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	set := root.covered()
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 type qaBranch struct {
 	FilterBranchType string     `json:"filterBranchType"`
 	FilterBranches   []qaBranch `json:"filterBranches"`
@@ -189,6 +207,39 @@ type qaBranch struct {
 		Operator   string      `json:"operator"`
 		ListID     json.Number `json:"listId"`
 	} `json:"filters"`
+}
+
+func (b qaBranch) covered() map[string]struct{} {
+	inList := func(i int) (string, bool) {
+		f := b.Filters[i]
+		id := strings.TrimSpace(f.ListID.String())
+		return id, f.FilterType == "IN_LIST" && f.Operator == "IN_LIST" && id != ""
+	}
+	out := map[string]struct{}{}
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "OR":
+		for i := range b.Filters {
+			if id, ok := inList(i); ok {
+				out[id] = struct{}{}
+			}
+		}
+		for _, c := range b.FilterBranches {
+			for id := range c.covered() {
+				out[id] = struct{}{}
+			}
+		}
+	case "AND":
+		// Only a single condition: anything more narrows it below the whole list.
+		switch {
+		case len(b.Filters) == 1 && len(b.FilterBranches) == 0:
+			if id, ok := inList(0); ok {
+				out[id] = struct{}{}
+			}
+		case len(b.Filters) == 0 && len(b.FilterBranches) == 1:
+			return b.FilterBranches[0].covered()
+		}
+	}
+	return out
 }
 
 func (b qaBranch) required() map[string]struct{} {

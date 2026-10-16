@@ -113,6 +113,9 @@ const (
 	// one becomes a prefix other pages share and widens the audience: a URL over it
 	// is dropped with a note, never cut.
 	customURLMaxLen = 2000
+	// customValueMaxLen bounds a property-filter comparison value, kept whole for
+	// the same reason as a URL.
+	customValueMaxLen = customURLMaxLen
 	// customPropertyNameMaxLen is a property name's MaxLength in the criteria contract.
 	customPropertyNameMaxLen = 100
 	customMaxAnswers         = 12
@@ -293,6 +296,29 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 		return out
 	}
 
+	// wholeValues keeps each property-filter comparison value whole, or drops it: a
+	// CONTAINS on a cut value matches contacts the full value would not.
+	var droppedValues int
+	wholeValues := func(in []string) []string {
+		out := make([]string, 0, len(in))
+		for _, v := range in {
+			v = strings.Join(strings.Fields(v), " ")
+			if v == "" {
+				continue
+			}
+			if len([]rune(v)) > customValueMaxLen || blockMarkerRE.MatchString(v) {
+				droppedValues++
+				continue
+			}
+			out = append(out, v)
+		}
+		out = cleanValues(out)
+		if len(out) > customMaxValues {
+			out = out[:customMaxValues]
+		}
+		return out
+	}
+
 	c := w.Criteria
 	d := &CustomDraft{
 		Criteria: CustomCriteria{
@@ -327,7 +353,7 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 			break
 		}
 		d.Criteria.PropertyFilters = append(d.Criteria.PropertyFilters, CustomPropertyFilter{
-			Property: prop, Operator: op, Values: values(f.Values),
+			Property: prop, Operator: op, Values: wholeValues(f.Values),
 		})
 	}
 
@@ -339,6 +365,10 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 			scope = SpeakerScopeCurrentPast
 		}
 		d.Criteria.Speakers = &CustomSpeakers{Scope: scope, EventNames: editions(s.EventNames)}
+	}
+
+	if droppedValues > 0 {
+		d.Notes = append(d.Notes, fmt.Sprintf("Left out %d property-filter values longer than %d characters: a value is never shortened, since a shorter one matches more contacts.", droppedValues, customValueMaxLen))
 	}
 
 	for _, q := range w.Questions {
