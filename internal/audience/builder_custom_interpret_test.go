@@ -169,6 +169,17 @@ func TestParseCustomDraft_KeepsALongSpeakerEventNameWhole(t *testing.T) {
 	assert.Equal(t, []string{name}, d.Criteria.Speakers.EventNames)
 }
 
+// registered_for names an exact edition, so a long one stays whole: a prefix would
+// filter on a different (or no) edition.
+func TestParseCustomDraft_KeepsALongRegisteredForEditionWhole(t *testing.T) {
+	name := strings.Repeat("Synthetic ", 22) + "Summit 2026"
+	raw := `{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":["` + name + `"],"label":""},"questions":[],"notes":[]}`
+	d, err := ParseCustomDraft(raw)
+	require.NoError(t, err)
+	require.Greater(t, len([]rune(name)), 200)
+	assert.Equal(t, []string{name}, d.Criteria.RegisteredFor)
+}
+
 // A page URL is matched as a substring, so it is kept whole or dropped with a note,
 // never cut to a prefix other pages share.
 func TestParseCustomDraft_KeepsPageURLsWholeOrDropsThem(t *testing.T) {

@@ -277,3 +277,9 @@ sweep after review pagination hid them:
 - **An all-generic event name must appear whole in a brand voter** (Copilot). For "Open Source
   Summit Japan 2026" no distinctive word remained, so every search hit voted and KubeCon Japan's
   lists out-voted the event's own; such a name must now appear whole in a voter's list name.
+- **Review 6 (dealako): docs caught up with the code.** The `builder_qa.go` header now names four
+  checks and the tree readers behind check 4. `internal-audience.md` states the 2000-character
+  whole-or-drop rule for page URLs and property-filter values, `DominantBrand`'s distinctive-word
+  voters and whole-name fallback, and `DiscoveryHidden`'s test/staff-before-master order.
+  `TestParseCustomDraft_KeepsALongRegisteredForEditionWhole` pins a `registered_for` edition over
+  200 characters staying whole.

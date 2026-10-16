@@ -362,8 +362,12 @@ The plan is validated first, so a brief that cannot be planned leaves no row beh
 
 Every suppression-hint check reads the name with its separators normalised too
 (`hasSuppressionHint`, used by `DiscoveryHidden`, `ClassifyList`, `MatchesBrandMaster` and
-`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `DominantBrand` votes a long-form brand
-("The Linux Foundation") as its short name from `brandAliases`.
+`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `DiscoveryHidden` classifies test and
+staff before master, so a test or staff master rollup ("… Master [test]") is hidden rather than
+expanded as a master. `DominantBrand` votes a long-form brand ("The Linux Foundation") as its
+short name from `brandAliases`, and only lists sharing a distinctive event word vote; when every
+word of the event name is generic ("Open Source Summit Japan 2026"), a voter's list name must
+contain the whole event name, so another event's lists sharing generic words cannot win.
 
 The files above are the **record** half — `plan.go` and `filters.go` materialise the audience a
 BRIEF commits to, and their failures fail the brief. The `builder_*.go` files are the
@@ -521,7 +525,9 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
 - **Draft arrays stay inside the contract.** `ParseCustomDraft` caps value arrays at 25,
   `property_filters` at 10 (`customMaxFilters`) and `page_view_urls` at `CustomMaxPageViewURLs`
   (10), each matching its `MaxLength`, and drops, with a note, a suggested property filter whose
-  name is outside the contract's `^[A-Za-z0-9_]+$` or longer than 100 characters. Producers of
+  name is outside the contract's `^[A-Za-z0-9_]+$` or longer than 100 characters. A comparison
+  value is kept whole up to 2000 characters (`customValueMaxLen`) or dropped with a draft note,
+  never cut to a prefix, since a shorter value matches more contacts. Producers of
   `registered_for` honour `CustomMaxRegisteredFor` (25), so an unedited draft passes preview. The
   `internal/apivalidation` drift test decodes a body at and one past each cap through the
   generated validator, so a Go cap drifting from its `MaxLength` fails there.
@@ -548,7 +554,8 @@ signal:
 - `PageViewURLs` add one ungated `PAGE_VIEW` branch per URL (`HAS_PAGEVIEW_CONTAINS`, `pageUrl`).
   `filter.MarshalJSON` omits `operation` for that filter type only; every other filter's wire
   shape is unchanged. A fragment shorter than 8 characters is refused, since it matches every
-  page that mentions it. The PAGE_VIEW shape was confirmed by a live create (list 31588).
+  page that mentions it. A URL is kept whole up to 2000 characters (`customURLMaxLen`) or dropped
+  with a draft note, never shortened, since a prefix matches other pages too. The PAGE_VIEW shape was confirmed by a live create (list 31588).
 - **Reuse before create.** `CustomReuseProbes` searches by location/label, `ReusableCandidate`
   drops masters, suppressions and test lists, and the model ranks the survivors
   (`CustomReuseSystemPrompt` / `ParseCustomReuse`: reuse / update / unrelated). It ranks only

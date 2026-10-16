@@ -19,9 +19,14 @@ import (
 // ---------------------------------------------------------------------------
 // Pre-send QA on a HubSpot contact list (LFXV2-2770)
 //
-// Three checks, each answering a question that has cost a real send: does this
+// Four checks, each answering a question that has cost a real send: does this
 // list select on anything a contact actually DID, are the consent suppressions
-// genuinely applied as exclusions, and does it exclude anything at all.
+// genuinely applied as exclusions, does it exclude anything at all, and (check 4,
+// current_registrants) does it leave out the event's own current registrants.
+// Check 4 reads registration evidence from the filter trees themselves:
+// RegistrationEvidence for the editions a list's registration branches include,
+// CoveredEditions for those a suppression excludes whole, and
+// ExcludedOnEveryPathIDs for the exclusions a list applies on every path.
 //
 // Everything is inferred from the list's own filterBranch plus the NAMES of the
 // lists it references, because this portal has no machine-readable marker for
