@@ -228,3 +228,7 @@ sweep after review pagination hid them:
   historical audience; the name stays the fallback for a static or opaque list.
 - **Only the event's own lists vote for its brand.** A search hit sharing just a generic word
   ("summit") no longer votes in `DominantBrand`.
+- **Only positive registration predicates count** (Greptile). `RegisteredEditions` read every
+  `event_name` value as registrants, so a list of people who had NOT registered for this edition
+  failed check 4. A negated event branch or a negative comparison now returns nil, and the
+  name-based check decides.

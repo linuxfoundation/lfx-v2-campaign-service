@@ -1123,22 +1123,26 @@ func TestRunQA_SeparateSuppressionsCoveringTheAudienceTogetherAreNoSuppression(t
 // list named for "KubeCon 2026" that selects only 2025's registrants is a historical
 // audience, while one whose predicate names 2026 is this edition's own registrants.
 func TestRunQA_CheckFourReadsTheRegistrationPredicates(t *testing.T) {
-	branch := func(edition string) string {
+	branch := func(eventOp, nameOp, edition string) string {
 		return `{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[],"filterBranches":[` +
-			`{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],` +
-			`"filters":[{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["` + edition + `"]}}]}]}]}`
+			`{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"` + eventOp + `","filterBranches":[],` +
+			`"filters":[{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"` + nameOp + `","values":["` + edition + `"]}}]}]}]}`
 	}
 	for name, tc := range map[string]struct {
-		edition string
-		fail    bool
+		listName, eventOp, nameOp, edition string
+		fail                               bool
 	}{
-		"a past edition under this edition's name": {edition: "KubeCon 2025", fail: false},
-		"this edition's own registrants":           {edition: "KubeCon 2026", fail: true},
+		"a past edition under this edition's name": {listName: "26Q4 - KubeCon 2026 - Event Registration", eventOp: "HAS_COMPLETED", nameOp: "IS_EQUAL_TO", edition: "KubeCon 2025", fail: false},
+		"this edition's own registrants":           {listName: "26Q4 - KubeCon 2026 - Event Registration", eventOp: "HAS_COMPLETED", nameOp: "IS_EQUAL_TO", edition: "KubeCon 2026", fail: true},
+		// Negated predicates select the people who did NOT register; they are not this
+		// edition's registrants, and the neutral name leaves nothing to flag.
+		"not completed registration for 2026": {listName: "26Q4 - Seoul - Prospects", eventOp: "HAS_NOT_COMPLETED", nameOp: "IS_EQUAL_TO", edition: "KubeCon 2026", fail: false},
+		"event name is not 2026":              {listName: "26Q4 - Seoul - Prospects", eventOp: "HAS_COMPLETED", nameOp: "IS_NOT_EQUAL_TO", edition: "KubeCon 2026", fail: false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			portal := seoulPortal()
-			portal.lists["26Q4 - KubeCon 2026 - Event Registration"] = "500"
-			portal.branches = map[string]string{"500": branch(tc.edition)}
+			portal.lists[tc.listName] = "500"
+			portal.branches = map[string]string{"500": branch(tc.eventOp, tc.nameOp, tc.edition)}
 			srv := portal.serve(t)
 			defer srv.Close()
 

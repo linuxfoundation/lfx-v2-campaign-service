@@ -165,12 +165,30 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 // select (its `event_name` filter values), or nil when it has none. They say which
 // editions' registrants the list holds better than its display name does: a list
 // named for "KubeCon 2026" can select only 2025's registrants.
+//
+// Only a provably POSITIVE match counts. A negated event branch (has NOT completed)
+// or a negative comparison on event_name (is not equal to) selects people who did
+// not register, so it returns nil and the caller falls back to the list's name,
+// which leaves an uncertain case to the name-based check rather than inventing
+// "registrants" the list excludes.
 func RegisteredEditions(filters []ListFilter) []string {
+	positive := map[string]bool{"IS_EQUAL_TO": true, "IS_ANY_OF": true, "CONTAINS": true, "CONTAINS_TOKEN": true, "EQ": true}
 	var out []string
 	for _, f := range filters {
-		if f.PropertyKey() == "event_name" {
-			out = append(out, f.StringValues()...)
+		if f.FilterType == "UNIFIED_EVENTS" && strings.Contains(strings.ToUpper(f.Operator), "NOT") {
+			return nil
 		}
+		if f.PropertyKey() != "event_name" {
+			continue
+		}
+		op := strings.ToUpper(strings.TrimSpace(f.Operation.Operator))
+		if op == "" {
+			op = strings.ToUpper(strings.TrimSpace(f.Operator))
+		}
+		if !positive[op] {
+			return nil
+		}
+		out = append(out, f.StringValues()...)
 	}
 	return UniqueIDs(out)
 }
