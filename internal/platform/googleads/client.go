@@ -559,6 +559,33 @@ func (c *Client) invalidateAccessToken(presented string) {
 // and context.DeadlineExceeded keep answering for every existing caller.
 var errTokenContextAlreadyDone = errors.New("google-ads: the caller context was already done before any token request")
 
+// errRequestNotTransmitted marks a doRequest failure that happened BEFORE this process handed
+// the request to the transport, on an attempt that is provably the FIRST — so no earlier attempt
+// put anything on the wire either, and the call as a whole reached no platform.
+//
+// doRequestValidated attaches it at the three places that return before httpClient.Do: encoding
+// the body, acquiring the token, and building the *http.Request. Only on attempt 0, because the
+// retry loop re-acquires the token after a 429 backoff; a token failure on a LATER attempt says
+// nothing about the attempt that already transmitted, and marking it would convert the
+// retry-ambiguity defect tracked in #347 into a confident false negative.
+//
+// It is deliberately NOT read by ProbeNotSent, and that separation is the whole point. The
+// metrics/connection-test arm must keep seeing a refused credential as ProbeCredentialRejected —
+// the operator has to be told to replace it — and a token refresh Google answers 401 would
+// otherwise be claimed as "not sent" and shadow that verdict. The per-keyword outcome arm needs
+// the opposite reading of the same fact: whatever the reason the token could not be obtained,
+// Google never saw these keywords, so NOT_SENT is the true sentence there. Same fact, two
+// consumers, two correct answers — which is why this is its own marker rather than a widening of
+// ProbeNotSent.
+var errRequestNotTransmitted = errors.New("google-ads: the request was never handed to the transport")
+
+// RequestNotTransmitted reports whether err proves the request never reached the transport on a
+// call that had not already attempted transmission. See errRequestNotTransmitted for why this is
+// separate from ProbeNotSent.
+func RequestNotTransmitted(err error) bool {
+	return errors.Is(err, errRequestNotTransmitted)
+}
+
 // accessTokenValue returns a valid access token, refreshing via the OAuth2 token
 // endpoint when the cached one is absent or within tokenExpiryBuffer of expiry.
 //
@@ -887,7 +914,8 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 	if body != nil {
 		b, mErr := json.Marshal(body)
 		if mErr != nil {
-			return nil, fmt.Errorf("marshal request body: %w", mErr)
+			// Before the loop, so unconditionally the first attempt: nothing was sent.
+			return nil, fmt.Errorf("%w: marshal request body: %w", errRequestNotTransmitted, mErr)
 		}
 		encoded = b
 	}
@@ -906,6 +934,12 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 		// fast path, so this is cheap when no refresh is due.
 		token, err := c.accessTokenValue(ctx)
 		if err != nil {
+			// Marked only on the FIRST attempt. A later one follows a 429 whose request was
+			// already transmitted, and "not sent" would then be false. The wrap preserves the
+			// chain, so ProbeCredentialRejected and ProbeInconclusive answer exactly as before.
+			if attempt == 0 {
+				return nil, fmt.Errorf("%w: %w", errRequestNotTransmitted, err)
+			}
 			return nil, err
 		}
 
@@ -916,6 +950,9 @@ func (c *Client) doRequestValidated(ctx context.Context, method, path string, bo
 		req, err := http.NewRequestWithContext(attemptCtx, method, u, reqBody)
 		if err != nil {
 			cancel()
+			if attempt == 0 {
+				return nil, fmt.Errorf("%w: build request: %w", errRequestNotTransmitted, err)
+			}
 			return nil, fmt.Errorf("build request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)

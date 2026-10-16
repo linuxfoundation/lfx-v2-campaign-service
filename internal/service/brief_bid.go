@@ -138,12 +138,16 @@ func (s *BriefService) UpdateCampaignBid(ctx context.Context, p *briefs.UpdateCa
 			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign was adopted (bound to this brief from the ad platform, not created by this service), so its bid is managed in the ad platform's own UI — for LinkedIn, Campaign Manager; this endpoint does not set an adopted campaign's bid"}
 		case errors.Is(werr, ErrBidUnwritable):
 			// Automated, unreported or non-per-click bidding, OR an ad group / ad set / line item that
-			// could not be confirmed (missing, deleted, owned by another campaign, unreadable). The
-			// message is NEUTRAL across both kinds — a strategy remedy would mislead the second — and
-			// the specific cause goes to the log, since it names upstream configuration.
+			// could not be confirmed (missing, deleted, owned by another campaign, unreadable), OR —
+			// on Google Ads alone — a row recording SEVERAL ad groups, each carrying its own bid, so
+			// the request names no single bid to set. The message is NEUTRAL across all three kinds —
+			// a strategy remedy would mislead the others — and the specific cause goes to the log,
+			// since it names upstream configuration. The third kind is named explicitly because
+			// "could not be confirmed" is not true of it: the ad groups were confirmed, and there is
+			// more than one.
 			slog.WarnContext(ctx, "campaign bid change refused: the bid cannot be written as a manual bid",
 				append(logArgs, "platform_campaign_id", existing.PlatformCampaignID, "error", safeErrSummary(werr))...)
-			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's bid cannot be set here: its bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service created for it could not be confirmed; this endpoint never changes a bid strategy — check the campaign in the ad platform"}
+			return nil, &briefs.ConflictError{Code: "409", Message: "this campaign's bid cannot be set here: its bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service created for it could not be confirmed, or it has several ad groups that each carry their own bid; this endpoint never changes a bid strategy — check the campaign in the ad platform"}
 		case errors.Is(werr, domain.ErrPlatformCampaignAbsent):
 			slog.WarnContext(ctx, "campaign bid change refused: the platform holds no such campaign",
 				append(logArgs, "platform_campaign_id", existing.PlatformCampaignID)...)

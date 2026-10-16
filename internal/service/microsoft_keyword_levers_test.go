@@ -179,10 +179,10 @@ func TestAddNegativeKeywords_HappyPathIsPositional(t *testing.T) {
 	}
 }
 
-// Every platform but Microsoft, Reddit and X is a clean 400, and no dispatcher is reached —
-// including Google's, whose adapter has no negative-keyword add for a live campaign.
+// Every platform but Google, Microsoft, Reddit and X is a clean 400, and no dispatcher is
+// reached. Meta and LinkedIn have no keyword surface at all, so there is nothing to exclude on.
 func TestAddNegativeKeywords_UnsupportedPlatformIsBadRequest(t *testing.T) {
-	for _, platform := range []model.Provider{model.ProviderGoogleAds, model.ProviderMetaAds, model.ProviderLinkedInAds} {
+	for _, platform := range []model.Provider{model.ProviderMetaAds, model.ProviderLinkedInAds, model.ProviderHubSpot} {
 		d := &msLeverDispatcher{}
 		s := keywordActionService(t, platform, d)
 		_, err := s.AddNegativeKeywords(context.Background(), negativePayload(&briefs.NegativeKeywordInput{Text: "free", MatchType: "Exact"}))

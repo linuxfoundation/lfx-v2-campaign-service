@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
 // ---------------------------------------------------------------------------
@@ -23,9 +25,18 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	// maxKeywordTextRunes is Google Ads v23's KeywordInfo.text limit (System
+	// MaxKeywordTextRunes is Google Ads v23's KeywordInfo.text limit (System
 	// Limits table: 80 characters).
-	maxKeywordTextRunes = 80
+	//
+	// EXPORTED because the dispatcher must apply it BEFORE calling this package. The
+	// shared negative-keyword batch validator admits 100 runes — Microsoft's
+	// NegativeKeyword.Text limit, which is the endpoint's published one — so an 81..100
+	// rune text clears every dispatcher guard and is refused here instead, with a plain
+	// error that carries neither Unconfirmed() nor NotAttempted(). The dispatcher would
+	// then classify it as a platform REJECTION of every keyword in the batch: false twice
+	// over, since Google was never contacted and the fault is the caller's to fix. The
+	// endpoint's text limit is therefore per-platform, and this is the Google half of it.
+	MaxKeywordTextRunes = 80
 	// maxKeywords/maxAudienceSegments bound caller input to keep one
 	// adGroupCriteria:mutate call (and its log/error output) a sane size. Not a
 	// Google Ads platform limit — a sanity cap on this broker's input; Google's own
@@ -141,8 +152,8 @@ func validateKeywordList(noun string, keywords []Keyword, max int) ([]Keyword, e
 		if text == "" {
 			return nil, fmt.Errorf("google-ads: %s text must not be empty", noun)
 		}
-		if utf8.RuneCountInString(text) > maxKeywordTextRunes {
-			return nil, fmt.Errorf("google-ads: %s %q exceeds the %d-character limit", noun, text, maxKeywordTextRunes)
+		if utf8.RuneCountInString(text) > MaxKeywordTextRunes {
+			return nil, fmt.Errorf("google-ads: %s %q exceeds the %d-character limit", noun, text, MaxKeywordTextRunes)
 		}
 		matchType := strings.ToUpper(strings.TrimSpace(kw.MatchType))
 		switch matchType {
@@ -156,7 +167,36 @@ func validateKeywordList(noun string, keywords []Keyword, max int) ([]Keyword, e
 		// original casing) — otherwise "Kubernetes" and "kubernetes" both pass this
 		// preflight check as distinct, then the whole adGroupCriteria:mutate fails as a
 		// definite 4xx after the budget/campaign/ad group/ad already exist.
-		key := matchType + "\x00" + strings.ToLower(text)
+		//
+		// The fold is textfold.Key, NOT strings.ToLower, because this key has to agree with
+		// the dispatcher's: internal/dispatch keys every negative-keyword comparison on
+		// textfold.Key, and the two folds disagree in BOTH directions — ToLower collapses
+		// "İ" onto "i" where simple folding keeps them distinct, and keeps "ΟΣ" apart from
+		// "ος" where simple folding joins them. Under the old key a dispatcher-approved
+		// batch of two could shrink to one operation here, Google would acknowledge one id,
+		// and the dispatcher — still expecting two — would answer UNCONFIRMED while one
+		// exclusion was silently never applied, the same way on every retry.
+		//
+		// validateKeywords (the POSITIVE create path) inherits this key, where that reason
+		// does not reach — no dispatcher compares positive keywords. It inherits it anyway so
+		// both entry points fold identically: one helper with two folds would be a worse
+		// defect than either fold, and the behaviour is deliberately not forked here. The
+		// trade on that path is not uniformly an improvement — simple folding joins "ΟΣ"/"ος"
+		// that ToLower kept apart, which strictly reduces duplicate operations, but keeps
+		// "İ"/"i" apart where ToLower collapsed them, so a pair Google considers one keyword
+		// could now be sent twice. That direction is bounded by this preflight being a
+		// best-effort guard, not the authority: Google refusing a duplicate is the atomic
+		// 4xx this check exists to make RARE, never the thing it promises cannot happen.
+		//
+		// Whitespace is the one input this key does not normalise itself: it trims but does
+		// not collapse internal runs, while googleAdsNegativeKey collapses both. The two
+		// still agree on the negative path, because every text reaching it has already been
+		// through NormalizeNegativeKeywordText (strings.Fields joined by one space) in
+		// validateNegativeKeywordBatch, so there is no internal run left to disagree about.
+		// Collapsing here as well would be inert on that path and would change the POSITIVE
+		// one, which no dispatcher key constrains — so the agreement is kept where it is
+		// load-bearing rather than widened where it is not.
+		key := matchType + "\x00" + textfold.Key(text)
 		if _, dup := seen[key]; dup {
 			continue
 		}
@@ -414,49 +454,13 @@ func (c *Client) createAdGroupTargeting(ctx context.Context, adGroupResource, ad
 // Duplicate-criterion classification is unverified for this resource, as it is
 // for the ad-group criteria above: any definite 4xx here is reported as a
 // straightforward failure rather than reconciled by a duplicate predicate.
+// The mutate-and-verify itself lives in mutateCampaignNegativeKeywords
+// (negative_keywords.go), shared with the EDIT path's AddCampaignNegativeKeywords.
+// The request and the acknowledgement checks are identical on both paths; only the
+// sentence describing what a definite failure LEFT BEHIND differs, which is the
+// argument passed below — the create path's "no negative keywords at all" is simply
+// untrue of a campaign that already had some.
 func (c *Client) createCampaignNegativeKeywords(ctx context.Context, campaignResource, campaignID string, negatives []Keyword) ([]string, error) {
-	if len(negatives) == 0 {
-		return nil, nil
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, fmt.Errorf("google-ads negative keywords aborted before any request (context already done; campaign %s has no negative keywords yet): %w", campaignID, ctxErr)
-	}
-
-	ops := make([]mutateOperation, 0, len(negatives))
-	for _, kw := range negatives {
-		ops = append(ops, mutateOperation{Create: campaignNegativeKeywordCreate{
-			Campaign: campaignResource,
-			Negative: true,
-			Keyword:  &keywordInfo{Text: kw.Text, MatchType: kw.MatchType},
-		}})
-	}
-
-	resp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignCriteria:mutate"), mutateRequest{Operations: ops}, false)
-	if err != nil {
-		if createOutcomeAmbiguous(err) {
-			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; negative keyword criteria may exist — verify in Google Ads before retrying): %w", campaignID, err)
-		}
-		return nil, fmt.Errorf("google-ads negative keywords failed (campaign %s created; it has NO negative keywords and would be eligible for every query its positive keywords match if enabled): %w", campaignID, err)
-	}
-
-	var mr mutateResponse
-	if uErr := json.Unmarshal(resp, &mr); uErr != nil || len(mr.Results) != len(ops) {
-		return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; 2xx with a malformed/short mutate response — negative keyword criteria may exist — verify in Google Ads before retrying)", campaignID)
-	}
-
-	ids := make([]string, 0, len(ops))
-	for i, r := range mr.Results {
-		returnedCampaignID, critID := c.campaignCriterionID(r.ResourceName)
-		if critID == "" || returnedCampaignID == "" {
-			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; malformed/wrong-kind/wrong-account criterion resource name %q at index %d — verify in Google Ads before retrying)", campaignID, r.ResourceName, i)
-		}
-		// The campaignCriterion resourceName's campaign-id half must match the campaign
-		// these negatives were created under — a mismatch means the response does not
-		// describe what this call created, so the ids cannot be trusted enough to persist.
-		if returnedCampaignID != campaignID {
-			return nil, fmt.Errorf("google-ads negative keywords UNCONFIRMED (campaign %s; campaignCriterion resource name %q reports a different campaign id %q — verify in Google Ads before retrying)", campaignID, r.ResourceName, returnedCampaignID)
-		}
-		ids = append(ids, critID)
-	}
-	return ids, nil
+	return c.mutateCampaignNegativeKeywords(ctx, campaignResource, campaignID, negatives,
+		"the campaign was created but has NO negative keywords and would be eligible for every query its positive keywords match if enabled")
 }

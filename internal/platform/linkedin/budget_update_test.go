@@ -173,6 +173,33 @@ func TestGetCampaignBudget_RefusesAResponseAboutAnotherCampaign(t *testing.T) {
 	}
 }
 
+// TestGetCampaignBudget_RefusesAResponseNamingNoCampaign: a 2xx that carries no id at all proves
+// nothing about which campaign its budget fields describe, so it is refused like one naming
+// another campaign — never read as a budget the caller may act on.
+func TestGetCampaignBudget_RefusesAResponseNamingNoCampaign(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent": `{"dailyBudget":{"amount":"250.00","currencyCode":"USD"}}`,
+		"null":   `{"id":null,"dailyBudget":{"amount":"250.00","currencyCode":"USD"}}`,
+		"empty":  `{"id":"","dailyBudget":{"amount":"250.00","currencyCode":"USD"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			}))
+			defer srv.Close()
+
+			got, err := budgetClient(srv.URL).GetCampaignBudget(context.Background(), "123456")
+			if err == nil || !strings.Contains(err.Error(), "returned no campaign id instead") {
+				t.Fatalf("want a refusal for a response naming no campaign, got %+v, %v", got, err)
+			}
+			if got != nil {
+				t.Errorf("a refused read must not also return a budget: %+v", got)
+			}
+		})
+	}
+}
+
 func TestGetCampaignBudget_RefusesANonNumericCampaignID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("a malformed id must be refused before any HTTP call")
