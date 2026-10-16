@@ -206,3 +206,10 @@
   "1 OR 2" wrapper leaves nobody, though neither list is required on its own. `TreeCoveredBy` checks
   whether the wrapper's covered lists together cover every path through the audience; a wrapper
   covering one alternative still counts.
+- **Separate suppressions covering the audience together are no suppression** (Copilot). The
+  coverage guard ran per suppression, so `[A, B]` for an "A OR B" audience passed though together
+  they leave nobody. The union of verified suppressions and their covered children is now checked,
+  and when it covers the audience the set's credit is withheld, as for a single wrapper.
+- **A suppression, test or staff rollup is not expanded in discovery** (Copilot). Discovery expanded
+  rollups before its hygiene check, so a child of an "Opt-Outs" rollup was offered for inclusion.
+  Such a parent is now classified, and hidden, as itself; a master rollup is still expanded.

@@ -1089,3 +1089,32 @@ func TestRunQA_ASuppressionWrapperCoveringOneAlternativeStillCounts(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, 1, out.Checks.ExclusionCompleteness.SendTimeCount, "611 remains, so the wrapper is a real suppression")
 }
+
+// Separate send-time suppressions that together cover every path through the audience
+// leave no recipients, so, like one wrapper doing the same, their credit is withheld.
+func TestRunQA_SeparateSuppressionsCoveringTheAudienceTogetherAreNoSuppression(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	portal := seoulPortal()
+	portal.lists["26Q4 - Seoul - Mailable Contacts"] = "500"
+	portal.lists["26Q4 - Seoul - Base"] = "610"
+	portal.lists["26Q4 - Seoul - Extra"] = "611"
+	portal.branches = map[string]string{"500": or(and(in("610")), and(in("611")))}
+	srv := portal.serve(t)
+	defer srv.Close()
+	x := explorerOver(srv, nil)
+
+	both, err := x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"610", "611"})
+	require.NoError(t, err)
+	assert.Zero(t, both.Checks.ExclusionCompleteness.SendTimeCount, "together they exclude every recipient")
+	assert.NotEqual(t, audience.VerdictPass, both.Checks.ExclusionCompleteness.Verdict)
+
+	one, err := x.RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"610"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, one.Checks.ExclusionCompleteness.SendTimeCount, "one alternative alone leaves the other")
+}

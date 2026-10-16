@@ -2103,3 +2103,51 @@ func TestDiscover_TheFallbackBrandScopesAnEducationChild(t *testing.T) {
 	assert.Equal(t, audience.SignalEducationEnrollment, education, "the brand-scoped education child is classified with the inferred brand")
 	assert.NotContains(t, out.MissingSignals, audience.SignalEducationEnrollment)
 }
+
+// A rollup named as a suppression list is not expanded: its child is what it keeps
+// out, so offering the child would include those contacts. The parent is hidden; a
+// master rollup's children are still offered.
+func TestDiscover_ASuppressionRollupIsNotExpanded(t *testing.T) {
+	for name, tc := range map[string]struct {
+		parent  string
+		offered bool
+	}{
+		"suppression rollup": {parent: "26Q3 - Synthetic Summit 2026 - Opt-Outs", offered: false},
+		"ordinary rollup":    {parent: "26Q3 - Synthetic Summit 2026 - Inclusions", offered: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hits := `{"listId":"7201","name":"` + tc.parent + `","objectTypeId":"0-1"}`
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == hubSpotTokenInfoPath:
+					_, _ = io.WriteString(w, `{"hubId":8112310}`)
+				case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+					_, _ = io.WriteString(w, `{"lists":[`+hits+`],"hasMore":false,"offset":0}`)
+				case r.URL.Path == "/crm/v3/lists/7201":
+					_, _ = io.WriteString(w, `{"list":{"listId":"7201","name":"`+tc.parent+`","objectTypeId":"0-1",`+
+						`"filterBranch":{"filterBranchType":"OR","filterBranches":[{"filterBranchType":"AND",`+
+						`"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":8200}]}]}}}`)
+				case r.URL.Path == "/crm/v3/lists/8200":
+					_, _ = io.WriteString(w, `{"list":{"listId":"8200","name":"26Q3 - Synthetic Summit 2026 - Seoul Contacts","objectTypeId":"0-1","size":40}}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+			x := NewAudienceExplorer(NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL)),
+				&stubFetcher{body: []byte("x")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026"}}, nil)
+
+			out, err := x.Discover(context.Background(), "proj-1", "https://events.example.org/synthetic-summit")
+			require.NoError(t, err)
+			offered := false
+			for _, l := range out.Lists {
+				if l.ListID == "8200" {
+					offered = true
+				}
+			}
+			assert.Equal(t, tc.offered, offered)
+		})
+	}
+}

@@ -255,7 +255,15 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 		// silently drop the list from the outcome -- classify the list itself instead
 		// of falling through to the loop's `continue`, which would leave it neither
 		// classified nor reported.
-		if childIDs := audience.RollupChildIDs(filters); audience.IsRollup(filters) && len(childIDs) > 0 {
+		// A rollup named as a suppression, test or staff list is never expanded: its
+		// children are what it suppresses (or tests), and offering one would include the
+		// very contacts the parent exists to keep out. It is classified, and hidden, as
+		// itself. A master rollup is still expanded; its children are real signals.
+		parentHidden := false
+		if reason, hidden := audience.DiscoveryHidden(list.Name, false); hidden && reason != "master" {
+			parentHidden = true
+		}
+		if childIDs := audience.RollupChildIDs(filters); !parentHidden && audience.IsRollup(filters) && len(childIDs) > 0 {
 			for _, childID := range childIDs {
 				// Same reason as the outer loop: two rollups can name the same child, and
 				// the second costs no read but would still spend a budget slot.
@@ -1867,6 +1875,19 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 			nameByID[id] = x.listName(ctx, client, cache, id)
 		}
 		sendTimeIDs = append(sendTimeIDs, id)
+	}
+	// Each suppression alone may leave recipients while all of them together leave
+	// none ("A OR B" suppressed by separate A and B). Then the set is no suppression,
+	// as a single wrapper covering the audience is not: its credit is withheld.
+	if list != nil && len(sentAway) > 0 {
+		union := make([]string, 0, len(sentAway))
+		for id := range sentAway {
+			union = append(union, id)
+		}
+		if audience.TreeCoveredBy(list.FilterBranch, union) {
+			sendTimeIDs = sendTimeIDs[:0]
+			sentAway = map[string]bool{}
+		}
 	}
 	exclusionNames := x.exclusionNames(ctx, client, cache, append(excludedIDs, sendTimeIDs...), nameByID)
 
