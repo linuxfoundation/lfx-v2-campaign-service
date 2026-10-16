@@ -222,4 +222,25 @@ error-surface regression. And it is not a claim that the newer schema is what ma
 old binary unsafe — the old binary's behaviour on the old schema is by definition what
 rolling back is asking for, including whatever the new constraint existed to prevent.
 
+An image-only rollback is also why a contract migration waits for the code it relies on to
+be a release old, not just present. The campaigns slot index (`000022`'s
+`uq_campaigns_brief_platform_variant_live`) is dropped one release AFTER the per-slot
+adopt/claim advisory lock ships (LFXV2-2023): the binary before the lock takes no slot lock, so
+if the drop shipped with the lock, rolling the image back would leave that binary's adopt free
+to race a slot-2 claim on a schema with nothing else to stop it. Staged a release apart, the
+binary a rollback returns to either still has the index or already takes the lock. That also
+means the lock release must BOOT on the contracted schema, not just behave on it: startup runs
+`postgres.Migrate`, and the pool is closed on any error from its required-index check. So the
+lock release lists the legacy index in `requiredIndexes` as `optional` — absent is a healthy boot,
+present is still validated in full — while the four-column
+`uq_campaigns_brief_platform_variant_slot_version_live` stays required and its absence still fails
+startup with `ErrMissingRequiredIndex`. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex`.
+The contract release also records a migration version this older image does not embed, which
+golang-migrate's `Up()` would otherwise refuse before any index check. `postgres.Migrate`
+therefore starts on a CLEAN schema exactly one version newer than the image without migrating it
+or rewriting its version, and still runs the invalid- and required-index checks; a DIRTY newer
+schema, or a clean one two or more versions ahead, is still refused. That leans on expand/contract — every release must stay compatible with the next
+release's schema — since nothing marks a newer migration as compatible. Pinned live by
+`TestMigrateStartsOnACleanSchemaNewerThanThisImage`.
+
 See [charts/lfx-v2-campaign-service/templates/deployment.yaml](../../../charts/lfx-v2-campaign-service/templates/deployment.yaml).

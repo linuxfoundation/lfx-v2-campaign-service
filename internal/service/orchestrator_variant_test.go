@@ -147,7 +147,7 @@ func TestReleasingOneSlotDoesNotFreeAnother(t *testing.T) {
 		BriefID: "b1", Platform: model.ProviderGoogleAds, Variant: "demand-gen", Status: "pending",
 	})
 
-	if err := repo.DeleteDispatchClaim(context.Background(), "b1", model.ProviderGoogleAds, "demand-gen", model.FirstSlotVersion); err != nil {
+	if err := repo.DeleteDispatchClaim(context.Background(), "b1", model.ProviderGoogleAds, "demand-gen", model.FirstSlotVersion, "job-1"); err != nil {
 		t.Fatalf("DeleteDispatchClaim: %v", err)
 	}
 	if _, ok := repo.existing[slotKey("b1", model.ProviderGoogleAds, "demand-gen")]; ok {

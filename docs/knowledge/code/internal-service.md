@@ -137,7 +137,9 @@ claim targets its own slot version and gets the skip / reconciliation-required a
 gets, because a second campaign beside an unresolved one would spend twice. The slot version
 reaches the dispatcher on the context (`model.WithDispatchSlotVersion`). While `000022`'s
 three-column index still exists, the claim returns `domain.ErrSlotVersionUnavailable` and the
-platform result is a plain "not available yet" refusal; nothing is created. `CreateCampaigns`
+platform result is a plain "not available yet" refusal; nothing is created. That index is
+dropped one release after the per-slot adopt/claim lock ships (see the postgres concept), so an
+image-only rollback never returns to a lock-free binary on a schema without it. `CreateCampaigns`
 refuses `new_version` synchronously (400, before a job exists) for any platform outside
 `model.ProviderSupportsSlotVersions` — today Microsoft only, because the other providers reuse
 campaigns by a name that does not yet vary by slot version (see the dispatch concept).
@@ -145,8 +147,36 @@ campaigns by a name that does not yet vary by slot version (see the dispatch con
 Dispatch is durable (LFXV2-2665): single-flight per (brief, platform) is
 enforced by an atomic claim — `ClaimCampaignDispatch` does INSERT ... ON CONFLICT
 DO NOTHING of a `pending` campaign row, so exactly one worker across replicas
-wins the claim (the unique index arbitrates) with no held connection or blocking
-lock. A worker that loses the claim reuses the existing row instead of dispatching
+wins the claim (the unique index arbitrates); the INSERT runs in a short transaction under a
+per-slot advisory lock that `AdoptCampaign` also takes, so an adopt never lands beside a
+claimed row, and nothing is held once it commits. If the claim is cleared mid-flight and another
+row takes the slot, `UpsertCampaign` returns `domain.ErrDispatchClaimLost` without writing, and
+`dispatchPlatform` (success and retained-partial persists alike) fails the platform with a
+"claim was cleared ... untracked, reconciliation required" error that keeps the upstream id in
+`CampaignID` (`TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID`). Because
+the row that would have held the dispatch's `Result` blob is never written, `lostClaimResult`
+also copies the blob's identifying fields (`reconcileRef`: fields whose key ends in
+`id`/`ids`/`urn`/`urns`/`name`/`names`/`hash`, or whose key is exactly `mediaKey` (any case; X's
+Media Library handle — deliberately not a `key` suffix, which would admit credential-shaped
+fields), and whose value is a string, a string array — Google's
+`creativeAssetIds`/`extensionAssetIds` — or a string map — LinkedIn's `imageUrns`; nested objects
+and arrays of objects are descended to depth 3 and their identifiers kept under a dotted path —
+HubSpot `abTestVariant.id`, Google `adGroups[0].adIds`, Meta `Ads[1].ImageHash`; plus the
+campaign's name when the blob has none; never status, Steps text, URLs or other shapes; every
+string capped at 1024 RUNES and truncated with a `<key>Truncated: true` flag rather than dropped;
+the whole payload bounded at 256 strings / 32,768 runes, spent breadth-first — every depth's
+identifier scalars before its collections, in sorted-key order — so the campaign's and budget's
+top-level handles always survive and only the deepest or latest entries are cut, past which
+`reconcile_truncated` is set) into the stored
+platform result's `reconcile` map and the ERROR log. On the retained-partial path that log also
+carries the provider's error as `dispatch_error` (logged the way the retained-partial path
+always logs it), which the job result never does. An id-less partial gets its own message
+saying no campaign id was captured
+(`TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail`). `GetJob` returns
+`reconcile` as the typed `PlatformResult.reconcile` list (`{key, values | entries, truncated}`,
+sorted by key; `reconcileIdentifiers` folds each `<key>Truncated` flag into its identifier) and
+`reconcile_truncated`; the campaign's status goes to the lost-claim log only
+(`TestBriefService_GetJob_LostClaimReconcileIsPolled`). A worker that loses the claim reuses the existing row instead of dispatching
 again; the pending row also survives an upstream-create-then-crash, making the
 orphaned upstream campaign recoverable. The orchestrator tracks in-flight runs
 and its `Shutdown` drains them (bounded) before the DB pool closes, and on
