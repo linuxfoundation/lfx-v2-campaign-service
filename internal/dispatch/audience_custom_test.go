@@ -1337,3 +1337,45 @@ func TestRunQA_MixedListsAndInlineEmptyAudience(t *testing.T) {
 		assert.NotEqual(t, audience.VerdictPass, out.Checks.ExclusionCompleteness.Verdict)
 	})
 }
+
+// A composed master that excludes this edition's registrants through its combined
+// suppression on every branch does not fail check 4 because an included list carries
+// a registration branch for them; the same exclusion on one branch only still fails.
+func TestRunQA_TheMastersOwnSuppressionClearsCheckFour(t *testing.T) {
+	ue := `{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+		`{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["KubeCon 2026"]}}]}`
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	f := func(op, id string) string {
+		return `{"filterType":"IN_LIST","operator":"` + op + `","listId":` + id + `}`
+	}
+	and := func(fs ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(fs, ",") + `]}`
+	}
+	mixed := or(`{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"PROPERTY","property":"city","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["Seoul"]}}]}`,
+		`{"filterBranchType":"AND","filters":[],"filterBranches":[`+ue+`]}`)
+	suppression := or(`{"filterBranchType":"AND","filters":[],"filterBranches":[` + ue + `]}`)
+	for name, tc := range map[string]struct {
+		master string
+		fail   bool
+	}{
+		"excluded on every branch": {master: or(and(f("IN_LIST", "801"), f("NOT_IN_LIST", "700")), and(f("IN_LIST", "603"), f("NOT_IN_LIST", "700"))), fail: false},
+		"excluded on one branch":   {master: or(and(f("IN_LIST", "801"), f("NOT_IN_LIST", "700")), and(f("IN_LIST", "603"))), fail: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - Seoul - Master"] = "500"
+			portal.lists["26Q4 - Seoul - Mixed"] = "801"
+			portal.lists["26Q4 - Seoul - Prospects"] = "603"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.branches = map[string]string{"500": tc.master, "801": mixed, "700": suppression}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
+		})
+	}
+}

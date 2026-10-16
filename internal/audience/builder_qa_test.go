@@ -895,3 +895,19 @@ func TestCoveredEditions_IntersectsConditionsInOneBranch(t *testing.T) {
 	assert.Equal(t, []string{"KubeCon 2025"}, CoveredEditions(json.RawMessage(branch)), "only 2025 satisfies both conditions")
 	assert.Equal(t, []string{"KubeCon 2025"}, RegisteredEditions(json.RawMessage(branch)))
 }
+
+// Only a list every path excludes applies to the whole list.
+func TestExcludedOnEveryPathIDs(t *testing.T) {
+	f := func(op, id string) string {
+		return `{"filterType":"IN_LIST","operator":"` + op + `","listId":` + id + `}`
+	}
+	and := func(fs ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(fs, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	assert.Equal(t, []string{"9"}, ExcludedOnEveryPathIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9")), and(f("IN_LIST", "2"), f("NOT_IN_LIST", "9"))))))
+	assert.Equal(t, []string{}, ExcludedOnEveryPathIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9")), and(f("IN_LIST", "2"))))), "a branch-local exclusion is not global")
+	assert.Equal(t, []string{"1"}, RequiredInListIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9"))))), "IN_LIST requirement unchanged")
+}

@@ -1922,6 +1922,22 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// the evidence, not its display name: "26Q4 - KubeCon 2026 - Event Registration" built
 	// for registered_for ["KubeCon 2025"] holds only 2025's registrants. The name is the
 	// fallback for a static or otherwise opaque list.
+	// A list the audited list excludes on EVERY path is no recipient either, exactly as a
+	// send-time suppression is: a composed master's combined suppression clears the
+	// registrants it covers (as a list or inline), so they are not current-registrant
+	// evidence. A branch-local NOT_IN_LIST excludes only from that branch and is ignored.
+	for _, id := range audience.ExcludedOnEveryPathIDs(list.FilterBranch) {
+		sentAway[id] = true
+		if ex, _, xerr := x.listWithFilters(ctx, client, cache, id); xerr == nil && ex != nil {
+			for _, c := range audience.CoveredListIDs(ex.FilterBranch) {
+				sentAway[c] = true
+			}
+			for _, e := range audience.CoveredEditions(ex.FilterBranch) {
+				editionsAway[strings.ToLower(strings.TrimSpace(e))] = true
+			}
+		}
+	}
+
 	// Every edition a registration branch explicitly includes is evidence, less any a
 	// verified suppression excludes whole; the display name is evidence too unless those
 	// branches are the list's whole membership.

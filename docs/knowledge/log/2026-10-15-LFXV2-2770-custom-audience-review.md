@@ -265,3 +265,8 @@ sweep after review pagination hid them:
 - **An inline suppression that empties a registration-only audience earns no credit** (Copilot).
   When every edition of an exclusive registration audience is in the verified suppressions'
   `CoveredEditions`, the send has no recipients, and the set's credit is withheld.
+- **The master's own suppression clears check 4** (Greptile). A composed master that excludes this
+  edition's registrants through its combined suppression still failed check 4 on an included list's
+  registration branch, since only send-time suppressions were counted. A list excluded on every path
+  (`ExcludedOnEveryPathIDs`) is now treated like a verified suppression for check 4, with its
+  covered lists and editions; a branch-local exclusion is not.

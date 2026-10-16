@@ -220,6 +220,24 @@ func CoveredEditions(raw json.RawMessage) []string {
 	return UniqueIDs(root.coveredEditions())
 }
 
+// ExcludedOnEveryPathIDs are the lists EVERY path through a list's filter tree
+// excludes (a NOT_IN_LIST on each path), as a composed master excludes its combined
+// suppression. Such an exclusion applies to the whole list, like a send-time
+// suppression; a NOT_IN_LIST on only one branch does not.
+func ExcludedOnEveryPathIDs(raw json.RawMessage) []string {
+	var root qaBranch
+	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
+		return nil
+	}
+	set := root.requiredOp("NOT_IN_LIST")
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // RequiredInListIDs are the lists EVERY contact of a list's filter tree must be a
 // member of: an IN_LIST filter on every path through it (AND accumulates, OR keeps
 // only what all its alternatives require). A flattened reference proves nothing
@@ -480,11 +498,15 @@ func (b qaBranch) coveredBy(set map[string]struct{}) bool {
 	}
 }
 
-func (b qaBranch) required() map[string]struct{} {
+func (b qaBranch) required() map[string]struct{} { return b.requiredOp("IN_LIST") }
+
+// requiredOp is required() for a membership operator: IN_LIST for lists every path is
+// inside, NOT_IN_LIST for lists every path excludes.
+func (b qaBranch) requiredOp(operator string) map[string]struct{} {
 	inList := func(i int) (string, bool) {
 		f := b.Filters[i]
 		id := strings.TrimSpace(f.ListID.String())
-		return id, f.FilterType == "IN_LIST" && f.Operator == "IN_LIST" && id != ""
+		return id, f.FilterType == "IN_LIST" && f.Operator == operator && id != ""
 	}
 	switch strings.ToUpper(b.FilterBranchType) {
 	case "AND":
@@ -495,7 +517,7 @@ func (b qaBranch) required() map[string]struct{} {
 			}
 		}
 		for _, c := range b.FilterBranches {
-			for id := range c.required() {
+			for id := range c.requiredOp(operator) {
 				out[id] = struct{}{}
 			}
 		}
@@ -510,7 +532,7 @@ func (b qaBranch) required() map[string]struct{} {
 			alternatives = append(alternatives, alt)
 		}
 		for _, c := range b.FilterBranches {
-			alternatives = append(alternatives, c.required())
+			alternatives = append(alternatives, c.requiredOp(operator))
 		}
 		if len(alternatives) == 0 {
 			return map[string]struct{}{}
