@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres/dbtest"
@@ -189,10 +191,13 @@ func TestLiveUpsertDoesNotRecomputeProvenanceOnUpdate(t *testing.T) {
 			projectID := dbtest.UniqueID(t, "project")
 			name := dbtest.UniqueID(t, "campaign")
 			upstream := dbtest.UniqueID(t, "upstream")
+			// Both writes carry the SAME job id: the conflict arm updates only the row this
+			// job owns (the stored job_id), so a write with no job id could never reach it.
+			jobID := uuid.NewString()
 
 			base := func(flag *bool, status string) *model.Campaign {
 				return &model.Campaign{
-					ProjectID: projectID, BriefID: briefID,
+					ProjectID: projectID, BriefID: briefID, JobID: &jobID,
 					Platform:           model.ProviderGoogleAds,
 					CampaignName:       name,
 					Status:             status,

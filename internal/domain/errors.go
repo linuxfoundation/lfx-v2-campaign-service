@@ -1251,10 +1251,28 @@ var (
 	// ErrSlotVersionUnavailable indicates a request for ANOTHER campaign on a slot that
 	// already has one could not be claimed because the schema still enforces one live
 	// campaign per (brief, platform, variant). Migration 000037 adds the per-slot-version
-	// index alongside the old one, and the old one is dropped a release later (expand/
-	// contract); until then this is the expected answer to new_version, not a fault.
+	// index alongside the old one. The old one is NOT dropped the release after 000037: the
+	// per-slot adopt/claim lock ships first, in its own release, and the drop (a later contract
+	// migration) ships one release AFTER that lock, so an image-only rollback never runs a
+	// lock-free binary without the old index (expand → lock → contract). Until that drop this
+	// is the expected answer to new_version, not a fault.
 	// Nothing was created upstream.
 	ErrSlotVersionUnavailable = errors.New("another campaign on this platform cannot be created for this brief yet")
+
+	// ErrDispatchClaimLost indicates a dispatch tried to record its upstream campaign but the
+	// pending claim it took is no longer the row on its slot version: the claim was cleared
+	// (an operator removing an apparently-stuck claim — ClearDispatchClaim, or by hand)
+	// while the provider call was in flight, and ANOTHER row — an adoption, or a later
+	// dispatch's claim — took the slot before this write ran. UpsertCampaign then writes
+	// NOTHING rather than repointing that row at this dispatch's upstream id, which would
+	// silently untrack the campaign the other row binds.
+	//
+	// Upstream resources from this dispatch may exist — they certainly do when an upstream id was
+	// captured, and possibly do for an id-less ambiguous partial — and this service no longer
+	// tracks them, so this is never a plain failure: the caller must report it as needing
+	// reconciliation and keep whatever identifiers it has (the upstream id, or the reconcile
+	// handles of an id-less partial) where an operator can find them.
+	ErrDispatchClaimLost = errors.New("the dispatch's claim on this campaign slot was lost before its result could be recorded")
 
 	// ErrAdoptionRequiresOwnConnection indicates the project has no ad-platform connection of
 	// its own. Maps to 409.

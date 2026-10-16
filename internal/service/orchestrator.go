@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -1279,6 +1281,14 @@ type platformResult struct {
 	// campaign's own persisted Result blob (see hubspotURLFromResult) — nothing
 	// upstream of the campaign row carries it.
 	HubspotURL string `json:"hubspot_url,omitempty"`
+	// Reconcile is set only for domain.ErrDispatchClaimLost: the identifying fields of what the
+	// dispatch created (see reconcileRef), because the campaign row that would have held its
+	// result blob was never written. GetJob returns it as PlatformResult.reconcile (see
+	// reconcileIdentifiers), so the lost-claim message's pointer to it is one a caller can follow.
+	Reconcile map[string]any `json:"reconcile,omitempty"`
+	// ReconcileTruncated is set when reconcileRef's payload bounds stopped collection before the
+	// blob was exhausted, so Reconcile is a prefix (in sorted key order), not the whole set.
+	ReconcileTruncated bool `json:"reconcile_truncated,omitempty"`
 }
 
 // hubspotURLFromResult reads the deep link a HubSpot dispatch stashed in the
@@ -1550,10 +1560,11 @@ func dispatchOutcomeFor(res platformResult) string {
 
 // dispatchPlatform creates (or reuses) the campaign for a single platform.
 // Single-flight is enforced by an atomic claim row (ClaimCampaignDispatch:
-// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING) — no held connection,
-// no blocking lock — so two concurrent create-campaigns for the same pair cannot
-// both create an upstream campaign: exactly one wins the claim (the unique index
-// arbitrates); the other reuses the existing row or, if it's still pending, is
+// INSERT ... ON CONFLICT (brief_id, platform, variant, slot_version) ... DO NOTHING, in a
+// short transaction under the per-slot advisory lock, which waits only for local statements
+// on the same slot and holds nothing after commit) — so two concurrent create-campaigns for
+// the same slot version cannot both create an upstream campaign: exactly one wins the claim
+// (the unique index arbitrates); the other reuses the existing row or, if it's still pending, is
 // reported in-progress. campaign_id is always the upstream platform id, so the
 // field means the same on the reuse and create paths.
 
@@ -1766,14 +1777,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		return res
 	}
 
-	// Single-flight claim: atomically insert a 'pending' placeholder for (brief,
-	// platform). Exactly one worker across all replicas wins (the unique index
-	// arbitrates) — no held connection, no blocking lock.
+	// Single-flight claim: atomically insert a 'pending' placeholder for this slot version
+	// of (brief, platform, variant). Exactly one worker across all replicas wins (the unique
+	// index arbitrates). The INSERT runs in a short transaction under the per-slot advisory
+	// lock — it waits only for local statements on the same slot, and nothing is held once
+	// it commits, so no connection is held across the platform call below.
 	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
 	if errors.Is(err, domain.ErrSlotVersionUnavailable) {
-		// Expected until the release after 000037 drops the old one-campaign-per-slot index,
-		// which still rejects the second campaign. Nothing was written or created, so this
-		// is a plain refusal rather than a fault.
+		// Expected until the release after this one drops 000022's one-campaign-per-slot
+		// index, which still rejects the second campaign. That drop is staged one release
+		// after the per-slot lock ships, so an image-only rollback to the previous binary
+		// (which takes no slot lock) still finds the index in place. Nothing was written or
+		// created, so this is a plain refusal rather than a fault.
 		slog.WarnContext(ctx, "new campaign version refused: the schema still allows one live campaign per slot",
 			"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "slot_version", slotVersion)
 		res.Error = "creating another campaign on this platform for the same brief is not available yet"
@@ -1847,7 +1862,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// DELETE fail and leak the pending claim exactly when we most need to free it.
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
 		defer cancel()
-		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant, slotVersion); derr != nil {
+		if derr := o.campaigns.DeleteDispatchClaim(rctx, brief.ID, p, variant, slotVersion, jobID); derr != nil {
 			slog.ErrorContext(rctx, "failed to release pending dispatch claim", "platform", p, "job_id", jobID, "error", derr)
 		}
 	}
@@ -2024,11 +2039,18 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				//
 				// CreatedBy is set for the one case that does reach the INSERT arm: the
 				// claim row disappearing between that call and this one — an operator
-				// clearing what looked like a stuck claim (see StuckDispatchClaims), or a
-				// concurrent DeleteDispatchClaim. On the conflict arm the query leaves the
+				// clearing what looked like a stuck claim (see StuckDispatchClaims). Another
+				// job's DeleteDispatchClaim cannot do it: a release deletes only the releasing
+				// job's own claim. On the conflict arm the query leaves the
 				// column alone, so passing it costs nothing; omitting it would leave a
 				// campaign with no recorded author on the one path that creates a row
-				// without a live claim in front of it.
+				// without a live claim in front of it — and it reaches it only when the slot
+				// is wholly EMPTY by then. If ANY live row is on the slot, at any version (an
+				// adoption at slot 1, a later dispatch's claim, or the earlier version a
+				// new_version claim sat beside), UpsertCampaign's ownership check refuses
+				// before either arm runs and returns domain.ErrDispatchClaimLost, handled
+				// below — schema-independently, so it still holds once 000022's
+				// one-live-row-per-slot index is dropped.
 				campaign.CreatedBy = by
 				campaign.UpdatedBy = by
 				// Decide the persisted status. Preserve a dispatcher-set status that
@@ -2053,10 +2075,21 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 				// Index the RETAINED PARTIAL too: it is a real row an operator must be able to
 				// find in order to reconcile it. Indexing only clean successes would hide
 				// exactly the campaigns that need attention.
-				if _, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); perr != nil {
+				_, perr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated))
+				switch {
+				case errors.Is(perr, domain.ErrDispatchClaimLost):
+					// The claim this partial would have been recorded on is gone and another
+					// row holds the slot, left untouched. Whatever exists upstream is now
+					// tracked by nothing, so the job carries the id (when there is one) and the
+					// identifying fields of Result — an id-less partial's ONLY handle, which the
+					// unwritten row would have held — and names reconciliation rather than a
+					// plain creation failure.
+					cancelPersist()
+					return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, perr, derr)
+				case perr != nil:
 					slog.ErrorContext(ctx, "failed to record partial upstream campaign on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", perr)
-				} else {
+				default:
 					slog.ErrorContext(ctx, "platform dispatch failed after (possible) upstream create; recorded orphan on retained pending claim",
 						"platform", p, "job_id", jobID, "platform_campaign_id", campaign.PlatformCampaignID, "has_result", len(campaign.Result) > 0, "error", derr)
 				}
@@ -2111,6 +2144,13 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), persistResultTimeout)
 	defer cancelPersist()
 	if _, uerr := o.campaigns.UpsertCampaign(persistCtx, campaign, o.campaignIndexPayload(indexer.ActionCreated)); uerr != nil {
+		if errors.Is(uerr, domain.ErrDispatchClaimLost) {
+			// Checked FIRST: unlike the fallthrough below, the pending claim is NOT retained —
+			// it was cleared and another row (an adoption, or a later dispatch's claim) now
+			// holds the slot, which the repository left untouched. The paid campaign exists
+			// and nothing here tracks it, so the job keeps its id and says so.
+			return lostClaimResult(ctx, res, jobID, brief.ProjectID, slotVersion, campaign, uerr, nil)
+		}
 		// The upstream (paid) campaign was created but recording it failed. The
 		// 'pending' claim row remains, so this is recoverable/reconcilable out of
 		// band and a duplicate can't be created behind the claim. Log the raw error
@@ -2140,6 +2180,296 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	res.OK = true
 	res.CampaignID = campaign.PlatformCampaignID
 	res.HubspotURL = hubspotURLFromResult(campaign.Result)
+	return res
+}
+
+// lostClaimResultError and lostClaimNoIDResultError are the job result's messages for
+// domain.ErrDispatchClaimLost. Both name reconciliation, not a creation failure: the slot this
+// dispatch claimed is now bound to a different row, so nothing in this service tracks what it
+// created. They differ on whether an upstream id was captured, because an id-less partial (an
+// ambiguous create, a LinkedIn group-only orphan) can be found only by the identifiers carried in
+// platformResult.Reconcile, and the message must send the operator there rather than to a
+// campaign_id that is absent.
+const (
+	lostClaimResultError     = "created upstream campaign but this dispatch's claim was cleared and the slot is now bound to another campaign; the upstream campaign is untracked, reconciliation required"
+	lostClaimNoIDResultError = "this dispatch may have created upstream resources but no campaign id was captured, and its claim was cleared and the slot is now bound to another campaign; they are untracked, reconcile by the identifiers in this result's reconcile field"
+)
+
+// reconcileRefMaxRunes bounds each value copied into platformResult.Reconcile, in CHARACTERS
+// (runes), because that is the unit every platform documents its name limits in — a byte cap
+// would drop a legitimate multibyte name well under the platform's limit. It sits far above the
+// largest name any lane platform accepts (Google Ads campaign 256, Microsoft Ads ad group 256,
+// LinkedIn campaign / group 255, X entity 255, Meta creative 255, Reddit names built from a
+// 120-rune event name) and matches the bound the Meta client already puts on a name read back
+// verbatim (maxAdSetNameBytes, 1024), so no real identifier reaches it. A value that somehow
+// does is TRUNCATED, never dropped, and flagged with a "<key>Truncated": true entry, because
+// a dropped value is exactly the failure — nothing left to find the orphan by.
+const reconcileRefMaxRunes = 1024
+
+// reconcileIdentifierSuffixes are the key endings (lower-cased) that name an identifier in a
+// dispatcher's result blob: single ids and names (campaignId, campaignGroupName, AdID, AccountID),
+// the identifier COLLECTIONS a partial-result contract keeps for reconciliation — Google Ads'
+// creativeAssetIds / extensionAssetIds ([]string) and LinkedIn's imageUrns (stored asset id →
+// urn:li:image) — and Meta's per-ad ImageHash, the account-scoped key of the image behind an ad.
+var reconcileIdentifierSuffixes = []string{"ids", "urns", "names", "id", "urn", "name", "hash"}
+
+// reconcileIdentifierExactKeys are identifier handles whose names no suffix rule can cover
+// without overreach, matched EXACTLY (lower-cased). X's mediaKey is the Media Library
+// media_key of an image uploaded BEFORE the campaign POST, so on X's name-only partial it is
+// the only handle on that library entry. A "key" suffix is deliberately NOT a rule: it would
+// admit credential-shaped fields (apiKey, tokenKey). Every dispatcher's partial-result struct
+// was checked when this list was written; this is the only such handle today.
+var reconcileIdentifierExactKeys = map[string]bool{"mediakey": true}
+
+func isReconcileIdentifierKey(k string) bool {
+	lk := strings.ToLower(k)
+	if reconcileIdentifierExactKeys[lk] {
+		return true
+	}
+	for _, suf := range reconcileIdentifierSuffixes {
+		if strings.HasSuffix(lk, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	// reconcileRefMaxDepth bounds how far reconcileRef descends into nested objects and arrays
+	// of objects: depth 1 is the blob's top level, so 3 reaches e.g. adGroups[0].adIds. Every
+	// nested identifier a dispatcher records today sits at depth 2 (HubSpot abTestVariant.id,
+	// Google adGroups[i].id, Meta Ads[i].AdID).
+	reconcileRefMaxDepth = 3
+	// reconcileRefMaxStrings and reconcileRefMaxTotalRunes bound the whole reconcile payload — a
+	// pathological blob (thousands of ads, or a deep array) must not bloat the job result. Every
+	// kept string (a scalar, a list element, a map key or value) counts toward both. Once either
+	// is reached collection stops and the result is flagged ReconcileTruncated, so a reader
+	// knows the list is incomplete rather than whole.
+	reconcileRefMaxStrings    = 256
+	reconcileRefMaxTotalRunes = 32 * 1024
+)
+
+// reconcileRef extracts the IDENTIFYING fields of a dispatch's result blob — what an operator
+// needs to find an untracked upstream campaign, and the resources created under it, when the row
+// that would have held the blob was never written (domain.ErrDispatchClaimLost). It returns the
+// identifiers and whether the payload bounds cut collection short.
+//
+// The blob itself is NOT copied. On a retained partial it is persisted onto the campaign row,
+// never into the job result or a log (the retry path logs only has_result), because it holds more
+// than identifiers: Steps can carry text the platform returned, and URLs, subjects and labels are
+// not needed to find anything. So only fields whose key names an identifier
+// (isReconcileIdentifierKey) are kept, and only when the value is a string, an array of strings,
+// or an object of string values. Nested objects and arrays of objects are DESCENDED into
+// whatever their own key, to reconcileRefMaxDepth, because dispatchers keep identifiers there
+// too (HubSpot's abTestVariant, Google's adGroups, Meta's Ads); a nested identifier is kept
+// under its dotted path, e.g. "abTestVariant.id", "adGroups[0].adIds", "Ads[1].ImageHash".
+// Every other value is dropped. The walk is breadth-first, scalars before collections at each
+// depth, and in sorted-key order, so the same blob always yields the same identifiers and the
+// bounds only ever cut the deepest or latest entries (see the walk below).
+//
+// Every string kept goes through the rune cap (reconcileRefMaxRunes): an over-long one is
+// truncated and the field flagged "<key>Truncated": true. Empty strings are skipped. The
+// campaign's own name is added when the blob carries none. Its STATUS is not: it is state, not a
+// handle to look anything up by, and the lost-claim log carries it instead. nil when nothing
+// identifying is present.
+func reconcileRef(c *model.Campaign) (map[string]any, bool) {
+	ref := map[string]any{}
+	count, totalRunes, capped := 0, 0, false
+	// admit charges one string against the payload bounds, reporting false once they are spent.
+	admit := func(v string) bool {
+		n := utf8.RuneCountInString(v)
+		if capped || count+1 > reconcileRefMaxStrings || totalRunes+n > reconcileRefMaxTotalRunes {
+			capped = true
+			return false
+		}
+		count++
+		totalRunes += n
+		return true
+	}
+	// clip trims and caps one string; cut reports whether it was shortened.
+	clip := func(v string) (out string, cut bool) {
+		v = strings.TrimSpace(v)
+		if utf8.RuneCountInString(v) > reconcileRefMaxRunes {
+			return string([]rune(v)[:reconcileRefMaxRunes]), true
+		}
+		return v, false
+	}
+	flag := func(k string, cut bool) {
+		if cut {
+			ref[k+"Truncated"] = true
+		}
+	}
+	keepString := func(path, v string) {
+		v, cut := clip(v)
+		if v == "" || !admit(v) {
+			return
+		}
+		ref[path] = v
+		flag(path, cut)
+	}
+	// node is one object to visit: its path prefix and its decoded fields.
+	type node struct {
+		prefix string
+		obj    map[string]json.RawMessage
+	}
+	sortedKeys := func(obj map[string]json.RawMessage) []string {
+		keys := make([]string, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return keys
+	}
+	keepList := func(path string, list []string) {
+		kept, anyCut := make([]string, 0, len(list)), false
+		for _, e := range list {
+			e, cut := clip(e)
+			if e == "" || !admit(e) {
+				continue
+			}
+			kept = append(kept, e)
+			anyCut = anyCut || cut
+		}
+		if len(kept) > 0 {
+			ref[path] = kept
+			flag(path, anyCut)
+		}
+	}
+	keepEntries := func(path string, entries map[string]string) {
+		ek := make([]string, 0, len(entries))
+		for mk := range entries {
+			ek = append(ek, mk)
+		}
+		sort.Strings(ek)
+		kept, anyCut := make(map[string]string, len(entries)), false
+		for _, mk := range ek {
+			ck, kcut := clip(mk)
+			cv, vcut := clip(entries[mk])
+			if (ck == "" && cv == "") || !admit(ck) || !admit(cv) {
+				continue
+			}
+			kept[ck] = cv
+			anyCut = anyCut || kcut || vcut
+		}
+		if len(kept) > 0 {
+			ref[path] = kept
+			flag(path, anyCut)
+		}
+	}
+
+	// BREADTH-FIRST, one depth at a time, and within a depth two passes: every identifier
+	// SCALAR at that depth first, then every identifier COLLECTION. The payload bound is spent
+	// in that order, so the handles that matter most — the campaign's and budget's own ids and
+	// names at the top level — are always kept, and a blob too big for the bound loses only its
+	// deepest or latest entries (hundreds of ad-group criterion ids), never the campaign. A
+	// depth-first walk let a nested adGroups list exhaust the bound before campaignId was
+	// visited. Objects at one depth are visited in sorted-key / array-index order.
+	var level []node
+	if len(c.Result) > 0 {
+		var top map[string]json.RawMessage
+		if json.Unmarshal(c.Result, &top) == nil {
+			level = []node{{"", top}}
+		}
+	}
+	for depth := 1; len(level) > 0 && !capped; depth++ {
+		// Pass 1: identifier scalars.
+		for _, n := range level {
+			for _, k := range sortedKeys(n.obj) {
+				var str string
+				if isReconcileIdentifierKey(k) && json.Unmarshal(n.obj[k], &str) == nil {
+					keepString(n.prefix+k, str)
+				}
+			}
+		}
+		if depth == 1 {
+			// The campaign's own name is a top-level handle; add it with the top-level
+			// scalars, before any collection can spend the bound.
+			if _, ok := ref["campaignName"]; !ok {
+				if _, ok := ref["CampaignName"]; !ok {
+					keepString("campaignName", c.CampaignName)
+				}
+			}
+		}
+		// Pass 2: identifier collections; and the next depth's objects, in order.
+		var next []node
+		for _, n := range level {
+			for _, k := range sortedKeys(n.obj) {
+				raw, path := n.obj[k], n.prefix+k
+				if isReconcileIdentifierKey(k) {
+					var str string
+					if json.Unmarshal(raw, &str) == nil {
+						continue // kept in pass 1
+					}
+					var list []string
+					if json.Unmarshal(raw, &list) == nil {
+						keepList(path, list)
+						continue
+					}
+					var entries map[string]string
+					if json.Unmarshal(raw, &entries) == nil {
+						keepEntries(path, entries)
+						continue
+					}
+				}
+				if depth >= reconcileRefMaxDepth {
+					continue
+				}
+				// A nested object or array of objects, whatever its key: visit it next depth.
+				var child map[string]json.RawMessage
+				if json.Unmarshal(raw, &child) == nil {
+					next = append(next, node{path + ".", child})
+					continue
+				}
+				var children []json.RawMessage
+				if json.Unmarshal(raw, &children) == nil {
+					for idx, el := range children {
+						var elem map[string]json.RawMessage
+						if json.Unmarshal(el, &elem) == nil {
+							next = append(next, node{fmt.Sprintf("%s[%d].", path, idx), elem})
+						}
+					}
+				}
+			}
+		}
+		level = next
+	}
+	if len(ref) == 0 {
+		return nil, capped
+	}
+	return ref, capped
+}
+
+// lostClaimResult turns a domain.ErrDispatchClaimLost from either persist (the success upsert or
+// the retained-partial one) into the platform's result, and logs it at ERROR with everything an
+// operator needs to find what was created: the upstream id when there is one, and the
+// identifying fields of the result blob (reconcileRef) either way. The blob would otherwise be
+// lost with the row that was never written.
+//
+// dispatchErr is the PROVIDER's error on the retained-partial path (nil on the success path). It
+// is logged as dispatch_error exactly as the retained-partial path logs it when the persist
+// succeeds ("error", derr — a provider response, which never passed through the credential blob,
+// so it is logged unredacted like every retained-claim branch), because returning here skips
+// that line and the log would otherwise show only the repository error. It never reaches the job
+// result, whose message stays one of the fixed lostClaim* strings.
+func lostClaimResult(ctx context.Context, res platformResult, jobID, projectID string, slotVersion int, c *model.Campaign, err, dispatchErr error) platformResult {
+	res.OK = false
+	res.CampaignID = c.PlatformCampaignID
+	res.Reconcile, res.ReconcileTruncated = reconcileRef(c)
+	res.Error = lostClaimResultError
+	if c.PlatformCampaignID == "" {
+		res.Error = lostClaimNoIDResultError
+	}
+	attrs := []any{
+		"platform", res.Platform, "job_id", jobID, "project_id", projectID, "slot_version", slotVersion,
+		"platform_campaign_id", c.PlatformCampaignID, "has_result", len(c.Result) > 0,
+		"reconcile", res.Reconcile, "reconcile_truncated", res.ReconcileTruncated,
+		// status is state, not a lookup handle, so it is not in Reconcile; the log keeps it.
+		"status", c.Status, "error", err,
+	}
+	if dispatchErr != nil {
+		attrs = append(attrs, "dispatch_error", dispatchErr)
+	}
+	slog.ErrorContext(ctx, "dispatch claim lost before its result was recorded; upstream campaign untracked, reconciliation required", attrs...)
 	return res
 }
 
