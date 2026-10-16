@@ -115,13 +115,14 @@ type ApplyKeywordActionsRequestBody struct {
 // "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
 // HTTP request body.
 type AddNegativeKeywordsRequestBody struct {
-	// The negative keywords to add: at campaign level on Microsoft Advertising, on
-	// the campaign's one ad group on Reddit, on its one line item on X.
+	// The negative keywords to add: at campaign level on Google Ads and Microsoft
+	// Advertising, on the campaign's one ad group on Reddit, on its one line item
+	// on X.
 	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords,omitempty" json:"negative_keywords,omitempty" xml:"negative_keywords,omitempty"`
 	// Reddit only, and required there: the revision get-keyword-targeting
 	// returned; an empty or blank one is 400. The add is refused (409) when the ad
-	// group's targeting no longer has that fingerprint. Microsoft Advertising and
-	// X refuse the field (400) whenever it is present, even empty.
+	// group's targeting no longer has that fingerprint. Google Ads, Microsoft
+	// Advertising and X refuse the field (400) whenever it is present, even empty.
 	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 
@@ -509,6 +510,16 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -534,6 +545,16 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -571,15 +592,21 @@ type GetCampaignMetricsResponseBody struct {
 	// partial conversions under data-driven, position-based and offline
 	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
 	// round it to a whole number, and in particular do not treat a value below 1
-	// as zero. ABSENT when the channel does not report a campaign-level conversion
-	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
-	// Microsoft whenever the ConversionsQualified column is missing from the
-	// report or ANY row's conversion cell is blank — that column is only populated
-	// for accounts wired for Universal Event Tracking, and a partial column summed
-	// as though it were complete would report a campaign's conversions as lower
-	// than they are. Absent means "not measured here", which is NOT the same as a
-	// measured 0, and a consumer must not render it as zero or fold it into a
-	// conversion total.
+	// as zero. ABSENT means "not measured" — the platform cannot report it, or
+	// (LinkedIn, Microsoft) the read was incomplete. The first case covers
+	// channels that do not report a campaign-level conversion count at all (Meta,
+	// X, Reddit and the email channel never do). The second covers the two
+	// conversion-capable channels whose read can come back partial: LinkedIn
+	// whenever ANY returned analytics element omits externalWebsiteConversions,
+	// and Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank (that column is only populated
+	// for accounts wired for Universal Event Tracking). On either, summing only
+	// the elements or rows that did carry a value would publish a partial count as
+	// a complete one and report a campaign's conversions as lower than they are,
+	// so the whole total is withdrawn instead. Absence therefore does NOT by
+	// itself identify a platform that cannot report conversions, and it is NOT the
+	// same as a measured 0: a consumer must not render it as zero or fold it into
+	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
@@ -675,6 +702,16 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -701,6 +738,16 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -727,6 +774,16 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -753,6 +810,16 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion int `form:"slot_version" json:"slot_version" xml:"slot_version"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version int64 `form:"version" json:"version" xml:"version"`
 }
@@ -846,6 +913,32 @@ type ListMetaAdSetsResponseBody struct {
 	AdSets []*MetaAdSetResponseBody `form:"ad_sets" json:"ad_sets" xml:"ad_sets"`
 	// len(ad_sets).
 	AdSetCount int `form:"ad_set_count" json:"ad_set_count" xml:"ad_set_count"`
+}
+
+// ListMetaAdsResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "list-meta-ads" endpoint HTTP response body.
+type ListMetaAdsResponseBody struct {
+	// Campaign UUID
+	CampaignID string `form:"campaign_id" json:"campaign_id" xml:"campaign_id"`
+	// The Meta campaign id the ad set was proven to belong to.
+	PlatformCampaignID string `form:"platform_campaign_id" json:"platform_campaign_id" xml:"platform_campaign_id"`
+	// The Meta ad set id the ads were read under.
+	AdSetID string `form:"ad_set_id" json:"ad_set_id" xml:"ad_set_id"`
+	// The reporting window the counters cover.
+	Window string `form:"window" json:"window" xml:"window"`
+	// The ad account's ISO 4217 currency; `cost_micros` is denominated in it.
+	Currency string `form:"currency" json:"currency" xml:"currency"`
+	// When Meta was read (RFC3339, UTC).
+	ReadAt string `form:"read_at" json:"read_at" xml:"read_at"`
+	// true when the ad LISTING reported more ads than the page cap allows (5 pages
+	// of 100): `ads` then holds the ads that were read, not every ad of the ad
+	// set. Delivery is never truncated — the Insights read is all or nothing.
+	Truncated bool `form:"truncated" json:"truncated" xml:"truncated"`
+	// Every ad the listing returned, in Meta's order, then any unlisted ad that
+	// delivered in the window, by id. Empty when the ad set has none.
+	Ads []*MetaAdResponseBody `form:"ads" json:"ads" xml:"ads"`
+	// len(ads).
+	AdCount int `form:"ad_count" json:"ad_count" xml:"ad_count"`
 }
 
 // ToggleMetaAdSetStatusResponseBody is the type of the
@@ -2909,6 +3002,79 @@ type ListMetaAdSetsUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// ListMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type ListMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Conflict" error.
+type ListMetaAdsConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ListMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ListMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ListMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "NotFound" error.
+type ListMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ListMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// ListMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ListMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // ToggleMetaAdSetStatusBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -3912,15 +4078,21 @@ type CampaignMetricsResponseBody struct {
 	// partial conversions under data-driven, position-based and offline
 	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
 	// round it to a whole number, and in particular do not treat a value below 1
-	// as zero. ABSENT when the channel does not report a campaign-level conversion
-	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
-	// Microsoft whenever the ConversionsQualified column is missing from the
-	// report or ANY row's conversion cell is blank — that column is only populated
-	// for accounts wired for Universal Event Tracking, and a partial column summed
-	// as though it were complete would report a campaign's conversions as lower
-	// than they are. Absent means "not measured here", which is NOT the same as a
-	// measured 0, and a consumer must not render it as zero or fold it into a
-	// conversion total.
+	// as zero. ABSENT means "not measured" — the platform cannot report it, or
+	// (LinkedIn, Microsoft) the read was incomplete. The first case covers
+	// channels that do not report a campaign-level conversion count at all (Meta,
+	// X, Reddit and the email channel never do). The second covers the two
+	// conversion-capable channels whose read can come back partial: LinkedIn
+	// whenever ANY returned analytics element omits externalWebsiteConversions,
+	// and Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank (that column is only populated
+	// for accounts wired for Universal Event Tracking). On either, summing only
+	// the elements or rows that did carry a value would publish a partial count as
+	// a complete one and report a campaign's conversions as lower than they are,
+	// so the whole total is withdrawn instead. Absence therefore does NOT by
+	// itself identify a platform that cannot report conversions, and it is NOT the
+	// same as a measured 0: a consumer must not render it as zero or fold it into
+	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
@@ -4002,19 +4174,22 @@ type NegativeKeywordResultResponseBody struct {
 	Text string `form:"text" json:"text" xml:"text"`
 	// The match type as sent to the platform
 	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
-	// or ad group / line item (Reddit / X) already had it, so the requested state
-	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
-	// have been added, verify in the ad platform before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Google Ads,
+	// Microsoft) or ad group / line item (Reddit / X) already had it, so the
+	// requested state holds; FAILED — definitely not added (see error_code);
+	// UNCONFIRMED — may have been added, verify in the ad platform before retrying.
 	Outcome string `form:"outcome" json:"outcome" xml:"outcome"`
-	// The platform's id for a negative keyword this request added: Microsoft's
-	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
-	// an excluded keyword has no id, and for every outcome other than APPLIED.
+	// The platform's id for a negative keyword this request added: Google's
+	// campaign criterion id, Microsoft's NegativeKeyword id, or X's targeting
+	// criterion id. Absent on Reddit, where an excluded keyword has no id. Present
+	// for ALREADY_PRESENT on Google Ads, which reads the campaign's existing
+	// negatives and reports the criterion id it already holds; absent for
+	// ALREADY_PRESENT elsewhere, and for FAILED and UNCONFIRMED everywhere.
 	NegativeKeywordID *string `form:"negative_keyword_id,omitempty" json:"negative_keyword_id,omitempty" xml:"negative_keyword_id,omitempty"`
 	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
-	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
-	// it was never sent) or REJECTED (the platform refused it); their own text is
-	// never returned.
+	// error code, when it named one. Google Ads, Reddit and X: NOT_SENT (the
+	// request carrying it was never sent) or REJECTED (the platform refused it);
+	// their own text is never returned.
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
@@ -4106,6 +4281,38 @@ type MetaAdSetResponseBody struct {
 	// campaign; never assume it from the 503 alone. Always false on an adopted
 	// campaign.
 	DeliberatelyPaused bool `form:"deliberately_paused" json:"deliberately_paused" xml:"deliberately_paused"`
+}
+
+// MetaAdResponseBody is used to define fields on response body types.
+type MetaAdResponseBody struct {
+	// The Meta ad id
+	ID string `form:"id" json:"id" xml:"id"`
+	// false for an ad that DELIVERED in the window but that Meta's ad listing did
+	// not return (typically deleted or archived since, or beyond the listing cap
+	// when `truncated` is true): its counters are this ad set's spend, so they are
+	// reported, but every descriptive field is absent.
+	Listed bool `form:"listed" json:"listed" xml:"listed"`
+	// The ad's name as Meta holds it. Absent when not reported.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The ad's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED,
+	// ARCHIVED). Absent when not reported.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED,
+	// PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without
+	// notice. Absent when not reported.
+	EffectiveStatus *string `form:"effective_status,omitempty" json:"effective_status,omitempty" xml:"effective_status,omitempty"`
+	// The id of the ad's creative. Absent when not reported.
+	CreativeID *string `form:"creative_id,omitempty" json:"creative_id,omitempty" xml:"creative_id,omitempty"`
+	// The creative's name. Absent when not reported.
+	CreativeName *string `form:"creative_name,omitempty" json:"creative_name,omitempty" xml:"creative_name,omitempty"`
+	// Impressions over the window. 0 when Meta reported no delivery for this ad.
+	Impressions int64 `form:"impressions" json:"impressions" xml:"impressions"`
+	// Clicks over the window.
+	Clicks int64 `form:"clicks" json:"clicks" xml:"clicks"`
+	// Spend over the window in micro-units of `currency`.
+	CostMicros int64 `form:"cost_micros" json:"cost_micros" xml:"cost_micros"`
+	// clicks/impressions, 0 when impressions is 0.
+	Ctr float64 `form:"ctr" json:"ctr" xml:"ctr"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.
@@ -4261,12 +4468,12 @@ type KeywordActionInputRequestBody struct {
 // types.
 type NegativeKeywordInputRequestBody struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
-	// 100 characters.
+	// 100 characters — at most 80 on Google Ads, its own keyword text limit.
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
-	// How the negative keyword is compared with a search query. Microsoft
-	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
-	// (Reddit's excluded keywords carry no match type). Any other value for the
-	// platform is 400.
+	// How the negative keyword is compared with a search query. Google Ads: Broad,
+	// Phrase or Exact. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or
+	// Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type).
+	// Any other value for the platform is 400.
 	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
 }
 
@@ -4498,6 +4705,7 @@ func NewAdoptCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Ado
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4515,6 +4723,7 @@ func NewGetCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *GetCa
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4639,6 +4848,7 @@ func NewUpdateCampaignResponseBody(res *lfxv2campaignservicebriefs.Campaign) *Up
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4657,6 +4867,7 @@ func NewToggleCampaignStatusResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4675,6 +4886,7 @@ func NewUpdateCampaignBudgetResponseBody(res *lfxv2campaignservicebriefs.Campaig
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4693,6 +4905,7 @@ func NewUpdateCampaignBidResponseBody(res *lfxv2campaignservicebriefs.Campaign) 
 		CampaignName:       res.CampaignName,
 		Status:             res.Status,
 		SlotVersion:        res.SlotVersion,
+		Adopted:            res.Adopted,
 		Version:            res.Version,
 	}
 	return body
@@ -4815,6 +5028,34 @@ func NewListMetaAdSetsResponseBody(res *lfxv2campaignservicebriefs.MetaAdSets) *
 		}
 	} else {
 		body.AdSets = []*MetaAdSetResponseBody{}
+	}
+	return body
+}
+
+// NewListMetaAdsResponseBody builds the HTTP response body from the result of
+// the "list-meta-ads" endpoint of the "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsResponseBody(res *lfxv2campaignservicebriefs.MetaAds) *ListMetaAdsResponseBody {
+	body := &ListMetaAdsResponseBody{
+		CampaignID:         res.CampaignID,
+		PlatformCampaignID: res.PlatformCampaignID,
+		AdSetID:            res.AdSetID,
+		Window:             res.Window,
+		Currency:           res.Currency,
+		ReadAt:             res.ReadAt,
+		Truncated:          res.Truncated,
+		AdCount:            res.AdCount,
+	}
+	if res.Ads != nil {
+		body.Ads = make([]*MetaAdResponseBody, len(res.Ads))
+		for i, val := range res.Ads {
+			if val == nil {
+				body.Ads[i] = nil
+				continue
+			}
+			body.Ads[i] = marshalLfxv2campaignservicebriefsMetaAdToMetaAdResponseBody(val)
+		}
+	} else {
+		body.Ads = []*MetaAdResponseBody{}
 	}
 	return body
 }
@@ -7013,6 +7254,84 @@ func NewListMetaAdSetsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.U
 	return body
 }
 
+// NewListMetaAdsBadRequestResponseBody builds the HTTP response body from the
+// result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsBadRequestResponseBody(res *lfxv2campaignservicebriefs.BadRequestError) *ListMetaAdsBadRequestResponseBody {
+	body := &ListMetaAdsBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsConflictResponseBody builds the HTTP response body from the
+// result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsConflictResponseBody(res *lfxv2campaignservicebriefs.ConflictError) *ListMetaAdsConflictResponseBody {
+	body := &ListMetaAdsConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewListMetaAdsServiceUnavailableResponseBody builds the HTTP response body
+// from the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsServiceUnavailableResponseBody(res *lfxv2campaignservicebriefs.ConnServiceUnavailableError) *ListMetaAdsServiceUnavailableResponseBody {
+	body := &ListMetaAdsServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsInternalServerErrorResponseBody builds the HTTP response body
+// from the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsInternalServerErrorResponseBody(res *lfxv2campaignservicebriefs.InternalServerError) *ListMetaAdsInternalServerErrorResponseBody {
+	body := &ListMetaAdsInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsNotFoundResponseBody builds the HTTP response body from the
+// result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsNotFoundResponseBody(res *lfxv2campaignservicebriefs.NotFoundError) *ListMetaAdsNotFoundResponseBody {
+	body := &ListMetaAdsNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsPayloadTooLargeResponseBody builds the HTTP response body from
+// the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsPayloadTooLargeResponseBody(res *lfxv2campaignservicebriefs.PayloadTooLargeError) *ListMetaAdsPayloadTooLargeResponseBody {
+	body := &ListMetaAdsPayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewListMetaAdsUnauthorizedResponseBody builds the HTTP response body from
+// the result of the "list-meta-ads" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewListMetaAdsUnauthorizedResponseBody(res *lfxv2campaignservicebriefs.UnauthorizedError) *ListMetaAdsUnauthorizedResponseBody {
+	body := &ListMetaAdsUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewToggleMetaAdSetStatusBadRequestResponseBody builds the HTTP response body
 // from the result of the "toggle-meta-ad-set-status" endpoint of the
 // "lfx-v2-campaign-service-briefs" service.
@@ -8243,6 +8562,20 @@ func NewListMetaAdSetsPayload(projectID string, briefID string, campaignID strin
 	v.ProjectID = projectID
 	v.BriefID = briefID
 	v.CampaignID = campaignID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewListMetaAdsPayload builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint payload.
+func NewListMetaAdsPayload(projectID string, briefID string, campaignID string, adSetID string, window *string, bearerToken *string) *lfxv2campaignservicebriefs.ListMetaAdsPayload {
+	v := &lfxv2campaignservicebriefs.ListMetaAdsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.AdSetID = adSetID
 	v.Window = window
 	v.BearerToken = bearerToken
 

@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/dispatch"
-description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder and the audience EXPLORER an operator drives before a brief commits — discovery, suppression and precedent reads that degrade to a partial answer with the gap named, and the one non-idempotent write that does not."
+description: "Per-platform PlatformDispatcher adapters bridging the orchestrator to the channel API clients (six paid ad platforms plus the hubspot email channel), plus the HubSpot audience builder and the audience EXPLORER an operator drives before a brief commits — discovery, suppression and precedent reads that degrade to a partial answer with the gap named, and the one non-idempotent write that does not. The google-ads adapter adds the two keyword-and-bid levers: WriteBid, which refuses unless the row records exactly one ad group and Google itself reports MANUAL_CPC, and AddNegativeKeywords, which pre-reads the campaign's negatives because Google's mutate is atomic and so every keyword actually sent shares one outcome (LFXV2-2665)."
 resource: "internal/dispatch"
 ---
 
@@ -355,8 +355,12 @@ guess, so it keeps nothing.
 
 **Which fields each adapter scrubs.** Per adapter snapshot builder, as of LFXV2-2665:
 
-- `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`).
-- `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`, on a copied slice).
+- `reddit.go` — `PostURL`, `ImageURL` (`sanitizeSnapshotURL`); each variant's `headline`/`body`,
+  every `keywords`, `geoTargets`, `subreddits` and `interests` entry, and `callToAction`,
+  `conversionPixelId`, `videoGoal` (`sanitizeSnapshotText`) — `redditSnapshotConfig`, #245.
+- `meta.go` — each variant's `ImageURL` (`sanitizeSnapshotURL`) and `PrimaryText`/`Headline`/
+  `Description`, every `geoTargets` entry, `pixelId`, `dsaBeneficiary`, `dsaPayor`
+  (`sanitizeSnapshotText`) — `metaSnapshotConfig`, #245.
 - `googleads.go` — each sitelink's `finalUrl` (`googleAdsSnapshotConfig`); keyword and ad text
   are kept VERBATIM by design.
 - `twitter.go` — `tweetText` (`sanitizeSnapshotText`).
@@ -364,9 +368,27 @@ guess, so it keeps nothing.
   (`microsoftSnapshotConfig`); the snapshot is a redacted record, not a verbatim one.
 - `hubspot.go` — snapshots only the provenance fields (`hubspotConfigProvenance`); subject and
   body HTML are never stored.
-- `linkedin.go` — passes the raw `linkedinConfig`; NOTHING is scrubbed. It has no dedicated URL
-  field (the registration URL comes from the brief), but variant `introText`/`headline` are
-  caller free text stored verbatim. Not changed here; LinkedIn is owned by another engineer.
+- `linkedin.go` — each variant's `IntroText`/`Headline`, every `geoTargets[].label`,
+  `targetingProfile`, and every `targetingProfiles[].id`/`label`/`skills`/`groups` entry
+  (`sanitizeSnapshotText`) —
+  `linkedinSnapshotConfig`, #245. Before #245 it persisted the raw `linkedinConfig`.
+
+**#245: LinkedIn, Meta and Reddit free text.** The rule the three builders share is the one
+`microsoftSnapshotConfig` set: every caller string the client does not shape-check before a
+campaign exists goes through `sanitizeSnapshotText`, and the ad copy is the field that matters —
+a password-reset link pasted into an intro text, primary text or body keeps its secret in the
+PATH, which a query strip never touches. A field the client REFUSES unless it is a URN, an enum
+or a numeric id stays verbatim, and each builder's doc comment names which those are (for
+example LinkedIn `imageUrn` and `employerExclusions`, Meta `objective` and `instagramUserId`,
+Reddit `objective`). A field validated only when it is used — LinkedIn `skills`/`groups` on a
+profile `targetingProfile` does not select, Reddit `callToAction` once `postUrl` is
+set, `videoGoal` outside `video_views`, Meta `pixelId` outside a pixel objective, Meta
+`geoTargets` that `validateGeoTargets` filters — is redacted, because the unused value still
+reaches the column as typed. `sanitizeSnapshotTexts` (`creds.go`) is the list form; it keeps nil
+as nil and empty as empty so the stored JSON says what the caller sent. Every rewritten slice is
+reallocated first, so the platform still receives the full text.
+`snapshot_free_text_test.go` builds each snapshot through the adapter's `campaignFrom*` mapper,
+gives every field its own marker, and asserts both halves per field.
 
 **The redactors live in `pkg/redact`, and the update path uses them generically.** The pure
 string sanitizers (`SnapshotURL`, `SnapshotText` and the run patterns behind them) moved
@@ -379,7 +401,7 @@ the service needs the same rules: `UpdateCampaign` (`PUT .../campaigns/{id}`) ac
 into `config_snapshot`, bypassing every per-adapter scrub listed above. It now walks the
 value and runs EVERY string value and object key through `SnapshotText` before persisting (see
 [internal/service](internal-service.md), "Campaign config update"). The per-adapter list
-above is the CREATE/adoption path only; the LinkedIn create-path gap is unchanged.
+above is the CREATE/adoption path only.
 
 **Microsoft scrubs `timeZone` and the links inside keywords.** `campaignFromMicrosoft` persists
 `microsoftSnapshotConfig(cfg)`, never the caller's raw `microsoftConfig`. The struct carries no
@@ -550,7 +572,7 @@ Which adapters honour it today:
 | X/Twitter | yes | `validateTwitterConnection` — dispatch, toggle, metrics |
 | Microsoft Ads | yes | `validateMicrosoftConnection` — dispatch, toggle, metrics (async Reporting API; default-OFF) |
 | Meta | yes | `resolveMetaCredentials` — dispatch, toggle, metrics (LFXV2-3061) |
-| LinkedIn | yes | `resolveLinkedInCredentials` — toggle, metrics (LFXV2-3196); Dispatch keeps its own inline checks, which wrap in `notCreated()` to release the claim |
+| LinkedIn | yes | `resolveLinkedInCredentials` — dispatch, toggle, metrics (LFXV2-3196 for toggle and metrics; dispatch joined 2026-10-15 and wraps the result in `notCreated()` to release the claim) |
 | HubSpot (email) | **n/a** | out of scope — see below |
 
 HubSpot is listed for completeness, not as a gap. Its checks in `internal/dispatch/hubspot.go`
@@ -567,12 +589,27 @@ so tagging it was an extraction rather than an annotation — Meta was in the sa
 LFXV2-3061 performed exactly that extraction. LFXV2-3196 did the same for LinkedIn's toggle and
 metrics paths.
 
-Its `Dispatch` deliberately keeps its own inline checks: they wrap in `notCreated()` to release
-the dispatch claim, which is a different contract from returning a classified error to a
-synchronous handler, and folding the two would mean the helper had to know which caller it had.
+Its `Dispatch` validated inline until 2026-10-15, which meant an empty account id failed with a
+bare `notCreated` that never named the missing choice. It now calls `resolveLinkedInCredentials`
+(bound to `d.creds.resolve`, so creation stays governed by the forced-system flag) and wraps the
+helper's plain classified error in `notCreated()` ITSELF — the Meta, X and Microsoft split. The
+helper never needs to know which caller it has, and the claim is still released. Only the org id,
+which is creation-only, stays an inline check in `Dispatch`. An account-less connection therefore
+reaches the polled job result as `this project's linkedin-ads connection cannot be used as
+configured (reason: account_not_selected); nothing was sent` (issue #208's connection-class
+sentence), or the LF-system variant when the row is the fallback.
 
-One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics where
-Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
+The inline org-id refusal never passes through `systemScoped`, so it once named the PROJECT's
+connection even when the credentials came from the LF system fallback row — sending an operator
+to fix a row the project does not own. `linkedInMissingOrgIDRefusal` now reads the same
+provenance (`res.isFromSystem()`) and uses the #208 sentence heads: `this project's linkedin-ads
+connection is missing its org id; nothing was sent`, or `the LF system linkedin-ads connection
+is missing its org id; nothing was sent` for the unforced fallback and the forced-system row
+alike. It stays a `PreflightRefusal` (copied verbatim into the job result, so "org id" survives)
+wrapped in `notCreated()`, raised before any request.
+
+One asymmetry worth carrying: LinkedIn emits `account_not_selected` on toggle and metrics (as
+well as create) where Meta does not. LinkedIn's client is constructed with a `RuntimeConfig` naming the account, so an
 empty account id cannot reach the platform at all; Meta targets the campaign node by platform id
 and never reads the account, so an account cleared after creation must not block pausing.
 
@@ -1471,10 +1508,10 @@ wrong write. See [internal/platform/twitter](internal-platform-twitter.md).
 
 ## Bid write (optional capability, LFXV2-2665)
 
-`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Microsoft Advertising,
-Reddit, Meta, X and LinkedIn**; Google Ads and HubSpot are not `BidWriter`s (pinned by
-`TestBidWriter_GoogleAndHubSpotDoNotImplementIt`), so the orchestrator answers
-`ErrBidUnsupported` (400). LinkedIn's leg is described in
+`service.BidWriter` (`WriteBid`) sets a campaign's manual max CPC bid. **Google Ads, Microsoft
+Advertising, Reddit, Meta, X and LinkedIn**; HubSpot is not a `BidWriter` (pinned by
+`TestBidWriter_HubSpotDoesNotImplementIt`), so the orchestrator answers
+`ErrBidUnsupported` (400) — an email channel has no bid at all. LinkedIn's leg is described in
 [LinkedIn settings, bid and adoption](#linkedin-settings-bid-and-adoption-lfxv2-2665). Shared outcome types live in `bid.go`: `unconfirmedBidWriteError`
 (`Unconfirmed()`) and `rejectedBidAmountError` (`BidAmountReason()`), the bid lever's
 counterparts of the budget types. No env gate, matching the budget writers.
@@ -1485,6 +1522,30 @@ request), then the row/request facts (bid type, recorded ad group id, amount), t
 resolution and the account-match guard, then a READ, then the guards, then the one mutate,
 classified. Nothing is written until every guard has passed.
 
+- **Google Ads** (`googleads_bid.go`): writes `cpc_bid_micros` on the ad group recorded in the
+  row's result blob (`googleAdsCampaignAdGroupIDs`) — where the create path puts the bid, with
+  the keywords created bidless so they inherit it. **Google is the first platform whose row can
+  record MORE THAN ONE ad group**, and more than one is REFUSED (`ErrBidUnwritable`), not
+  resolved: siblings carry INDEPENDENT bids, so writing the first silently leaves the rest and
+  writing the same amount to all flattens a spread nobody asked about — the request names a
+  campaign, not an ad group. A row recording NONE is refused for every sibling's reason (never
+  provisioned, or ADOPTED, which records none). The set is ordered through `sortedKeys` so
+  neither the single-ad-group pick nor the refusal message varies between identical requests.
+  Reads the CAMPAIGN (`GetCampaignSettings`) and writes only under a reported `MANUAL_CPC`; an
+  unreported strategy is refused rather than assumed manual, and because Google offers no
+  PORTFOLIO `MANUAL_CPC` the same guard covers the portfolio case with no second query. An
+  absent campaign → `ErrPlatformCampaignAbsent`. Amount bounds are the create path's
+  (`ValidateMaxCPCBid`: 0.01–100,000 in the account currency) → 400 before any call; unlike
+  `WriteBudget` this leg NEEDS that mapping, because the service layer's own checks (a 1,000,000
+  ceiling, and refusing anything rounding below half a micro) accept a wide band this client
+  refuses, each of which would otherwise be a 503 inviting a retry that can never succeed. There
+  is no amount-rejection arm on the mutate itself: Google states no floor only its mutate can
+  report, so every amount refusal happens before anything is sent. **Unlike Reddit, Meta and X,
+  this leg is expected to PASS on a campaign this service created**: `defaultBiddingStrategy`
+  gives a SEARCH campaign `MANUAL_CPC`, so no operator change is needed there — while Demand Gen,
+  Performance Max, Video and Display default to an automated strategy and are refused. The guard
+  still decides on what Google REPORTS, never on that default. Mutate outcomes:
+  `googleads.IsOutcomeUnconfirmed` → `unconfirmedBidWriteError` (503); anything else definite.
 - **Microsoft** (`microsoft_bid.go`): writes the default `CpcBid` of the ad group recorded in
   the row's result blob (`microsoftChildIDs`) — the field the create path sets; keywords are
   created without bids and inherit it. Reads the CAMPAIGN's bid strategy
@@ -1577,10 +1638,14 @@ the orchestrator.
 ### Conversions: which platforms can report one (LFXV2-3314)
 
 `model.CampaignMetrics.Conversions` is a `*float64`, and the pointer is load-bearing: **absent
-means "this channel does not report a campaign-level conversion count", which is not the same
-claim as a measured zero.** Only three of the seven adapters populate it, and which three was
-settled field-by-field against each vendor's published reference rather than inferred from what
-the clients happened to request:
+means "not measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was
+incomplete — which is not the same claim as a measured zero.** The contract is stated over the
+READ, not the platform: LinkedIn withdraws the whole total to nil when any returned element omits
+`externalWebsiteConversions`, and Microsoft does the same on a missing column or blank
+`ConversionsQualified` cell (both below), so a nil from either is NOT evidence that the platform
+cannot report conversions. A consumer must not classify the channel from the nil. Only three of
+the seven adapters populate it, and which three was settled field-by-field against each vendor's
+published reference rather than inferred from what the clients happened to request:
 
 | Platform | Reports conversions? | Field / column | Type |
 |---|---|---|---|
@@ -1625,12 +1690,16 @@ Three corrections that a plausible-looking implementation would have got wrong:
   window, so `GetCampaignMetrics`'s `len(rows) == 0` branch means the query ran and the answer
   was nothing — not that conversions could not be measured. That branch originally returned a
   zero-value `CampaignMetrics`, which for a POINTER field is nil, so a genuinely quiet Google
-  campaign serialised as "not measured here" — the one shape `no_conversions` refuses to fire
-  on, and therefore precisely the campaign the rule exists to catch. It now materialises a
-  non-nil zero, matching what the row-decoding path produces and what the struct's own comment
-  already promised ("Google can, so this adapter never leaves it nil").
+  campaign serialised as "not measured" — a false statement about a window the query did
+  answer. It now materialises a non-nil zero, matching what the row-decoding path produces and
+  what the struct's own comment already promised ("Google can, so this adapter never leaves it
+  nil"). The fix is about the truth of the field, NOT about alerting: `no_conversions` also
+  requires `Clicks >= minClicksForConversions` (50), and a no-rows window reports zero clicks,
+  so the rule cannot fire on it either way. A campaign that delivered nothing is
+  `zero_delivery`'s finding, not `no_conversions`'s.
 
-For the four that cannot report one, the field is left **absent rather than zero**. A fabricated
+For the four that cannot report one, the field is left **absent rather than zero** (and the
+LinkedIn and Microsoft incomplete-read cases above are absent for the same reason). A fabricated
 zero is indistinguishable from a measured one to every consumer, and it would make the
 `no_conversions` rule fire on every campaign on those platforms forever. Deriving a single number
 for Meta or X would additionally require choosing which action types count as a conversion — a
@@ -2142,6 +2211,16 @@ when the selection was cleared: only a configured PAUSED/DELETED/ARCHIVED one pr
 written on either. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 Tests: `meta_ad_sets_test.go`, `meta_ad_set_pause_test.go`.
+
+## Meta ads under an ad set (`meta_ads.go`, decision D7 first step)
+
+`MetaDispatcher` implements `service.MetaAdReader` (`ReadMetaAds`), read-only. Window, `ad_set_id`
+(`ErrMetaAdSetInvalid`) and the stored campaign id (`ErrStoredPlatformIDInvalid`) are checked before
+any credential work; then `metaAdSetScope`; then `GetAdSetState` must report the row's campaign
+under the connection's account (`ErrMetaAdSetNotInCampaign`, 409, nothing else read); then
+`meta.Client.ListAdSetAds`, whose `ErrAdAccountMismatch` maps to
+`ErrCampaignUpstreamIdentityMismatch`. `ReadAt` comes from the `settingsNow` clock. See
+[Meta Ad Read Under an Ad Set](../architecture/meta-ads.md). Tests: `meta_ads_test.go`.
 
 `noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
 a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
@@ -2740,7 +2819,11 @@ sentinel, so no grep or reflection separates LinkedIn (tagged in a resolver `Dis
 from X (whose `Dispatch` calls the validator itself). `TestAccountDiscoveryProvidersIsASubsetOfAccountListers`
 therefore pins only the invariant that survives — every member holds the first half — and
 deliberately does not assert equality, because the sets are unequal on purpose and forcing that
-judgement to be relitigated as a test failure is what produced the serial corrections.
+judgement to be relitigated as a test failure is what produced the serial corrections. Since issue
+#181 (which admitted Microsoft) its candidate roster is itself derived: it walks
+`model.AllProviders()` filtered by `IsPaidAds()` and fails when a paid-ads provider has no entry in
+its dispatcher table, so a provider added later cannot be left out of the lister set it checks
+against, and it refuses a non-paid-ads member outright.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"
@@ -3176,6 +3259,22 @@ function type for adapters whose credential helper serves BOTH kinds of caller
 bind the recorded id with `existingResolver(<platform>CreationAccountID(campaign))`, so the
 creation-path signature stays free of a campaign argument it has no value for.
 
+The CHOICE each caller makes is pinned by `resolver_identity_test.go` (#174), not only the
+resolvers' behaviour. A compile-time parameter does not stop a call site, or a shared helper's
+`resolveCreds` pass-through, from being swapped to `d.creds.resolve`, and before this sweep that
+swap kept the suite green. The sweep drives every entry point of the LinkedIn, Meta, Reddit, X,
+Microsoft and HubSpot dispatchers (Google Ads is out of its scope) against credential-less rows
+with the forced-system flag ON. The scopes `scopedConnReader` is asked for, with and without a
+project row, identify the resolver: `resolve` asks the system scope first; `existingResolver(<non-empty id>)`
+asks project then system; `existingResolver("")` and HubSpot's unforced `resolve` reach the system
+scope only when the project has no row; `resolveOwned` and `resolveOwnedForAdoption` never reach it.
+Each row states the identity it expects. Every existing-campaign row also runs a third fixture.
+In it the project row decrypts and carries the account the campaign records, so only a resolver
+bound to THAT account stays on the project scope; one bound to any other non-empty id goes on to
+ask the system scope. `TestClassifyResolver_FingerprintsAreDistinct` guards the
+classifier, so a change to `credsSource` that merged two fingerprints fails there rather than
+blinding the sweep. A new entry point needs a row in its dispatcher's table.
+
 ### The forced path itself
 
 A guard at the top of `credsSource.resolve` routes to `resolveForcedSystem` when the flag is on,
@@ -3486,8 +3585,11 @@ render the full discovery request URL, pagination cursor included; `VerifyAccoun
 only layer that knows both the service's contract and this client's types, so doing it here is
 what lets `internal/service` classify the outcome without importing
 `internal/platform/linkedin` at all, exactly as it does for `ErrKeyUnavailable` and
-`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest that
-points the client at a closed server and asserts the result `errors.Is`
+`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest whose
+test transport refuses the discovery dial (`platformtest.RefusedDialTransport` from the shared
+`internal/platform/platformtest` test-support package, a real `http.Transport` that fails the
+connect with `ECONNREFUSED` instead of racing the OS for a closed port, issue #206) and
+asserts the result `errors.Is`
 `domain.ErrOrgVerificationInconclusive`, is NOT `linkedin.ErrOrgVerificationInconclusive`, and
 carries neither the request path nor the base URL in its text.
 
@@ -3923,7 +4025,9 @@ for that one line.
 request this service BUILT, which is not a verdict on the credential, and treating it as
 inconclusive would silently stop testing anything the day an endpoint moves.
 
-`ProbeNotSent` is the third and lowest-stakes member, and it decides nothing an operator sees. It
+`ProbeNotSent` is the third member. Here, on the probe path, it decides nothing an operator sees
+— though `internal/platform/googleads` has a second caller where it does, separating `NOT_SENT`
+from `REJECTED` on a negative-keyword outcome. It
 answers only whether the request whose failure ENDED the probe left this process at all, and it
 has to be asked HERE because the
 platform error chain is dropped at this boundary: past `probeClass` nothing downstream can tell a
@@ -4074,6 +4178,16 @@ per item whenever any item has a definite outcome — `ALREADY_PRESENT`, `APPLIE
 with `REJECTED` / `NOT_SENT` — and error the whole call (UNCONFIRMED) only when every item is
 UNCONFIRMED. See [keyword-targeting-reddit-x](../architecture/keyword-targeting-reddit-x.md).
 
+X's already-present key is `targetingType + NUL + textfold.Key(collapsed value)`, collapsed
+**inside** `twitterNegativeKey` for the reason the Google key is: the key is built from two sources
+that do not arrive in the same shape — the request side is normalised by
+`NormalizeNegativeKeywordText`, the present side is X's raw `TargetingValue`, normalised by nobody
+— so collapsing in only one of them made them disagree on a stored `" free download"`,
+`"free  download"` or non-breaking space, which then read as ABSENT and was sent again as a
+duplicate criterion. Cheaper than the Google case (one paced POST per keyword, not an atomic
+batch) but the same defect, so the same fix. It only ever makes the present-set match MORE, and
+only for texts X itself treats as one keyword.
+
 **Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
 REMOVE the row's `keywordIds` still names the deleted keyword. On ACTIVATE `ToggleStatus` therefore
 narrows them to the live ones (`microsoftLiveKeywordIDs`, under a bounded 10s sub-budget) before
@@ -4096,6 +4210,45 @@ here; the operator remedy is to pause the keyword again after activating.
 (`MICROSOFT_METRICS_ENABLED`) gates only the unverified Reporting reads, and no Microsoft WRITE —
 create, toggle, budget — is gated. Both levers follow the writes.
 
+## Google Ads negative keywords (`googleads_negative_keywords.go`, LFXV2-2665)
+
+`GoogleAdsDispatcher` implements `service.NegativeKeywordAdder`, attaching CAMPAIGN-level
+negative KEYWORD criteria — the same level and resource the create path's exclusion list uses,
+so a negative added here behaves exactly like one added at create and keeps applying to any ad
+group added later.
+
+Guard order is the keyword levers': the batch is validated locally first
+(`validateNegativeKeywordBatch`, with Google's three match types — Broad, Phrase, Exact — so a
+permanent input fault masks any contingent one), `revision` is refused (it is Reddit's
+compare-and-set token), the row must record a well-formed platform campaign id, provenance
+FAILS CLOSED, then the account-match guard, all before Google is contacted.
+
+**Then a READ, and it is not an optimisation.** `campaignCriteria:mutate` is ATOMIC, so one
+keyword the campaign already excludes fails the WHOLE batch, taking down the keywords Google
+would have accepted. `ListCampaignNegativeKeywords` therefore runs first and anything already
+present is reported `ALREADY_PRESENT` with its existing criterion id rather than sent. The
+comparison key is `matchType + NUL + textfold.Key(collapsed text)` — the Unicode
+simple-case-fold key every negative-keyword comparison in this service uses, which
+`strings.ToLower` cannot replace (σ/ς), over text whose whitespace runs are collapsed to
+single spaces. The collapse is INSIDE the key because the key's two sides do not arrive in
+the same shape: the request side has been through `NormalizeNegativeKeywordText`, the present
+side is whatever Google returned. Collapsing in only one of them makes a criterion Google
+holds as `"free  download"` read as ABSENT, be sent again, and fail the atomic batch. It can
+only ever make the present-set match MORE, which is the safe direction here — a missed match
+costs the whole batch, a match costs one keyword correctly reported `ALREADY_PRESENT`.
+The read is a PURE read, so its failure is definite and returned unclassified.
+
+**Every keyword actually SENT shares one outcome**, which is atomicity restated rather than a
+simplification: `APPLIED` with its criterion id, or `FAILED` (`REJECTED`, or `NOT_SENT` when the
+error reports `NotAttempted()`), or `UNCONFIRMED`. A 2xx returning a different number of ids than
+keywords sent is treated as UNCONFIRMED rather than paired positionally — pairing a criterion id
+to a keyword it does not identify would report an id the operator cannot act on.
+
+**503 only when there is nothing definite to report.** An unconfirmed mutate returns
+`unconfirmedKeywordLeverError` (shared with Microsoft, Reddit and X) ONLY if no keyword reached a
+definite outcome; if any was `ALREADY_PRESENT`, the outcome list is returned instead, so the
+caller keeps the facts that were established rather than losing them to a blanket 503.
+
 ## Reddit and X keyword targeting (LFXV2-2665)
 
 `RedditDispatcher` and `TwitterDispatcher` implement `service.KeywordTargetingReader` and
@@ -4108,6 +4261,123 @@ refuses a removal that would leave no keyword (`ErrKeywordTargetingWouldEmpty`),
 (`ErrKeywordTargetingChanged`), writes the whole targeting back, and re-reads to confirm. X's
 deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Reddit, X and Microsoft negative-keyword adapters (LFXV2-2665)
+
+Four dispatchers implement `service.NegativeKeywordAdder` (`add-negative-keywords`): Google Ads
+(above), Microsoft (`microsoft_keywords.go`), Reddit (`reddit_negative_keywords.go`) and X
+(`twitter_negative_keywords.go`). This section covers the last three and the shared batch check.
+The design and the upstream research are in
+[Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md); the clients are
+in [internal/platform/reddit](internal-platform-reddit.md) ("Ad-group excluded keywords"),
+[internal/platform/twitter](internal-platform-twitter.md) ("Line-item negative keywords") and
+[internal/platform/microsoft](internal-platform-microsoft.md) ("Keyword levers on a live campaign").
+
+**Shared batch check (`negative_keywords.go`).** `validateNegativeKeywordBatch(label, keywords, max,
+allowed...)` runs before any platform is contacted and returns the batch normalised and
+index-aligned. Every refusal is `ErrNegativeKeywordInvalid`: an entry count outside 1..max; a text
+`microsoft.NormalizeNegativeKeywordText` refuses (Microsoft's text rules, applied to every platform
+because the endpoint publishes one input contract); a match type outside the platform's `allowed`
+set (any casing is accepted, via `canonicalNegativeMatchType`); the same (match type,
+`textfold.Key(text)`) twice. Duplicates are REFUSED, not de-duplicated, because outcomes are
+positional. `maxNegativeKeywordsPerRequest` is 60. Reddit and X (and Google) call it; Microsoft
+calls `microsoft.ValidateNegativeKeywords`, the same rules with Exact/Phrase.
+
+| | Reddit | X | Microsoft |
+|---|---|---|---|
+| Match types | Broad only | Broad / Phrase / Exact → `BROAD_` / `PHRASE_` / `EXACT_KEYWORD` (`twitterNegativeTargetingType`) | Exact / Phrase |
+| Max per request | 60 | 20 (`maxTwitterNegativeKeywords`: one paced POST per keyword inside the 45 s mutation timeout) | 60 |
+| `revision` | required, non-blank | refused if non-empty | refused if non-empty |
+| Gate | `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED` exactly `"true"`, else `ErrNegativeKeywordsUnsupported` | none | none |
+| Target | the row's recorded ad group (`redditTargetingAdGroup`) | the row's recorded line item | the row's `PlatformCampaignID` (`microsoftCampaignIDRE`) |
+| Provenance | fails closed: no recorded creating account is `ErrCampaignProvenanceUnknown` | fails closed (`ownedTwitterLineItem(..., true)`) | fails closed (`microsoftKeywordLeverClient`) |
+| Account | `verifyRedditAccountMatch` | `verifyTwitterAccountMatch` | `verifyMicrosoftAccountMatch` |
+| Ownership read | `readOwnedRedditTargeting`: the ad group exists and Reddit reports it under THIS campaign (an unreported `campaign_id` is refused like a different one) | `ownedTwitterLineItem`: the line item is live and X reports it under THIS campaign | none — the only id sent is the campaign's own, from the row |
+| Read before write | the same targeting read: compare-and-set on `revision` (`ErrKeywordTargetingChanged`, 409), then the already-present set | `ListLineItemTargetingCriteria` (all-or-error; unreadable → `ErrKeywordTargetingUnaddressable`), then the already-present set | none — Microsoft's own 4335 reports a duplicate per item |
+
+Every refusal in that table happens before the write, so it changes nothing. Guard order:
+- *Reddit:* the gate; the batch; `revision` present; the recorded ad group; provenance; the
+  account; the ownership read; `revision` equal to that read's; `excluded_keywords` legible; the
+  already-present set; the 2,000-element cap; a fingerprint of every other targeting member
+  (`FingerprintExceptExcluded`, unreadable → `ErrKeywordTargetingUnaddressable`), kept for the
+  post-write comparison.
+- *X:* the batch; no `revision`; then `ownedTwitterLineItem` — a platform campaign id, provenance,
+  a recorded line item, the account, the line item read live and under this campaign; then the
+  complete criteria list.
+- *Microsoft:* the batch; no `revision`; a well-formed platform campaign id; provenance (refused
+  before credentials are decrypted); the account.
+
+On every platform a malformed batch therefore masks a contingent fault.
+
+**No last-keyword guard.** The removal's `ErrKeywordTargetingWouldEmpty` / `WOULD_EMPTY` guard exists
+because taking out the last positive keyword widens delivery. Adding a negative only narrows it, so
+none of the three adapters checks it, and X does not re-list the criteria before each POST (the
+removal does).
+
+**Idempotency and duplicates.**
+- *Reddit:* a keyword whose exact text is already in `excluded_keywords` is `ALREADY_PRESENT` and
+  not sent; if nothing is new, no write is made. The comparison is exact, not case-folded (the
+  request side is normalised by the batch check). The array cap is counted in elements, `null`
+  elements kept from the read included (`ErrNegativeKeywordLimit`, 409).
+- *X:* the already-present key is `twitterNegativeKey(targetingType, value)` =
+  `targetingType + NUL + textfold.Key(whitespace-collapsed value)`, built the same way for X's raw
+  stored value and the normalised request text, so a stored `"Free Download"`, `" free download"`,
+  doubled space or non-breaking space matches. Only live `NE` criteria count; a positive criterion
+  with the same text does not. A match is `ALREADY_PRESENT` and not sent.
+- *Microsoft:* there is no pre-read. The add is sent and Microsoft's
+  `CampaignServiceNegativeKeywordAlreadyExists` / 4335, as an item's ONLY error, becomes
+  `ALREADY_PRESENT`; the client matches it strictly.
+
+**Outcomes and error classification.**
+- *Reddit:* one `AddAdGroupExcludedKeywords` PATCH carries every new keyword, so they share its
+  outcome. `reddit.IsOutcomeUnconfirmed` → UNCONFIRMED; `reddit.IsPlatformRefusal` (4xx other than
+  429) → FAILED `REJECTED`; any other error is treated as never reaching Reddit → FAILED `NOT_SENT`.
+  An acknowledged PATCH is then confirmed by a re-read: the ad group missing, a read error, an
+  excluded list other than the one written (`reddit.SameKeywords`), or any other targeting member's
+  fingerprint changed (logged at ERROR) is UNCONFIRMED; otherwise APPLIED. No id is returned.
+- *X:* one `CreateNegativeKeywordCriterion` per remaining keyword, in request order. A context
+  already done before an item is sent → FAILED `NOT_SENT`; success → APPLIED with the criterion id
+  as `NegativeKeywordID`; `ErrWriteNotSent` → FAILED `NOT_SENT`; `twitter.IsOutcomeUnconfirmed` →
+  UNCONFIRMED; any other error → FAILED `REJECTED` (see the pre-send gap noted in the X client
+  concept).
+- *Microsoft:* per-item outcomes from the client map through `microsoftKeywordOutcome`; anything it
+  does not name is UNCONFIRMED. A whole-call UNCONFIRMED from the client is wrapped
+  `unconfirmedKeywordLeverError`; a whole-call definite failure (e.g. the entity-level
+  `negativeKeywordEntityError`) is returned as is.
+- *When the call errors.* Reddit and X answer per item whenever any item has a definite outcome —
+  `ALREADY_PRESENT`, `APPLIED`, or FAILED with `REJECTED` / `NOT_SENT`. Only a batch whose every item
+  is UNCONFIRMED is returned as `unconfirmedKeywordLeverError` (`Unconfirmed()`), the service's
+  verify-before-retry arm. On Reddit, `ALREADY_PRESENT` items found before the PATCH are kept
+  whatever happens to the write. Microsoft errors only on a whole-call failure.
+
+The pre-reads (`GetAdGroupTargeting`, `ListLineItemTargetingCriteria`) and the X create echo are
+checked with `identityjson` before they are decoded (#359): a refused pre-read is a definite
+failure with nothing sent, and a refused X echo is UNCONFIRMED, because the write was sent.
+
+**Tests.**
+- `reddit_negative_keywords_test.go`: `TestReddit_AddNegativeKeywords_OffByDefault` (`"TRUE"` is not
+  `"true"`; zero requests); `_AppendsToExcludedKeywordsThenConfirms` (one PATCH, `null` element kept,
+  every other member as read, `ALREADY_PRESENT` not resent); `_CreatesAnAbsentMember`;
+  `_AllAlreadyPresentWritesNothing`; `_RefusalsWriteNothing` (Exact, Phrase, a disallowed
+  character, duplicates incl. Unicode folding, missing/blank revision, provenance unknown,
+  unprovisioned, another campaign's ad group, stale revision, an unreadable `excluded_keywords`, over
+  2,000, `null` elements counting toward 2,000 — no PATCH, and no request at all for the local ones);
+  `_AmbiguityIsUnconfirmed` (5xx, 429, a re-read missing the keyword or with another dimension moved,
+  a wrong echo — each with the PATCH sent exactly once; a 400 answered per item as `REJECTED`);
+  `_MixedBatchKeepsAlreadyPresentWhenTheWriteFails`.
+- `twitter_negative_keywords_test.go`: `TestTwitter_AddNegativeKeywords_OnePostPerKeywordMappedToNE`;
+  `_AlreadyPresentIgnoresCase`; `_PerItemOutcomes` (a 400 REJECTED, a 429 and an `EQ` echo UNCONFIRMED, one
+  APPLIED, four POSTs, no upstream text leaked); `_NotSentIsDefinite`; `_UnicodeCaseFolding`;
+  `_AllAmbiguousIsUnconfirmed` (502, 429, `"data": null` — one POST each);
+  `_DeadlineSendsNothing`; `_RefusalsPostNothing` (over 20, unknown match type, duplicate, a
+  revision, provenance unknown, account mismatch, no recorded line item, another campaign's or a
+  deleted line item, an unreadable criteria list); `TestTwitterNegativeKey_AgreesAcrossBothSources`,
+  `_StillSeparatesDifferentKeywords`, `_TargetingTypeStillSeparates`.
+- `microsoft_keywords_test.go`: `TestMicrosoft_AddNegativeKeywords_HappyPath` (an id → APPLIED, a
+  4335 → ALREADY_PRESENT, the campaign id taken from the row); `_RefusedBeforeAnyCall` (Broad, over
+  100 characters, a malformed batch beating unprovisioned, a revision, a Unicode-folded duplicate,
+  unprovisioned, provenance unknown, account mismatch — Microsoft never called);
+  `_AmbiguityIsUnconfirmed` (a 429 is `Unconfirmed()` and not retried).
 
 ## Also here: the audience EXPLORER (LFXV2-2770)
 
@@ -4438,11 +4708,13 @@ and scope faults beat an inactive connection, 401 → expired, 5xx unclassified 
 
 Marked refusals: the pre-send validation in each client's `CreateCampaign`, up to its first
 request. That is Reddit up to the account-verify GET (name/project/budget/dates/objective/video
-goal/**conversion pixel**/CTA/headline/account id/geo), LinkedIn up to the group find-or-create
+goal/**conversion pixel**/CTA/headline/account id/geo, the composed campaign and ad-group
+name lengths, and the **campaign window** — end not after the nudged start), LinkedIn up to the group find-or-create
 (account, targeting profile, event name, **budget minimums**, variants, project, geo, schedule,
 name lengths), Meta up to the account preflight GET (variants and lengths, budget, currency
 offset, dates, account/page id, project, event, IG id, DSA pair, objective, placements, promoted
-object, variant image choice), X up to `verifyAccount` (event, project, budget, date format and
+object, variant image choice, and the two **geo refusals** — no usable geo targets, all geos
+regulated), X up to `verifyAccount` (event, project, budget, date format and
 calendar validity (`validateDate`), date order and lead time, tweet id, composed tweet length,
 image placement and `validateImageInput`, account/funding instrument, and the composed
 campaign and line-item name lengths), and Microsoft up to geo resolution (account/customer ids, project, event, budget,
@@ -4453,7 +4725,32 @@ way: `resolveLinkedInImages`, Meta `resolveVariantAssets`, Microsoft `resolveMic
 (including its `ValidateImage`), X `resolveTwitterImage` and Reddit `checkRedditAsset`. That
 covers malformed ids, a missing or foreign asset, size and byte limits, a full reservation, and
 empty bytes. Repository-error wraps stay unmarked. Reddit's composed campaign / ad-group name length
-checks are NOT: they run after the account-verify GET, so a request was already sent. Dispatcher-authored ones
+checks used to run after the account-verify GET and so stayed unmarked; they now run before it
+(every input — event name, project, objective, normalized geos — is settled by then) and are
+marked, pinned with zero upstream requests by `TestCreateCampaign_ComposedNameRefusedBeforeAnyRequest`
+and the "reddit composed ad group name too long" refusal case. The rest of the #208
+ordering audit (every non-Google create path, 2026-10-15) moved two more groups the same way:
+Reddit's window check (its inputs are the parsed StartDate/EndDate and the clock; both instants
+it quotes are `toRedditTimestamp` renderings, so no caller text) and Meta's two geo refusals
+(the caller's GeoTargets and static tables only; each dropped code goes through
+`domain.CallerValue`, so the "dropped" list now quotes each code). Meta still appends the
+"dropped"/"skipped" Steps lines after "Account verified", in the same order. Their entries go
+through the same `callerValueList` / `domain.CallerValue` path as the refusals, because the
+Steps are saved on the create job. So on a SUCCESSFUL create a URL-shaped geo entry reads
+"(value withheld)", and every listed code is quoted (`Geo targets dropped (…): (value withheld),
+"IR"`). This is a deliberate change to success-path Steps text; before it the lines joined the
+raw uppercased entries.
+Pinned by `TestCreateCampaign_WindowRefusedBeforeAnyRequest`,
+`TestCreateCampaign_GeoRefusalsBeforeAnyRequest`, `TestCreateCampaignGeoStepsWithholdURLEntries`
+and three refusal cases. Deliberately NOT
+moved: LinkedIn's window re-checks in `findOrCreateCampaignGroup` / `createSponsoredCampaign`
+(clock-race re-checks of what `validateSchedule` already refused up front), Meta's minor-unit
+budget bounds (the offset is the account currency's, from the preflight), Reddit's late
+`ImageURLSource` URL check (the URL is minted late on purpose), and HubSpot's hero-image URL
+parse/scheme checks (best-effort after the clone; refusing up front would turn a degrade into a
+failed create). X, Microsoft and HubSpot had no other reachable deterministic check after their
+first request: what remains there is either upstream-dependent or a backstop repeating an
+earlier check. Dispatcher-authored ones
 are marked too: Reddit's stored-asset choice, LinkedIn's inactive / incomplete / missing-org /
 no-variant / foreign-account refusals, X's missing funding instrument, and HubSpot's missing
 `sourceEmailId` and send-list-in-suppression check. Every CALLER or connection value a marked

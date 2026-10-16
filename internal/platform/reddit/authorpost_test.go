@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 // TestCreateCampaign_AuthorsPostFromImageURL exercises the author-a-post path:
@@ -555,7 +557,7 @@ func TestCreateCampaign_AuthorPostAmbiguousIsUnconfirmed(t *testing.T) {
 
 // TestCreateCampaign_AuthorPostPreSendIsDefinite pins the THIRD arm of the
 // classification: a proven pre-send failure. The posts endpoint is pointed at a
-// closed port, so the dial is refused — isPreSendDialError proves no request
+// refused address, so the dial is refused — isPreSendDialError proves no request
 // bytes reached Reddit, request() returns the error PLAIN (not wrapped as a
 // transportError), and createOutcomeAmbiguous is false.
 //
@@ -569,12 +571,6 @@ func TestCreateCampaign_AuthorPostPreSendIsDefinite(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tok", "expires_in": 3600})
 	}))
 	defer tokenSrv.Close()
-
-	// A server started and immediately closed leaves a port nothing listens on, so
-	// the POST /profiles/.../posts dial is REFUSED (a proven pre-send failure).
-	deadSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := deadSrv.URL
-	deadSrv.Close()
 
 	handler := http.NewServeMux()
 	handler.HandleFunc("/api/v3/", func(w http.ResponseWriter, r *http.Request) {
@@ -597,9 +593,10 @@ func TestCreateCampaign_AuthorPostPreSendIsDefinite(t *testing.T) {
 		WithBaseURL(apiSrv.URL+"/api/v3"),
 		WithTokenURL(tokenSrv.URL),
 		WithNowFunc(fixedRedditClock()),
-		WithHTTPClient(&http.Client{Transport: &postsToDeadPortTransport{
-			base:    http.DefaultTransport,
-			deadURL: deadURL,
+		// The POST /profiles/.../posts dial is REFUSED (a proven pre-send failure).
+		WithHTTPClient(&http.Client{Transport: &postsToRefusedTransport{
+			base:       platformtest.RefusedDialTransport(t),
+			refusedURL: platformtest.RefusedURL,
 		}}),
 	)
 
@@ -651,18 +648,18 @@ func TestCreateCampaign_AuthorPostPreSendIsDefinite(t *testing.T) {
 	}
 }
 
-// postsToDeadPortTransport redirects ONLY the promoted-post authoring request
-// (POST /profiles/.../posts) to a port nothing listens on, so its dial is
-// refused — a proven pre-send failure. Every other request is passed through
+// postsToRefusedTransport redirects ONLY the promoted-post authoring request
+// (POST /profiles/.../posts) to platformtest.RefusedURL, whose dial refusedDialTransport
+// refuses — a proven pre-send failure. Every other request is passed through
 // untouched so the campaign and ad group still get created normally.
-type postsToDeadPortTransport struct {
-	base    http.RoundTripper
-	deadURL string
+type postsToRefusedTransport struct {
+	base       http.RoundTripper
+	refusedURL string
 }
 
-func (t *postsToDeadPortTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+func (t *postsToRefusedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/profiles/") && strings.HasSuffix(r.URL.Path, "/posts") {
-		dead, err := url.Parse(t.deadURL)
+		dead, err := url.Parse(t.refusedURL)
 		if err != nil {
 			return nil, err
 		}

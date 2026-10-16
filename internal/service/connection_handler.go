@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -204,14 +205,14 @@ func forcedSystemAdsAccount() bool {
 //
 // currentAccountID is what the row ALREADY stores, and the guard fires on a CHANGE rather than
 // on presence, which is what makes the paragraph above true rather than aspirational. account_id
-// is still Required on LinkedIn, Reddit and Microsoft (design/connection.go's
+// is still Required on LinkedIn and Reddit (design/connection.go's
 // Required("account_id") on each config type, generated as a non-pointer string), so a caller
 // editing only the label MUST resend the id it already stored — PUT is a full replace and
 // omitting it is not an option the schema offers. A presence check therefore returned 400 for
 // every update those providers can express, leaving their update endpoints dead while the flag is
 // on, and forced credentials-first callers to CLEAR a selection to rename a connection. X left
-// that group in LFXV2-3319 and is now credentials-first like Google Ads and Meta, so its
-// account_id CAN be omitted, reaching this guard as "". What that means depends on the ROW, and
+// that group in LFXV2-3319 and Microsoft in issue #181; both are now credentials-first like
+// Google Ads and Meta, so their account_id CAN be omitted, reaching this guard as "". What that means depends on the ROW, and
 // both outcomes are correct: against a row with no selection it is the both-empty no-op below;
 // against a row that HAS one it is a CLEAR, which is permitted deliberately (PUT is a full
 // replace, and refusing to clear would trap the connection in the state the flag found it in).
@@ -311,11 +312,11 @@ func (s *ConnectionService) createConn(ctx context.Context, c *model.Connection,
 	// is by definition NEWLY set. Create therefore keeps rejecting on presence, which is the
 	// same rule as update's, evaluated against an empty current value.
 	//
-	// The consequence is deliberate and worth stating: while the flag is on, LinkedIn, Reddit
-	// and Microsoft cannot be CONNECTED at all, because account_id is Required on their
-	// create bodies too. X left that set in LFXV2-3319 — its account_id is now optional, so an
-	// account-less X connection CAN be created while the flag is on, and the guard is satisfied
-	// because "" is not a newly-set id. That is the invariant working, not a second instance of the update
+	// The consequence is deliberate and worth stating: while the flag is on, LinkedIn and
+	// Reddit cannot be CONNECTED at all, because account_id is Required on their create bodies
+	// too. X left that set in LFXV2-3319 and Microsoft in issue #181 — their account_id is now
+	// optional, so an account-less X or Microsoft connection CAN be created while the flag is
+	// on, and the guard is satisfied because "" is not a newly-set id. That is the invariant working, not a second instance of the update
 	// defect — the id would be landing fresh on a project row, which is exactly the write that
 	// outlives the flag. Update differs only because a value already sitting on the row is not
 	// something this write is putting there.
@@ -359,8 +360,72 @@ func (s *ConnectionService) getConn(ctx context.Context, projectID string, p mod
 	return c, mapErr(gerr)
 }
 
-// updateConn replaces config, gated on the If-Match version.
+// updateConn replaces config, gated on the If-Match version. It applies no omission guard to
+// the provider config: see updateConnGuarded, which every provider except Google Ads uses.
 func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection, ifMatch *string) (*model.Connection, error) {
+	return s.updateConnGuarded(ctx, c, ifMatch, nil)
+}
+
+// optionalConfig is the OPTIONAL provider-config keys of an update payload, exactly as the
+// caller sent them: a nil value means the key was omitted (or sent as JSON null, which Goa
+// decodes identically), and a pointer to "" means the caller sent an explicit empty string.
+// Required keys do not belong here — the generated decoder already refuses a body without them.
+type optionalConfig map[string]*string
+
+// omittedConfigKeys returns the keys of sent that the caller omitted, sorted so a refusal names
+// them in a stable order.
+func omittedConfigKeys(sent optionalConfig) []string {
+	var keys []string
+	for k, v := range sent {
+		if v == nil {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// rejectOmittedConfigClear refuses an update that would clear a stored provider-config value
+// only because the caller left its key out (issue #300).
+//
+// PUT is a full replace, so an omitted optional key is written as "" — and for several keys
+// that empties a value the provider needs (Reddit's conversion_pixel_id is required on every
+// campaign create) or relaxes a control (X's as_user_id). The full-replace contract stays: a
+// caller who SENDS a key gets exactly what it sent, including "" to clear. What is refused is
+// clearing by omission, because a partial body is far more often a caller that does not model
+// the field than a caller that wants it gone.
+//
+// A key the row has no value for is not refused: omitting it writes "" over "", which changes
+// nothing.
+func rejectOmittedConfigClear(omitted []string, stored map[string]string) error {
+	var clearing []string
+	for _, k := range omitted {
+		if stored[k] != "" {
+			clearing = append(clearing, "config."+k)
+		}
+	}
+	if len(clearing) == 0 {
+		return nil
+	}
+	verb := "was"
+	if len(clearing) > 1 {
+		verb = "were"
+	}
+	return &conn.BadRequestError{
+		Code: "400",
+		Message: strings.Join(clearing, ", ") + " " + verb + " omitted, but the connection has a stored value: " +
+			"PUT replaces the whole config, so omitting a field would clear it. Send the current value to keep it, " +
+			`or send "" to clear it deliberately`,
+	}
+}
+
+// updateConnGuarded is updateConn with the omission guard: before any write, it refuses an
+// update whose payload omits a key in optional while the stored row has a value for it.
+//
+// Opting a provider in is one line in its Update adapter: pass its optional config keys, e.g.
+// optionalConfig{"login_customer_id": cfg.LoginCustomerID}, to updateConnGuarded instead of
+// calling updateConn.
+func (s *ConnectionService) updateConnGuarded(ctx context.Context, c *model.Connection, ifMatch *string, optional optionalConfig) (*model.Connection, error) {
 	if err := rejectSystemScope(c.ProjectID); err != nil {
 		return nil, err
 	}
@@ -372,6 +437,11 @@ func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection,
 	if err != nil {
 		return nil, err
 	}
+	// The omission guard needs the stored row only when the payload actually omits a guarded
+	// key. A caller that sends every key pays no extra read, so a full body takes exactly the
+	// path it took before the guard existed.
+	omitted := omittedConfigKeys(optional)
+	forced := forcedSystemGuardApplies(c.Provider)
 	// The forced-system guard needs the CURRENT selection to tell a changed account id from a
 	// merely resent one, so the row is read before the write — but ONLY when that answer can
 	// change the outcome. Gating on forcedSystemGuardApplies — the guard's OWN first line — keeps
@@ -389,8 +459,9 @@ func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection,
 	// Defaulting to "" on failure would be the reverse of fail-closed: an unreadable row would
 	// make every incoming id look newly set and turn a transient database fault into a 400
 	// blaming the caller's body. mapErr renders a genuinely absent row as the 404 the update
-	// would have produced anyway, and the version conflict is still the repository's to decide.
-	if forcedSystemGuardApplies(c.Provider) {
+	// would have produced anyway. The omission guard shares this read, and the version is checked
+	// below before either guard runs.
+	if forced || len(omitted) > 0 {
 		current, gerr := repo.Get(ctx, c.ProjectID, c.Provider)
 		// `current == nil` is checked ALONGSIDE the error, not instead of it.
 		// domain.ConnectionReader (internal/domain/port.go) does not forbid a (nil, nil)
@@ -410,8 +481,24 @@ func (s *ConnectionService) updateConn(ctx context.Context, c *model.Connection,
 		if current == nil {
 			return nil, mapErr(domain.ErrNotFound)
 		}
-		if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID, current.AccountID); err != nil {
-			return nil, err
+		// Both guards must judge the row the write is conditioned on, so the version is
+		// checked before either of them. A read that already shows a different version is the
+		// 412 the write would get, answered now rather than as a 400 about a row the caller
+		// never saw. repo.Update only writes when the row is still at the If-Match version, so
+		// this also closes the race: a writer that moves the row after this read bumps the
+		// version and the write below then fails with 412 instead of clearing a key.
+		if current.Version != version {
+			return nil, mapErr(domain.ErrPreconditionFailed)
+		}
+		if forced {
+			if err := rejectForcedSystemAccountWrite(c.Provider, c.AccountID, current.AccountID); err != nil {
+				return nil, err
+			}
+		}
+		if len(omitted) > 0 {
+			if err := rejectOmittedConfigClear(omitted, current.ProviderConfig); err != nil {
+				return nil, err
+			}
 		}
 	}
 	updated, uerr := repo.Update(ctx, c, version)

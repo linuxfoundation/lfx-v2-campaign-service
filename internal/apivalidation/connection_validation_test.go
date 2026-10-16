@@ -183,6 +183,12 @@ func TestValidateTwitterAdsConnectionConfig_PatternsAndRequired(t *testing.T) {
 		{name: "funding_instrument_id with slash", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp("ly/gyi")}, wantErr: true, errSubstr: "funding_instrument_id"},
 		{name: "overlong account_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp(strings.Repeat("a", 65)), FundingInstrumentID: strp("lygyi")}, wantErr: true, errSubstr: "account_id"},
 		{name: "overlong funding_instrument_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{AccountID: strp("8r7gb"), FundingInstrumentID: strp(strings.Repeat("a", 65))}, wantErr: true, errSubstr: "funding_instrument_id"},
+		{name: "numeric as_user_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp("1234567890123456789")}},
+		// Issue #300: an omitted as_user_id is refused on PUT while one is stored, so "" is the
+		// only way to clear a declared identity and the transport must let it through.
+		{name: `empty as_user_id (deliberate clear)`, body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp("")}},
+		{name: "non-numeric as_user_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp("abc")}, wantErr: true, errSubstr: "as_user_id"},
+		{name: "overlong as_user_id", body: &connsrv.TwitterAdsConnectionConfigRequestBody{FundingInstrumentID: strp("lygyi"), AsUserID: strp(strings.Repeat("9", 33))}, wantErr: true, errSubstr: "as_user_id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -360,8 +366,14 @@ func TestValidateRedditAdsConnectionConfig_AccountIDPattern(t *testing.T) {
 //
 // customer_id admits "" and account_id does not, and the asymmetry is the providers' own:
 // microsoft.ValidateCustomerID treats an empty customer_id as "no customer configured" — a
-// supported state in which discoveryCustomerIDs walks every customer the credential reaches —
-// while account_id is Required and has no unselected state on this provider.
+// supported state in which discoveryCustomerIDs walks every customer the credential reaches.
+//
+// account_id is no longer REQUIRED (issue #181 made Microsoft credentials-first, as LFXV2-3319
+// did X), so an OMITTED account_id is the legal bootstrap state — the connection is created
+// with credentials alone and pointed at an account after discovery. Goa's Required is a
+// presence check on the JSON KEY, so relaxing it makes ABSENCE legal without making a
+// malformed PRESENT value legal: "empty account_id" still fails (the pattern rejects ""), as
+// do the injection, dashed, overlong and zero cases. Only the missing-key case moved.
 func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -372,7 +384,8 @@ func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
 		{name: "digits", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("9999999")}},
 		{name: "customer_id absent", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567")}},
 		{name: "customer_id empty (no customer configured)", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("")}},
-		{name: "missing account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{}, wantErr: true, errSubstr: "account_id"},
+		{name: "missing account_id is the credentials-first state", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{}},
+		{name: "missing account_id with a customer configured", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{CustomerID: strp("9999999")}},
 		{name: "empty account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("")}, wantErr: true, errSubstr: "account_id"},
 		{name: "non-numeric customer_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("abc")}, wantErr: true, errSubstr: "customer_id"},
 		// A header-injection attempt is the reason the charset is pinned at all.

@@ -53,6 +53,10 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
   `adGroupId`) or line item (X `LineItemID`); the platform must report it live and under THIS
   campaign (an unreported owner is refused like a different one); on X every named criterion
   must be a live, positive keyword criterion of that line item, read before the first DELETE.
+  Both reads run `identityjson.Check` over the RAW body (every page on X) before decoding: a
+  duplicated key, malformed UTF-8 or an unpaired surrogate escape would otherwise resolve
+  silently (last-wins), so it is `ErrTargetingUnreadable` (409, definite) and nothing is written.
+  On X a refused DELETE or negative-keyword POST echo is UNCONFIRMED, since the write was sent.
 - **Provenance and account identity before any call.** The read uses the toggle's check (an
   unrecorded creating account proceeds); the removal fails closed on it, as every mutation does.
 - **Reddit concurrency.** The read returns `revision`, `sha256:` of the whole targeting object's
@@ -105,7 +109,7 @@ argument (Reddit's token, required and non-blank there). For Microsoft and X the
 | Where | `targeting.excluded_keywords` of the recorded ad group — `{"type":["array","null"],"maxItems":2000,"items":{"type":"string"}}`, "The keywords to exclude from targeting." | A keyword targeting criterion of the recorded line item with `operator_type` `NE` ("to set negated targeting, use operator_type=NE"). |
 | Match types | **Broad only.** The member is a plain string list with no match type, so `Exact`/`Phrase` would promise a mode Reddit does not offer (400). | `Broad`→`BROAD_KEYWORD`, `Phrase`→`PHRASE_KEYWORD`, `Exact`→`EXACT_KEYWORD` (the guide's Negative / Negative Phrase / Negative Exact). `UNORDERED_KEYWORD` is deprecated; the legacy `NEGATIVE_*` types now read back as the positive type with `NE`. Microsoft keeps Exact/Phrase. |
 | Write | The removal's whole-targeting PATCH in the other direction: every other member and every existing excluded element sent back as read, the new strings appended. Behind `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`; `revision` required, a stale one 409; over 2,000 array elements — a null element kept from the read counts — is `ErrNegativeKeywordLimit` (409). | One `POST accounts/:account_id/targeting_criteria` per keyword through the account write pacer, at most 20 per request (one write per second inside the 45 s mutation timeout). The batch endpoint (≤ 40) succeeds or fails as a group, so it is not used. |
-| Already there | Exact text already excluded → `ALREADY_PRESENT`, not resent; nothing new → no write. | A live `NE` criterion of the same type and text equal under `textfold.Key` — the one simple-case-fold key also used for request duplicates and the echo check (`strings.ToLower` would split σ/ς) → `ALREADY_PRESENT`, not sent. |
+| Already there | Exact text already excluded → `ALREADY_PRESENT`, not resent; nothing new → no write. | A live `NE` criterion of the same type and text equal under `textfold.Key` after collapsing whitespace — the one simple-case-fold key also used for request duplicates and the echo check (`strings.ToLower` would split σ/ς), with the collapse inside `twitterNegativeKey` because the request side arrives normalised by `NormalizeNegativeKeywordText` and X's stored value does not → `ALREADY_PRESENT`, not sent. |
 | Outcomes | One PATCH, sent once (429 UNCONFIRMED); a re-read must show exactly the excluded list written and the fingerprint of every other member unchanged, else UNCONFIRMED. New items share the write's outcome — APPLIED, FAILED (`REJECTED` by Reddit, `NOT_SENT`) or UNCONFIRMED — and ALREADY_PRESENT items keep theirs; the call errors only when no item has a definite outcome (every item rode on an UNCONFIRMED write). No id. | Per item: APPLIED (+ criterion id as `negative_keyword_id`), FAILED `NOT_SENT` / `REJECTED`, or UNCONFIRMED (transport, 3xx, 5xx, 429, or a 2xx not echoing a live `NE` criterion of that type, line item and keyword — the value compared under `textfold`). `NOT_SENT` is definite; the call errors only when every item is UNCONFIRMED. |
 
 Guards are the removal's, in order: (Reddit) the flag; the batch — the text rules are Microsoft's
@@ -132,7 +136,12 @@ this concept.
   `DeleteTargetingCriterion`; `negative_keywords.go` — `CreateNegativeKeywordCriterion`.
 - `internal/dispatch/reddit_keyword_targeting.go`, `internal/dispatch/twitter_keyword_targeting.go`;
   negatives in `reddit_negative_keywords.go`, `twitter_negative_keywords.go`, with the shared batch
-  check in `negative_keywords.go`; service `brief_negative_keywords.go`.
+  check in `negative_keywords.go`; service `brief_negative_keywords.go`. Per-file detail — the
+  request shapes, guard order, classification and the tests that pin each — is in
+  [internal/dispatch](../code/internal-dispatch.md) ("Reddit, X and Microsoft negative-keyword
+  adapters"), [internal/platform/reddit](../code/internal-platform-reddit.md) ("Ad-group excluded
+  keywords") and [internal/platform/twitter](../code/internal-platform-twitter.md) ("Line-item
+  negative keywords").
 - `internal/service/brief_keyword_targeting.go`; orchestrator `ReadKeywordTargeting` /
   `RemoveKeywordTargeting` (`opReadKeywordTargeting`, `opRemoveKeywordTargeting`).
 - Routes inherit the `briefs(/.*)?` HTTPRoute match and `/briefs/**` RuleSet rule; pinned by

@@ -194,20 +194,21 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   Rolling the image back past `000047` still boots: the release before it recorded no version
   above `000046`, and `golang-migrate` v4.19.1's `Up()` refuses a recorded version its source does
   not contain ("no migration found for version N") before any index check runs. So `Migrate` first
-  reads the recorded version (`schemaIsNewerThanImage`, from #260): when it is CLEAN and above the
-  highest embedded version (read from the migration source, exported as `LatestMigrationVersion`,
+  reads the recorded version (`schemaIsNewerThanImage`, from #260): when it is CLEAN and exactly
+  one above the highest embedded version (read from the migration source, exported as `LatestMigrationVersion`,
   never hard-coded) it skips `Up()`, leaves the recorded version untouched, logs a warning, and
   runs `checkNoInvalidIndexes` as usual — so an invalid index, an impostor, or a missing REQUIRED
   index on the newer schema still refuses boot. A DIRTY newer version, and every other state,
   takes `Up()` exactly as before (a dirty one is still `migrate.ErrDirty`). The assumption is
   expand/contract, one release apart (`migrations/README.md`): a release's schema stays compatible
   with the previous release's binary. Nothing in the chain marks a version as compatible, so the
-  tolerance is not bounded to known versions — it trusts that discipline, and the required-index
-  check is the part of it that is verified. This release keeps the tolerance too, as the rollback
+  tolerance is bounded to that one hop (PR #260 review): a clean version two or more ahead takes
+  `Up()` and its loud "no migration found" refusal. Within the hop it trusts that discipline, and
+  the required-index check is the part of it that is verified. This release keeps the tolerance too, as the rollback
   target for whatever ships after it. Pinned live by
   `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (version set to latest+1 clean → boot
-  succeeds and the version is unchanged; dirty → `ErrDirty`; slot-version index dropped →
-  `ErrMissingRequiredIndex`).
+  succeeds and the version is unchanged; dirty → `ErrDirty`; latest+2 clean → refused; an invalid
+  index → `ErrInvalidIndex`; slot-version index dropped → `ErrMissingRequiredIndex`).
 
   **Per-slot advisory lock, staged one release BEFORE the index drop.** With the three-column
   index gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always
@@ -2121,10 +2122,17 @@ in-flight `Own`'s database step), and closes the session if it gets the slot wit
 deadline (it runs inside the container's shared shutdown budget, `statsLeaseCloseTimeout`; only a
 context with no deadline gets `lockReleaseTimeout`). If it does not, it returns anyway, and the
 `Own` still holding the slot closes the session on its way out — only the slot holder touches the
-session, so it is closed exactly once. The request-path drop stays detached. `StatsJobLeaseLockKeys`
+session, so it is closed exactly once. **The release is prompt but not synchronous with
+`Close`:** pgx sends `Terminate` and closes the socket without waiting for the server, and
+Postgres drops the session's advisory locks only as that backend exits, a few milliseconds later.
+In that window the lock is still held, so another pod's try-lock answers `ErrStatsJobLeaseNotHeld`
+— the safe direction; the single-owner guarantee is unaffected, because the closed lease refuses
+every `Own` from the moment `Close` marks it closed. The request-path drop stays detached. `StatsJobLeaseLockKeys`
 exposes the keys as they appear in `pg_locks` (`objsubid` 2). Live tests:
 `dbtest/stats_job_lease_live_test.go` (two leases cannot both own one account; Close hands it
-over; a terminated owner session loses every lease, another pod takes one and the former owner
+over — the test polls `pg_locks`, bounded at 5s, until no backend holds the lock on two
+consecutive reads, rather than reading `pg_locks` once right after `Close` (not the closed pid in
+`pg_stat_activity`, which Postgres may reuse); a terminated owner session loses every lease, another pod takes one and the former owner
 refuses it but re-acquires the other on a new session; a cancelled or expired check keeps the
 lock in `pg_locks` and the next live check still owns it; no database is Unavailable; with a
 ONE-connection business pool, three accounts' leases sit on one session and an ordinary

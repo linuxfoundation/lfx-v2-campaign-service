@@ -432,7 +432,10 @@ because the dispatcher hands exactly that sentence to an API client.
 rather than becoming zero — nil is what a caller reads as "this campaign does not use this
 field" — while a field that is PRESENT but unparseable sets `AmountUnparseable` instead of
 silently reading as absent; those are opposite facts and only one of them is safe to write
-against. A response echoing a different campaign id is refused.
+against. A response echoing a different campaign id is refused, and so is one echoing **no**
+id (absent, `null` or `""`): it proves nothing about which campaign its fields describe, and an
+absent `dailyBudget` would otherwise read as "this campaign does not use it". This matches
+`GetCampaignSettings` on the same resource and the Reddit and X budget reads.
 
 `UpdateCampaignBudget(ctx, campaignID, amount string, lifetime bool)` sends a single
 `PARTIAL_UPDATE` setting exactly one of the two fields, with the caller's wire string passed
@@ -542,9 +545,11 @@ names `externalWebsiteConversions` in `fields`, and a well-formed empty array (a
 `elements` is rejected as a decode error upstream) is LinkedIn stating the campaign had no
 activity — the metric WAS asked for and the window WAS answered, so a no-activity window is a
 MEASUREMENT of zero, not an absence of one. This matches `googleads.GetCampaignMetrics`'s
-no-rows branch. Per `model.CampaignMetrics.Conversions`, nil is reserved for platforms that
-cannot report a campaign-level count AT ALL (Meta, X, Reddit, HubSpot); LinkedIn is not one of
-them, so returning nil here would assert something false about the platform. Note the two
+no-rows branch. Per `model.CampaignMetrics.Conversions`, nil means "not measured" — the platform
+cannot report it (Meta, X, Reddit, HubSpot), or (LinkedIn, Microsoft) the read was incomplete. An
+empty array is neither: LinkedIn can report the metric and the read is complete, so returning nil
+here would claim an incomplete read that did not happen. Conversely, a nil from this adapter is
+always the incomplete-read case, never "LinkedIn cannot report conversions". Note the two
 branches differ in what the response contains, not in how much is known: an element LinkedIn
 RETURNED without the metric is missing data about activity that happened, while an empty array
 means there was no activity to measure. `Impressions`/`Clicks`/`CostMicros` already answer 0 as

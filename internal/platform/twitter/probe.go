@@ -112,9 +112,9 @@ func ProbeAccountUnreachable(err error) bool {
 // learned about the connection either way: a pre-send failure, a mid-flight transport
 // failure, HTTP 429, or any 5xx.
 //
-// preSendError is checked as well as isPreSendDialError because this client wraps a request
-// that never left the process (OAuth1 signing, request build) in that type rather than
-// letting the dial classifier see it.
+// preSendError is checked as well as isPreSendDialError because this client wraps a dial
+// failure in that type to strip the URL. A signing or request-build failure
+// (requestNotSentError) is inconclusive by the default arm below: it is not an apiError.
 func ProbeInconclusive(err error) bool {
 	if isPreSendDialError(err) {
 		return true
@@ -147,8 +147,8 @@ func ProbeInconclusive(err error) bool {
 }
 
 // ProbeNotSent reports whether err PROVES the FAILING request never left this process — a DNS failure, a
-// connect-time dial refusal, or this client's own preSendError — so the probe's outcome belongs
-// to no platform at all.
+// connect-time dial refusal, this client's own preSendError, or a request it could not sign or
+// build (requestNotSentError) — so the probe's outcome belongs to no platform at all.
 //
 // It is the third member of the probe vocabulary and the only one that is not about the
 // operator's answer: an inconclusive probe reads identically either way. It exists for the
@@ -179,5 +179,9 @@ func ProbeNotSent(err error) bool {
 		return true
 	}
 	var pse *preSendError
-	return errors.As(err, &pse)
+	if errors.As(err, &pse) {
+		return true
+	}
+	var rns *requestNotSentError
+	return errors.As(err, &rns)
 }

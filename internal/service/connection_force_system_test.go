@@ -238,17 +238,17 @@ func TestForceSystem_EveryPaidAdsProviderIsStillGuarded(t *testing.T) {
 // the fifth variant of this PR's recurring defect: a guard that fixes one path and breaks an
 // adjacent one.
 //
-// account_id is Required on LinkedIn, Reddit and Microsoft (design/connection.go's
+// account_id is Required on LinkedIn and Reddit (design/connection.go's
 // Required("account_id") on each config type, generated as a NON-POINTER string). PUT is a full
 // replace on every provider in this API, so a caller renaming a connection has no way to omit
 // the id — the schema will not decode a body without it. A guard that fired on the id being
 // PRESENT therefore returned 400 for every update those providers can express, which is
 // the whole update endpoint, not an edge of it.
 //
-// X left that group in LFXV2-3319 and is now credentials-first, so its account_id is a
-// *string and CAN be omitted. It is still asserted below, with the id PRESENT: re-sending a
-// stored id must remain a no-op for a credentials-first provider too, which is the property
-// this test pins and the one a presence-based guard would break.
+// X left that group in LFXV2-3319 and Microsoft in issue #181; both are now credentials-first,
+// so their account_id is a *string and CAN be omitted. Both are still asserted below, with the
+// id PRESENT: re-sending a stored id must remain a no-op for a credentials-first provider too,
+// which is the property this test pins and the one a presence-based guard would break.
 //
 // Each provider is asserted separately rather than through the shared helper because the bug
 // lived in what the ADAPTERS are obliged to send: reading Required("account_id") off the design
@@ -311,7 +311,7 @@ func TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider(t *t
 		if _, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
 			ProjectID: "cncf",
 			Config: &conn.MicrosoftAdsConnectionConfig{
-				Label: strPtr("CNCF bing"), AccountID: "1234567", CustomerID: strPtr("7654321"),
+				Label: strPtr("CNCF bing"), AccountID: strPtr("1234567"), CustomerID: strPtr("7654321"),
 			},
 			IfMatch: &ifMatch,
 		}); err != nil {
@@ -321,8 +321,9 @@ func TestForceSystem_LabelOnlyUpdateSucceedsForEveryRequiredAccountProvider(t *t
 }
 
 // TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate covers the other half of the same
-// defect, on the providers whose account_id is OPTIONAL (Google Ads, Meta and — since
-// LFXV2-3319 — X; design/connection.go leaves all three out of Required, generated as *string).
+// defect, on the providers whose account_id is OPTIONAL (Google Ads, Meta, X since LFXV2-3319
+// and Microsoft since issue #181; design/connection.go leaves all four out of Required,
+// generated as *string).
 //
 // These could technically satisfy a presence check, but only by sending account_id absent —
 // and because PUT is a full replace, absent CLEARS the column. So the presence check did not
@@ -427,6 +428,53 @@ func TestForceSystem_OptionalAccountProvidersNeedNotClearToUpdate(t *testing.T) 
 			t.Fatalf("clearing an X selection must stay allowed while the flag is on: %v", err)
 		}
 		if got := repo.store[repoKey("cncf", model.ProviderTwitterAds)].AccountID; got != "" {
+			t.Fatalf("account id after an omitted-id PUT = %q, want \"\" — PUT is a full "+
+				"replace, so an absent account_id must CLEAR the selection", got)
+		}
+	})
+
+	// Microsoft joined this group in issue #181 and gets both arms for the same reason X did:
+	// dropping Required("account_id") made the omitted-id body expressible for it too.
+	msRow := func() *model.Connection {
+		return &model.Connection{
+			Version: 1, AccountID: "1234567",
+			ProviderConfig: map[string]string{"customer_id": "9999999"},
+		}
+	}
+	t.Run("microsoft-ads-resend-preserves", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderMicrosoftAds)] = msRow()
+		s := newTestService(t, repo)
+
+		if _, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.MicrosoftAdsConnectionConfig{
+				Label: strPtr("CNCF bing"), AccountID: strPtr("1234567"), CustomerID: strPtr("9999999"),
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("a Microsoft label edit must not require clearing the account id: %v", err)
+		}
+		if got := repo.store[repoKey("cncf", model.ProviderMicrosoftAds)].AccountID; got != "1234567" {
+			t.Fatalf("account id on the row after a label-only update = %q, want %q", got, "1234567")
+		}
+	})
+
+	t.Run("microsoft-ads-omitted-id-clears", func(t *testing.T) {
+		repo := newFakeRepo()
+		repo.store[repoKey("cncf", model.ProviderMicrosoftAds)] = msRow()
+		s := newTestService(t, repo)
+
+		if _, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
+			ProjectID: "cncf",
+			Config: &conn.MicrosoftAdsConnectionConfig{
+				Label: strPtr("CNCF bing"), AccountID: nil, CustomerID: strPtr("9999999"),
+			},
+			IfMatch: &ifMatch,
+		}); err != nil {
+			t.Fatalf("clearing a Microsoft selection must stay allowed while the flag is on: %v", err)
+		}
+		if got := repo.store[repoKey("cncf", model.ProviderMicrosoftAds)].AccountID; got != "" {
 			t.Fatalf("account id after an omitted-id PUT = %q, want \"\" — PUT is a full "+
 				"replace, so an absent account_id must CLEAR the selection", got)
 		}
@@ -662,10 +710,16 @@ func TestForceSystem_CurrentRowReadIsConditional(t *testing.T) {
 		ifMatch := "1"
 		repo.gets = 0
 
+		// Every optional HubSpot config key is SENT (as ""), so the omission guard of issue #300
+		// has nothing to check and needs no read. Omitting them would make that guard read the
+		// row, and this case is about the force-system guard's scope alone.
+		empty := strPtr("")
 		if _, err := s.UpdateHubspot(context.Background(), &conn.UpdateHubspotPayload{
 			ProjectID: "cncf",
-			Config:    &conn.HubspotConnectionConfig{AccountID: "87654321"},
-			IfMatch:   &ifMatch,
+			Config: &conn.HubspotConnectionConfig{
+				AccountID: "87654321", PortalID: empty, SenderEmail: empty, SenderName: empty, BrandKit: empty,
+			},
+			IfMatch: &ifMatch,
 		}); err != nil {
 			t.Fatalf("HubSpot update must stay allowed while force-system mode is on: %v", err)
 		}
@@ -742,5 +796,31 @@ func TestForceSystem_NilCurrentRowDoesNotPanic(t *testing.T) {
 	if _, isNotFound := err.(*conn.NotFoundError); !isNotFound {
 		t.Errorf("err = %T (%v), want *conn.NotFoundError: a (nil, nil) read is the same absence "+
 			"ErrNotFound expresses, and the update would have 404'd on it anyway", err, err)
+	}
+}
+
+// TestForceSystem_StaleIfMatchIs412BeforeTheAccountGuard: with the flag on, a changed account_id
+// AND a stale If-Match, the answer is 412, not the guard's 400. The version is checked before
+// either guard, so a caller holding a stale ETag is told to re-read rather than being refused
+// over a row it never saw.
+func TestForceSystem_StaleIfMatchIs412BeforeTheAccountGuard(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderGoogleAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderGoogleAds, Version: 5, AccountID: "1111111111",
+	}
+	s := newTestService(t, repo)
+	ifMatch := "4"
+
+	_, err := s.UpdateGoogleAds(context.Background(), &conn.UpdateGoogleAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.GoogleAdsConnectionConfig{AccountID: strPtr("8666746580")},
+		IfMatch:   &ifMatch,
+	})
+	if _, ok := err.(*conn.PreconditionFailedError); !ok {
+		t.Fatalf("expected *conn.PreconditionFailedError (412) for a stale If-Match, got %T (%v)", err, err)
+	}
+	if repo.updateCalls != 0 {
+		t.Errorf("repo.Update called %d time(s); a stale update must not write", repo.updateCalls)
 	}
 }

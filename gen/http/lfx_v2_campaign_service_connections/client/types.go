@@ -6840,7 +6840,10 @@ type MetaAdsConnectionConfigRequestBody struct {
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Facebook page ID
 	PageID string `form:"page_id" json:"page_id" xml:"page_id"`
-	// Meta app ID
+	// Meta app ID. On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	AppID *string `form:"app_id,omitempty" json:"app_id,omitempty" xml:"app_id,omitempty"`
 }
 
@@ -6859,7 +6862,11 @@ type RedditAdsConnectionConfigRequestBody struct {
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// Reddit advertiser ID
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// Reddit conversion pixel ID (Reddit Ads → Events Manager)
+	// Reddit conversion pixel ID (Reddit Ads → Events Manager). On update (PUT
+	// replaces the whole config): omitting this field while the connection has a
+	// stored value for it is refused with 400 naming the field. Send the current
+	// value to keep it, or send "" to clear it deliberately. JSON null counts as
+	// omitted.
 	ConversionPixelID *string `form:"conversion_pixel_id,omitempty" json:"conversion_pixel_id,omitempty" xml:"conversion_pixel_id,omitempty"`
 }
 
@@ -6883,7 +6890,11 @@ type TwitterAdsConnectionConfigRequestBody struct {
 	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// X/Twitter funding instrument id (alphanumeric)
 	FundingInstrumentID string `form:"funding_instrument_id" json:"funding_instrument_id" xml:"funding_instrument_id"`
-	// X/Twitter user id authorized to author this connection's tweets (numeric)
+	// X/Twitter user id authorized to author this connection's tweets (numeric, or
+	// "" for none). On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	AsUserID *string `form:"as_user_id,omitempty" json:"as_user_id,omitempty" xml:"as_user_id,omitempty"`
 }
 
@@ -6905,10 +6916,16 @@ type TwitterAdsCredentialsRequestBody struct {
 type MicrosoftAdsConnectionConfigRequestBody struct {
 	// Optional friendly name
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
-	// Microsoft Advertising account ID (positive integer)
-	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
+	// Microsoft Advertising account ID (positive integer). Optional: omit it to
+	// create the connection with credentials only, then choose one from GET
+	// .../connection-microsoft-ads/accounts and set it with PUT.
+	AccountID *string `form:"account_id,omitempty" json:"account_id,omitempty" xml:"account_id,omitempty"`
 	// Microsoft Advertising customer ID (a positive integer, digits only).
-	// Optional: omit it to let the credential's own customers be discovered.
+	// Optional: leave it empty to let the credential's own customers be
+	// discovered. On update (PUT replaces the whole config): omitting this field
+	// while the connection has a stored value for it is refused with 400 naming
+	// the field. Send the current value to keep it, or send "" to clear it
+	// deliberately. JSON null counts as omitted.
 	CustomerID *string `form:"customer_id,omitempty" json:"customer_id,omitempty" xml:"customer_id,omitempty"`
 }
 
@@ -6932,13 +6949,25 @@ type HubspotConnectionConfigRequestBody struct {
 	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
 	// HubSpot list/audience ID
 	AccountID string `form:"account_id" json:"account_id" xml:"account_id"`
-	// HubSpot portal/account ID
+	// HubSpot portal/account ID. On update (PUT replaces the whole config):
+	// omitting this field while the connection has a stored value for it is
+	// refused with 400 naming the field. Send the current value to keep it, or
+	// send "" to clear it deliberately. JSON null counts as omitted.
 	PortalID *string `form:"portal_id,omitempty" json:"portal_id,omitempty" xml:"portal_id,omitempty"`
-	// Default sender address
+	// Default sender address. On update (PUT replaces the whole config): omitting
+	// this field while the connection has a stored value for it is refused with
+	// 400 naming the field. Send the current value to keep it, or send "" to clear
+	// it deliberately. JSON null counts as omitted.
 	SenderEmail *string `form:"sender_email,omitempty" json:"sender_email,omitempty" xml:"sender_email,omitempty"`
-	// Default sender name
+	// Default sender name. On update (PUT replaces the whole config): omitting
+	// this field while the connection has a stored value for it is refused with
+	// 400 naming the field. Send the current value to keep it, or send "" to clear
+	// it deliberately. JSON null counts as omitted.
 	SenderName *string `form:"sender_name,omitempty" json:"sender_name,omitempty" xml:"sender_name,omitempty"`
-	// Per-project brand kit selector
+	// Per-project brand kit selector. On update (PUT replaces the whole config):
+	// omitting this field while the connection has a stored value for it is
+	// refused with 400 naming the field. Send the current value to keep it, or
+	// send "" to clear it deliberately. JSON null counts as omitted.
 	BrandKit *string `form:"brand_kit,omitempty" json:"brand_kit,omitempty" xml:"brand_kit,omitempty"`
 }
 
@@ -15538,8 +15567,8 @@ func ValidateCreateGoogleAdsConflictResponseBody(body *CreateGoogleAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -15999,8 +16028,8 @@ func ValidateCreateLinkedinAdsConflictResponseBody(body *CreateLinkedinAdsConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -16461,8 +16490,8 @@ func ValidateCreateMetaAdsConflictResponseBody(body *CreateMetaAdsConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -16922,8 +16951,8 @@ func ValidateCreateRedditAdsConflictResponseBody(body *CreateRedditAdsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -17383,8 +17412,8 @@ func ValidateCreateTwitterAdsConflictResponseBody(body *CreateTwitterAdsConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -17844,8 +17873,8 @@ func ValidateCreateMicrosoftAdsConflictResponseBody(body *CreateMicrosoftAdsConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -18307,8 +18336,8 @@ func ValidateCreateHubspotConflictResponseBody(body *CreateHubspotConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -18840,8 +18869,8 @@ func ValidateGetGoogleAdsKeywordsConflictResponseBody(body *GetGoogleAdsKeywords
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -18929,8 +18958,8 @@ func ValidateGetGoogleAdsAudienceConflictResponseBody(body *GetGoogleAdsAudience
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -19018,8 +19047,8 @@ func ValidateGetMetaAdsAudienceConflictResponseBody(body *GetMetaAdsAudienceConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -19107,8 +19136,8 @@ func ValidateGetTwitterAdsAudienceConflictResponseBody(body *GetTwitterAdsAudien
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -19196,8 +19225,8 @@ func ValidateGetLinkedinAdsAudienceConflictResponseBody(body *GetLinkedinAdsAudi
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -19285,8 +19314,8 @@ func ValidateGetMicrosoftAdsKeywordsConflictResponseBody(body *GetMicrosoftAdsKe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -19374,8 +19403,8 @@ func ValidateGetMicrosoftAdsAudienceConflictResponseBody(body *GetMicrosoftAdsAu
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -19463,8 +19492,8 @@ func ValidateGetRedditAdsAudienceConflictResponseBody(body *GetRedditAdsAudience
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -19552,8 +19581,8 @@ func ValidateGetRedditAdsKeywordsConflictResponseBody(body *GetRedditAdsKeywords
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -22918,7 +22947,7 @@ func ValidateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.funding_instrument_id", body.FundingInstrumentID, utf8.RuneCountInString(body.FundingInstrumentID), 64, false))
 	}
 	if body.AsUserID != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.as_user_id", *body.AsUserID, "^[0-9]+$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.as_user_id", *body.AsUserID, "^([0-9]+)?$"))
 		if utf8.RuneCountInString(*body.AsUserID) > 32 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.as_user_id", *body.AsUserID, utf8.RuneCountInString(*body.AsUserID), 32, false))
 		}
@@ -22941,7 +22970,7 @@ func validateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".funding_instrument_id", body.FundingInstrumentID, utf8.RuneCountInString(body.FundingInstrumentID), 64, false))
 	}
 	if body.AsUserID != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern(path+".as_user_id", *body.AsUserID, "^[0-9]+$"))
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".as_user_id", *body.AsUserID, "^([0-9]+)?$"))
 		if utf8.RuneCountInString(*body.AsUserID) > 32 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".as_user_id", *body.AsUserID, utf8.RuneCountInString(*body.AsUserID), 32, false))
 		}
@@ -22952,9 +22981,11 @@ func validateTwitterAdsConnectionConfigRequestBody(body *TwitterAdsConnectionCon
 // ValidateMicrosoftAdsConnectionConfigRequestBody runs the validations defined
 // on microsoft-ads-connection-config
 func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody) (err error) {
-	err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", body.AccountID, "^[1-9][0-9]{0,17}$"))
-	if utf8.RuneCountInString(body.AccountID) > 18 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 18, false))
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.account_id", *body.AccountID, "^[1-9][0-9]{0,17}$"))
+		if utf8.RuneCountInString(*body.AccountID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 18, false))
+		}
 	}
 	if body.CustomerID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.customer_id", *body.CustomerID, "^([1-9][0-9]{0,17})?$"))
@@ -22969,9 +23000,11 @@ func ValidateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectio
 // microsoft-ads-connection-config and reports errors using the path supplied
 // by its caller
 func validateMicrosoftAdsConnectionConfigRequestBody(body *MicrosoftAdsConnectionConfigRequestBody, path string) (err error) {
-	err = goa.MergeErrors(err, goa.ValidatePattern(path+".account_id", body.AccountID, "^[1-9][0-9]{0,17}$"))
-	if utf8.RuneCountInString(body.AccountID) > 18 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".account_id", body.AccountID, utf8.RuneCountInString(body.AccountID), 18, false))
+	if body.AccountID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".account_id", *body.AccountID, "^[1-9][0-9]{0,17}$"))
+		if utf8.RuneCountInString(*body.AccountID) > 18 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".account_id", *body.AccountID, utf8.RuneCountInString(*body.AccountID), 18, false))
+		}
 	}
 	if body.CustomerID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern(path+".customer_id", *body.CustomerID, "^([1-9][0-9]{0,17})?$"))

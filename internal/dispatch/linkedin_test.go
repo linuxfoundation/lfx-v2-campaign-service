@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -58,6 +59,30 @@ func TestLinkedIn_PreCreateErrorsReleaseClaim(t *testing.T) {
 				t.Errorf("a pre-create failure must be NoUpstreamCreate, got %T: %v", err, err)
 			}
 		})
+	}
+}
+
+// TestLinkedIn_DispatchIsGovernedByTheForcedSystemFlag pins WHICH credential entry point Dispatch
+// hands resolveLinkedInCredentials. A create is governed by LFX_FORCE_SYSTEM_ADS_ACCOUNT
+// (d.creds.resolve), not by a campaign's recorded creation account (existingResolver) — there is
+// no campaign yet. Passing existingResolver("") instead would read the project's own row first
+// and create on the project's account while forcing is on, with every other Dispatch test green.
+// The observable is the scope the repository is asked for: forced creation never reads the
+// project row. The config is deliberately nil so Dispatch stops after resolution.
+func TestLinkedIn_DispatchIsGovernedByTheForcedSystemFlag(t *testing.T) {
+	t.Setenv(constants.EnvForceSystemAdsAccount, "true")
+	sys := activeLinkedInConn(goodLinkedInCreds)
+	sys.AccountID = "999999999"
+	repo := &scopedConnReader{rows: map[string]*model.Connection{
+		"cncf":                activeLinkedInConn(goodLinkedInCreds),
+		model.SystemProjectID: sys,
+	}}
+	d := NewLinkedInDispatcher(repo, identityEncryptor{})
+	if _, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, nil); !isNoUpstreamCreate(err) {
+		t.Fatalf("want a pre-create failure from the nil config, got %v", err)
+	}
+	if len(repo.gets) != 1 || repo.gets[0] != model.SystemProjectID {
+		t.Errorf("Dispatch asked the repository for %q, want only the LF system scope: forcing governs creation", repo.gets)
 	}
 }
 
@@ -193,12 +218,11 @@ func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
 	// safe because the platform error's chain stops HERE. A *url.Error inside it renders the
 	// full discovery request URL, pagination cursor included.
 	t.Run("an inconclusive walk becomes the domain sentinel and carries no request url", func(t *testing.T) {
-		// A closed server: the dial fails, which is the real inconclusive case and the one
+		// A refused dial: the request fails, which is the real inconclusive case and the one
 		// whose error carries the URL.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-		closedURL := srv.URL
-		srv.Close()
-		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(closedURL))
+		closedURL := platformtest.RefusedURL
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+			linkedin.WithBaseURL(closedURL), linkedin.WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)}))
 		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
 		if err == nil {
 			t.Fatal("VerifyAccountOrg: want an error when ad-account discovery cannot be reached")
@@ -1031,9 +1055,9 @@ func TestLinkedIn_ReadMetrics_UnsupportedWindowBeatsUnusableConnection(t *testin
 // cannot repair a row it does not own. Both scopes are exercised by
 // TestLinkedIn_UnusableConnectionIsTaggedOnEveryPath in connection_defect_tagging_test.go.
 //
-// Deliberately covers ONLY ToggleStatus and ReadMetrics (LFXV2-3196). Dispatch keeps its own
-// inline checks because it wraps them in notCreated() to release the dispatch claim — a
-// different contract, covered by TestLinkedIn_PreCreateErrorsReleaseClaim above.
+// Covers Dispatch as well as ToggleStatus and ReadMetrics (LFXV2-3196): all three resolve
+// through resolveLinkedInCredentials. Dispatch additionally wraps the error in notCreated() to
+// release the dispatch claim, which its row below asserts alongside the sentinels.
 // A whitespace-padded access token must be trimmed ONCE, in the helper, so both callers get the
 // same value. An earlier revision trimmed only for the empty check and returned the raw token:
 // ToggleStatus then passed the padded token to NewClient while ReadMetrics trimmed it again, so
@@ -1051,10 +1075,10 @@ func TestLinkedIn_AccessTokenIsTrimmedOnceInTheHelper(t *testing.T) {
 	}
 }
 
-// Dispatch must ADOPT the trimmed token, not merely test it — and this is the case the helper
-// test above cannot reach, because Dispatch does not go through resolveLinkedInCredentials; it
-// decodes inline. An earlier revision only tested TrimSpace(token) == "" and then sent the raw
-// value, so a padded stored credential listed accounts successfully through discovery (which
+// Dispatch must ADOPT the trimmed token, not merely test it. Dispatch now resolves through
+// resolveLinkedInCredentials, so the helper test above covers the value; this pins it on the
+// WIRE for the create path, which once decoded inline. An earlier revision only tested
+// TrimSpace(token) == "" and then sent the raw value, so a padded stored credential listed accounts successfully through discovery (which
 // shares the helper) and was rejected upstream on create: the same connection working on one
 // path and failing on the other, which is the misleading-discovery state the helper exists to
 // prevent.
@@ -1158,13 +1182,25 @@ func TestLinkedIn_UnusableReasonsAreClassified(t *testing.T) {
 	}
 	entryPoints := []struct {
 		name string
-		call func(d *LinkedInDispatcher) error
+		call func(t *testing.T, d *LinkedInDispatcher) error
 	}{
-		{"ToggleStatus", func(d *LinkedInDispatcher) error {
+		{"Dispatch", func(t *testing.T, d *LinkedInDispatcher) error {
+			camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderLinkedInAds, nil)
+			if camp != nil {
+				t.Errorf("Dispatch returned a campaign %+v alongside a connection defect", camp)
+			}
+			// Still a pre-create failure: routing through the shared helper must not cost the
+			// claim release, or a fixed connection could never be retried.
+			if !isNoUpstreamCreate(err) {
+				t.Errorf("Dispatch error %v is not NoUpstreamCreate, so the dispatch claim is retained", err)
+			}
+			return err
+		}},
+		{"ToggleStatus", func(t *testing.T, d *LinkedInDispatcher) error {
 			camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "777"}
 			return d.ToggleStatus(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.CampaignRunPaused)
 		}},
-		{"ReadMetrics", func(d *LinkedInDispatcher) error {
+		{"ReadMetrics", func(t *testing.T, d *LinkedInDispatcher) error {
 			camp := &model.Campaign{Platform: model.ProviderLinkedInAds, PlatformCampaignID: "777"}
 			_, err := d.ReadMetrics(context.Background(), "proj", model.ProviderLinkedInAds, camp, model.MetricsWindowLast30Days)
 			return err
@@ -1175,7 +1211,7 @@ func TestLinkedIn_UnusableReasonsAreClassified(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(ep.name+"/"+tc.name, func(t *testing.T) {
 				d := NewLinkedInDispatcher(fakeConnReader{conn: tc.conn}, tc.enc)
-				err := ep.call(d)
+				err := ep.call(t, d)
 
 				if err == nil {
 					t.Fatalf("want an error for %s, got nil", tc.name)

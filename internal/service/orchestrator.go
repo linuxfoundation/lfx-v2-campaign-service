@@ -353,10 +353,12 @@ type BudgetWriter interface {
 //     automated or unreported; it must never send a strategy field itself.
 //
 // The bid is written AT THE LEVEL THE CREATE PATH PUT IT — for the platforms wired today, the
-// one ad group (Microsoft, Reddit), ad set (Meta) or line item (X) this service created for the
-// campaign, named by the row's recorded result. A row recording none is refused rather than
-// resolved by listing children upstream: choosing which of several to re-bid is a decision this
-// endpoint does not make.
+// ad group (Google Ads, Microsoft, Reddit), ad set (Meta) or line item (X) this service created
+// for the campaign, named by the row's recorded result. A row recording none is refused rather
+// than resolved by listing children upstream: choosing which of several to re-bid is a decision
+// this endpoint does not make. A row recording SEVERAL is refused for the same reason — Google
+// Ads is the first platform whose create path can record more than one ad group, and siblings
+// carry independent bids, so there is no single bid the request names.
 type BidWriter interface {
 	// WriteBid sets the campaign's manual max CPC bid on the platform. campaign is the
 	// persisted row, supplied so the adapter can reach PlatformCampaignID, the creation
@@ -878,6 +880,7 @@ const (
 	opRemoveKeywordTargeting     = "remove_keyword_targeting"
 	opReadMetaAdSets             = "read_meta_ad_sets"
 	opToggleMetaAdSetStatus      = "toggle_meta_ad_set_status"
+	opReadMetaAds                = "read_meta_ads"
 	opVerifyAccountOrg           = "verify_account_org"
 	opProbeConnection            = "probe_connection"
 	opListAccountCampaigns       = "list_account_campaigns"
@@ -2583,9 +2586,9 @@ func (o *Orchestrator) ToggleCampaignStatus(ctx context.Context, projectID strin
 	// part 2) was an extraction rather than an annotation: ToggleStatus validated the
 	// connection inline across four checks (inactive status, credential decode, incomplete
 	// credentials, missing account id) with no shared helper to put the tagging in. The new
-	// helper serves ToggleStatus and ReadMetrics, the two paths that reach this classification.
-	// Dispatch keeps its own inline validation, because its failures are wrapped in
-	// notCreated() to release the dispatch claim — a contract this helper does not carry.
+	// helper serves ToggleStatus and ReadMetrics, the two paths that reach this classification,
+	// and Dispatch too, which wraps its errors in notCreated() itself to release the dispatch
+	// claim — a contract the helper does not carry.
 	//
 	// Meta's tagging deliberately stops short of a missing account id HERE, because
 	// ToggleStatus never reads AccountConfig.AccountID (a status update targets the campaign

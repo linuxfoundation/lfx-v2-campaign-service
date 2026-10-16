@@ -670,6 +670,91 @@ func TestInstallRequiresAnAccountIDWhereNothingCanSupplyOneLater(t *testing.T) {
 	}
 }
 
+// TestInstallMicrosoftIsCredentialsFirst pins Microsoft's admission to accountDiscoveryProviders
+// (issue #181), made in the same change that dropped Required("account_id") from
+// MicrosoftAdsConnectionConfig. It walks the whole CLI lifecycle rather than the one install,
+// because what admission changes is not a single call but which sequence of runs completes:
+//
+//  1. install with credentials only — legal now, refused before;
+//  2. ... with or without -config customer_id, which was never a choice this defers;
+//  3. rerun with the -account-id discovery returned, which binds it and KEEPS customer_id;
+//  4. -clear-account-id returns the row to the credentials-first state.
+//
+// It also pins what admission must NOT relax: the shape rules still run on the credentials-first
+// path, so a customer_id no Microsoft customer can have is refused even with no account id.
+func TestInstallMicrosoftIsCredentialsFirst(t *testing.T) {
+	msCreds := []byte(`{"client_id":"ci","client_secret":"cs","refresh_token":"rt","developer_token":"dt"}`)
+	ctx := context.Background()
+
+	for name, cfg := range map[string]map[string]string{
+		"no customer configured": nil,
+		"customer configured":    {"customer_id": "9999999"},
+	} {
+		t.Run("first install, "+name, func(t *testing.T) {
+			repo := &stubRepo{}
+			if err := InstallSystemCredentials(ctx, repo, fakeEnc{},
+				model.ProviderMicrosoftAds, "", false, cfg, msCreds); err != nil {
+				t.Fatalf("microsoft has discovery AND names the missing choice, so credentials-first "+
+					"must be legal: %v", err)
+			}
+			if repo.created == nil {
+				t.Fatalf("an account-less microsoft row wrote nothing; calls = %v", repo.calls)
+			}
+			if repo.created.AccountID != "" {
+				t.Fatalf("created.AccountID = %q, want it left empty for the picker to fill", repo.created.AccountID)
+			}
+			if got, want := repo.created.ProviderConfig["customer_id"], cfg["customer_id"]; got != want {
+				t.Fatalf("created customer_id = %q, want %q", got, want)
+			}
+		})
+	}
+
+	t.Run("rotation binds the discovered account and keeps customer_id", func(t *testing.T) {
+		repo := &stubRepo{row: &model.Connection{
+			ProjectID: model.SystemProjectID, Provider: model.ProviderMicrosoftAds,
+			AccountID: "", ProviderConfig: map[string]string{"customer_id": "9999999"},
+			Version: 3, Status: model.StatusActive,
+		}}
+		if err := InstallSystemCredentials(ctx, repo, fakeEnc{},
+			model.ProviderMicrosoftAds, "1234567", false, nil, msCreds); err != nil {
+			t.Fatalf("binding a discovered account to a credentials-first row: %v", err)
+		}
+		if repo.updated == nil || repo.updated.AccountID != "1234567" {
+			t.Fatalf("rotation did not bind the account id: %+v", repo.updated)
+		}
+		if repo.updated.ProviderConfig["customer_id"] != "9999999" {
+			t.Fatalf("rotation lost customer_id: %+v", repo.updated.ProviderConfig)
+		}
+	})
+
+	t.Run("clear-account-id returns the row to credentials-first", func(t *testing.T) {
+		repo := &stubRepo{row: &model.Connection{
+			ProjectID: model.SystemProjectID, Provider: model.ProviderMicrosoftAds,
+			AccountID: "1234567", ProviderConfig: map[string]string{"customer_id": "9999999"},
+			Version: 5, Status: model.StatusActive,
+		}}
+		if err := InstallSystemCredentials(ctx, repo, fakeEnc{},
+			model.ProviderMicrosoftAds, "", true, nil, msCreds); err != nil {
+			t.Fatalf("-clear-account-id on a discovery provider must be legal: %v", err)
+		}
+		if repo.updated == nil || repo.updated.AccountID != "" {
+			t.Fatalf("clear did not drop the account id: %+v", repo.updated)
+		}
+	})
+
+	t.Run("shape rules still run with no account id", func(t *testing.T) {
+		repo := &stubRepo{}
+		err := InstallSystemCredentials(ctx, repo, fakeEnc{},
+			model.ProviderMicrosoftAds, "", false, map[string]string{"customer_id": "0"}, msCreds)
+		if err == nil {
+			t.Fatal("customer_id 0 names no Microsoft customer and must be refused on the credentials-first path too")
+		}
+		if repo.created != nil || repo.updated != nil {
+			t.Fatalf("refused and wrote anyway; calls = %v", repo.calls)
+		}
+	})
+}
+
 // TestInstallKeepsTheInstallableAndUsableSetsTheSame pins the invariant this gate has always been
 // about: a row bootstrap reports as installed must be a row the fallback can actually resolve.
 //

@@ -25,7 +25,9 @@ variables or touches the database.
 `CreateCampaign` is only PARTIALLY idempotent: it reuses existing campaigns and
 line items by name (paged cursor lookups via `findByName`) before creating new
 ones, and a lookup that fails transiently propagates an error so the caller
-aborts rather than creating a duplicate. Reuse is NOT a silent no-op: when a
+aborts rather than creating a duplicate. On a reused line item it also reuses the
+promoted tweet an earlier attempt attached (see "Create idempotency on retry"
+below). Reuse is NOT a silent no-op: when a
 campaign or line item is reused, the client does NOT re-apply this request's
 budget/config/flight-dates to it, so the reused resource may be serving under a
 DIFFERENT budget/config or an already-ENABLED line item with different dates. This
@@ -34,8 +36,8 @@ structured `CampaignResult.Reused` flag (set on both the success and partial-res
 paths). Consumers that need to know whether the returned campaign matches the
 request MUST inspect `Reused` (the dispatch adapter maps a reused result to the
 `created_degraded` status, and an authoritative reconcile is the orchestrator's
-job, LFXV2-2665). The promoted-tweet association, however,
-is always re-POSTed on a repeat call. A recognizable duplicate response
+job, LFXV2-2665). The promoted-tweet association is re-POSTed only when the
+reused line item's association read finds none for the tweet. A recognizable duplicate response
 (`DUPLICATE_PROMOTABLE_ENTITY`) is NOT treated as idempotent success: X returns
 that code even when the tweet is already promoted by a DIFFERENT line item, so it
 is surfaced as a warning (on `PromotedTweetWarning` and in the step log) to be
@@ -207,6 +209,16 @@ not applied), distinct from the ambiguous `transportError`.
 `createOutcomeAmbiguous` treats a mutating 3xx/5xx (and transport error) as
 UNCONFIRMED so a create that may have committed is not blind-retried into a
 duplicate; a `preSendError` is neither, so it stays a definite "not applied".
+
+The request-preparation exits are the fourth shape, `requestNotSentError`: `doRequestAbs` and the
+media upload's `doBodyRequest` return it when `buildOAuthHeader` (a `url.Parse` of the request URL)
+or `http.NewRequestWithContext` fails, so `httpClient.Do` never ran. It unwraps to BOTH
+`ErrWriteNotSent` — the marker the keyword write levers' callers and the dispatcher read as
+`NOT_SENT` — and the cause, and its `Error()` renders method, path label and stage only, because a
+URL parse error embeds the full request URL. Before it, both exits returned an unmarked error that
+the dispatcher's per-keyword default stamped `REJECTED`, a refusal X never issued. Both stages are
+deterministic in (method, URL) and the URL is fixed before the retry loop, so only the first
+attempt can fail there and the claim needs no attempt guard. `ProbeNotSent` matches it too.
 
 ## Authoring a promoted tweet (brief -> servable ad)
 
@@ -769,8 +781,9 @@ tweet as PUBLISHED-but-unpromoted, instead of reporting `""` for a tweet that
 provably exists and leaving the prose Steps entry as its only trace.
 
 `authoredTweetStatus` names the id AND what to do with it, and the second half is
-not decoration. Authoring is unconditional — Step 4 says so in its own comment, and
-the guard is deferred to the LFXV2-2665 idempotency work — so the retry the operator
+not decoration. Authoring is skipped only when a REUSED line item already carries a
+promoted tweet (see "Create idempotency on retry"); a tweet that was published but never
+promoted has no parent to be found through, so the retry the operator
 chooses decides between two very different outcomes: passing this id back as
 `tweetId` skips authoring entirely and promotes the tweet that is already live,
 while retrying without it publishes a SECOND tweet under the LF handle. The message
@@ -1230,7 +1243,8 @@ series instead of vanishing from it.
 
 The one error it claims beyond a dial failure is a caller that had ALREADY given up:
 `Client.doRequestAbs` checks `ctx.Err()` at its entry and returns `errRequestContextAlreadyDone`
-wrapped around it, and `ProbeNotSent` matches that marker alongside `preSendError`. X has no token
+wrapped around it, and `ProbeNotSent` matches that marker alongside `preSendError` and
+`requestNotSentError` (a request this client could not sign or build). X has no token
 leg for the sibling clients' `errTokenContextAlreadyDone` to guard, and `doRequestAbs` is the
 single path every Ads API call takes, so its entry is where the equivalent check belongs. The
 marker is deliberately NOT a `preSendError`: that type names a DIAL failure and exists to strip a
@@ -1274,14 +1288,63 @@ test that only checked the error would still pass if the request were made and d
 `ListLineItemTargetingCriteria` lists a line item's targeting criteria
 (`targeting_criteria?line_item_ids=…&with_deleted=false&count=1000`, cursor-walked through
 `cursorVerdict` like `findByName`) and is all-or-error: no result set, a criterion without a
-usable id or under another line item, an unusable cursor on a full page, or the page cap is
-`ErrTargetingUnreadable`. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
+usable id or under another line item, an unusable cursor on a full page, the page cap, or a page
+`identityjson.Check` refuses over its RAW bytes (a duplicated key — `id`, `line_item_id`,
+`operator_type`, the envelope's `data` — malformed UTF-8 or an unpaired surrogate escape; every
+page is checked before it is decoded) is `ErrTargetingUnreadable`, never a shorter list, so the
+ownership and last-keyword gates never act on a last-wins reading. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
 `ErrWriteNotSent`, and so is a request `ProbeNotSent` proves never left the process — a DNS or
-connect-time failure, or a context already done at entry — checked before any API
+connect-time failure, a request that could not be signed or built, or a context already done at
+entry — checked before any API
 classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), sends one DELETE with the 429 never retried, maps 404 to
 `ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
-`deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
+`deleted: true` — anything else, including an echo `identityjson.Check` refuses, is an
+UNCONFIRMED `transportError` (the DELETE was sent, so a refused echo is never a definite
+refusal, and it is not retried). `CreateNegativeKeywordCriterion` (`negative_keywords.go`) treats
+its POST echo the same way: a refused echo is UNCONFIRMED. The create path sets no
 targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+
+## Line-item negative keywords (`negative_keywords.go`, LFXV2-2665)
+
+The client half of `TwitterDispatcher.AddNegativeKeywords` (see [internal/dispatch](internal-dispatch.md),
+"Reddit, X and Microsoft negative-keyword adapters"). An X negative keyword is a keyword targeting
+criterion of the line item with `operator_type` `NE` (`OperatorNE`); the file's header cites X's
+Campaign Management guide and reference for the keyword types and `NE`. It has not been exercised
+against a live ad account.
+
+- **`TargetingCriterion.NegativeKeyword()`** is true for a live (not `deleted`) keyword-type
+  criterion with `operator_type` `NE` and a non-empty value — the dispatcher's already-present
+  test. `PositiveKeyword()` is its counterpart for the removal.
+- **Request shape.** `CreateNegativeKeywordCriterion(ctx, lineItemID, targetingType, keyword)` sends
+  one `POST accounts/:account_id/targeting_criteria` with `line_item_id`, `operator_type=NE`,
+  `targeting_type` and `targeting_value`. One POST per keyword, not the batch endpoint: the batch
+  (up to 40) succeeds or fails as a group and cannot give each keyword its own outcome.
+- **Refused before sending:** an unusable line-item id (`lineItemPath`); a targeting type other than
+  `BROAD_KEYWORD`, `PHRASE_KEYWORD` or `EXACT_KEYWORD` (`UNORDERED_KEYWORD` is deprecated; the legacy
+  `NEGATIVE_*` types are not sent); a blank keyword.
+- **Pacing and NOT_SENT.** It takes a slot on the client's shared write pacer first; a pacer wait cut
+  short, or a request `ProbeNotSent` proves never left the process, is `ErrWriteNotSent`.
+- **Sent once, never retried on a 429** (`doRequest(..., false)`): X has no idempotency key for a
+  criterion, so a retry after a committed write would add a second one. A 429, transport failure,
+  3xx or 5xx is UNCONFIRMED (`createOutcomeAmbiguous`, read by `IsOutcomeUnconfirmed`); any other
+  4xx is a definite refusal.
+- **Echo check.** A 2xx is success only when it reports a criterion with a usable id, under THIS
+  line item, of the requested type, `NE`, not deleted, and for this keyword compared with
+  `textfold.Equal` (X may return the value case-normalised). Anything else — including
+  `"data": null` — is an UNCONFIRMED `transportError`. The echo is checked with
+  `identityjson` before decoding (#359); a refused echo is UNCONFIRMED, since the write was sent.
+- **Known gap (pre-existing).** `doRequestAbs` has two pre-send exits that carry no not-sent
+  marker — a `buildOAuthHeader` failure and an `http.NewRequestWithContext` failure — so they are
+  neither `ErrWriteNotSent` nor UNCONFIRMED, and the dispatcher reports them `REJECTED`. Recorded
+  in `log/2026-10-16-LFXV2-2665-google-request-not-transmitted.md`; not fixed.
+
+**Tests** (`negative_keywords_test.go`): `TestCreateNegativeKeywordCriterion_PostsANegatedKeyword`
+(the query parameters, and a case-normalised echo accepted);
+`TestCreateNegativeKeywordCriterion_RefusesBeforeSending` (`UNORDERED_KEYWORD`,
+`NEGATIVE_PHRASE_KEYWORD`, a malformed line item, a blank keyword — zero requests);
+`TestCreateNegativeKeywordCriterion_UnprovenEchoIsUnconfirmed` (null data, no id, another line
+item, `EQ`, another type, another keyword; 429 and 502 UNCONFIRMED after exactly one request; a
+400 definite).
 
 ## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
 
@@ -1386,6 +1449,76 @@ endpoints on `WithMediaUploadBaseURL` (default `https://api.x.com`) and adds it 
 The key goes out as `media_keys` and is recorded in `CampaignResult.MediaKey`. `doBodyRequest`
 is the one body-carrying, never-retrying sender. It classifies outcomes the way `doRequestAbs`
 does. `ensureImageMedia` holds a per-(account, image) `mediaLocks` entry from the
-`AccountPacers` registry (pacer.go) across lookup, upload and library add. `decodeMediaState`
-rejects a missing or null `data` body, and only an explicit `succeeded` state ends processing.
+`AccountPacers` registry (pacer.go) across lookup, upload and library add; a client shares
+the registry's locks under the pacer's own gate (a registry AND an account id). `decodeMediaState`
+runs `identityjson.Check` on the raw body, so a duplicated `data` key cannot resolve last-wins
+into a ready state, and it rejects a missing or null `data`. A STATUS answer that drops
+`processing_info` is refused, and only an explicit `succeeded` state ends processing.
 See [X Ads Creative Image Assets](../architecture/x-creative-assets.md).
+
+## Create idempotency on retry (LFXV2-2665)
+
+A retried dispatch whose first attempt's outcome was UNCONFIRMED must find what that attempt
+left upstream instead of creating a second spending entity. X has no create-idempotency key,
+so every level is found through something deterministic:
+
+| Entity | Found by | Rule |
+| --- | --- | --- |
+| Media Library image | `lfxasset<sha256>` name (`findMediaByName`) | unchanged |
+| Campaign | deterministic name (`findCampaignByName`) | exact name, live, ONE match, same funding instrument |
+| Line item | deterministic name under the campaign (`findLineItemByName`) | exact name, live, ONE match, parent is that campaign |
+| Promoted tweet | the reused line item (`listPromotedTweets`) | live, parent is that line item, see below |
+| Authored tweet | through its promoted tweet only | a published-but-unpromoted tweet is NOT found |
+
+`findByNameChecked` checks every page's raw body with `identityjson` before decoding it (a
+repeated or case-folded key such as `"deleted":false,"deleted":true` would otherwise read
+last-wins, skip a live match as deleted and license a duplicate create; PR #358 review), and
+now walks every page and refuses when two or more live elements carry
+the exact name (X does not enforce uniqueness, and reusing whichever is listed first could
+adopt someone else's campaign), skips elements X reports `deleted`, and runs a provenance
+check on each match: a campaign whose `funding_instrument_id` differs from the connection's,
+or a line item whose `campaign_id` is not the one filtered on, is refused. Each refusal is a
+lookup error, so the campaign level returns `(nil, err)` before any write and the line-item
+level returns the partial carrying the campaign. Because the walk no longer stops at the first
+match, a lookup that used to succeed on a page-1 match can now fail closed on a later full page
+with no usable cursor or at `maxListPages`; with the server-side `q=` filter that is unlikely.
+
+`listPromotedTweets` (`promoted_tweet_lookup.go`) reads `GET promoted_tweets?line_item_ids=
+<id>&with_deleted=false&count=200` and fails closed exactly as `findByName` does (no data
+field, a full page with no usable cursor, a repeated cursor, the page cap), plus on any element
+whose `line_item_id` is not this line item or whose id / `tweet_id` has the wrong shape. Each
+page's raw body must also pass `identityjson` first (a duplicated `data` key would otherwise be
+read last-wins, so a trailing `[]` meant "none" and licensed a second tweet), and associations
+are counted by id: the same id repeated across or within pages is one association, while the
+same id naming two different tweets is refused (PR #358 review). It runs
+ONLY when the line item was reused — a line item created moments ago cannot hold one — so a
+first create is unchanged. What Step 4 does with the answer:
+
+- tweet text, exactly one live association: that tweet and association are reused; nothing is
+  authored, and a warning step says its copy/image were NOT compared with this request (X
+  re-wraps links, so text equality proves nothing). `AuthoredTweetID` stays empty.
+- tweet text, two or more: nothing is authored or promoted; `PromotedTweetWarning` asks the
+  operator to verify.
+- explicit `TweetID` already associated once: reused, not re-POSTed (the re-POST would answer
+  `DUPLICATE_PROMOTABLE_ENTITY`, which cannot be read as this line item's). Twice: refused.
+- explicit `TweetID` not yet associated (the line item promotes another tweet, or nothing):
+  promoted as asked — the pass-back path for a published-but-unpromoted tweet.
+- the read fails while AUTHORING: nothing is authored or promoted, with a warning — an
+  existing association cannot be ruled out. With an explicit `TweetID` the POST still goes
+  out (with a step saying the read failed): nothing is published, and a repeat on this line
+  item is refused by X as `DUPLICATE_PROMOTABLE_ENTITY` rather than duplicated.
+
+Every reuse path is already `Reused`, so the dispatcher records `created_degraded`. The gap
+that remains is a tweet PUBLISHED but never PROMOTED (authoring outcome lost, or an abort
+between authoring and promotion): the partial carries its id in `AuthoredTweetID` with the
+instruction to pass it back as `tweetId`. Finding such a tweet would need a tweet-level name or
+lookup on `GET accounts/:id/tweets`, which this client does not use.
+
+Tests: `create_idempotency_test.go`, against a stateful fake X server — a retry after a 502
+that committed the promoted tweet creates nothing new (tweet text and explicit-id flows); two
+associations refuse; a failed association read blocks writes; a fresh create makes no
+association read; duplicate campaign or line-item names refuse; a foreign funding instrument
+or parent refuses; a deleted twin is skipped; a twin on page 2 refuses while the same id on
+two pages does not; the explicit-`TweetID` matrix (read failure still promotes, associated
+twice refuses, not yet associated is promoted). Mutation-checked: thirteen mutations of the
+new rules, each killed.

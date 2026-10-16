@@ -32,6 +32,9 @@ type fakeRepo struct {
 	// (as the real repository's RETURNING does), so a retained pointer would report the
 	// post-call state and the assertion would be about the fake, not the handler.
 	gotUpdateCreds []byte
+	// updateCalls counts Update calls that reached the repository, so a test can show a
+	// refused update never attempted the write.
+	updateCalls int
 	// createCalls and setCredentialCalls count writes that REACHED the repository.
 	//
 	// A rejected payload must not persist, and the error alone cannot show that: every
@@ -52,6 +55,12 @@ type fakeRepo struct {
 	// does not forbid. A fake that only ever reports absence as ErrNotFound cannot exercise
 	// a caller's nil-row handling, so a missing guard reads as covered.
 	nilNilGet bool
+	// afterGet, when set, runs after Get returns, standing in for a concurrent writer that
+	// moves the row between the handler's read and its write.
+	afterGet func(r *fakeRepo)
+	// checkVersion makes Update refuse a stale expectedVersion with ErrPreconditionFailed,
+	// as the real repository's version-conditioned UPDATE does.
+	checkVersion bool
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{store: map[string]*model.Connection{}} }
@@ -70,7 +79,13 @@ func (r *fakeRepo) Get(_ context.Context, projectID string, p model.Provider) (*
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	return c, nil
+	// A copy, so a concurrent write applied by afterGet does not change the row the caller
+	// already read — as with a real database read.
+	snapshot := *c
+	if r.afterGet != nil {
+		r.afterGet(r)
+	}
+	return &snapshot, nil
 }
 
 func (r *fakeRepo) Create(_ context.Context, c *model.Connection) (*model.Connection, error) {
@@ -90,6 +105,7 @@ func (r *fakeRepo) Create(_ context.Context, c *model.Connection) (*model.Connec
 }
 
 func (r *fakeRepo) Update(_ context.Context, c *model.Connection, expectedVersion int64) (*model.Connection, error) {
+	r.updateCalls++
 	r.gotUpdateVersion = expectedVersion
 	r.gotUpdateCreds = c.EncryptedCredentials
 	if r.updateErr != nil {
@@ -99,6 +115,9 @@ func (r *fakeRepo) Update(_ context.Context, c *model.Connection, expectedVersio
 	existing, ok := r.store[k]
 	if !ok {
 		return nil, domain.ErrNotFound
+	}
+	if r.checkVersion && existing.Version != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
 	}
 	c.ID = existing.ID
 	c.Status = model.StatusActive
@@ -883,6 +902,92 @@ func TestCreateTwitterAds_WithoutAccountID(t *testing.T) {
 	}
 }
 
+// TestCreateMicrosoftAds_WithoutAccountID is the Microsoft counterpart, added by issue #181
+// alongside the removal of Required("account_id") from MicrosoftAdsConnectionConfig and
+// Microsoft's admission to the bootstrap CLI's accountDiscoveryProviders.
+//
+// Microsoft qualified the way X did — BOTH halves: discovery (MicrosoftDispatcher.ListAccounts)
+// and a create path that NAMES the missing choice, because Dispatch itself resolves through
+// validateMicrosoftConnection, which tags an empty account id with ErrAccountNotSelected.
+//
+// The assertions are the Google Ads three, plus the customer_id one Microsoft adds:
+//
+//  1. Accepted with the key OMITTED (nil), the shape the bootstrap flow sends.
+//  2. status is ACTIVE. validateMicrosoftConnection refuses a non-active connection, so any
+//     other status would make GET .../connection-microsoft-ads/accounts unreachable.
+//  3. account_id round-trips as "".
+//  4. customer_id is NOT a second choice credentials-first defers: it was already optional,
+//     and a credentials-only connection may carry one or not. Both shapes are created here.
+func TestCreateMicrosoftAds_WithoutAccountID(t *testing.T) {
+	for name, customerID := range map[string]*string{
+		"no customer configured": nil,
+		"customer configured":    strPtr("9999999"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestService(t, newFakeRepo())
+			res, err := s.CreateMicrosoftAds(context.Background(), &conn.CreateMicrosoftAdsPayload{
+				ProjectID: "cncf",
+				// AccountID is nil EXPLICITLY — the absence is the subject of this test.
+				Config: &conn.MicrosoftAdsConnectionConfig{
+					Label: strPtr("TLF Main"), AccountID: nil, CustomerID: customerID,
+				},
+				Credentials: &conn.MicrosoftAdsCredentials{
+					ClientID: "ci", ClientSecret: "cs", RefreshToken: "rt", DeveloperToken: "dt",
+				},
+			})
+			if err != nil {
+				t.Fatalf("a credentials-only connection must be creatable: %v", err)
+			}
+			if res.AccountID != "" {
+				t.Errorf("account_id = %q, want the empty string", res.AccountID)
+			}
+			if res.Status != string(model.StatusActive) {
+				t.Errorf("status = %q, want %q — validateMicrosoftConnection refuses a non-active "+
+					"connection, so any other status would make the account unchoosable",
+					res.Status, model.StatusActive)
+			}
+			if !res.HasCredentials {
+				t.Error("expected has_credentials = true: the credentials are exactly what WAS supplied")
+			}
+			if customerID != nil && (res.CustomerID == nil || *res.CustomerID != *customerID) {
+				t.Errorf("customer_id did not round-trip: %v, want %q", res.CustomerID, *customerID)
+			}
+		})
+	}
+}
+
+// TestUpdateMicrosoftAds_BindsDiscoveredAccountToCredentialsOnlyRow is step three of the
+// Microsoft credentials-first flow: the PUT that stores the id discovery returned. The
+// credential assertion is on the Update ARGUMENT for the reason the Google Ads test gives.
+func TestUpdateMicrosoftAds_BindsDiscoveredAccountToCredentialsOnlyRow(t *testing.T) {
+	repo := newFakeRepo()
+	repo.store[repoKey("cncf", model.ProviderMicrosoftAds)] = &model.Connection{
+		ProjectID: "cncf", Provider: model.ProviderMicrosoftAds, Status: model.StatusActive,
+		AccountID: "", Version: 2, EncryptedCredentials: []byte("ciphertext"),
+	}
+	s := newTestService(t, repo)
+	ifMatch := "2"
+
+	res, err := s.UpdateMicrosoftAds(context.Background(), &conn.UpdateMicrosoftAdsPayload{
+		ProjectID: "cncf",
+		Config:    &conn.MicrosoftAdsConnectionConfig{AccountID: strPtr("1234567"), CustomerID: strPtr("9999999")},
+		IfMatch:   &ifMatch,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMicrosoftAds: %v", err)
+	}
+	if res.AccountID != "1234567" {
+		t.Errorf("account_id = %q, want the discovered id to be bound", res.AccountID)
+	}
+	if res.CustomerID == nil || *res.CustomerID != "9999999" {
+		t.Errorf("customer_id = %v, want 9999999", res.CustomerID)
+	}
+	if repo.gotUpdateCreds != nil {
+		t.Errorf("Update was passed credentials %q; a config-only PUT must leave the column to the repository",
+			repo.gotUpdateCreds)
+	}
+}
+
 // TestUpdateGoogleAds_BindsDiscoveredAccountToCredentialsOnlyRow is the second half of the
 // credentials-first bootstrap, and the step the existing update tests never exercised: they
 // only cover missing and stale If-Match. Here the stored row is the state a POST-with-
@@ -1062,14 +1167,12 @@ func TestUpdateMetaAds_OmittedAccountIDClearsTheSelection(t *testing.T) {
 	}
 }
 
-// The conversion pixel must survive create → read-back, and a PUT that omits it must CLEAR
-// it. Both halves matter and neither was pinned.
+// The conversion pixel must survive create → read-back, a PUT that omits it must be REFUSED
+// while one is stored (issue #300), and a PUT that sends "" must clear it.
 //
-// Reddit requires the pixel on every campaign create, so an update that silently drops it
-// turns the next dispatch into a refusal — an operator editing only the label would break
-// campaign creation without touching anything that looks related. That is the documented
-// full-replace semantic of PUT (see the Update handlers), not a bug, but it is exactly the
-// kind of behaviour that needs a test recording it where someone will find it.
+// Reddit requires the pixel on every campaign create, so an update that silently dropped it
+// turned the next dispatch into a refusal — an operator editing only the label broke campaign
+// creation without touching anything that looked related. Clearing now takes an explicit "".
 func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
 	repo := newFakeRepo()
 	s := newTestService(t, repo)
@@ -1100,18 +1203,31 @@ func TestRedditAdsConversionPixelRoundTripAndClear(t *testing.T) {
 		t.Errorf("read-back pixel = %v, want a2_pixel_round_trip — a value that does not survive the round trip is unusable at dispatch", got.ConversionPixelID)
 	}
 
-	// PUT is a full replace: omitting the pixel clears it. Recorded rather than asserted as
-	// desirable — the next dispatch refuses, which is the safe outcome but a surprising one.
-	updated, err := s.UpdateRedditAds(ctx, &conn.UpdateRedditAdsPayload{
+	// Omitting the stored pixel is refused, and the pixel survives.
+	_, err = s.UpdateRedditAds(ctx, &conn.UpdateRedditAdsPayload{
 		ProjectID: "cncf",
 		IfMatch:   strPtr(etag(got.Version)),
 		Config:    &conn.RedditAdsConnectionConfig{AccountID: "t2_gv9wtbfa"},
 	})
+	if bad, ok := err.(*conn.BadRequestError); !ok || !strings.Contains(bad.Message, "config.conversion_pixel_id") {
+		t.Fatalf("an update omitting a stored conversion_pixel_id must be a 400 naming it, got %T (%v)", err, err)
+	}
+	if px := repo.store[repoKey("cncf", model.ProviderRedditAds)].ProviderConfig["conversion_pixel_id"]; px != "a2_pixel_round_trip" {
+		t.Errorf("stored pixel = %q after a refused update, want it kept", px)
+	}
+
+	// An explicit "" is a deliberate clear and is honoured: PUT stays a full replace for
+	// every field the caller sends.
+	updated, err := s.UpdateRedditAds(ctx, &conn.UpdateRedditAdsPayload{
+		ProjectID: "cncf",
+		IfMatch:   strPtr(etag(got.Version)),
+		Config:    &conn.RedditAdsConnectionConfig{AccountID: "t2_gv9wtbfa", ConversionPixelID: strPtr("")},
+	})
 	if err != nil {
 		t.Fatalf("UpdateRedditAds: %v", err)
 	}
-	if updated.ConversionPixelID != nil && *updated.ConversionPixelID != "" {
-		t.Errorf("an update omitting conversion_pixel_id must CLEAR it (PUT is a full replace), got %v", *updated.ConversionPixelID)
+	if updated.ConversionPixelID != nil {
+		t.Errorf(`an update sending conversion_pixel_id "" must clear it, got %v`, *updated.ConversionPixelID)
 	}
 }
 
@@ -1429,7 +1545,7 @@ func TestCreateConnection_UUIDProjectIDRejectedBeforeAnyWrite_AllProviders(t *te
 		{"microsoft", func(s *ConnectionService, pid string) error {
 			_, err := s.CreateMicrosoftAds(context.Background(), &conn.CreateMicrosoftAdsPayload{
 				ProjectID:   pid,
-				Config:      &conn.MicrosoftAdsConnectionConfig{AccountID: "123456789"},
+				Config:      &conn.MicrosoftAdsConnectionConfig{AccountID: strPtr("123456789")},
 				Credentials: &conn.MicrosoftAdsCredentials{RefreshToken: "rt", ClientID: "ci", ClientSecret: "cs", DeveloperToken: "dt"},
 			})
 			return err
@@ -1549,14 +1665,12 @@ func TestTwitterAds_AsUserIDRoundTripsThroughTheService(t *testing.T) {
 	}
 }
 
-// TestUpdateTwitterAds_OmittedAsUserIDClearsIt states the full-replace semantics out loud,
-// because this is the direction that WIDENS what dispatch accepts: a PUT that restates the row
-// without as_user_id returns the connection to "declares no identity", after which a campaign
-// config may name any promotable handle again. That is the same rule account_id and Meta's
-// app_id already carry on these endpoints — X is not inventing a third convention — but an
-// authorization control silently relaxing on an omitted key is worth a test that says so, so a
-// later "preserve when omitted" tweak has to argue with this comment rather than slip past.
-func TestUpdateTwitterAds_OmittedAsUserIDClearsIt(t *testing.T) {
+// TestUpdateTwitterAds_OmittedAsUserIDIsRefused: an omitted as_user_id no longer clears a
+// declared identity (issue #300). Clearing it widens what dispatch accepts — a campaign config
+// may then name any promotable handle — so it must be asked for with an explicit "", and a PUT
+// that merely restates the row without the key is refused with 400 before any write. The
+// explicit-clear half is TestUpdateConnection_OmittedConfigKeyGuard's.
+func TestUpdateTwitterAds_OmittedAsUserIDIsRefused(t *testing.T) {
 	repo := newFakeRepo()
 	repo.store[repoKey("cncf", model.ProviderTwitterAds)] = &model.Connection{
 		ProjectID: "cncf", Provider: model.ProviderTwitterAds, Status: model.StatusActive,
@@ -1577,18 +1691,17 @@ func TestUpdateTwitterAds_OmittedAsUserIDClearsIt(t *testing.T) {
 		},
 		IfMatch: &ifMatch,
 	})
-	if err != nil {
-		t.Fatalf("UpdateTwitterAds: %v", err)
+	if bad, ok := err.(*conn.BadRequestError); !ok || !strings.Contains(bad.Message, "config.as_user_id") {
+		t.Fatalf("expected a 400 naming config.as_user_id, got %T (%v)", err, err)
+	}
+	if res != nil {
+		t.Errorf("result = %+v, want none for a refused update", res)
+	}
+	if repo.updateCalls != 0 {
+		t.Errorf("repo.Update called %d time(s); the refusal must come before any write", repo.updateCalls)
 	}
 	stored := repo.store[repoKey("cncf", model.ProviderTwitterAds)]
-	if got := stored.ProviderConfig["as_user_id"]; got != "" {
-		t.Errorf("stored as_user_id = %q, want it cleared: PUT is a full replace here", got)
-	}
-	if res.AsUserID != nil {
-		t.Errorf("result as_user_id = %v, want it absent once cleared", *res.AsUserID)
-	}
-	if got := stored.ProviderConfig["funding_instrument_id"]; got != "lygyi" {
-		t.Errorf("funding_instrument_id = %q, want it preserved — the restated key must "+
-			"survive a PUT that clears its neighbour", got)
+	if got := stored.ProviderConfig["as_user_id"]; got != "1234567890123456789" {
+		t.Errorf("stored as_user_id = %q, want the declared identity kept", got)
 	}
 }

@@ -635,8 +635,9 @@ unusable-connection 409 messages name the campaign's platform (Google's wording 
 
 `AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
 is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
-persists nothing: no `If-Match`, no write lock, no ETag, no index event. Microsoft Advertising,
-Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler, and a
+persists nothing: no `If-Match`, no write lock, no ETag, no index event. Google Ads, Microsoft
+Advertising, Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler,
+and a
 dispatcher without the capability is 400 via `Orchestrator.AddNegativeKeywords`'s type assertion on
 the optional `NegativeKeywordAdder`. The payload's optional `revision` (Reddit's compare-and-set
 token) is passed through untouched; each adapter validates it. Reddit/X-only refusals map to fixed
@@ -742,6 +743,36 @@ guard working, not a gap in it: this service has not verified the campaign can d
 reporting a successful activation of something that cannot serve is exactly what the sentinel
 exists to prevent.
 
+### The `adopted` flag and the `campaign_adopted` resume refusal (lfx-self-serve #3741)
+
+Clients could not tell an adopted campaign from a created one, and a refused resume answered the
+same reason-less 409 as every other not-provisioned toggle, so the UI could neither disable Resume
+on adopted rows nor say why it was refused. Both gaps are closed additively:
+
+- **One marker, stamped on every platform.** `AdoptCampaign` passes `ref.Result` through
+  `model.MarkResultAdopted` before persisting, which sets `"adopted": true` at the blob's top
+  level and keeps every other key (the account provenance the mismatch guards read back). Only
+  LinkedIn's adapter wrote that key before (`linkedin.AdoptedCampaignResult`); Google Ads'
+  lookup recorded only `customerId`, and Meta/Microsoft/Reddit/X only a prose Steps line. A blob
+  that is not a JSON object is refused (500, nothing bound) rather than overwritten.
+- **One reader.** `model.CampaignAdopted` reads that key and nothing else — not the Steps
+  prose. `campaignResult` maps it to the campaign's optional `adopted` (`adoptedFlag`: `true` or
+  ABSENT, never `false`), `campaignDoc` to `indexer.CampaignDoc.Adopted` (`omitempty`), and the
+  LinkedIn dispatcher's `linkedInAdopted` now delegates to it, so the bid/activate refusals and
+  the public flag cannot disagree. A row adopted before the stamp on any platform but LinkedIn
+  reads absent; absent therefore means "not recorded as adopted".
+- **Its own 409 reason.** In `ToggleCampaignStatus`'s `ErrCampaignNotProvisioned` arm, a RESUME
+  (`status == active`) of a row `model.CampaignAdopted` reports adopted answers
+  `ConflictError{Reason: "campaign_adopted"}` (`conflictReasonCampaignAdopted`) with fixed text
+  naming nothing upstream. It is decided from the ROW, never from the dispatcher's sentence, and
+  only for ACTIVE: a not-provisioned refusal of a PAUSE is some other cause and keeps the general
+  reason-less 409, as does every non-adopted row. Pause of an adopted campaign is unaffected.
+  The slug is in the shared `ConflictError` Enum in `design/connection.go`.
+
+Pinned by `campaign_adopted_test.go` (service) and `model/campaign_adopted_test.go`; each
+behaviour was mutation-checked (dropping the stamp, the reason arm, the ACTIVE condition, the
+index mapping, or the absent-not-false rule each fails a test).
+
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts`, `ListMetaAdsAccounts`, `ListLinkedinAdsAccounts`,
@@ -844,10 +875,10 @@ Each outcome below is distinguished deliberately, because collapsing them misdir
   them in LFXV2-3196 (`resolveLinkedInCredentials`, covering the credential-state three plus the
   missing account, which it needs because its client is constructed with a RuntimeConfig naming
   the account) — for its two synchronous entry points, `ToggleStatus` and `ReadMetrics`.
-  LinkedIn's `Dispatch` deliberately keeps its own inline validation and does NOT route through
-  that helper: it wraps failures in `notCreated()` to release the dispatch claim, a contract the
-  helper does not carry, and it is asynchronous so it never reaches this arm anyway
-  (`internal-dispatch.md` records the same split). In Google Ads the wrap has three owners:
+  LinkedIn's `Dispatch` routes through the same helper too (since 2026-10-15), wrapping its
+  error in `notCreated()` itself to release the dispatch claim; it is asynchronous, so it never
+  reaches this arm and surfaces in the job result instead (`internal-dispatch.md`). In Google
+  Ads the wrap has three owners:
   `validateGoogleAdsCredentials` tags the credential-state three (inactive, undecodable,
   incomplete), which is why they reach callers beyond discovery — but the SHAPE they reach them in
   depends on whether the caller is synchronous. The **status toggle** and the **metrics read**
@@ -942,16 +973,16 @@ paid-ads policy. See internal-dispatch's Reversibility section for what the guar
 
 **The third parameter is the row's CURRENT `account_id`, and the guard fires on a CHANGE rather
 than on presence.** The distinction is the whole endpoint, not an edge of it. `account_id` is
-`Required` on LinkedIn, Reddit and Microsoft (`design/connection.go`, generated as a
+`Required` on LinkedIn and Reddit (`design/connection.go`, generated as a
 non-pointer `string`), and PUT is a full replace, so a caller editing only the label MUST resend
 the id already stored — the schema will not decode a body without it. A presence check therefore
 returned 400 for **every update those providers can express**. X left that group in LFXV2-3319 and
-is now credentials-first alongside Google Ads and Meta; the change-based check is what keeps
-re-sending a stored id a no-op for those three too, so it is not merely a concession to the
-Required ones. Google Ads, Meta and X, whose `account_id` is optional, could satisfy a presence
-check only by omitting the field — which, PUT being a full
+Microsoft in issue #181; both are now credentials-first alongside Google Ads and Meta, and the
+change-based check is what keeps re-sending a stored id a no-op for those four too, so it is not
+merely a concession to the Required ones. Google Ads, Meta, X and Microsoft, whose `account_id` is
+optional, could satisfy a presence check only by omitting the field — which, PUT being a full
 replace, CLEARS the column. So the presence check's single permitted way to rename any of those
-three connections was to destroy the account selection a rollback depends on: the guard, obeyed,
+four connections was to destroy the account selection a rollback depends on: the guard, obeyed,
 caused the loss it exists to prevent.
 
 Re-sending the stored value persists nothing, so allowing it cannot violate the invariant. What
@@ -973,10 +1004,10 @@ Two sub-decisions are load-bearing:
 
 `createConn` passes `""`, and that is the accurate answer rather than a placeholder: create has no
 prior row by construction, so every non-empty id on a create is newly set and stays refused. The
-consequence is deliberate — while the flag is on those three `Required("account_id")` providers
-(LinkedIn, Reddit, Microsoft) cannot be CONNECTED at all. X is no longer among them: since
-LFXV2-3319 its `account_id` is optional, so an account-less X connection CAN be created under the
-flag, the guard being satisfied because `""` is not a newly-set id. That is the invariant working, not a second instance of the update
+consequence is deliberate — while the flag is on the two `Required("account_id")` providers
+(LinkedIn, Reddit) cannot be CONNECTED at all. X and Microsoft are no longer among them: since
+LFXV2-3319 and issue #181 respectively their `account_id` is optional, so an account-less X or
+Microsoft connection CAN be created under the flag, the guard being satisfied because `""` is not a newly-set id. That is the invariant working, not a second instance of the update
 defect: the id would be landing fresh on a project row, which is exactly the write that outlives
 the flag.
 
@@ -997,10 +1028,10 @@ That failure mode is specific to an AUTHORIZATION field and worth naming as such
 routing value fails loudly on first use, because something downstream needs it; a dropped
 authorization value fails silently and OPEN, because the code that reads it is written to treat
 absence as "no restriction configured". The same shape applies to the update direction: PUT is a
-full replace on these endpoints, so an omitted `as_user_id` CLEARS the declared identity and
-widens what dispatch will accept. That matches `account_id` and Meta's `app_id` rather than
-inventing a third convention, and `TestUpdateTwitterAds_OmittedAsUserIDClearsIt` states it out
-loud for exactly that reason. The round-trip test asserts the STORED row, not the returned
+full replace on these endpoints, and an omitted `as_user_id` used to CLEAR the declared identity
+and widen what dispatch would accept. Since issue #300 that omission is refused with 400 while an
+identity is stored (see "Omitting a stored config field is refused" below), and clearing takes an
+explicit `""`; `TestUpdateTwitterAds_OmittedAsUserIDIsRefused` pins it. The round-trip test asserts the STORED row, not the returned
 result: a handler that echoed the payload back without persisting it passes any result-only
 assertion, and the stored row is what dispatch resolves.
 
@@ -1009,9 +1040,11 @@ chosen: AFTER the precondition parse, so a caller who omitted `If-Match` still g
 paying for a read; BEFORE the write, because a rejected update must not reach the database. A read
 FAILURE is returned as-is rather than defaulting the current value to `""` — that default would be
 the reverse of fail-closed, making every resubmission look newly set and reporting a transient
-database fault as a 400 about the caller's body.
+database fault as a 400 about the caller's body. Once the row is read, a version that differs from
+`If-Match` is answered 412 before the guard runs (issue #300), so a stale ETag never earns a 400.
 
-The read is gated on **`forcedSystemGuardApplies`**, the guard's own scope predicate
+The read is gated on **`forcedSystemGuardApplies`** (or, since issue #300, on the payload omitting
+a guarded config key), the guard's own scope predicate
 (`IsPaidAds() && forcedSystemAdsAccount()`), extracted into a named function precisely so the gate
 and the guard cannot be one expression written twice. The gate matters because the flag is
 default-off: without it every connection update on every deployment would pay a round-trip for a
@@ -1687,7 +1720,8 @@ What differs:
   lever's twin of `budget_amount`: a REQUEST the platform confirmed, never an observation. NULL
   means "never set through this endpoint", not "no bid" — a create-time bid lives in
   `config_snapshot` under each platform's own key, which this layer deliberately does not patch.
-- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; Google Ads and LinkedIn today),
+- **Sentinels**: `ErrBidUnsupported` → 400 (no `BidWriter`; the hubspot email channel today —
+  Google Ads and LinkedIn both gained the capability in LFXV2-2665),
   `ErrBidUnwritable` → 409 (automated, unreported or non-per-click bid strategy, or an
   unaddressable ad group, ad set or line item — the message is NEUTRAL across both kinds ("its
   bidding setup is not a manual per-click bid, or the ad group, ad set or line item this service
@@ -1701,9 +1735,11 @@ What differs:
 - **`BidWriter`** (orchestrator.go) carries the budget's three rules plus its own: never write a
   bid the platform will ignore, and never switch strategy — read the governing strategy first and
   refuse an automated or unreported one with `ErrBidUnwritable`; never send a strategy field.
-  The bid goes to the level the create path put it (the one ad group — Microsoft, Reddit — ad set
-  — Meta — or line item — X — this service created); a row recording none is refused rather than
-  resolved upstream.
+  The bid goes to the level the create path put it (the one ad group — Google Ads, Microsoft,
+  Reddit — ad set — Meta — or line item — X — this service created); a row recording none is
+  refused rather than resolved upstream, and so is a row recording SEVERAL: Google Ads is the one
+  platform whose create path can record more than one ad group, and siblings carry independent
+  bids, so no single bid is named.
 
 ## Campaign delete
 
@@ -2218,6 +2254,15 @@ and adopted rows record nothing. `classifyMetaAdSetError` maps every failure to 
 missing row is `domain.ErrConnectionAbsent` (no connection), never a bare `ErrNotFound`. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 
+## Meta ads under an ad set (`meta_ads.go`, decision D7 first step)
+
+`ListMetaAds` serves `list-meta-ads` through the optional `MetaAdReader` capability
+(`Orchestrator.ReadMetaAds` under `metricsCallTimeout`, upstream op `read_meta_ads`). Read-only:
+no If-Match, no ETag, nothing persisted. `window` and `ad_set_id` (`metaAdSetIDOK`) are 400 before
+the row is loaded; the capability is checked before provisioning. Errors go through
+`classifyMetaAdSetError` with verb `read_ads` (its own 503 and not-provisioned wording). See
+[Meta Ad Read Under an Ad Set](../architecture/meta-ads.md).
+
 
 ## LinkedIn audience read (`connection_linkedin_audience.go`, LFXV2-2665)
 
@@ -2234,6 +2279,55 @@ LinkedIn not contacted). No `AudienceEnabled` gate — LinkedIn has no metrics f
 (the scope 409s, account mismatch and connection-state arms already exist). `approximate` is always
 `true` on the wire. Tests: `linkedin_audience_test.go`. See
 [LinkedIn Audience Insights](../architecture/linkedin-audience-insights.md).
+
+## Omitting a stored config field is refused (issue #300)
+
+PUT on a connection is a full replace, and each `Update<Provider>` adapter rebuilds
+`ProviderConfig` from the payload alone, so an OPTIONAL key the caller left out used to be written
+as `""` over whatever was stored. For Reddit that cleared `conversion_pixel_id`, which Reddit
+requires on every campaign create, so a label-only edit disabled campaign creation for the project
+while answering 200.
+
+`updateConnGuarded` (`connection_handler.go`) keeps the full replace for every field a caller
+SENDS and refuses only clearing by omission. Each adapter passes its optional keys as an
+`optionalConfig` (`map[string]*string`, the payload pointers as decoded: nil means omitted or JSON
+null). When any is nil, the handler reads the current row and:
+
+- answers **412** if the row is not at the `If-Match` version, so neither guard judges a row the
+  caller did not see. This check comes before both the force-system guard and the omission guard,
+  so a stale `If-Match` is 412 whichever guard would otherwise have answered 400. `repo.Update` is itself conditioned on that version, so a writer that moves
+  the row after the read makes the write fail with 412: the guard adds no race window and needs no
+  extra lock;
+- answers **400** naming every omitted key that has a non-empty stored value (`config.<key>`,
+  sorted), telling the caller to resend the value or send `""` to clear it. Nothing is written.
+
+An omitted key with nothing stored passes, since `""` over `""` changes nothing. A body that sends
+every optional key performs no read, so a full body keeps the single-statement path. The read is
+shared with the force-system guard when that applies.
+
+`TestClearGuardProviders_CoverEveryConfigKey` requires every opted-in provider's Required plus
+guarded keys to equal `Provider.ConfigKeys()`, with LinkedIn and Google Ads the only providers
+outside the table, so a new optional key cannot be added without being classified.
+
+Guarded keys, verified against the Required lists in `design/connection.go`:
+
+| Provider | Optional keys guarded | Not guarded (Required) |
+| --- | --- | --- |
+| Meta Ads | `app_id` | `page_id` |
+| Reddit Ads | `conversion_pixel_id` | |
+| X / Twitter Ads | `as_user_id` | `funding_instrument_id` |
+| Microsoft Ads | `customer_id` | |
+| HubSpot | `portal_id`, `sender_email`, `sender_name`, `brand_kit` | |
+| LinkedIn Ads | none | `org_id` |
+| Google Ads | none yet | |
+
+Google Ads is not opted in (`login_customer_id` still clears on omission). Opting it in is one
+line: call `updateConnGuarded(ctx, m, p.IfMatch, optionalConfig{"login_customer_id":
+cfg.LoginCustomerID})` instead of `updateConn`. X's `as_user_id` Pattern became `^([0-9]+)?$` so an
+explicit `""` can clear it; with the old `^[0-9]+$` a declared identity could not be cleared at all
+once omission was refused. The rule is in each guarded attribute's description (`keepOnUpdate` in
+the design), so it reaches the generated OpenAPI. `account_id` and `label` are not
+provider-config keys and keep the plain full-replace behaviour.
 
 ## Dispatch failure reasons in the job result (`dispatch_failure.go`, issue #208)
 

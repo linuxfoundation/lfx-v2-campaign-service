@@ -265,6 +265,12 @@ var Campaign = Type("campaign", func() {
 		Minimum(1)
 		Example(1)
 	})
+	// Read-only and OPTIONAL: present (true) only on a row bound by adopt-campaign. Absent rather
+	// than false on every other row, because the marker it is derived from is only as old as its
+	// stamp (see model.CampaignAdopted) — absent means "not recorded as adopted".
+	Attribute("adopted", Boolean, "Read-only. true when the campaign was ADOPTED (bound to this brief from an existing campaign on the ad platform by adopt-campaign) rather than created by this service. An adopted campaign records none of its serving children, so toggle-campaign-status refuses to resume it (409 with reason=campaign_adopted) and it is resumed in the ad platform's own UI; pausing it is supported. ABSENT on every other campaign — and also on a campaign adopted before this flag existed on any platform but LinkedIn, so absent means \"not recorded as adopted\", not a guarantee that resume will succeed.", func() {
+		Example(true)
+	})
 	Attribute("version", Int64, "Optimistic-concurrency version")
 	Attribute("etag", String, "ETag header value (mirrors version)")
 	Required("id", "project_id", "brief_id", "platform", "campaign_name", "status", "slot_version", "version")
@@ -300,10 +306,12 @@ var CampaignMetrics = Type("campaign-metrics", func() {
 	// Microsoft report a campaign-level conversion count; Meta and X expose conversions only
 	// as per-action-type structures with no scalar to read, Reddit's reporting contract is
 	// undocumented, and the email channel has no conversion concept at all. On those four the
-	// attribute is ABSENT rather than 0 — a 0 would be indistinguishable from a campaign that
-	// genuinely converted nobody, which is the same substitution the row `status` field and
-	// `pacing.pct` already refuse to make elsewhere in this contract.
-	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do), and ALSO absent on Microsoft whenever the ConversionsQualified column is missing from the report or ANY row's conversion cell is blank — that column is only populated for accounts wired for Universal Event Tracking, and a partial column summed as though it were complete would report a campaign's conversions as lower than they are. Absent means \"not measured here\", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37.0) })
+	// attribute is ABSENT rather than 0, and it is also absent when a LinkedIn or Microsoft
+	// read came back incomplete (see model.CampaignMetrics.Conversions). A 0 in either case
+	// would be indistinguishable from a campaign that genuinely converted nobody, which is the
+	// same substitution the row `status` field and `pacing.pct` already refuse to make
+	// elsewhere in this contract.
+	Attribute("conversions", Float64, "Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT means \"not measured\" — the platform cannot report it, or (LinkedIn, Microsoft) the read was incomplete. The first case covers channels that do not report a campaign-level conversion count at all (Meta, X, Reddit and the email channel never do). The second covers the two conversion-capable channels whose read can come back partial: LinkedIn whenever ANY returned analytics element omits externalWebsiteConversions, and Microsoft whenever the ConversionsQualified column is missing from the report or ANY row's conversion cell is blank (that column is only populated for accounts wired for Universal Event Tracking). On either, summing only the elements or rows that did carry a value would publish a partial count as a complete one and report a campaign's conversions as lower than they are, so the whole total is withdrawn instead. Absence therefore does NOT by itself identify a platform that cannot report conversions, and it is NOT the same as a measured 0: a consumer must not render it as zero or fold it into a conversion total.", func() { Example(37.0) })
 	Attribute("email", EmailMetrics, "Email-channel counters. Present only for the email channel (HubSpot); absent for every ad platform.")
 	Required("campaign_id", "platform_campaign_id", "window", "impressions", "clicks", "cost_micros", "ctr")
 	// An EXPLICIT object example, because the attribute-level examples above cannot produce a
@@ -1101,9 +1109,12 @@ var KeywordActions = Type("keyword-actions", func() {
 
 // ─── Negative keywords on a live campaign (LFXV2-2665) ───
 
-// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry, across the three
+// negativeKeywordMatchTypeEnum is the match types a negative keyword may carry, across the four
 // platforms that take one (LFXV2-2665). Each platform accepts a subset and refuses the rest with
 // 400 before it is contacted:
+//   - Google Ads: Broad, Phrase, Exact — a negative campaign_criterion of type KEYWORD whose
+//     keyword.match_type is BROAD, PHRASE or EXACT
+//     (https://developers.google.com/google-ads/api/reference/rpc/v23/KeywordMatchType).
 //   - Microsoft Advertising: Exact, Phrase — "The supported values for a negative keyword are
 //     Exact and Phrase." (https://learn.microsoft.com/en-us/advertising/campaign-management-service/negativekeyword).
 //   - X: Broad, Phrase, Exact — a targeting criterion of type BROAD_KEYWORD, PHRASE_KEYWORD or
@@ -1117,7 +1128,10 @@ func negativeKeywordMatchTypeEnum() {
 
 // negativeKeywordOutcomeEnum adds ALREADY_PRESENT to the per-item outcomes: Microsoft answers
 // a re-add of a negative the campaign already has with CampaignServiceNegativeKeywordAlreadyExists
-// (4335), and the state the caller asked for then holds.
+// (4335), and the state the caller asked for then holds. Google Ads reaches the same outcome from
+// the other end — its campaignCriteria:mutate is atomic, so a duplicate would fail the whole
+// batch, and the adapter reads the campaign's existing negatives first and withholds the ones
+// already there rather than sending them.
 func negativeKeywordOutcomeEnum() {
 	Enum("APPLIED", "ALREADY_PRESENT", "FAILED", "UNCONFIRMED")
 }
@@ -1133,13 +1147,13 @@ func negativeKeywordOutcomeEnum() {
 // most once per request. MaxLength is Microsoft's: "The text can contain a maximum of 100
 // characters." Goa counts runes, as Microsoft counts characters.
 var NegativeKeywordInput = Type("negative-keyword-input", func() {
-	Attribute("text", String, "The negative keyword text. Letters, digits, spaces and & ' - . only; at most 100 characters.", func() {
+	Attribute("text", String, "The negative keyword text. Letters, digits, spaces and & ' - . only; at most 100 characters — at most 80 on Google Ads, its own keyword text limit.", func() {
 		MinLength(1)
 		MaxLength(100)
 		Pattern(`^[\p{L}\p{M}\p{N} &'.\-]+$`)
 		Example("free download")
 	})
-	Attribute("match_type", String, "How the negative keyword is compared with a search query. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type). Any other value for the platform is 400.", func() {
+	Attribute("match_type", String, "How the negative keyword is compared with a search query. Google Ads: Broad, Phrase or Exact. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type). Any other value for the platform is 400.", func() {
 		negativeKeywordMatchTypeEnum()
 		Example("Phrase")
 	})
@@ -1150,9 +1164,9 @@ var NegativeKeywordInput = Type("negative-keyword-input", func() {
 var NegativeKeywordResult = Type("negative-keyword-result", func() {
 	Attribute("text", String, "The negative keyword text as sent to the platform (trimmed, whitespace collapsed)", func() { Example("free download") })
 	Attribute("match_type", String, "The match type as sent to the platform", negativeKeywordMatchTypeEnum)
-	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft) or ad group / line item (Reddit / X) already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
-	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added: Microsoft's NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where an excluded keyword has no id, and for every outcome other than APPLIED.", func() { Example("8475612390") })
-	Attribute("error_code", String, "Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable error code, when it named one. Reddit and X: NOT_SENT (the request carrying it was never sent) or REJECTED (the platform refused it); their own text is never returned.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
+	Attribute("outcome", String, "APPLIED — added by this request; ALREADY_PRESENT — the campaign (Google Ads, Microsoft) or ad group / line item (Reddit / X) already had it, so the requested state holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may have been added, verify in the ad platform before retrying.", negativeKeywordOutcomeEnum)
+	Attribute("negative_keyword_id", String, "The platform's id for a negative keyword this request added: Google's campaign criterion id, Microsoft's NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where an excluded keyword has no id. Present for ALREADY_PRESENT on Google Ads, which reads the campaign's existing negatives and reports the criterion id it already holds; absent for ALREADY_PRESENT elsewhere, and for FAILED and UNCONFIRMED everywhere.", func() { Example("8475612390") })
+	Attribute("error_code", String, "Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable error code, when it named one. Google Ads, Reddit and X: NOT_SENT (the request carrying it was never sent) or REJECTED (the platform refused it); their own text is never returned.", func() { Example("CampaignServiceNegativeKeywordMatchesKeyword") })
 	Required("text", "match_type", "outcome")
 })
 
@@ -1301,6 +1315,54 @@ var MetaAdSets = Type("meta-ad-sets", func() {
 			},
 		},
 		"ad_set_count": 1,
+	})
+})
+
+// MetaAd is one ad under a Meta ad set, read live (decision D7 first step). Never persisted.
+var MetaAd = Type("meta-ad", func() {
+	Attribute("id", String, "The Meta ad id", func() { Example("120210000000000999") })
+	Attribute("listed", Boolean, "false for an ad that DELIVERED in the window but that Meta's ad listing did not return (typically deleted or archived since, or beyond the listing cap when `truncated` is true): its counters are this ad set's spend, so they are reported, but every descriptive field is absent.", func() { Example(true) })
+	Attribute("name", String, "The ad's name as Meta holds it. Absent when not reported.", func() { Example("KubeCon NA — Leads — Image A") })
+	Attribute("status", String, "The ad's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED, ARCHIVED). Absent when not reported.", func() { Example("ACTIVE") })
+	Attribute("effective_status", String, "The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED, PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without notice. Absent when not reported.", func() { Example("ACTIVE") })
+	Attribute("creative_id", String, "The id of the ad's creative. Absent when not reported.", func() { Example("120210000000000777") })
+	Attribute("creative_name", String, "The creative's name. Absent when not reported.", func() { Example("KubeCon NA — Image A") })
+	Attribute("impressions", Int64, "Impressions over the window. 0 when Meta reported no delivery for this ad.", func() { Example(920) })
+	Attribute("clicks", Int64, "Clicks over the window.", func() { Example(21) })
+	Attribute("cost_micros", Int64, "Spend over the window in micro-units of `currency`.", func() { Example(6170000) })
+	Attribute("ctr", Float64, "clicks/impressions, 0 when impressions is 0.", func() { Example(0.0228) })
+	Required("id", "listed", "impressions", "clicks", "cost_micros", "ctr")
+})
+
+// MetaAds is the live ad read for one ad set of a Meta campaign.
+var MetaAds = Type("meta-ads", func() {
+	Attribute("campaign_id", String, "Campaign UUID", func() { Example("6f9619ff-8b86-d011-b42d-00c04fc964ff") })
+	Attribute("platform_campaign_id", String, "The Meta campaign id the ad set was proven to belong to.", func() { Example("120210000000000555") })
+	Attribute("ad_set_id", String, "The Meta ad set id the ads were read under.", func() { Example("120210000000000888") })
+	Attribute("window", String, "The reporting window the counters cover.", metricsWindowEnum)
+	Attribute("currency", String, "The ad account's ISO 4217 currency; `cost_micros` is denominated in it.", func() { Example("USD") })
+	Attribute("read_at", String, "When Meta was read (RFC3339, UTC).", func() { Format(FormatDateTime) })
+	Attribute("truncated", Boolean, "true when the ad LISTING reported more ads than the page cap allows (5 pages of 100): `ads` then holds the ads that were read, not every ad of the ad set. Delivery is never truncated — the Insights read is all or nothing.", func() { Example(false) })
+	Attribute("ads", ArrayOf(MetaAd), "Every ad the listing returned, in Meta's order, then any unlisted ad that delivered in the window, by id. Empty when the ad set has none.")
+	Attribute("ad_count", Int, "len(ads).", func() { Example(1) })
+	Required("campaign_id", "platform_campaign_id", "ad_set_id", "window", "currency", "read_at", "truncated", "ads", "ad_count")
+	Example(map[string]any{
+		"campaign_id":          "6f9619ff-8b86-d011-b42d-00c04fc964ff",
+		"platform_campaign_id": "120210000000000555",
+		"ad_set_id":            "120210000000000888",
+		"window":               "last_30_days",
+		"currency":             "USD",
+		"read_at":              "2026-10-15T09:30:00Z",
+		"truncated":            false,
+		"ads": []map[string]any{
+			{
+				"id": "120210000000000999", "listed": true, "name": "KubeCon NA — Leads — Image A",
+				"status": "ACTIVE", "effective_status": "ACTIVE",
+				"creative_id": "120210000000000777", "creative_name": "KubeCon NA — Image A",
+				"impressions": 920, "clicks": 21, "cost_micros": 6170000, "ctr": 0.0228,
+			},
+		},
+		"ad_count": 1,
 	})
 })
 
@@ -1799,7 +1861,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("adopt-campaign", func() {
-		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign's own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.")
+		Description("Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project's connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project's OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection's ad account after a campaign 404, and the campaign must belong to that connection's ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project's connection / the campaign is of a type that platform's slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children, and is returned, read back by get-campaign and indexed with `adopted: true`. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires (toggle-campaign-status answers 409 with reason=campaign_adopted); the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign's own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.")
 		Payload(func() {
 			bearerToken()
 			// Slug-only, matching create-campaigns: project_id is the exact-match key for
@@ -2000,7 +2062,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("toggle-campaign-status", func() {
-		Description("Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in 'created_degraded' pauses it upstream and returns 200 with the status and ETag UNCHANGED. 'created_degraded' records that the campaign's wiring was never verified, and this schema has one status column, so writing 'paused' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). Read the pause's effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign's recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service's, not Meta's, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.")
+		Description("Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in 'created_degraded' pauses it upstream and returns 200 with the status and ETag UNCHANGED. 'created_degraded' records that the campaign's wiring was never verified, and this schema has one status column, so writing 'paused' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform's own UI. Read the pause's effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign's recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service's, not Meta's, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -2148,6 +2210,11 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"confirms it; once confirmed, a failed row write answers 500 with the platform holding the new " +
 			"bid, logged as a divergence, and re-applying the same bid reconciles it. " +
 			"ONE MANUAL CPC BID, AT THE LEVEL THIS SERVICE'S CREATE PATH PUTS IT — never a bid strategy. " +
+			"Google Ads: the cpc_bid_micros of the ad group this service created for the campaign " +
+			"(keywords are created without their own bids, so they inherit it); it is the one platform whose " +
+			"row can record SEVERAL ad groups, and because siblings carry independent max CPC bids a row " +
+			"recording more than one is refused (409) rather than resolved — set the bid on the ad group you " +
+			"mean in Google Ads. " +
 			"Microsoft Advertising: the default CpcBid of the ONE ad group this service created for the " +
 			"campaign (keywords are created without their own bids, so they inherit it). Reddit: the " +
 			"bid_value of the ONE ad group this service created. Meta: the bid_amount (a bid cap, in the " +
@@ -2158,12 +2225,16 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"(a decimal amount, written in USD at whole cents — a sub-cent amount is refused 400 rather than " +
 			"rounded); an ADOPTED LinkedIn campaign is refused (409). " +
 			"REFUSED (409) WHEN THE BID WOULD BE IGNORED OR IS NOT A COST PER CLICK. A manual bid only does " +
-			"something under a bid strategy that reads it — Microsoft's EnhancedCpc or ManualCpc; Reddit's " +
+			"something under a bid strategy that reads it — Google's MANUAL_CPC; Microsoft's EnhancedCpc or ManualCpc; Reddit's " +
 			"MANUAL_BIDDING with bid_type CPC; Meta's LOWEST_COST_WITH_BID_CAP with billing_event AND " +
 			"optimization_goal both LINK_CLICKS (a Meta bid cap is per optimization event and, billed on " +
 			"impressions, per 1,000 impressions — so only that pairing is a max cost per click); X's MAX " +
 			"with pay_by LINK_CLICK; LinkedIn's costType CPC with optimizationTargetType NONE or " +
-			"ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or target strategy (Microsoft MaxClicks, " +
+			"ENHANCED_CONVERSION (its two manual-bidding modes). Under an automated or target strategy (Google " +
+			"TARGET_CPA, TARGET_ROAS, TARGET_SPEND, MAXIMIZE_CLICKS, MAXIMIZE_CONVERSIONS, " +
+			"MAXIMIZE_CONVERSION_VALUE, TARGET_IMPRESSION_SHARE, MANUAL_CPM, MANUAL_CPV, or any portfolio " +
+			"strategy — Google offers no portfolio MANUAL_CPC, so a campaign on one never reports MANUAL_CPC " +
+			"and is refused by the same check; Microsoft MaxClicks, " +
 			"MaxConversions, TargetCpa, TargetRoas, MaxConversionValue, TargetImpressionShare, a portfolio " +
 			"strategy the read cannot name; Reddit BIDLESS, MAXIMIZE_VOLUME, TARGET_CPX; Meta " +
 			"LOWEST_COST_WITHOUT_CAP, COST_CAP, LOWEST_COST_WITH_MIN_ROAS; X AUTO, TARGET; LinkedIn MAX_*, " +
@@ -2177,14 +2248,18 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"campaign and its ad group, every Meta campaign LOWEST_COST_WITHOUT_CAP billed on IMPRESSIONS, " +
 			"and every X campaign AUTO, so those three legs apply only after an operator has moved the " +
 			"Reddit campaign and ad group, the Meta ad set or the X line item to a manual per-click bid in " +
-			"the platform's own UI. A LinkedIn campaign this service creates sends no optimizationTargetType, " +
+			"the platform's own UI. GOOGLE ADS IS THE EXCEPTION: a SEARCH campaign this service creates " +
+			"defaults to MANUAL_CPC, so the guard is expected to pass there without any operator change — " +
+			"while a Demand Gen, Performance Max, Video or Display campaign defaults to an automated " +
+			"strategy and is refused. The guard still decides on what Google REPORTS, never on that default. " +
+			"A LinkedIn campaign this service creates sends no optimizationTargetType, " +
 			"which LinkedIn documents as defaulting to NONE (manual), so it is expected to pass — but the " +
 			"guard decides on what LinkedIn REPORTS, never on that expectation. " +
 			"On every adapter but LinkedIn the amount is in the AD ACCOUNT's own currency, not USD, and " +
 			"this service neither knows nor converts it; the LinkedIn adapter writes USD and refuses " +
 			"(409) a campaign whose bid is in any other or an unreported currency. " +
-			"Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other platform is " +
-			"refused with 400. " +
+			"Google Ads, Microsoft Advertising, Reddit, Meta, X and LinkedIn today: a campaign on any other " +
+			"platform is refused with 400. " +
 			"**409** when the change is refused BEFORE the platform is written, so nothing has changed: the " +
 			"campaign is unprovisioned; it belongs to a different ad account than the project's connection " +
 			"now resolves to, or does not record which ad account it was created under; its bid strategy is " +
@@ -2321,13 +2396,15 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 	})
 
 	Method("add-negative-keywords", func() {
-		Description("Add negative keywords to one live campaign (LFXV2-2665). Three platforms, each at its own level: " +
+		Description("Add negative keywords to one live campaign (LFXV2-2665). Four platforms, each at its own level: " +
+			"Google Ads at CAMPAIGN level (campaignCriteria:mutate, negative KEYWORD criteria — the same level and " +
+			"resource its create path attaches an exclusion list through); " +
 			"Microsoft Advertising at CAMPAIGN level (AddNegativeKeywordsToEntities, EntityType Campaign); Reddit in " +
 			"the excluded_keywords of the ONE ad group this service created (a whole-targeting PATCH, behind " +
 			"REDDIT_KEYWORD_TARGETING_WRITES_ENABLED — off is 400 before Reddit is contacted); X as one negated " +
 			"keyword targeting criterion (operator_type NE) per keyword on the ONE line item this service created. " +
 			"A campaign on any other platform is refused with 400 before anything is contacted. " +
-			"Match types per platform: Microsoft Exact or Phrase; X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); " +
+			"Match types per platform: Google Ads Broad, Phrase or Exact (BROAD/PHRASE/EXACT); Microsoft Exact or Phrase; X Broad, Phrase or Exact (BROAD_/PHRASE_/EXACT_KEYWORD); " +
 			"Reddit Broad only, because Reddit's excluded keywords carry no match type. Any other is 400. " +
 			"A MUTATION on a live paid campaign — a negative keyword stops the campaign serving on matching " +
 			"queries, so it only narrows delivery — and it carries the keyword levers' guard set, all before the " +
@@ -2335,17 +2412,21 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"the project's current connection (a campaign that does not record its ad account is refused, never " +
 			"assumed), and on Reddit and X a READ proving the ad group / line item is live and reported under THIS " +
 			"campaign. Reddit also requires `revision`, the fingerprint get-keyword-targeting returned, and refuses " +
-			"(409) when the ad group's targeting has changed since, and a blank one is 400; Microsoft and X refuse a present " +
-			"revision, even an empty one (400). " +
+			"(409) when the ad group's targeting has changed since, and a blank one is 400; Google Ads, Microsoft and X " +
+			"refuse a present revision, even an empty one (400). " +
 			"Like apply-keyword-actions it persists nothing — the negatives live on the platform — so it takes " +
 			"no If-Match and returns no ETag. " +
 			"Every write is sent ONCE and never retried on a 429. The 200 carries one result per requested keyword, " +
 			"in request order, each with its own outcome. A negative already there is ALREADY_PRESENT, a success, " +
-			"and is not sent again. Microsoft adds each negative independently; Reddit's one PATCH carries every new " +
+			"and is not sent again. On Google Ads that is established by a READ of the campaign's existing negatives " +
+			"before anything is written, and it is not an optimisation: Google's campaignCriteria:mutate is ATOMIC, so " +
+			"one duplicate would fail the whole batch and take every acceptable keyword with it. For the same atomicity " +
+			"every Google keyword actually SENT shares one outcome — all APPLIED, all FAILED or all UNCONFIRMED; there " +
+			"is no partial result and none is invented. Microsoft adds each negative independently; Reddit's one PATCH carries every new " +
 			"one, so they share its outcome (confirmed by a re-read) while ALREADY_PRESENT ones keep theirs — a batch with " +
 			"any ALREADY_PRESENT item always answers per item; X sends one POST per keyword, at most 20 per " +
 			"request (X's one-write-per-second account pacing), each APPLIED, FAILED (NOT_SENT, REJECTED) or UNCONFIRMED. " +
-			"**400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters or outside " +
+			"**400** for a malformed batch (empty or over 60 — over 20 on X —, a text over 100 characters — over 80 on Google Ads — or outside " +
 			"the allowed characters, consecutive punctuation, a match type the platform does not offer, the same " +
 			"keyword twice, a missing or misplaced revision), an unsupported platform, or Reddit writes switched off. " +
 			"A malformed batch is 400 even when the campaign is also unprovisioned. " +
@@ -2364,7 +2445,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// One explicit example for the same reason apply-keyword-actions has one: Goa's
 			// fabricated sample repeats the element example, which this endpoint refuses as a
 			// duplicate.
-			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add: at campaign level on Microsoft Advertising, on the campaign's one ad group on Reddit, on its one line item on X.", func() {
+			Attribute("negative_keywords", ArrayOf(NegativeKeywordInput), "The negative keywords to add: at campaign level on Google Ads and Microsoft Advertising, on the campaign's one ad group on Reddit, on its one line item on X.", func() {
 				MinLength(1)
 				MaxLength(60)
 				// Broad, because the generated request example also carries `revision`, which only
@@ -2375,7 +2456,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			})
 			// Reddit's compare-and-set token, exactly as get-keyword-targeting returned it. Never sent
 			// upstream; only compared with a fresh read's fingerprint.
-			Attribute("revision", String, "Reddit only, and required there: the revision get-keyword-targeting returned; an empty or blank one is 400. The add is refused (409) when the ad group's targeting no longer has that fingerprint. Microsoft Advertising and X refuse the field (400) whenever it is present, even empty.", func() {
+			Attribute("revision", String, "Reddit only, and required there: the revision get-keyword-targeting returned; an empty or blank one is 400. The add is refused (409) when the ad group's targeting no longer has that fingerprint. Google Ads, Microsoft Advertising and X refuse the field (400) whenever it is present, even empty.", func() {
 				MaxLength(128)
 				Example("sha256:5e1b7f0c2a9d4e3b8c6a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c")
 			})
@@ -2498,6 +2579,37 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 		commonBriefErrors()
 		HTTP(func() {
 			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets")
+			Header("bearer_token:Authorization")
+			Param("window")
+			Response(StatusOK)
+			briefErrorResponses()
+		})
+	})
+
+	Method("list-meta-ads", func() {
+		Description("Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad's name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; there is no per-ad pause or edit. " +
+			"Before anything is read the campaign must record which ad account it was created under and that account must be the connection's (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). " +
+			"Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection's ad account, every Insights row must name this ad set and campaign and the account's currency, and an explicit null counter is refused while an absent one is 0. " +
+			"**404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta's 100/33 is a 503 like every other unverifiable upstream answer.")
+		Payload(func() {
+			bearerToken()
+			projectIDAttr()
+			briefIDAttr()
+			campaignIDAttr()
+			// Interpolated into the Graph path, so the Pattern is the transport's half of the
+			// path-injection guard meta.ValidateAdSetID repeats (TestMetaAdsAdSetIDPattern_MatchesPlatformValidator).
+			Attribute("ad_set_id", String, "The Meta ad set id: digits, no leading zero, at most 32.", func() {
+				Pattern(`^[1-9][0-9]*$`)
+				MaxLength(32)
+				Example("120210000000000888")
+			})
+			Attribute("window", String, "Platform-agnostic reporting window; defaults to last_30_days when omitted", metricsWindowEnum)
+			Required("project_id", "brief_id", "campaign_id", "ad_set_id")
+		})
+		Result(MetaAds)
+		commonBriefErrors()
+		HTTP(func() {
+			GET("/projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/ads")
 			Header("bearer_token:Authorization")
 			Param("window")
 			Response(StatusOK)

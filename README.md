@@ -295,12 +295,12 @@ openssl rand -base64 32
   stored — the guard refuses a CHANGED id, not a present one. This is
   what keeps the rollout reversible by flipping the flag back.
 
-  One consequence to plan around: `linkedin-ads`, `reddit-ads` and
-  `microsoft-ads` declare `account_id` as REQUIRED on their create
-  payloads, so a create body cannot omit it and those three providers
-  cannot be connected at all while the flag is on. `google-ads`,
-  `meta-ads` and — as of LFXV2-3319 — `twitter-ads` are credentials-first
-  and can still be created. (X's `funding_instrument_id` is still
+  One consequence to plan around: `linkedin-ads` and `reddit-ads`
+  declare `account_id` as REQUIRED on their create payloads, so a create
+  body cannot omit it and those two providers cannot be connected at all
+  while the flag is on. `google-ads`, `meta-ads`, `twitter-ads` (as of
+  LFXV2-3319) and `microsoft-ads` (as of issue #181) are
+  credentials-first and can still be created. (X's `funding_instrument_id` is still
   required; credentials-first defers the ACCOUNT choice only.) The
   per-endpoint status contract is in
   [`docs/api-catalog.md`](docs/api-catalog.md) under Platform
@@ -639,6 +639,23 @@ make build         # build a local binary
 make build-release # build a static release binary for Linux
 make run           # build and run locally (needs PG* env; see above)
 ```
+
+### Verifying a gated metrics read (`cmd/verify-metrics`)
+
+Before flipping `REDDIT_METRICS_ENABLED`, `MICROSOFT_METRICS_ENABLED` or
+`TWITTER_METRICS_ENABLED`, run the gated read against a live account with the
+same database and key settings as `make run`:
+
+```sh
+go run ./cmd/verify-metrics -provider reddit-ads -project <slug|lf-system> \
+  -campaign <platform campaign id> -window last_7_days [-raw]
+```
+
+It resolves the connection and calls the dispatcher's `ReadMetrics` exactly as
+the service does, forces the flag on in its own process only, is read-only
+(read-only DB session; non-read upstream requests refused before sending) and
+redacts every secret. `google-ads` is refused. See
+[docs/knowledge/code/cmd-verify-metrics.md](docs/knowledge/code/cmd-verify-metrics.md).
 
 ### MegaLinter (local)
 

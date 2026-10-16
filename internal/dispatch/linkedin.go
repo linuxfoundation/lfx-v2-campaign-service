@@ -249,42 +249,29 @@ func NewLinkedInDispatcher(repo connReader, enc domain.Encryptor, opts ...linked
 // planned per-(brief, platform) single-flight guard (LFXV2-2665). Callers must not treat
 // a LinkedIn ambiguous error as freely retryable the way name-idempotent platforms are.
 func (d *LinkedInDispatcher) Dispatch(ctx context.Context, brief *model.CampaignBrief, platform model.Provider, config json.RawMessage) (camp *model.Campaign, err error) {
-	res, err := d.creds.resolve(ctx, brief.ProjectID, platform)
+	// The connection checks are resolveLinkedInCredentials, the helper ToggleStatus and
+	// ReadMetrics share, so create and toggle accept EXACTLY the same connections and tag each
+	// defect the same way — an empty account id included, which now names the missing choice
+	// (ErrAccountNotSelected) instead of failing bare. Its errors are wrapped with notCreated
+	// HERE: the claim-release contract is create-only, so the helper does not carry it.
+	// d.creds.resolve, not an existingResolver: Dispatch CREATES, so it is governed by the
+	// forced-system flag rather than by an account a campaign was previously created under.
+	res, creds, err := d.resolveLinkedInCredentials(ctx, brief.ProjectID, platform, d.creds.resolve)
 	if err != nil {
-		return nil, err // preCreateError
+		return nil, notCreated(err)
 	}
 	// Record WHICH ACCOUNT served this campaign on every exit that returns a row —
 	// including the UNCONFIRMED/degraded paths that return a campaign alongside an error.
 	// See stampProvenance for why this is a defer on the named return, not a per-return call.
 	defer func() { res.stampProvenance(camp) }()
-	if res.status != model.StatusActive {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is %s, not active", domain.CallerValue(brief.ProjectID), domain.CallerValue(string(res.status))))
-	}
 
-	var creds linkedinCreds
-	if err := json.Unmarshal(res.plaintext, &creds); err != nil {
-		return nil, notCreated(fmt.Errorf("decode linkedin credentials: %w", err))
-	}
-	// ASSIGN the trimmed token, do not merely test it. resolveLinkedInCredentials — which the
-	// discovery and toggle paths share — writes the trimmed value back, so testing it here while
-	// sending the raw one makes the two paths disagree about the SAME stored credential: a
-	// whitespace-padded token passes this check, lists accounts successfully through discovery,
-	// and is then sent padded from here for LinkedIn to reject. That is the misleading-discovery
-	// state the shared resolver exists to prevent, reintroduced by testing a value instead of
-	// adopting it. (The padding is refused at bootstrap install time, so this is defence in
-	// depth. The bootstrap installer refuses padded values, but that is NOT the only writer: the
-	// public create-connection and set-credential APIs reach `credentialJSON`, which marshals and
-	// encrypts without trimming, so a padded token is persistable through supported input today.
-	// An earlier version of this comment called the path unreachable; it is not.)
-	creds.AccessToken = strings.TrimSpace(creds.AccessToken)
-	if creds.AccessToken == "" {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin credentials are incomplete (need accessToken)"))
-	}
-
+	// The org id is creation-only (the toggle and metrics paths never read it), so it is
+	// checked here rather than in the shared helper. The helper has already refused an empty
+	// account id.
 	orgID := strings.TrimSpace(res.providerConfig["org_id"])
 	accountID := strings.TrimSpace(res.accountID)
-	if accountID == "" || orgID == "" {
-		return nil, notCreated(domain.PreflightRefusalf("linkedin connection for project %s is missing account id or org id", domain.CallerValue(brief.ProjectID)))
+	if orgID == "" {
+		return nil, notCreated(linkedInMissingOrgIDRefusal(res))
 	}
 
 	var cfg linkedinConfig
@@ -551,12 +538,12 @@ func (d *LinkedInDispatcher) ToggleStatus(ctx context.Context, projectID string,
 // callers below, each with bare errors that fell through to 503 — "transient, retry later" for
 // defects no retry can fix. No amount of retrying repairs a credential blob that is not valid
 // JSON. Four CHECKS, two CALLERS: Dispatch was a third inline site but never reached that 503
-// mapping, for the reason the next paragraph gives.
+// mapping, because campaign create is asynchronous.
 //
-// Scoped to the toggle and metrics paths (LFXV2-3196). Dispatch keeps its own inline checks:
-// they wrap in notCreated() to release the dispatch claim, which is a different contract from
-// returning a classified error to a synchronous handler, and folding the two would mean this
-// helper had to know which caller it had.
+// Dispatch calls it too (LFXV2-3196 scoped it to toggle and metrics; the create path joined
+// later). The helper still returns PLAIN classified errors: Dispatch wraps them in notCreated()
+// itself to release the dispatch claim, so the helper never has to know which caller it has —
+// the same split Meta, X and Microsoft draw between their shared validator and create.
 //
 // resolveCreds selects the credential entry point (see credsResolver): discovery is governed by
 // the forced-system flag; an operation on an existing campaign resolves the account that
@@ -613,6 +600,25 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 	return res, creds, nil
 }
 
+// linkedInMissingOrgIDRefusal is Dispatch's refusal for a connection with no org id, worded
+// for the row Dispatch actually READ. With forcing off, a project with no LinkedIn row of its
+// own is served from the LF system fallback, and the org id it lacks is then the system row's:
+// naming "this project's" connection would send the operator to repair a connection the
+// project does not have, while the row that needs the fix belongs to LF. res.isFromSystem() is
+// the same provenance systemScoped reads for the connection-class defects, and the two
+// sentence heads are the ones DispatchFailureMessage uses for those classes (issue #208), so a
+// missing org id reads like every other connection fault on the same row.
+//
+// It stays a PreflightRefusal rather than an ErrConnectionNotUsable classification: the job
+// result copies it verbatim, which keeps "org id" in the sentence, and every value in it is a
+// service-owned constant. Raised before any request, so the caller wraps it in notCreated().
+func linkedInMissingOrgIDRefusal(res *resolved) error {
+	if res.isFromSystem() {
+		return domain.PreflightRefusalf("the LF system %s connection is missing its org id; nothing was sent", model.ProviderLinkedInAds)
+	}
+	return domain.PreflightRefusalf("this project's %s connection is missing its org id; nothing was sent", model.ProviderLinkedInAds)
+}
+
 // resolveLinkedInDiscoveryCredentials is resolveLinkedInCredentials WITHOUT the account-id
 // requirement, and that omission is the entire point.
 //
@@ -628,12 +634,10 @@ func (d *LinkedInDispatcher) resolveLinkedInCredentials(ctx context.Context, pro
 // rejected at toggle could be accepted here — the failure mode that makes a discovery endpoint
 // actively misleading rather than merely permissive.
 //
-// NOT shared with Dispatch, and the distinction is worth stating precisely because an earlier
-// version of this comment claimed it was. Dispatch calls d.creds.resolve directly and validates
-// inline (see its own block above), so the two CAN drift — and did: Dispatch was sending an
-// untrimmed access token while this resolver trimmed it, which is why a padded credential listed
-// accounts here and failed on create. That is fixed, but by a regression test rather than by
-// shared code, so the invariant this comment may claim is the narrower one.
+// Shared with Dispatch too, which calls resolveLinkedInCredentials for its connection checks.
+// Before it did, Dispatch validated inline and the two drifted: it sent an untrimmed access
+// token while this resolver trimmed it, so a padded credential listed accounts here and failed
+// on create. Sharing the code is what now keeps discovery and create from disagreeing.
 //
 // It returns the *resolved alongside the credentials so this endpoint can name the
 // connection (and attribute a defect to the LF SYSTEM row) exactly as the create,
@@ -736,9 +740,10 @@ func (d *LinkedInDispatcher) ListAccounts(ctx context.Context, projectID string,
 // LinkedIn is the platform where this is LIVE rather than defensive: it genuinely runs
 // several ad accounts across foundations (tlf and lf-events are two of them), so a project
 // naming another project's account is a real, reachable request and this is what refuses
-// it. The other ad platforms share one account today, where the same check is defensive —
-// see requireMetaManagedAccount. Per-platform tenancy is documented in docs/architecture.md
-// ("Account Tenancy" and "Current Platform Accounts"), which is the authority for it.
+// it. Meta, Reddit and X share one LF account, where the same check is defensive — see
+// requireMetaManagedAccount — and Microsoft's tenancy is not yet recorded. Per-platform
+// tenancy is documented in docs/architecture.md ("Account Tenancy" and "Current Platform
+// Accounts"), which is the authority for it.
 //
 // The empty case is kept DISTINCT from the mismatch rather than folded into it. An empty
 // stored account means the operator has not finished setting the connection up, whose
@@ -1177,6 +1182,60 @@ func linkedinRunStatus(status string) (string, error) {
 	}
 }
 
+// linkedinSnapshotConfig returns the copy of cfg that is persisted to config_snapshot
+// (stored UNENCRYPTED and indexed).
+//
+// Every caller string that the client does not shape-check goes through sanitizeSnapshotText
+// — the helper X's tweetText and Microsoft's keywords use — which reduces any link-shaped run
+// to scheme+host and drops one carrying userinfo. The fields that matter are
+// Variants[].IntroText and Headline: operator-authored ad copy where a link gets pasted, and a
+// password-reset or magic-link URL keeps its secret in the PATH as readily as in the query.
+// GeoTargets[].Label, TargetingProfile and TargetingProfiles[].ID/Label are caller labels and
+// selectors bound for the same column and get the same treatment. So are
+// TargetingProfiles[].Skills/Groups: validFacets checks them only on the profile
+// TargetingProfile SELECTS, so an unselected profile's facets reach the snapshot as typed. An
+// ordinary label, id or facet URN has no link-shaped run and passes through unchanged.
+//
+// Kept verbatim, because the client refuses anything that could carry a URL before a campaign
+// (and so a snapshot) exists: Variants[].ImageURN (urn:li:image:<id> only), EmployerExclusions
+// (validFacets: facet URNs only, and creation is refused when no profile matches), and
+// AdAccountID (refused unless it equals the connection's account). GeoTargets[].URN,
+// Variants[].ImageAssetID (a stored asset key), numbers, flags and dates are kept too.
+//
+// cfg is passed by value but its slices share backing arrays with the config Dispatch sends,
+// so every slice that is rewritten is REALLOCATED first: the FULL text must still reach
+// LinkedIn, and only the stored copy is redacted.
+func linkedinSnapshotConfig(cfg linkedinConfig) linkedinConfig {
+	snapshot := cfg
+	snapshot.TargetingProfile = sanitizeSnapshotText(cfg.TargetingProfile)
+	if cfg.Variants != nil {
+		snapshot.Variants = make([]linkedin.CreativeVariant, len(cfg.Variants))
+		copy(snapshot.Variants, cfg.Variants)
+		for i := range snapshot.Variants {
+			snapshot.Variants[i].IntroText = sanitizeSnapshotText(cfg.Variants[i].IntroText)
+			snapshot.Variants[i].Headline = sanitizeSnapshotText(cfg.Variants[i].Headline)
+		}
+	}
+	if cfg.GeoTargets != nil {
+		snapshot.GeoTargets = make([]linkedin.GeoTarget, len(cfg.GeoTargets))
+		copy(snapshot.GeoTargets, cfg.GeoTargets)
+		for i := range snapshot.GeoTargets {
+			snapshot.GeoTargets[i].Label = sanitizeSnapshotText(cfg.GeoTargets[i].Label)
+		}
+	}
+	if cfg.TargetingProfiles != nil {
+		snapshot.TargetingProfiles = make([]linkedin.TargetingProfileConfig, len(cfg.TargetingProfiles))
+		copy(snapshot.TargetingProfiles, cfg.TargetingProfiles)
+		for i := range snapshot.TargetingProfiles {
+			snapshot.TargetingProfiles[i].ID = sanitizeSnapshotText(cfg.TargetingProfiles[i].ID)
+			snapshot.TargetingProfiles[i].Label = sanitizeSnapshotText(cfg.TargetingProfiles[i].Label)
+			snapshot.TargetingProfiles[i].Skills = sanitizeSnapshotTexts(cfg.TargetingProfiles[i].Skills)
+			snapshot.TargetingProfiles[i].Groups = sanitizeSnapshotTexts(cfg.TargetingProfiles[i].Groups)
+		}
+	}
+	return snapshot
+}
+
 // campaignFromLinkedIn maps the client result to the persistence model: upstream id,
 // name, result blob, the budget/schedule/ConfigSnapshot (via applyCampaignConfig), and
 // a status derived from what was confirmed created — one of `created`,
@@ -1224,8 +1283,9 @@ func campaignFromLinkedIn(ctx context.Context, r *linkedin.CampaignResult, reque
 		c.Status = campaignStatusUnconfirmed
 	}
 	// Persist the budget/schedule/config the caller supplied (LinkedIn honors a
-	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config.
-	applyCampaignConfig(ctx, c, cfg.BudgetUSD, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, cfg)
+	// lifetime-vs-daily budget flag). ConfigSnapshot captures the validated config with its
+	// caller free text redacted — see linkedinSnapshotConfig.
+	applyCampaignConfig(ctx, c, cfg.BudgetUSD, cfg.LifetimeBudget, cfg.StartDate, cfg.EndDate, linkedinSnapshotConfig(cfg))
 	if raw, err := json.Marshal(r); err != nil {
 		// A marshal failure should be near-impossible for this plain struct, but do NOT
 		// swallow it: leaving Result empty would make an orphaned campaign harder to

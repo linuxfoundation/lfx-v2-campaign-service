@@ -115,13 +115,14 @@ type ApplyKeywordActionsRequestBody struct {
 // "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
 // HTTP request body.
 type AddNegativeKeywordsRequestBody struct {
-	// The negative keywords to add: at campaign level on Microsoft Advertising, on
-	// the campaign's one ad group on Reddit, on its one line item on X.
+	// The negative keywords to add: at campaign level on Google Ads and Microsoft
+	// Advertising, on the campaign's one ad group on Reddit, on its one line item
+	// on X.
 	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords" json:"negative_keywords" xml:"negative_keywords"`
 	// Reddit only, and required there: the revision get-keyword-targeting
 	// returned; an empty or blank one is 400. The add is refused (409) when the ad
-	// group's targeting no longer has that fingerprint. Microsoft Advertising and
-	// X refuse the field (400) whenever it is present, even empty.
+	// group's targeting no longer has that fingerprint. Google Ads, Microsoft
+	// Advertising and X refuse the field (400) whenever it is present, even empty.
 	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 
@@ -509,6 +510,16 @@ type AdoptCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -534,6 +545,16 @@ type GetCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -571,15 +592,21 @@ type GetCampaignMetricsResponseBody struct {
 	// partial conversions under data-driven, position-based and offline
 	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
 	// round it to a whole number, and in particular do not treat a value below 1
-	// as zero. ABSENT when the channel does not report a campaign-level conversion
-	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
-	// Microsoft whenever the ConversionsQualified column is missing from the
-	// report or ANY row's conversion cell is blank — that column is only populated
-	// for accounts wired for Universal Event Tracking, and a partial column summed
-	// as though it were complete would report a campaign's conversions as lower
-	// than they are. Absent means "not measured here", which is NOT the same as a
-	// measured 0, and a consumer must not render it as zero or fold it into a
-	// conversion total.
+	// as zero. ABSENT means "not measured" — the platform cannot report it, or
+	// (LinkedIn, Microsoft) the read was incomplete. The first case covers
+	// channels that do not report a campaign-level conversion count at all (Meta,
+	// X, Reddit and the email channel never do). The second covers the two
+	// conversion-capable channels whose read can come back partial: LinkedIn
+	// whenever ANY returned analytics element omits externalWebsiteConversions,
+	// and Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank (that column is only populated
+	// for accounts wired for Universal Event Tracking). On either, summing only
+	// the elements or rows that did carry a value would publish a partial count as
+	// a complete one and report a campaign's conversions as lower than they are,
+	// so the whole total is withdrawn instead. Absence therefore does NOT by
+	// itself identify a platform that cannot report conversions, and it is NOT the
+	// same as a measured 0: a consumer must not render it as zero or fold it into
+	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
@@ -675,6 +702,16 @@ type UpdateCampaignResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -701,6 +738,16 @@ type ToggleCampaignStatusResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -727,6 +774,16 @@ type UpdateCampaignBudgetResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -753,6 +810,16 @@ type UpdateCampaignBidResponseBody struct {
 	// channel: 1 for the first, 2 for one created on top of it with new_version,
 	// and so on. Unrelated to version.
 	SlotVersion *int `form:"slot_version,omitempty" json:"slot_version,omitempty" xml:"slot_version,omitempty"`
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool `form:"adopted,omitempty" json:"adopted,omitempty" xml:"adopted,omitempty"`
 	// Optimistic-concurrency version
 	Version *int64 `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
@@ -846,6 +913,32 @@ type ListMetaAdSetsResponseBody struct {
 	AdSets []*MetaAdSetResponseBody `form:"ad_sets,omitempty" json:"ad_sets,omitempty" xml:"ad_sets,omitempty"`
 	// len(ad_sets).
 	AdSetCount *int `form:"ad_set_count,omitempty" json:"ad_set_count,omitempty" xml:"ad_set_count,omitempty"`
+}
+
+// ListMetaAdsResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "list-meta-ads" endpoint HTTP response body.
+type ListMetaAdsResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The Meta campaign id the ad set was proven to belong to.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// The Meta ad set id the ads were read under.
+	AdSetID *string `form:"ad_set_id,omitempty" json:"ad_set_id,omitempty" xml:"ad_set_id,omitempty"`
+	// The reporting window the counters cover.
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// The ad account's ISO 4217 currency; `cost_micros` is denominated in it.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
+	// When Meta was read (RFC3339, UTC).
+	ReadAt *string `form:"read_at,omitempty" json:"read_at,omitempty" xml:"read_at,omitempty"`
+	// true when the ad LISTING reported more ads than the page cap allows (5 pages
+	// of 100): `ads` then holds the ads that were read, not every ad of the ad
+	// set. Delivery is never truncated — the Insights read is all or nothing.
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+	// Every ad the listing returned, in Meta's order, then any unlisted ad that
+	// delivered in the window, by id. Empty when the ad set has none.
+	Ads []*MetaAdResponseBody `form:"ads,omitempty" json:"ads,omitempty" xml:"ads,omitempty"`
+	// len(ads).
+	AdCount *int `form:"ad_count,omitempty" json:"ad_count,omitempty" xml:"ad_count,omitempty"`
 }
 
 // ToggleMetaAdSetStatusResponseBody is the type of the
@@ -2909,6 +3002,79 @@ type ListMetaAdSetsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type ListMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Conflict" error.
+type ListMetaAdsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ListMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ListMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ListMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "NotFound" error.
+type ListMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ListMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ListMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ToggleMetaAdSetStatusBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -3912,15 +4078,21 @@ type CampaignMetricsResponseBody struct {
 	// partial conversions under data-driven, position-based and offline
 	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
 	// round it to a whole number, and in particular do not treat a value below 1
-	// as zero. ABSENT when the channel does not report a campaign-level conversion
-	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
-	// Microsoft whenever the ConversionsQualified column is missing from the
-	// report or ANY row's conversion cell is blank — that column is only populated
-	// for accounts wired for Universal Event Tracking, and a partial column summed
-	// as though it were complete would report a campaign's conversions as lower
-	// than they are. Absent means "not measured here", which is NOT the same as a
-	// measured 0, and a consumer must not render it as zero or fold it into a
-	// conversion total.
+	// as zero. ABSENT means "not measured" — the platform cannot report it, or
+	// (LinkedIn, Microsoft) the read was incomplete. The first case covers
+	// channels that do not report a campaign-level conversion count at all (Meta,
+	// X, Reddit and the email channel never do). The second covers the two
+	// conversion-capable channels whose read can come back partial: LinkedIn
+	// whenever ANY returned analytics element omits externalWebsiteConversions,
+	// and Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank (that column is only populated
+	// for accounts wired for Universal Event Tracking). On either, summing only
+	// the elements or rows that did carry a value would publish a partial count as
+	// a complete one and report a campaign's conversions as lower than they are,
+	// so the whole total is withdrawn instead. Absence therefore does NOT by
+	// itself identify a platform that cannot report conversions, and it is NOT the
+	// same as a measured 0: a consumer must not render it as zero or fold it into
+	// a conversion total.
 	Conversions *float64 `form:"conversions,omitempty" json:"conversions,omitempty" xml:"conversions,omitempty"`
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.
@@ -4002,19 +4174,22 @@ type NegativeKeywordResultResponseBody struct {
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
 	// The match type as sent to the platform
 	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
-	// or ad group / line item (Reddit / X) already had it, so the requested state
-	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
-	// have been added, verify in the ad platform before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Google Ads,
+	// Microsoft) or ad group / line item (Reddit / X) already had it, so the
+	// requested state holds; FAILED — definitely not added (see error_code);
+	// UNCONFIRMED — may have been added, verify in the ad platform before retrying.
 	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
-	// The platform's id for a negative keyword this request added: Microsoft's
-	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
-	// an excluded keyword has no id, and for every outcome other than APPLIED.
+	// The platform's id for a negative keyword this request added: Google's
+	// campaign criterion id, Microsoft's NegativeKeyword id, or X's targeting
+	// criterion id. Absent on Reddit, where an excluded keyword has no id. Present
+	// for ALREADY_PRESENT on Google Ads, which reads the campaign's existing
+	// negatives and reports the criterion id it already holds; absent for
+	// ALREADY_PRESENT elsewhere, and for FAILED and UNCONFIRMED everywhere.
 	NegativeKeywordID *string `form:"negative_keyword_id,omitempty" json:"negative_keyword_id,omitempty" xml:"negative_keyword_id,omitempty"`
 	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
-	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
-	// it was never sent) or REJECTED (the platform refused it); their own text is
-	// never returned.
+	// error code, when it named one. Google Ads, Reddit and X: NOT_SENT (the
+	// request carrying it was never sent) or REJECTED (the platform refused it);
+	// their own text is never returned.
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
@@ -4106,6 +4281,38 @@ type MetaAdSetResponseBody struct {
 	// campaign; never assume it from the 503 alone. Always false on an adopted
 	// campaign.
 	DeliberatelyPaused *bool `form:"deliberately_paused,omitempty" json:"deliberately_paused,omitempty" xml:"deliberately_paused,omitempty"`
+}
+
+// MetaAdResponseBody is used to define fields on response body types.
+type MetaAdResponseBody struct {
+	// The Meta ad id
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// false for an ad that DELIVERED in the window but that Meta's ad listing did
+	// not return (typically deleted or archived since, or beyond the listing cap
+	// when `truncated` is true): its counters are this ad set's spend, so they are
+	// reported, but every descriptive field is absent.
+	Listed *bool `form:"listed,omitempty" json:"listed,omitempty" xml:"listed,omitempty"`
+	// The ad's name as Meta holds it. Absent when not reported.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The ad's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED,
+	// ARCHIVED). Absent when not reported.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED,
+	// PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without
+	// notice. Absent when not reported.
+	EffectiveStatus *string `form:"effective_status,omitempty" json:"effective_status,omitempty" xml:"effective_status,omitempty"`
+	// The id of the ad's creative. Absent when not reported.
+	CreativeID *string `form:"creative_id,omitempty" json:"creative_id,omitempty" xml:"creative_id,omitempty"`
+	// The creative's name. Absent when not reported.
+	CreativeName *string `form:"creative_name,omitempty" json:"creative_name,omitempty" xml:"creative_name,omitempty"`
+	// Impressions over the window. 0 when Meta reported no delivery for this ad.
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window.
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window in micro-units of `currency`.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// clicks/impressions, 0 when impressions is 0.
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.
@@ -4261,12 +4468,12 @@ type KeywordActionInputRequestBody struct {
 // types.
 type NegativeKeywordInputRequestBody struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
-	// 100 characters.
+	// 100 characters — at most 80 on Google Ads, its own keyword text limit.
 	Text string `form:"text" json:"text" xml:"text"`
-	// How the negative keyword is compared with a search query. Microsoft
-	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
-	// (Reddit's excluded keywords carry no match type). Any other value for the
-	// platform is 400.
+	// How the negative keyword is compared with a search query. Google Ads: Broad,
+	// Phrase or Exact. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or
+	// Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type).
+	// Any other value for the platform is 400.
 	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
 }
 
@@ -5551,6 +5758,7 @@ func NewAdoptCampaignCampaignCreated(body *AdoptCampaignResponseBody, etag *stri
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -5649,6 +5857,7 @@ func NewGetCampaignCampaignOK(body *GetCampaignResponseBody, etag *string) *lfxv
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -6163,6 +6372,7 @@ func NewUpdateCampaignCampaignOK(body *UpdateCampaignResponseBody, etag *string)
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -6284,6 +6494,7 @@ func NewToggleCampaignStatusCampaignOK(body *ToggleCampaignStatusResponseBody, e
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -6409,6 +6620,7 @@ func NewUpdateCampaignBudgetCampaignOK(body *UpdateCampaignBudgetResponseBody, e
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -6534,6 +6746,7 @@ func NewUpdateCampaignBidCampaignOK(body *UpdateCampaignBidResponseBody, etag *s
 		CampaignName:       *body.CampaignName,
 		Status:             *body.Status,
 		SlotVersion:        *body.SlotVersion,
+		Adopted:            body.Adopted,
 		Version:            *body.Version,
 	}
 	v.Etag = etag
@@ -7150,6 +7363,110 @@ func NewListMetaAdSetsPayloadTooLarge(body *ListMetaAdSetsPayloadTooLargeRespons
 // NewListMetaAdSetsUnauthorized builds a lfx-v2-campaign-service-briefs
 // service list-meta-ad-sets endpoint Unauthorized error.
 func NewListMetaAdSetsUnauthorized(body *ListMetaAdSetsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewListMetaAdsMetaAdsOK builds a "lfx-v2-campaign-service-briefs" service
+// "list-meta-ads" endpoint result from a HTTP "OK" response.
+func NewListMetaAdsMetaAdsOK(body *ListMetaAdsResponseBody) *lfxv2campaignservicebriefs.MetaAds {
+	v := &lfxv2campaignservicebriefs.MetaAds{
+		CampaignID:         *body.CampaignID,
+		PlatformCampaignID: *body.PlatformCampaignID,
+		AdSetID:            *body.AdSetID,
+		Window:             *body.Window,
+		Currency:           *body.Currency,
+		ReadAt:             *body.ReadAt,
+		Truncated:          *body.Truncated,
+		AdCount:            *body.AdCount,
+	}
+	v.Ads = make([]*lfxv2campaignservicebriefs.MetaAd, len(body.Ads))
+	for i, val := range body.Ads {
+		if val == nil {
+			v.Ads[i] = nil
+			continue
+		}
+		v.Ads[i] = unmarshalMetaAdResponseBodyToLfxv2campaignservicebriefsMetaAd(val)
+	}
+
+	return v
+}
+
+// NewListMetaAdsBadRequest builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint BadRequest error.
+func NewListMetaAdsBadRequest(body *ListMetaAdsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsConflict builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint Conflict error.
+func NewListMetaAdsConflict(body *ListMetaAdsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewListMetaAdsServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service list-meta-ads endpoint ServiceUnavailable error.
+func NewListMetaAdsServiceUnavailable(body *ListMetaAdsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsInternalServerError builds a lfx-v2-campaign-service-briefs
+// service list-meta-ads endpoint InternalServerError error.
+func NewListMetaAdsInternalServerError(body *ListMetaAdsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsNotFound builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint NotFound error.
+func NewListMetaAdsNotFound(body *ListMetaAdsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service list-meta-ads endpoint PayloadTooLarge error.
+func NewListMetaAdsPayloadTooLarge(body *ListMetaAdsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsUnauthorized builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint Unauthorized error.
+func NewListMetaAdsUnauthorized(body *ListMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
 	v := &lfxv2campaignservicebriefs.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -9136,6 +9453,54 @@ func ValidateListMetaAdSetsResponseBody(body *ListMetaAdSetsResponseBody) (err e
 	return
 }
 
+// ValidateListMetaAdsResponseBody runs the validations defined on
+// ListMetaAdsResponseBody
+func ValidateListMetaAdsResponseBody(body *ListMetaAdsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.AdSetID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_set_id", "body"))
+	}
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Currency == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("currency", "body"))
+	}
+	if body.ReadAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("read_at", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	if body.Ads == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ads", "body"))
+	}
+	if body.AdCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_count", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	if body.ReadAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.read_at", *body.ReadAt, goa.FormatDateTime))
+	}
+	for _, e := range body.Ads {
+		if e != nil {
+			if err2 := validateMetaAdResponseBody(e, "body.ads[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
 // ValidateToggleMetaAdSetStatusResponseBody runs the validations defined on
 // ToggleMetaAdSetStatusResponseBody
 func ValidateToggleMetaAdSetStatusResponseBody(body *ToggleMetaAdSetStatusResponseBody) (err error) {
@@ -9414,8 +9779,8 @@ func ValidateCreateBriefConflictResponseBody(body *CreateBriefConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -9503,8 +9868,8 @@ func ValidateFindBriefConflictResponseBody(body *FindBriefConflictResponseBody) 
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -9592,8 +9957,8 @@ func ValidateGetBriefConflictResponseBody(body *GetBriefConflictResponseBody) (e
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -9681,8 +10046,8 @@ func ValidateUpdateBriefConflictResponseBody(body *UpdateBriefConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -9794,8 +10159,8 @@ func ValidateApproveBriefConflictResponseBody(body *ApproveBriefConflictResponse
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -9907,8 +10272,8 @@ func ValidateDeleteBriefConflictResponseBody(body *DeleteBriefConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -9996,8 +10361,8 @@ func ValidateFetchEventURLConflictResponseBody(body *FetchEventURLConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10085,8 +10450,8 @@ func ValidateUploadCreativeAssetConflictResponseBody(body *UploadCreativeAssetCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10174,8 +10539,8 @@ func ValidateCreateCampaignsConflictResponseBody(body *CreateCampaignsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10263,8 +10628,8 @@ func ValidateAdoptCampaignConflictResponseBody(body *AdoptCampaignConflictRespon
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10352,8 +10717,8 @@ func ValidateGetCampaignConflictResponseBody(body *GetCampaignConflictResponseBo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10441,8 +10806,8 @@ func ValidateGetCampaignMetricsConflictResponseBody(body *GetCampaignMetricsConf
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10530,8 +10895,8 @@ func ValidateGetCampaignSettingsConflictResponseBody(body *GetCampaignSettingsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10619,8 +10984,8 @@ func ValidateGetBriefMetricsConflictResponseBody(body *GetBriefMetricsConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10708,8 +11073,8 @@ func ValidateGenerateEmailCopyConflictResponseBody(body *GenerateEmailCopyConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10797,8 +11162,8 @@ func ValidateUpdateCampaignConflictResponseBody(body *UpdateCampaignConflictResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -10910,8 +11275,8 @@ func ValidateToggleCampaignStatusConflictResponseBody(body *ToggleCampaignStatus
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11023,8 +11388,8 @@ func ValidateUpdateCampaignBudgetConflictResponseBody(body *UpdateCampaignBudget
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11136,8 +11501,8 @@ func ValidateUpdateCampaignBidConflictResponseBody(body *UpdateCampaignBidConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11249,8 +11614,8 @@ func ValidateApplyKeywordActionsConflictResponseBody(body *ApplyKeywordActionsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11338,8 +11703,8 @@ func ValidateAddNegativeKeywordsConflictResponseBody(body *AddNegativeKeywordsCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11427,8 +11792,8 @@ func ValidateGetKeywordTargetingConflictResponseBody(body *GetKeywordTargetingCo
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11516,8 +11881,8 @@ func ValidateRemoveKeywordTargetingConflictResponseBody(body *RemoveKeywordTarge
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11605,8 +11970,8 @@ func ValidateListMetaAdSetsConflictResponseBody(body *ListMetaAdSetsConflictResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11672,6 +12037,95 @@ func ValidateListMetaAdSetsUnauthorizedResponseBody(body *ListMetaAdSetsUnauthor
 	return
 }
 
+// ValidateListMetaAdsBadRequestResponseBody runs the validations defined on
+// ListMetaAdsBadRequestResponseBody
+func ValidateListMetaAdsBadRequestResponseBody(body *ListMetaAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsConflictResponseBody runs the validations defined on
+// ListMetaAdsConflictResponseBody
+func ValidateListMetaAdsConflictResponseBody(body *ListMetaAdsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		}
+	}
+	return
+}
+
+// ValidateListMetaAdsServiceUnavailableResponseBody runs the validations
+// defined on ListMetaAdsServiceUnavailableResponseBody
+func ValidateListMetaAdsServiceUnavailableResponseBody(body *ListMetaAdsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsInternalServerErrorResponseBody runs the validations
+// defined on ListMetaAdsInternalServerErrorResponseBody
+func ValidateListMetaAdsInternalServerErrorResponseBody(body *ListMetaAdsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsNotFoundResponseBody runs the validations defined on
+// ListMetaAdsNotFoundResponseBody
+func ValidateListMetaAdsNotFoundResponseBody(body *ListMetaAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsPayloadTooLargeResponseBody runs the validations defined
+// on ListMetaAdsPayloadTooLargeResponseBody
+func ValidateListMetaAdsPayloadTooLargeResponseBody(body *ListMetaAdsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsUnauthorizedResponseBody runs the validations defined on
+// ListMetaAdsUnauthorizedResponseBody
+func ValidateListMetaAdsUnauthorizedResponseBody(body *ListMetaAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateToggleMetaAdSetStatusBadRequestResponseBody runs the validations
 // defined on ToggleMetaAdSetStatusBadRequestResponseBody
 func ValidateToggleMetaAdSetStatusBadRequestResponseBody(body *ToggleMetaAdSetStatusBadRequestResponseBody) (err error) {
@@ -11694,8 +12148,8 @@ func ValidateToggleMetaAdSetStatusConflictResponseBody(body *ToggleMetaAdSetStat
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11807,8 +12261,8 @@ func ValidateDeleteCampaignConflictResponseBody(body *DeleteCampaignConflictResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -11920,8 +12374,8 @@ func ValidateGetJobConflictResponseBody(body *GetJobConflictResponseBody) (err e
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12009,8 +12463,8 @@ func ValidateStartEmailWizardPlanConflictResponseBody(body *StartEmailWizardPlan
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12098,8 +12552,8 @@ func ValidatePlanEmailWizardConflictResponseBody(body *PlanEmailWizardConflictRe
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12187,8 +12641,8 @@ func ValidateGenerateWizardContentConflictResponseBody(body *GenerateWizardConte
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12276,8 +12730,8 @@ func ValidateUpdateWizardSectionsConflictResponseBody(body *UpdateWizardSections
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12365,8 +12819,8 @@ func ValidateCloneWizardEmailConflictResponseBody(body *CloneWizardEmailConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12454,8 +12908,8 @@ func ValidateSetWizardSendListConflictResponseBody(body *SetWizardSendListConfli
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12543,8 +12997,8 @@ func ValidateChatWizardTurnConflictResponseBody(body *ChatWizardTurnConflictResp
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -12632,8 +13086,8 @@ func ValidateGetWizardSessionConflictResponseBody(body *GetWizardSessionConflict
 		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
 	if body.Reason != nil {
-		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
 		}
 	}
 	return
@@ -13355,6 +13809,53 @@ func validateMetaAdSetResponseBody(body *MetaAdSetResponseBody, path string) (er
 		if !(*body.BudgetType == "daily" || *body.BudgetType == "lifetime") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".budget_type", *body.BudgetType, []any{"daily", "lifetime"}))
 		}
+	}
+	return
+}
+
+// ValidateMetaAdResponseBody runs the validations defined on meta-ad
+func ValidateMetaAdResponseBody(body *MetaAdResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Listed == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("listed", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	return
+}
+
+// validateMetaAdResponseBody checks meta-ad and reports errors using the path
+// supplied by its caller
+func validateMetaAdResponseBody(body *MetaAdResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Listed == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("listed", path))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", path))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", path))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", path))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", path))
 	}
 	return
 }

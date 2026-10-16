@@ -255,12 +255,16 @@ func TestMigrateStartsOnACleanSchemaNewerThanThisImage(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close(context.Background()) }) // before freshDatabase's drop
 
-	record := func(t *testing.T, dirty bool) {
+	recordAt := func(t *testing.T, version uint, dirty bool) {
 		t.Helper()
 		if _, err := conn.Exec(ctx, "UPDATE schema_migrations SET version = $1, dirty = $2",
-			int64(future), dirty); err != nil {
-			t.Fatalf("record version %d dirty=%t: %v", future, dirty, err)
+			int64(version), dirty); err != nil {
+			t.Fatalf("record version %d dirty=%t: %v", version, dirty, err)
 		}
+	}
+	record := func(t *testing.T, dirty bool) {
+		t.Helper()
+		recordAt(t, future, dirty)
 	}
 
 	t.Run("clean newer version, legacy index dropped: startup succeeds", func(t *testing.T) {
@@ -298,6 +302,56 @@ func TestMigrateStartsOnACleanSchemaNewerThanThisImage(t *testing.T) {
 			t.Errorf("a dirty newer schema is not classified permanent")
 		}
 		record(t, false)
+	})
+
+	// The trust is one release apart (PR #260 review): a clean version two past this image is
+	// a schema it was never shown compatible with, and must take Up()'s loud refusal.
+	t.Run("clean version two past this image: startup still refuses", func(t *testing.T) {
+		farFuture := latest + 2
+		recordAt(t, farFuture, false)
+		t.Cleanup(func() { record(t, false) })
+		err := postgres.Migrate(dsn)
+		if err == nil {
+			t.Fatalf("Migrate on a clean schema at version %d (this image embeds up to %d) "+
+				"succeeded — only the next release's schema is trusted", farFuture, latest)
+		}
+		if !strings.Contains(err.Error(), "no migration found for version") {
+			t.Errorf("Migrate at version %d: got %s, want Up()'s \"no migration found\" refusal",
+				farFuture, dbtest.SafeDSNErrFor(dsn, err))
+		}
+	})
+
+	// Skipping Up() must not skip the invalid-index scan either (PR #260 review): a failed
+	// CREATE INDEX CONCURRENTLY on the newer release leaves exactly this behind.
+	t.Run("clean newer version with an invalid index: startup refuses", func(t *testing.T) {
+		const table = "zz_newer_invalid_idx"
+		idx := "uq_" + table
+		if _, err := conn.Exec(ctx, "CREATE TABLE "+table+" (k int)"); err != nil {
+			t.Fatalf("create scratch table: %v", err)
+		}
+		t.Cleanup(func() {
+			cleanupCtx, cancel := dbtest.CleanupContext()
+			defer cancel()
+			if _, err := conn.Exec(cleanupCtx, "DROP TABLE IF EXISTS "+table); err != nil {
+				t.Errorf("drop scratch table: %v", err)
+			}
+		})
+		if _, err := conn.Exec(ctx, "INSERT INTO "+table+" VALUES (1), (1)"); err != nil {
+			t.Fatalf("seed duplicates: %v", err)
+		}
+		// Expected to FAIL — that is what leaves the invalid index behind.
+		if _, err := conn.Exec(ctx, "CREATE UNIQUE INDEX CONCURRENTLY "+idx+" ON "+table+" (k)"); err == nil {
+			t.Fatalf("the duplicate-key build succeeded; this test cannot produce an invalid index")
+		}
+		record(t, false)
+		err := postgres.Migrate(dsn)
+		if !errors.Is(err, postgres.ErrInvalidIndex) {
+			t.Fatalf("Migrate on a clean newer schema with an invalid index: got %s, want "+
+				"ErrInvalidIndex", dbtest.SafeDSNErrFor(dsn, err))
+		}
+		if !strings.Contains(err.Error(), idx) {
+			t.Errorf("the error does not name %s: %v", idx, err)
+		}
 	})
 
 	t.Run("clean newer version, slot-version index dropped: startup refuses", func(t *testing.T) {

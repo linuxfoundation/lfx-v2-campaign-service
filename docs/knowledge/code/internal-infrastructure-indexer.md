@@ -270,3 +270,12 @@ because config resolves it with `envOrDefaultUnlessSet` (`os.LookupEnv`): the or
 documented switch a no-op.
 
 See [internal/infrastructure/indexer](../../../internal/infrastructure/indexer).
+
+## `CampaignDoc.adopted` (lfx-self-serve #3741)
+
+`CampaignDoc` carries `adopted` (`omitempty`): `true` for a campaign bound by adopt-campaign,
+OMITTED otherwise — never `false`, because the marker it is derived from
+(`model.CampaignAdopted`, the `adopted` key of the row's result blob) is only as old as its stamp,
+so absence reads "not recorded as adopted". It is mapped in `campaignDoc` from the campaign
+result type's optional `adopted`, so the index and the API cannot disagree. Like every additive
+field here it reaches existing documents only on each campaign's next write; there is no reindex.

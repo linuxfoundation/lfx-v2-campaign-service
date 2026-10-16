@@ -1514,6 +1514,82 @@ func BuildListMetaAdSetsPayload(lfxV2CampaignServiceBriefsListMetaAdSetsProjectI
 	return v, nil
 }
 
+// BuildListMetaAdsPayload builds the payload for the
+// lfx-v2-campaign-service-briefs list-meta-ads endpoint from CLI flags.
+func BuildListMetaAdsPayload(lfxV2CampaignServiceBriefsListMetaAdsProjectID *string, lfxV2CampaignServiceBriefsListMetaAdsBriefID *string, lfxV2CampaignServiceBriefsListMetaAdsCampaignID *string, lfxV2CampaignServiceBriefsListMetaAdsAdSetID *string, lfxV2CampaignServiceBriefsListMetaAdsWindow *string, lfxV2CampaignServiceBriefsListMetaAdsBearerToken *string) (*lfxv2campaignservicebriefs.ListMetaAdsPayload, error) {
+	var err error
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsListMetaAdsProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsListMetaAdsProjectID
+	}
+	var briefID string
+	{
+		if lfxV2CampaignServiceBriefsListMetaAdsBriefID == nil {
+			return nil, fmt.Errorf("missing required flag --brief-id")
+		}
+		briefID = *lfxV2CampaignServiceBriefsListMetaAdsBriefID
+		err = goa.MergeErrors(err, goa.ValidateFormat("brief_id", briefID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var campaignID string
+	{
+		if lfxV2CampaignServiceBriefsListMetaAdsCampaignID == nil {
+			return nil, fmt.Errorf("missing required flag --campaign-id")
+		}
+		campaignID = *lfxV2CampaignServiceBriefsListMetaAdsCampaignID
+		err = goa.MergeErrors(err, goa.ValidateFormat("campaign_id", campaignID, goa.FormatUUID))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var adSetID string
+	{
+		if lfxV2CampaignServiceBriefsListMetaAdsAdSetID == nil {
+			return nil, fmt.Errorf("missing required flag --ad-set-id")
+		}
+		adSetID = *lfxV2CampaignServiceBriefsListMetaAdsAdSetID
+		err = goa.MergeErrors(err, goa.ValidatePattern("ad_set_id", adSetID, "^[1-9][0-9]*$"))
+		if utf8.RuneCountInString(adSetID) > 32 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("ad_set_id", adSetID, utf8.RuneCountInString(adSetID), 32, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var window *string
+	{
+		if lfxV2CampaignServiceBriefsListMetaAdsWindow != nil {
+			window = lfxV2CampaignServiceBriefsListMetaAdsWindow
+			if !(*lfxV2CampaignServiceBriefsListMetaAdsWindow == "today" || *lfxV2CampaignServiceBriefsListMetaAdsWindow == "yesterday" || *lfxV2CampaignServiceBriefsListMetaAdsWindow == "last_7_days" || *lfxV2CampaignServiceBriefsListMetaAdsWindow == "last_14_days" || *lfxV2CampaignServiceBriefsListMetaAdsWindow == "last_30_days" || *lfxV2CampaignServiceBriefsListMetaAdsWindow == "this_month" || *lfxV2CampaignServiceBriefsListMetaAdsWindow == "last_month") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("window", *lfxV2CampaignServiceBriefsListMetaAdsWindow, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsListMetaAdsBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsListMetaAdsBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.ListMetaAdsPayload{}
+	v.ProjectID = projectID
+	v.BriefID = briefID
+	v.CampaignID = campaignID
+	v.AdSetID = adSetID
+	v.Window = window
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildToggleMetaAdSetStatusPayload builds the payload for the
 // lfx-v2-campaign-service-briefs toggle-meta-ad-set-status endpoint from CLI
 // flags.

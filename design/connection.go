@@ -189,11 +189,14 @@ var NotFoundError = Type("not-found-error", func() {
 // the remedy is a REBUILD — the opposite of `stale_approval`'s refresh-and-retry and of
 // `audience_build_in_flight`'s wait-and-poll. Leaving it unset would have made a client
 // parse prose for exactly the distinction this field exists to carry. The briefs group also distinguishes many conflicts, but does so in message
-// prose only and sets a reason on exactly one of them so far -- create-campaigns' refusal of
+// prose only and sets a reason on exactly two of them so far -- create-campaigns' refusal of
 // an A/B test on an email set to send by recipients' time zones
 // (`ab_test_unsupported_send_type`), which needed a discriminator because the caller's front
 // end must show that one refusal as an actionable message while it deliberately shows no
-// upstream text for any other rejection. The rest are a gap to close, not the intended end
+// upstream text for any other rejection -- and toggle-campaign-status's refusal to RESUME an
+// adopted campaign (`campaign_adopted`), which shares its ErrCampaignNotProvisioned cause with
+// the general "not fully provisioned" 409 but has the opposite remedy (resume it in the ad
+// platform's own UI, not finish or recreate it). The rest are a gap to close, not the intended end
 // state. Until it is closed a client must treat an absent reason as "unspecified conflict"
 // and fall back to the message, which is what the message already says. Making the field
 // Required now would force a slug onto every 409 in one change and invent a taxonomy
@@ -216,7 +219,7 @@ var NotFoundError = Type("not-found-error", func() {
 var ConflictError = Type("conflict-error", func() {
 	errorAttrs("409", "A connection for this provider already exists on the project.")
 	Attribute("reason", String, "Stable machine-readable discriminator, present only where an endpoint returns more than one kind of conflict. Absent means unspecified.", func() {
-		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type")
+		Enum("stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted")
 		Example("already_exists")
 	})
 })
@@ -597,11 +600,11 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // which is the Meta case spelled out below. Google Ads had both
 // from the start. Meta is the one provider where the halves came apart — it gained discovery
 // in LFXV2-3062 and stayed required here until LFXV2-3061 supplied the tagging; see the
-// paragraph below MetaAdsConnectionConfig's own godoc. X is the most recent to earn both, in
-// LFXV2-3319, and unlike Microsoft it was carried across both config gates in the same change.
-// Of the three that remain required, Microsoft (as of LFXV2-3064) has BOTH: Reddit still lacks
-// discovery, while LinkedIn gained a discovery endpoint in that ticket and is missing the
-// OTHER half.
+// paragraph below MetaAdsConnectionConfig's own godoc. X earned both in LFXV2-3319 and
+// Microsoft (whose discovery arrived in LFXV2-3064) was the most recent to be carried across
+// both config gates, in issue #181. Of the two that remain required, Reddit HAS both halves
+// (discovery since LFXV2-2665) and is held back by sequencing alone, while LinkedIn gained a
+// discovery endpoint in LFXV2-3064 and is missing the OTHER half.
 // resolveLinkedInCredentials
 // does tag domain.ErrAccountNotSelected, but LinkedInDispatcher.Dispatch never calls it — the
 // create path resolves inline and answers a missing account id with a bare notCreated, so the
@@ -636,30 +639,28 @@ var GoogleAdsCredentials = Type("google-ads-credentials", func() {
 // log line carries, which is where an operator tells this apart from a bad credential. The requirement the rule states is that a half-configured
 // connection is DIAGNOSABLE, not that the API returns a bespoke code for it.
 //
-// LinkedIn, Microsoft and Reddit keep Required("account_id"), but no longer all for the
-// same reason, and the difference is what tells you how far each is from being relaxed.
-// Reddit still has NO list to choose from, so relaxing the requirement would create a
-// connection that can never be finished from inside this API: the operator has to obtain the
-// id out-of-band anyway, and the only thing gained is a half-configured row. LinkedIn and
-// Microsoft DO have a discovery endpoint as of LFXV2-3064 — the list exists. What blocks each
-// differs, and two independent gates are easy to conflate here:
+// LinkedIn and Reddit keep Required("account_id"), but not for the same reason, and the
+// difference is what tells you how far each is from being relaxed. Both have a discovery
+// endpoint — the list exists. What blocks each differs, and two independent gates are easy to
+// conflate here:
 //
 //   - THIS Required("account_id") gates the PUBLIC connection APIs. LinkedIn stays required
 //     because it lacks the second half — its create path resolves inline and answers a missing
 //     account id with a bare notCreated, so the choice is never named (paragraph above).
-//     Microsoft has both halves and is therefore behaviourally eligible to have it relaxed.
+//     Reddit has both halves and is therefore behaviourally eligible to have it relaxed.
 //   - accountDiscoveryProviders (internal/bootstrap/sysacct.go) gates only whether an
 //     account-less SYSTEM row is installable by the bootstrap CLI.
 //
 // BOTH gates are per-provider and must be relaxed TOGETHER to make a provider credentials-first;
-// relaxing only one leaves half the flow blocked, which is why X was carried across both in
-// LFXV2-3319. X is now credentials-first on both: it holds both halves (discovery from
-// LFXV2-3319, and a Dispatch that resolves through validateTwitterConnection and tags
-// ErrAccountNotSelected), so it no longer appears in the list above. Microsoft holds both halves
-// too and remains excluded from both gates — that exclusion is a sequencing decision, not a
-// missing capability. Relaxing either gate without both halves is what the next rule forbids.
+// relaxing only one leaves half the flow blocked, which is why X (LFXV2-3319) and Microsoft
+// (issue #181) were each carried across both in one change. Both hold both halves — discovery,
+// and a Dispatch that resolves through validateTwitterConnection / validateMicrosoftConnection,
+// each of which tags ErrAccountNotSelected — so neither appears in the list above. Reddit holds
+// both halves too and remains excluded from both gates — that exclusion is a sequencing
+// decision, not a missing capability. Relaxing either gate without both halves is what the next
+// rule forbids.
 //
-// Add the requirement back for any credentials-first provider — Google Ads, Meta or X — or drop
+// Add the requirement back for any credentials-first provider — Google Ads, Meta, X or Microsoft — or drop
 // it for another provider, only together with that provider's discovery endpoint AND its
 // account_not_selected tagging. Stated as the CLASS rather than a roster: the membership grows,
 // and a fixed list is what sends a later edit to treat the newest member as unrelated.
@@ -794,6 +795,13 @@ var LinkedInAdsCredentials = Type("linkedin-ads-credentials", func() {
 	Required("access_token")
 })
 
+// keepOnUpdate is appended to the description of every OPTIONAL provider-config attribute
+// whose omission on PUT is refused (issue #300), so the rule reaches the generated OpenAPI
+// rather than living only in Go comments. PUT stays a full replace for every field a caller
+// sends; what is refused is clearing a stored value by leaving the key out. Google Ads'
+// login_customer_id does not carry it: that provider has not opted in to the guard.
+const keepOnUpdate = ` On update (PUT replaces the whole config): omitting this field while the connection has a stored value for it is refused with 400 naming the field. Send the current value to keep it, or send "" to clear it deliberately. JSON null counts as omitted.`
+
 var LinkedInAdsConnectionConfig = Type("linkedin-ads-connection-config", func() {
 	Attribute("label", String, "Optional friendly name")
 	// Both ids are interpolated into LinkedIn request paths / URNs
@@ -871,7 +879,7 @@ var MetaAdsConnectionConfig = Type("meta-ads-connection-config", func() {
 		// Bound the stored size (see account_id); real Facebook page ids are far shorter.
 		MaxLength(64)
 	})
-	Attribute("app_id", String, "Meta app ID")
+	Attribute("app_id", String, "Meta app ID."+keepOnUpdate)
 	// page_id is required at connection time: the Meta dispatcher needs it to attach
 	// the promoted-object page, so an active connection without it would always fail
 	// dispatch. Requiring it here surfaces the error as a 4xx at connection creation
@@ -926,17 +934,16 @@ var RedditAdsConnectionConfig = Type("reddit-ads-connection-config", func() {
 	// unreadable. What it would break is the caller — every existing integration that PUTs a
 	// Reddit connection without this newly-added field would start getting a 400.
 	//
-	// The cost of leaving it optional is real and must be stated rather than discovered: PUT
-	// is a FULL REPLACE on every provider in this API, so omitting this field CLEARS a
-	// configured pixel, and the next Reddit dispatch is then refused. That is the same
-	// semantic account_id and label have always had here — consistency across seven providers
-	// is worth more than special-casing one field — but it is sharper for a field a caller may
-	// not know exists yet. Send it on every update, or read the current value first.
+	// PUT is a FULL REPLACE on every provider in this API, and leaving this field optional
+	// used to mean that omitting it CLEARED a configured pixel, after which every Reddit
+	// dispatch was refused. Issue #300 keeps the full replace for every field a caller sends
+	// but refuses the omission when a pixel is stored (keepOnUpdate, enforced by
+	// updateConnGuarded): clearing the pixel now takes an explicit "".
 	// The example is deliberately DIFFERENT from account_id's above. On the LF account the
 	// two happen to share a value, and copying it here published a schema in which the
 	// advertiser id is offered as the pixel id — a UI developer wiring the connection form
 	// reads the generated OpenAPI, not this account's coincidence.
-	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID (Reddit Ads → Events Manager)", func() {
+	Attribute("conversion_pixel_id", String, "Reddit conversion pixel ID (Reddit Ads → Events Manager)."+keepOnUpdate, func() {
 		Example("a2_1b3c5d7e9f")
 	})
 	Required("account_id")
@@ -997,9 +1004,14 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 	// Numeric, unlike account_id and funding_instrument_id: X user ids are snowflake ids
 	// and the client reads them from id_str. Pattern-checking here rejects a malformed one
 	// as a 4xx at connection time rather than as a pre-create dispatch refusal.
-	Attribute("as_user_id", String, "X/Twitter user id authorized to author this connection's tweets (numeric)", func() {
+	//
+	// The Pattern admits "" (issue #300): an omitted as_user_id on PUT is refused while one is
+	// stored, so an explicit "" is the only way to clear a declared identity, and a pattern
+	// that refused "" would leave no way to clear it at all. "" stores the same value an
+	// omitted key on create always stored: "this connection declares no identity".
+	Attribute("as_user_id", String, "X/Twitter user id authorized to author this connection's tweets (numeric, or \"\" for none)."+keepOnUpdate, func() {
 		Example("1234567890123456789")
-		Pattern(`^[0-9]+$`)
+		Pattern(`^([0-9]+)?$`)
 		MaxLength(32)
 	})
 	// An explicit JSON `null` decodes identically to an ABSENT key (both yield a nil *string,
@@ -1009,9 +1021,10 @@ var TwitterAdsConnectionConfig = Type("twitter-ads-connection-config", func() {
 	// exactly that) — there is no separate "not chosen yet" intent for null to collide with, and
 	// a create has no prior selection to lose. Google Ads and Meta have behaved this way since
 	// LFXV2-3061/3062 and X now matches them rather than inventing a third convention. Note
-	// what is NOT relaxed: an explicit "" is a PRESENT value, so it still fails the Pattern
-	// below — only the missing/null key is accepted, which is why the apivalidation table keeps
-	// its empty-string case as a rejection.
+	// what is NOT relaxed for account_id: an explicit "" is a PRESENT value, so it still fails
+	// account_id's Pattern below — only the missing/null key is accepted, which is why the
+	// apivalidation table keeps "empty account_id" as a rejection. (as_user_id, above, is the
+	// exception: its Pattern admits "" as the deliberate clear, issue #300.)
 	//
 	// account_id is deliberately NOT required (LFXV2-3319), making X credentials-first:
 	// a connection may be created with credentials only and pointed at an account after
@@ -1056,9 +1069,11 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	// preference. Declaring the same rule here refuses a malformed id at connection time
 	// rather than storing it on an active connection that can never dispatch.
 	//
-	// account_id is Required, so "" is a malformed value and the pattern rejects it — this
-	// provider has no credentials-first state (see the force-system guard's note that
-	// LinkedIn, Reddit and Microsoft callers must resend the id they already stored).
+	// account_id is OPTIONAL as of issue #181, which made Microsoft credentials-first: a
+	// connection may be created with credentials only and pointed at an account after
+	// GET .../connection-microsoft-ads/accounts enumerates the choices. Only the missing KEY
+	// moved — an explicit "" is a PRESENT value and the pattern still rejects it, exactly as
+	// on X. See the Required() note at the end of this type for why Microsoft qualified.
 	//
 	// It carries customer_id's STRICTER rule, not accountIDRE's bare `[0-9]+`, for the reason
 	// stated below and for one more: an account_id is an identity, and microsoft.numberID —
@@ -1079,7 +1094,7 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	//
 	// The runtime validators stay regardless — a row written by bootstrap, by a migration, or
 	// before this pattern existed never passed through Goa at all.
-	Attribute("account_id", String, "Microsoft Advertising account ID (positive integer)", func() {
+	Attribute("account_id", String, "Microsoft Advertising account ID (positive integer). Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-microsoft-ads/accounts and set it with PUT.", func() {
 		Example("1234567")
 		Pattern(`^[1-9][0-9]{0,17}$`)
 		MaxLength(18)
@@ -1099,12 +1114,21 @@ var MicrosoftAdsConnectionConfig = Type("microsoft-ads-connection-config", func(
 	// customer is configured, and discoveryCustomerIDs then walks every customer the
 	// credential reaches. ValidateCustomerID accepts it for the same reason, so the two
 	// layers agree on the empty case rather than one tolerating it.
-	Attribute("customer_id", String, "Microsoft Advertising customer ID (a positive integer, digits only). Optional: omit it to let the credential's own customers be discovered.", func() {
+	Attribute("customer_id", String, "Microsoft Advertising customer ID (a positive integer, digits only). Optional: leave it empty to let the credential's own customers be discovered."+keepOnUpdate, func() {
 		Example("9999999")
 		Pattern(`^([1-9][0-9]{0,17})?$`)
 		MaxLength(18)
 	})
-	Required("account_id")
+	// account_id is deliberately NOT required (issue #181), making Microsoft credentials-first
+	// the way X became in LFXV2-3319. Microsoft earned it by holding BOTH halves — discovery
+	// (microsoft.ListAdAccounts / MicrosoftDispatcher.ListAccounts, LFXV2-3064) and a create
+	// path that NAMES the missing choice, because Dispatch itself resolves through
+	// validateMicrosoftConnection, which tags an empty account id with
+	// domain.ErrAccountNotSelected. It was relaxed in the SAME change that admitted Microsoft
+	// to accountDiscoveryProviders (internal/bootstrap/sysacct.go): the two gates are relaxed
+	// together or not at all. customer_id was already optional and stays so — it is not a
+	// choice discovery has to make (discoveryCustomerIDs walks every customer the credential
+	// reaches) and the client omits the CustomerId header when it is empty.
 })
 
 var MicrosoftAdsConnection = Type("microsoft-ads-connection", func() {
@@ -1133,10 +1157,10 @@ var HubSpotConnectionConfig = Type("hubspot-connection-config", func() {
 	// value to reach, so a bound here would assert a shape this service has no way to know.
 	// Give it one only alongside a caller that puts it in a request.
 	Attribute("account_id", String, "HubSpot list/audience ID")
-	Attribute("portal_id", String, "HubSpot portal/account ID")
-	Attribute("sender_email", String, "Default sender address")
-	Attribute("sender_name", String, "Default sender name")
-	Attribute("brand_kit", String, "Per-project brand kit selector")
+	Attribute("portal_id", String, "HubSpot portal/account ID."+keepOnUpdate)
+	Attribute("sender_email", String, "Default sender address."+keepOnUpdate)
+	Attribute("sender_name", String, "Default sender name."+keepOnUpdate)
+	Attribute("brand_kit", String, "Per-project brand kit selector."+keepOnUpdate)
 	Required("account_id")
 })
 
