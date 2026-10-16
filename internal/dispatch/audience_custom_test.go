@@ -988,3 +988,39 @@ func TestRunQA_CheckFourCreditsEverythingTheSendExcludes(t *testing.T) {
 		})
 	}
 }
+
+// A suppression wrapper credits only the children it fully covers: "GDPR OR Opt-Outs"
+// applies both protections, "GDPR AND Opt-Outs" applies neither, since a contact in
+// only one child stays eligible.
+func TestRunQA_ASuppressionWrapperCreditsOnlyWhatItFullyCovers(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	for name, tc := range map[string]struct {
+		wrapper string
+		applied bool
+	}{
+		"union":        {wrapper: or(and(in("601")), and(in("602"))), applied: true},
+		"intersection": {wrapper: or(and(in("601"), in("602"))), applied: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - Seoul - Mailable Contacts"] = "500"
+			portal.lists["LF Europe GDPR Suppression"] = "601"
+			portal.lists["LF Global Opt-Outs"] = "602"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.branches = map[string]string{"700": tc.wrapper}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", true, false, []string{"700"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.applied, out.Checks.Suppression.AppliedGDPR, "GDPR credited")
+			assert.Equal(t, tc.applied, out.Checks.Suppression.AppliedOptOut, "opt-out credited")
+		})
+	}
+}

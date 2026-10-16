@@ -1926,13 +1926,16 @@ func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.C
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
 		}
-		_, childFilters, err := x.listWithFilters(ctx, client, cache, id)
-		if err != nil {
+		wrapper, _, err := x.listWithFilters(ctx, client, cache, id)
+		if err != nil || wrapper == nil {
 			// An unreadable exclusion is reported by its own name only. Failing the
 			// whole audit would withhold the two checks that did complete.
 			continue
 		}
-		for _, childID := range audience.ReferencedListIDs(childFilters, "IN_LIST") {
+		// Only the children the wrapper FULLY covers are credited: an "A OR B" wrapper
+		// excludes everyone in A and in B, but "GDPR AND Opt-Outs" excludes only the
+		// contacts in both, so neither protection is applied by it.
+		for _, childID := range audience.CoveredListIDs(wrapper.FilterBranch) {
 			if name, done := nameByID[childID]; done {
 				if name != "" {
 					out = append(out, name)

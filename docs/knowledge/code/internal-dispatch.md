@@ -4556,7 +4556,7 @@ lookup is not optional decoration. A single request-scoped `map[string]*hubspot.
 (seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
-fetched from HubSpot once per `RunQA` call, not once per reference. Check 4 (`current_registrants`) leaves out what the send provably does not reach: every verified send-time suppression (verified independently of check 3's dedup, so one a branch already excludes still counts) and every list such a suppression's own tree fully covers, one hop deep (`audience.CoveredListIDs`: a list alone as one OR alternative; an intersection covers nothing).
+fetched from HubSpot once per `RunQA` call, not once per reference. Check 4 (`current_registrants`) leaves out what the send provably does not reach: every verified send-time suppression (verified independently of check 3's dedup, so one a branch already excludes still counts) and every list such a suppression's own tree fully covers, one hop deep (`audience.CoveredListIDs`: a list alone as one OR alternative; an intersection covers nothing). The suppression checks read a wrapper the same way: only the children it fully covers are credited, so "GDPR AND Opt-Outs" applies neither protection.
 
 ## Account-monitor currency (LFXV2-2665)
 

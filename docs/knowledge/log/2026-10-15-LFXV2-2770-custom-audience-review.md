@@ -195,3 +195,7 @@
   are credited too. An intersection ("R AND OptOut") covers nothing.
 - **Property-filter values are kept whole or dropped** (Greptile), as page URLs are: a CONTAINS on a
   cut value matches contacts the full value would not.
+- **A suppression wrapper credits only what it fully covers** (Copilot). `exclusionNames` read a
+  wrapper's flattened IN_LIST references, so "GDPR AND Global Opt-Outs" satisfied both suppression
+  checks though a contact in only one child stays eligible. It now credits `CoveredListIDs`, the
+  same rule check 4 uses: an OR wrapper applies each child, an AND wrapper none.
