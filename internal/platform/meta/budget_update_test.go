@@ -287,6 +287,29 @@ func TestGetAdSetBudget_RefusesAResponseAboutAnotherAdSet(t *testing.T) {
 	}
 }
 
+// TestGetAdSetBudget_RefusesAResponseNamingNoAdSet: a 2xx that carries no id at all proves
+// nothing about which ad set its budget fields describe, so it is refused like one naming
+// another ad set — never read as a budget the caller may act on.
+func TestGetAdSetBudget_RefusesAResponseNamingNoAdSet(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent": `{"campaign_id":"555","daily_budget":"2550"}`,
+		"null":   `{"id":null,"campaign_id":"555","daily_budget":"2550"}`,
+		"empty":  `{"id":"","campaign_id":"555","daily_budget":"2550"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := adSetBudgetServer(t, body)
+
+			got, err := budgetClient(srv.URL, AccountConfig{AccountID: "act_1"}).GetAdSetBudget(context.Background(), "777")
+			if err == nil || !strings.Contains(err.Error(), "returned no ad set id instead") {
+				t.Fatalf("want a refusal for a response naming no ad set, got %+v, %v", got, err)
+			}
+			if got != nil {
+				t.Errorf("a refused read must not also return a budget: %+v", got)
+			}
+		})
+	}
+}
+
 func TestGetAdSetBudget_RefusesANonNumericAdSetID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("a malformed id must be refused before any HTTP call")
