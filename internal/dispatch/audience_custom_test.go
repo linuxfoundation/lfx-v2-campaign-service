@@ -1407,3 +1407,48 @@ func TestRunQA_AnEmptiedMasterIsNotAPass(t *testing.T) {
 	require.NotEmpty(t, out.Checks.CurrentRegistrants.Findings)
 	assert.Contains(t, out.Checks.CurrentRegistrants.Findings[0].Message, "reach no one")
 }
+
+// An included list that excludes this edition's registrants on every one of its own
+// paths has no current registrants to contribute, so a master including it passes
+// check 4. The credit stays with that list: a sibling branch of the master that
+// includes the registrants directly still fails.
+func TestRunQA_AnIncludedListsOwnExclusionClearsItsEvidence(t *testing.T) {
+	ue := `{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+		`{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["KubeCon 2026"]}}]}`
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	f := func(op, id string) string {
+		return `{"filterType":"IN_LIST","operator":"` + op + `","listId":` + id + `}`
+	}
+	and := func(fs ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(fs, ",") + `]}`
+	}
+	city := `{"filterType":"PROPERTY","property":"city","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["Seoul"]}}`
+	// Seoul contacts OR this edition's registrants, excluding the combined suppression on both paths.
+	mixed := or(and(city, f("NOT_IN_LIST", "700")),
+		`{"filterBranchType":"AND","filters":[`+f("NOT_IN_LIST", "700")+`],"filterBranches":[`+ue+`]}`)
+	suppression := or(`{"filterBranchType":"AND","filters":[],"filterBranches":[` + ue + `]}`)
+	for name, tc := range map[string]struct {
+		master string
+		fail   bool
+	}{
+		"the master includes only that list":            {master: or(and(f("IN_LIST", "801"))), fail: false},
+		"a sibling branch includes the registrants too": {master: or(and(f("IN_LIST", "801")), and(f("IN_LIST", "802"))), fail: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - Seoul - Master"] = "500"
+			portal.lists["26Q4 - Seoul - Mixed"] = "801"
+			portal.lists["26Q4 - Seoul - Registration Push"] = "802"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.branches = map[string]string{"500": tc.master, "801": mixed, "802": suppression, "700": suppression}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tc.fail, out.Checks.CurrentRegistrants.Verdict == audience.VerdictFail)
+		})
+	}
+}

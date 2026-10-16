@@ -283,3 +283,8 @@ sweep after review pagination hid them:
   voters and whole-name fallback, and `DiscoveryHidden`'s test/staff-before-master order.
   `TestParseCustomDraft_KeepsALongRegisteredForEditionWhole` pins a `registered_for` edition over
   200 characters staying whole.
+- **An included list's own exclusion clears its evidence, locally** (Greptile). A master including
+  "Seoul OR KubeCon 2026 registrants, excluding the combined suppression on every path" failed
+  check 4, though auditing that list directly passed. Each included list's every-path exclusions
+  now clear the editions they cover from that list's registration evidence only; a sibling branch
+  of the master that includes the registrants directly still fails.

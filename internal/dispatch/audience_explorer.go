@@ -1948,11 +1948,25 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	for id := range sentAway {
 		emptied[id] = true
 	}
-	addEvidence := func(raw json.RawMessage, name string) (allAway bool) {
+	// localAway are the editions an included list excludes on every one of its own
+	// paths. That exclusion clears the list's own registration branches, but not the
+	// master's other branches, so it is credited to that list alone.
+	localAway := func(raw json.RawMessage) map[string]bool {
+		away := map[string]bool{}
+		for _, id := range audience.ExcludedOnEveryPathIDs(raw) {
+			if ex, _, xerr := x.listWithFilters(ctx, client, cache, id); xerr == nil && ex != nil {
+				for _, e := range audience.CoveredEditions(ex.FilterBranch) {
+					away[strings.ToLower(strings.TrimSpace(e))] = true
+				}
+			}
+		}
+		return away
+	}
+	addEvidence := func(raw json.RawMessage, name string, local map[string]bool) (allAway bool) {
 		editions, exclusive := audience.RegistrationEvidence(raw)
 		allAway = exclusive && len(editions) > 0
 		for _, e := range editions {
-			if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+			if key := strings.ToLower(strings.TrimSpace(e)); !editionsAway[key] && !local[key] {
 				allAway = false
 				inclusionNames = append(inclusionNames, e+" Registrants")
 			}
@@ -1964,7 +1978,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		}
 		return allAway
 	}
-	auditedAllAway := addEvidence(list.FilterBranch, list.Name)
+	auditedAllAway := addEvidence(list.FilterBranch, list.Name, nil)
 	// A list the send itself suppresses (sentAway, verified above) is not sent to: this
 	// edition's registrants included as "A OR B" and excluded at send time leave only B.
 	// A flattened NOT_IN_LIST reference may be local to one branch, so it is no proof
@@ -1976,7 +1990,7 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		// A referenced list is judged the same way: its registration branches' editions
 		// (less any suppressed whole), and its name unless they are its whole membership.
 		if ref, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr == nil && ref != nil {
-			if addEvidence(ref.FilterBranch, nameByID[id]) {
+			if addEvidence(ref.FilterBranch, nameByID[id], localAway(ref.FilterBranch)) {
 				emptied[id] = true
 			}
 			continue
