@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -37,8 +38,28 @@ func twitterNegativeTargetingType(matchType string) string {
 // keyword X stored as "Free Download" (or "ΟΣ") matches a repeat request for "free download" (or
 // "ος") rather than being sent again as a duplicate criterion (PR #321 review). strings.ToLower
 // would not: it keeps σ and ς apart, which simple case folding does not.
+//
+// Whitespace is collapsed the SAME way on both sides, for the reason the fold is shared, and this
+// key is built from two sources that do not arrive in the same shape: the REQUEST side comes
+// through validateNegativeKeywordBatch, which normalises text with NormalizeNegativeKeywordText
+// (strings.Fields joined by one space — trimmed, every internal run collapsed), while the PRESENT
+// side is X's raw TargetingValue, normalised by nobody. Collapsing in only one of them made the
+// two disagree on exactly the texts the caller cannot see: a criterion X holds as " free download"
+// or "free  download" — or with a non-breaking space, which strings.Fields splits on and X does
+// not have to — would not match the caller's "free download", would read as ABSENT, and would be
+// sent again as a duplicate criterion. Collapsing inside the key leaves both call sites normalised
+// by construction, and cannot drift the way two call sites would.
+//
+// This is googleAdsNegativeKey's defect on the same shape, and it costs materially less here: X
+// sends one paced POST per keyword rather than one atomic batch, so a missed match duplicates a
+// single criterion instead of failing every keyword in the request. It is the same fix because it
+// is the same class, not because the price is the same.
+//
+// It only ever makes the present-set match MORE, never less, and only for texts X itself treats as
+// one keyword — the safe direction: a missed match duplicates a criterion, while a wrong match
+// would report a keyword ALREADY_PRESENT and never send it, silently dropping an exclusion.
 func twitterNegativeKey(targetingType, value string) string {
-	return targetingType + "\x00" + textfold.Key(value)
+	return targetingType + "\x00" + textfold.Key(strings.Join(strings.Fields(value), " "))
 }
 
 // AddNegativeKeywords implements service.NegativeKeywordAdder for X: one negated keyword
