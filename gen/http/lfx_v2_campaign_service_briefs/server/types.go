@@ -4344,8 +4344,10 @@ type PlatformResultResponseBody struct {
 	// known.
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
 	// Best-effort steps of a successful create that did not apply, in
-	// operator-readable sentences. For the email channel this reports a hero image
-	// that could not be added; the draft exists but has no hero banner.
+	// operator-readable sentences. For the email channel this reports a requested
+	// hero image that could not be added; the draft exists, and its banner needs
+	// checking in the HubSpot editor (it may have none, or still carry the
+	// template's).
 	Warnings []string `form:"warnings,omitempty" json:"warnings,omitempty" xml:"warnings,omitempty"`
 	// Present only when this dispatch's claim was lost before its result was
 	// recorded: the identifiers of what it created upstream (ids, names, urns,

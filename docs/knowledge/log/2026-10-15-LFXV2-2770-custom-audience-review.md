@@ -254,3 +254,6 @@ sweep after review pagination hid them:
   Registrants" list passed check 4 though the membership branch may hold 2026 registrants.
   `RegisteredEditions` now also requires every path through the tree to run through an exact
   completed-registration branch.
+- **The API contract no longer promises a missing banner** (Copilot, review body). The `warnings`
+  description in `design/brief.go` and the API catalog now say the requested hero could not be added
+  and the banner needs checking, matching the operator warning.
