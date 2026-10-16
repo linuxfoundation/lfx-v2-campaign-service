@@ -99,16 +99,18 @@ type Service interface {
 	// project has no ad-platform connection of its own, and 400 when the platform
 	// has no adoption capability wired or platform_campaign_id is malformed for
 	// that platform (checked before any connection work). An adopted campaign
-	// records only the campaign itself (id, name, account), never its children.
+	// records only the campaign itself (id, name, account), never its children,
+	// and is returned, read back by get-campaign and indexed with `adopted: true`.
 	// The metrics read and the settings readback (on the platforms that support
 	// them), delete and pause work on it; activation is refused on every platform
-	// because adoption does not verify the targeting the activate guard requires;
-	// the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on
-	// an ad group, ad set or line item the row does not record) and on LinkedIn
-	// (its bid is the campaign's own unitCost, but adoption verifies identity, not
-	// the bidding setup); the budget lever is refused on Meta (its budget lives on
-	// the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget
-	// is the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the
+	// because adoption does not verify the targeting the activate guard requires
+	// (toggle-campaign-status answers 409 with reason=campaign_adopted); the bid
+	// lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad
+	// group, ad set or line item the row does not record) and on LinkedIn (its bid
+	// is the campaign's own unitCost, but adoption verifies identity, not the
+	// bidding setup); the budget lever is refused on Meta (its budget lives on the
+	// ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is
+	// the campaign's own. A LinkedIn PAUSE on an adopted campaign addresses the
 	// campaign alone, never its creatives.
 	AdoptCampaign(context.Context, *AdoptCampaignPayload) (res *Campaign, err error)
 	// Get one campaign under a brief; returns ETag.
@@ -171,12 +173,16 @@ type Service interface {
 	// wiring was never verified, and this schema has one status column, so writing
 	// 'paused' would spend the reconciliation marker to record a run state the
 	// platform already holds authoritatively. Resuming such a campaign is refused
-	// outright (409). Read the pause's effect from the ad platform, not from this
-	// row. META: ACTIVE cascades to the campaign's recorded ad set and its ads,
-	// EXCEPT that a recorded ad set deliberately paused through
-	// toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left
-	// PAUSED — its ads and the campaign are still activated. That record is this
-	// service's, not Meta's, so the held ad set is READ first (GET
+	// outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused
+	// but not resumed here: a resume is refused 409 with reason=campaign_adopted,
+	// distinct from the reason-less 409 for a campaign that is not fully
+	// provisioned, and the campaign is resumed in the ad platform's own UI. Read
+	// the pause's effect from the ad platform, not from this row. META: ACTIVE
+	// cascades to the campaign's recorded ad set and its ads, EXCEPT that a
+	// recorded ad set deliberately paused through toggle-meta-ad-set-status
+	// (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the
+	// campaign are still activated. That record is this service's, not Meta's, so
+	// the held ad set is READ first (GET
 	// /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written
 	// unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an
 	// ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the
@@ -888,6 +894,16 @@ type Campaign struct {
 	// observation — a bid changed in the platform's own UI is not reflected.
 	// ABSENT when this service never set one.
 	MaxCpcBid *float64
+	// Read-only. true when the campaign was ADOPTED (bound to this brief from an
+	// existing campaign on the ad platform by adopt-campaign) rather than created
+	// by this service. An adopted campaign records none of its serving children,
+	// so toggle-campaign-status refuses to resume it (409 with
+	// reason=campaign_adopted) and it is resumed in the ad platform's own UI;
+	// pausing it is supported. ABSENT on every other campaign — and also on a
+	// campaign adopted before this flag existed on any platform but LinkedIn, so
+	// absent means "not recorded as adopted", not a guarantee that resume will
+	// succeed.
+	Adopted *bool
 	// Optimistic-concurrency version
 	Version int64
 	// ETag header value (mirrors version)
@@ -997,15 +1013,21 @@ type CampaignMetrics struct {
 	// partial conversions under data-driven, position-based and offline
 	// attribution, so a campaign can genuinely hold 0.4 of a conversion — do not
 	// round it to a whole number, and in particular do not treat a value below 1
-	// as zero. ABSENT when the channel does not report a campaign-level conversion
-	// count (Meta, X, Reddit and the email channel never do), and ALSO absent on
-	// Microsoft whenever the ConversionsQualified column is missing from the
-	// report or ANY row's conversion cell is blank — that column is only populated
-	// for accounts wired for Universal Event Tracking, and a partial column summed
-	// as though it were complete would report a campaign's conversions as lower
-	// than they are. Absent means "not measured here", which is NOT the same as a
-	// measured 0, and a consumer must not render it as zero or fold it into a
-	// conversion total.
+	// as zero. ABSENT means "not measured" — the platform cannot report it, or
+	// (LinkedIn, Microsoft) the read was incomplete. The first case covers
+	// channels that do not report a campaign-level conversion count at all (Meta,
+	// X, Reddit and the email channel never do). The second covers the two
+	// conversion-capable channels whose read can come back partial: LinkedIn
+	// whenever ANY returned analytics element omits externalWebsiteConversions,
+	// and Microsoft whenever the ConversionsQualified column is missing from the
+	// report or ANY row's conversion cell is blank (that column is only populated
+	// for accounts wired for Universal Event Tracking). On either, summing only
+	// the elements or rows that did carry a value would publish a partial count as
+	// a complete one and report a campaign's conversions as lower than they are,
+	// so the whole total is withdrawn instead. Absence therefore does NOT by
+	// itself identify a platform that cannot report conversions, and it is NOT the
+	// same as a measured 0: a consumer must not render it as zero or fold it into
+	// a conversion total.
 	Conversions *float64
 	// Email-channel counters. Present only for the email channel (HubSpot); absent
 	// for every ad platform.

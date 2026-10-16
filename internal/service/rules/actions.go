@@ -59,7 +59,8 @@ type Input struct {
 	// the pacing rules use.
 	DeliveryExpected bool
 	// Conversions is the campaign's conversion count over the measured window, and is nil
-	// when the platform does not report one.
+	// when it was not measured — the platform cannot report it, or (LinkedIn, Microsoft) the
+	// read was incomplete. See model.CampaignMetrics.Conversions.
 	//
 	// A POINTER, because the clicks-without-conversions rule turns entirely on the
 	// difference between the two zeros. A campaign that earned 500 clicks and 0 measured

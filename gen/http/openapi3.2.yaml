@@ -3434,6 +3434,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign'
                             example:
+                                adopted: true
                                 bidding_strategy: manual
                                 brief_id: Quis eos est temporibus eveniet.
                                 campaign_name: Dolores sapiente veniam consequatur omnis non praesentium.
@@ -3591,6 +3592,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign'
                             example:
+                                adopted: true
                                 bidding_strategy: manual
                                 brief_id: Est eveniet rerum consequatur minima delectus molestias.
                                 campaign_name: Ut assumenda asperiores harum nostrum officiis.
@@ -3765,6 +3767,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign'
                             example:
+                                adopted: true
                                 bidding_strategy: manual
                                 brief_id: Voluptates error voluptatem.
                                 campaign_name: Officiis aut eos.
@@ -3939,6 +3942,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign'
                             example:
+                                adopted: true
                                 bidding_strategy: manual
                                 brief_id: Sed ut eum ad odit.
                                 campaign_name: Neque aut nihil nemo aut voluptas ab.
@@ -5428,7 +5432,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: toggle-campaign-status lfx-v2-campaign-service-briefs
-            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). Read the pause''s effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign''s recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service''s, not Meta''s, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.'
+            description: 'Pause or resume a campaign on its ad platform (ACTIVE↔PAUSED), then persist the new status. Unlike update-campaign (which only writes the DB row), this dispatches the status change to the platform and updates the row only after the platform confirms. Support is per-platform: a campaign whose platform has no status-toggle dispatcher wired returns 400. Reddit, LinkedIn, Meta, X, Google Ads and Microsoft Ads are wired; HubSpot is not, because an email send has no run state to pause. ONE EXCEPTION to the persist: pausing a campaign in ''created_degraded'' pauses it upstream and returns 200 with the status and ETag UNCHANGED. ''created_degraded'' records that the campaign''s wiring was never verified, and this schema has one status column, so writing ''paused'' would spend the reconciliation marker to record a run state the platform already holds authoritatively. Resuming such a campaign is refused outright (409). ADOPTED campaigns (campaign `adopted: true`) can be paused but not resumed here: a resume is refused 409 with reason=campaign_adopted, distinct from the reason-less 409 for a campaign that is not fully provisioned, and the campaign is resumed in the ad platform''s own UI. Read the pause''s effect from the ad platform, not from this row. META: ACTIVE cascades to the campaign''s recorded ad set and its ads, EXCEPT that a recorded ad set deliberately paused through toggle-meta-ad-set-status (list-meta-ad-sets `deliberately_paused`) is left PAUSED — its ads and the campaign are still activated. That record is this service''s, not Meta''s, so the held ad set is READ first (GET /{ad_set_id}?fields=id,campaign_id,account_id,status) and nothing is written unless Meta reports it PAUSED (or DELETED/ARCHIVED, which cannot serve): an ad set Meta reports ACTIVE is 409 (pause it, or resume it to clear the record, through toggle-meta-ad-set-status first), and an unreadable one is 503 with the campaign not modified.'
             operationId: lfx-v2-campaign-service-briefs#toggle-campaign-status
             parameters:
                 - name: project_id
@@ -5493,6 +5497,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign'
                             example:
+                                adopted: true
                                 bidding_strategy: manual
                                 brief_id: Sit atque ex quis quaerat.
                                 campaign_name: Earum nihil ad voluptate excepturi est.
@@ -5601,7 +5606,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: adopt-campaign lfx-v2-campaign-service-briefs
-            description: 'Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project''s connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project''s OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection''s ad account after a campaign 404, and the campaign must belong to that connection''s ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project''s connection / the campaign is of a type that platform''s slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires; the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign''s own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign''s own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.'
+            description: 'Bind a campaign that ALREADY exists on the ad platform to this brief. The platform is read, never written: the campaign must already exist under the project''s connection, and nothing is created upstream. Supported platforms: google-ads, microsoft-ads, meta-ads, reddit-ads, twitter-ads and linkedin-ads; every other platform answers 400. The read is one get-campaign-by-id under the project''s OWN connection (never the shared LF system account), plus, on Reddit, X and LinkedIn only, one read of that connection''s ad account after a campaign 404, and the campaign must belong to that connection''s ad account. Returns 404 only when the platform PROVES it holds no such campaign (a deleted, removed or archived campaign counts as absent; on LinkedIn a CANCELED, PENDING_DELETION or REMOVED one), 503 when the campaign could not be verified (the platform was unreachable or throttled, answered with something untrustworthy, or gave a not-found that could equally be an access, auth or account problem - its existence is unknown), 409 when this brief already has a live campaign on that platform / that campaign is already bound to another brief (in any project, since several foundations share one upstream ad account) / the platform reports the campaign under a different ad account than the project''s connection / the campaign is of a type that platform''s slot cannot hold (Microsoft adopts Search campaigns only) / the brief lost approval during the read / the project has no ad-platform connection of its own, and 400 when the platform has no adoption capability wired or platform_campaign_id is malformed for that platform (checked before any connection work). An adopted campaign records only the campaign itself (id, name, account), never its children, and is returned, read back by get-campaign and indexed with `adopted: true`. The metrics read and the settings readback (on the platforms that support them), delete and pause work on it; activation is refused on every platform because adoption does not verify the targeting the activate guard requires (toggle-campaign-status answers 409 with reason=campaign_adopted); the bid lever is refused on Microsoft, Meta, Reddit and X (the bid lives on an ad group, ad set or line item the row does not record) and on LinkedIn (its bid is the campaign''s own unitCost, but adoption verifies identity, not the bidding setup); the budget lever is refused on Meta (its budget lives on the ad set) and works on Microsoft, Reddit, X and LinkedIn, where the budget is the campaign''s own. A LinkedIn PAUSE on an adopted campaign addresses the campaign alone, never its creatives.'
             operationId: lfx-v2-campaign-service-briefs#adopt-campaign
             parameters:
                 - name: project_id
@@ -5651,6 +5656,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Campaign'
                             example:
+                                adopted: true
                                 bidding_strategy: manual
                                 brief_id: Id natus molestias quo.
                                 campaign_name: Impedit eligendi nihil placeat temporibus aut eveniet.
@@ -18153,6 +18159,10 @@ components:
         Campaign:
             type: object
             properties:
+                adopted:
+                    type: boolean
+                    description: Read-only. true when the campaign was ADOPTED (bound to this brief from an existing campaign on the ad platform by adopt-campaign) rather than created by this service. An adopted campaign records none of its serving children, so toggle-campaign-status refuses to resume it (409 with reason=campaign_adopted) and it is resumed in the ad platform's own UI; pausing it is supported. ABSENT on every other campaign — and also on a campaign adopted before this flag existed on any platform but LinkedIn, so absent means "not recorded as adopted", not a guarantee that resume will succeed.
+                    example: true
                 bidding_strategy:
                     type: string
                     description: 'How the campaign was CREATED to bid, as its dispatch config asked (LFXV2-2665) — normally `bidding.strategy`, except that a Microsoft Advertising create carrying the legacy `microsoftConfig.cpcBid` with no `bidding` object is recorded as `manual` (that bid is a manual starting bid), so this does not always echo an explicit `bidding.strategy`: `automatic` (the default — the platform sets every bid) or `manual` (a manual max cost-per-click bid the update-campaign-bid endpoint can change). A record of the request, not an observation: an operator may switch the strategy in the ad platform afterwards. ABSENT when not recorded — a campaign created before this field existed, an adopted campaign, or a Google Ads or email campaign — never read as `automatic`.'
@@ -18205,6 +18215,7 @@ components:
                     example: 6608946778758359400
                     format: int64
             example:
+                adopted: true
                 bidding_strategy: manual
                 brief_id: Id natus molestias quo.
                 campaign_name: Impedit eligendi nihil placeat temporibus aut eveniet.
@@ -18368,7 +18379,7 @@ components:
                     format: int64
                 conversions:
                     type: number
-                    description: 'Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT when the channel does not report a campaign-level conversion count (Meta, X, Reddit and the email channel never do), and ALSO absent on Microsoft whenever the ConversionsQualified column is missing from the report or ANY row''s conversion cell is blank — that column is only populated for accounts wired for Universal Event Tracking, and a partial column summed as though it were complete would report a campaign''s conversions as lower than they are. Absent means "not measured here", which is NOT the same as a measured 0, and a consumer must not render it as zero or fold it into a conversion total.'
+                    description: 'Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT means "not measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was incomplete. The first case covers channels that do not report a campaign-level conversion count at all (Meta, X, Reddit and the email channel never do). The second covers the two conversion-capable channels whose read can come back partial: LinkedIn whenever ANY returned analytics element omits externalWebsiteConversions, and Microsoft whenever the ConversionsQualified column is missing from the report or ANY row''s conversion cell is blank (that column is only populated for accounts wired for Universal Event Tracking). On either, summing only the elements or rows that did carry a value would publish a partial count as a complete one and report a campaign''s conversions as lower than they are, so the whole total is withdrawn instead. Absence therefore does NOT by itself identify a platform that cannot report conversions, and it is NOT the same as a measured 0: a consumer must not render it as zero or fold it into a conversion total.'
                     example: 37
                     format: double
                 cost_micros:
@@ -18725,6 +18736,7 @@ components:
                         - already_exists
                         - audience_provenance_immutable
                         - ab_test_unsupported_send_type
+                        - campaign_adopted
             example:
                 code: "409"
                 message: A connection for this provider already exists on the project.

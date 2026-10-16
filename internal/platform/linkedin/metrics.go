@@ -223,10 +223,10 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, accountID, campaignID s
 	// non-nil zero here — the same answer googleads.GetCampaignMetrics gives for its
 	// equivalent no-rows branch. The request named externalWebsiteConversions in `fields`
 	// and LinkedIn answered with a well-formed empty array, so the metric WAS asked for and
-	// the campaign simply did nothing in the window. Leaving it nil would report "LinkedIn
-	// cannot measure conversions", which per model.CampaignMetrics.Conversions is reserved
-	// for platforms that cannot report a campaign-level count AT ALL — a claim that is false
-	// for LinkedIn and that this branch has no evidence for.
+	// the campaign simply did nothing in the window. Leaving it nil would report "not
+	// measured", which per model.CampaignMetrics.Conversions means either a platform that
+	// cannot report a campaign-level count at all (false for LinkedIn) or an incomplete read
+	// (which this branch has no evidence for).
 	//
 	// This is distinct from the per-element omission handled in the aggregation loop below,
 	// which withdraws the total to nil: THERE an element LinkedIn returned came back without

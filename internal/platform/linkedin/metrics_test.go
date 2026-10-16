@@ -1846,3 +1846,74 @@ func TestGetCampaignMetrics_NoActivityConversionsIsMeasuredZero(t *testing.T) {
 		t.Errorf("expected zero impressions/clicks/cost, got %+v", metrics)
 	}
 }
+
+// Pins the CURRENT meaning of a nil LinkedIn conversions total (issue #175): nil is "not
+// measured" in its incomplete-read sense, never "LinkedIn cannot report conversions". One
+// element omitting externalWebsiteConversions withdraws the whole total; every element
+// carrying it publishes the sum; every element omitting it is likewise nil. A consumer reading
+// model.CampaignMetrics.Conversions must therefore not infer platform capability from nil, and
+// a change to any of these three outcomes is a contract change, not a refactor.
+//
+// This is the table-form contract pin. The single-case tests above (AbsentConversions...,
+// ConversionsAggregateAcrossElements, PartialConversionsCoverage..., ConversionsWithdrawn...)
+// each pin one outcome with its own failure narrative; this one states the three together,
+// over multi-element responses, and additionally checks that the withdrawal is scoped to
+// conversions — impressions and clicks still aggregate.
+func TestGetCampaignMetrics_NilConversionsIsAnIncompleteRead(t *testing.T) {
+	sum := func(v float64) *float64 { return &v }
+	cases := []struct {
+		name string
+		body string
+		want *float64
+	}{
+		{
+			name: "one element omits the field",
+			body: `{"elements":[
+				{"impressions":600,"clicks":30,"externalWebsiteConversions":4},
+				{"impressions":400,"clicks":20},
+				{"impressions":200,"clicks":10,"externalWebsiteConversions":2}
+			]}`,
+			want: nil,
+		},
+		{
+			name: "every element carries the field",
+			body: `{"elements":[
+				{"impressions":600,"clicks":30,"externalWebsiteConversions":4},
+				{"impressions":400,"clicks":20,"externalWebsiteConversions":0},
+				{"impressions":200,"clicks":10,"externalWebsiteConversions":2}
+			]}`,
+			want: sum(6),
+		},
+		{
+			name: "every element omits the field",
+			body: `{"elements":[
+				{"impressions":600,"clicks":30},
+				{"impressions":400,"clicks":20},
+				{"impressions":200,"clicks":10}
+			]}`,
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := linkedinConvServer(t, tc.body)
+			m, err := c.GetCampaignMetrics(context.Background(), "account123", "123456", model.MetricsWindowToday)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			// The counters aggregate regardless of conversions coverage: the withdrawal is
+			// scoped to the one metric that was incompletely reported.
+			if m.Impressions != 1200 || m.Clicks != 60 {
+				t.Errorf("Impressions/Clicks = %d/%d, want 1200/60", m.Impressions, m.Clicks)
+			}
+			switch {
+			case tc.want == nil && m.Conversions != nil:
+				t.Errorf("Conversions = %v, want nil (not measured)", *m.Conversions)
+			case tc.want != nil && m.Conversions == nil:
+				t.Errorf("Conversions = nil, want %v", *tc.want)
+			case tc.want != nil && *m.Conversions != *tc.want:
+				t.Errorf("Conversions = %v, want %v", *m.Conversions, *tc.want)
+			}
+		})
+	}
+}

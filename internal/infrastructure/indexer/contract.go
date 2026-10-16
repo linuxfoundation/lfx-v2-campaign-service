@@ -250,5 +250,12 @@ type CampaignDoc struct {
 	// absent in exactly those cases.
 	BiddingStrategy *string  `json:"bidding_strategy,omitempty"`
 	MaxCPCBid       *float64 `json:"max_cpc_bid,omitempty"`
-	Version         int64    `json:"version"`
+	// Adopted is true for a campaign bound by adopt-campaign rather than created here (the
+	// campaign result type's `adopted`, derived from model.CampaignAdopted). OMITTED, never
+	// false, otherwise: absence means "not recorded as adopted" — a row adopted before the
+	// marker was stamped on every platform carries none — and documents indexed before this
+	// field existed keep their old shape until the campaign's next write, exactly as with
+	// every other additive field here.
+	Adopted bool  `json:"adopted,omitempty"`
+	Version int64 `json:"version"`
 }

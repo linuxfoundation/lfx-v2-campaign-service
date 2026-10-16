@@ -208,7 +208,7 @@ across platforms — the same reason the brief-metrics response refuses a cross-
 | `underspending` | Pacing is computable and below the floor |
 | `budget_constrained` | Pacing is computable and `constrained` (above 90% up to and including 100% of plan — issue text "Budget constrained") or `overspending` (above 100% — "Spending ahead of plan"); one rule token, `MED`, for both |
 | `low_ctr` | CTR below the threshold, over enough impressions to mean anything |
-| `no_conversions` | Zero **measured** conversions over enough clicks to mean anything, on a platform that reports conversions at all |
+| `no_conversions` | Zero **measured** conversions over enough clicks (50) to mean anything — a non-nil count, so never on a platform that cannot report conversions or on an incomplete LinkedIn/Microsoft read. Never on a zero-click window (the click floor excludes it); a window with no delivery at all is `zero_delivery`'s finding |
 
 Two guards carry most of the weight. **Zero delivery requires both signals** — impressions alone
 is an unbilled serve, spend alone is a billing entry with no serve, and flagging either trains
@@ -234,10 +234,21 @@ normal variance, not a broken funnel. It is set lower than the CTR floor because
 funnel step further down and arrive one to two orders of magnitude less often — reusing the
 impression floor would mean the rule effectively never fired on the campaigns this service runs.
 
-The second floor is the one that matters more: the rule is **gated on the platform reporting
-conversions at all**, the same way `zero_delivery` is gated on the channel billing per delivery.
-`Conversions` is a POINTER on both `model.CampaignMetrics` and `rules.Input` precisely so absent
-stays distinguishable from a measured zero. Only Google Ads, LinkedIn and Microsoft populate it;
+The floor also means `no_conversions` **never fires on a window with zero clicks**, however quiet
+the campaign: an empty or no-activity window is `zero_delivery`'s finding (gated on the flight
+having begun and on a paid-ads channel), not this rule's. Materialising a measured zero for such a
+window (Google's no-rows branch, LinkedIn's empty `elements`) keeps the field truthful; it does
+not make this rule fire.
+
+The second floor is the one that matters more: the rule is **gated on the read having produced a
+conversion measurement** (`Conversions != nil`), the same way `zero_delivery` is gated on the
+channel billing per delivery. `Conversions` is a POINTER on both `model.CampaignMetrics` and
+`rules.Input` precisely so absent stays distinguishable from a measured zero. Absent means "not
+measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was incomplete:
+LinkedIn withdraws the whole total when any returned element omits `externalWebsiteConversions`,
+and Microsoft does so on a missing column or a blank `ConversionsQualified` cell. Neither case may
+fire: a platform that cannot report has no measurement to be zero, and a partial read says nothing
+about whether the campaign converted. Only Google Ads, LinkedIn and Microsoft populate it;
 Meta and X expose conversions solely as per-action-type structures with no scalar to read,
 Reddit's reporting read does not request a conversion field at all, and the email channel has no
 conversion concept.
