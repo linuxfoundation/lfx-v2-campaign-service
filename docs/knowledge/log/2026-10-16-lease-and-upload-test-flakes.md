@@ -21,7 +21,9 @@ ran before the test reached the receive, it skipped blocking, and the test waite
 signal that never came (2 hangs in 4,800 runs across 16 parallel processes). The first handler
 now blocks on its own first-call flag and closes a channel. Every wait in the test is bounded.
 The test also checks that the second request has not finished while the permit is held, and
-that it was not admitted until the first was released.
+that it was not admitted until the first was released. The permit is released only after the
+second request has been priced, the step just before it waits for the permit, so a second
+request that started late cannot take a free permit and skip the wait it is meant to test.
 
 After the fix there were 0 failures in 2,400 lease runs (12 parallel processes) and 4,800 upload
 runs (16 processes) at load ~28, plus 100 runs each under `-race` and with `GOMAXPROCS=1`.

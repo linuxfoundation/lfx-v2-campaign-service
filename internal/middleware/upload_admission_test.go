@@ -253,7 +253,10 @@ func TestUploadAdmission_NonUploadRoutesAreNotGated(t *testing.T) {
 // non-blocking send let it skip the block whenever it ran before the test reached the receive,
 // and the test then waited for a signal that never came, until go test's timeout. The second
 // handler records whether the first had been released by the time it was admitted, so a
-// semaphore that let the two overlap fails here instead of passing on the shared 200.
+// semaphore that let the two overlap fails here instead of passing on the shared 200. The
+// permit is released only after the second request has been priced: pricing is the statement
+// before sem.Acquire, with nothing that blocks between them, so a second request that started
+// late cannot take a free permit and pass without exercising the wait.
 func TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly(t *testing.T) {
 	const budget, weight = 10, 10
 	// The middleware's wait is generous so scheduling delay under load cannot turn the brief
@@ -261,11 +264,18 @@ func TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly(t *testing.T) {
 	const admissionWait = 5 * time.Second
 	const stepTimeout = 10 * time.Second
 
-	var calls atomic.Int32
+	var calls, priced atomic.Int32
 	var overlapped atomic.Bool
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	h := UploadAdmission(budget, noBodyCap, flat(weight), admissionWait)(
+	secondPriced := make(chan struct{})
+	price := func(int64) int64 {
+		if priced.Add(1) == 2 {
+			close(secondPriced) // the second request has reached admission
+		}
+		return weight
+	}
+	h := UploadAdmission(budget, noBodyCap, price, admissionWait)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			if calls.Add(1) == 1 {
 				close(entered)
@@ -308,6 +318,12 @@ func TestUploadAdmission_WaitsBrieflyRatherThanShedingInstantly(t *testing.T) {
 	}
 
 	second := serve()
+	select {
+	case <-secondPriced:
+	case <-time.After(stepTimeout):
+		close(release)
+		t.Fatalf("the second upload did not reach admission within %s", stepTimeout)
+	}
 	// The second request cannot finish while the permit is held, except by shedding.
 	select {
 	case code := <-second:
