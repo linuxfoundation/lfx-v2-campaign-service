@@ -1153,33 +1153,46 @@ func TestListAccountCampaigns_UpdatedBeforeCreatedIsUnknown(t *testing.T) {
 // Agreeing reads (the control) still convert both.
 func TestListAccountCampaigns_InsightsCurrencyMismatchLeavesBudgetsUnknown(t *testing.T) {
 	settled := `"created_time":"2025-11-01T00:00:00+0000","updated_time":"2025-12-01T00:00:00+0000"`
-	insights := func(code111, code222 string) string {
-		return `{"data":[` +
-			`{"campaign_id":"111","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code111 + `"},` +
-			`{"campaign_id":"222","impressions":"1000","clicks":"10","spend":"5","account_currency":"` + code222 + `"}],"paging":{}}`
+	// insights gives campaigns 111 and 222 one row each, in that order; a third code adds a row for
+	// campaign 333, which the campaign list does not carry — its row is still currency evidence.
+	insights := func(codes ...string) string {
+		ids := []string{"111", "222", "333"}
+		rows := make([]string, 0, len(codes))
+		for i, code := range codes {
+			rows = append(rows, `{"campaign_id":"`+ids[i]+`","impressions":"1000","clicks":"10","spend":"5","account_currency":"`+code+`"}`)
+		}
+		return `{"data":[` + strings.Join(rows, ",") + `],"paging":{}}`
 	}
 	for _, tc := range []struct {
-		name, code111, code222 string
-		mismatch               bool
+		name     string
+		codes    []string
+		mismatch bool
 	}{
-		{"insights JPY, account USD", "JPY", "JPY", true},
-		{"insights EUR, account USD", "EUR", "EUR", true},
+		{"insights JPY, account USD", []string{"JPY", "JPY"}, true},
+		{"insights EUR, account USD", []string{"EUR", "EUR"}, true},
 		// Rows disagreeing with each other withhold the label, but the JPY row still conflicts
 		// with the USD budgets whichever row carries it (PR #316 review).
-		{"one USD and one JPY row, account USD", "USD", "JPY", true},
-		{"one JPY and one USD row, account USD", "JPY", "USD", true},
-		{"agreeing currencies still convert", "USD", "USD", false},
+		{"one USD and one JPY row, account USD", []string{"USD", "JPY"}, true},
+		{"one JPY and one USD row, account USD", []string{"JPY", "USD"}, true},
+		// A majority agreeing with the account does not outvote the one conflicting row: ANY
+		// readable conflict voids the budget currency (PR #316 review).
+		{"two USD rows and one JPY row, account USD", []string{"USD", "USD", "JPY"}, true},
+		{"agreeing currencies still convert", []string{"USD", "USD"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, rec := monitorServer(t, monitorFixture{
 				campaigns: []string{monitorList(
 					monitorCampaign("111", StatusActive, `"daily_budget":"1000",`+settled),
 					monitorCampaign("222", StatusActive, settled))},
-				insights: []string{insights(tc.code111, tc.code222)},
+				insights: []string{insights(tc.codes...)},
 				currency: usdAccount,
 				adSets:   []string{monitorList(monitorAdSetRow("9001", "222", "ACTIVE", `"daily_budget":"1500","created_time":"2025-11-01T00:00:00+0000"`))},
 			})
-			list, published, err := newMonitorClient(srv).ListAccountCampaignsWithCurrency(context.Background(), "act_123", 30)
+			// Pinned like listMonitorRowsAt: the fixture's ad-set flight is October 2026, so a
+			// wall-clock window would stop overlapping it and void the control's pacing (PR #316 review).
+			clock := func() time.Time { return time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC) }
+			c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, AccountConfig{}, WithBaseURL(srv.URL), WithClock(clock))
+			list, published, err := c.ListAccountCampaignsWithCurrency(context.Background(), "act_123", 30)
 			if err != nil {
 				t.Fatalf("ListAccountCampaignsWithCurrency: %v (a currency mismatch must not fail the read)", err)
 			}
