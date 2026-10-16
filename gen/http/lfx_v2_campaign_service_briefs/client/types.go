@@ -115,13 +115,14 @@ type ApplyKeywordActionsRequestBody struct {
 // "lfx-v2-campaign-service-briefs" service "add-negative-keywords" endpoint
 // HTTP request body.
 type AddNegativeKeywordsRequestBody struct {
-	// The negative keywords to add: at campaign level on Microsoft Advertising, on
-	// the campaign's one ad group on Reddit, on its one line item on X.
+	// The negative keywords to add: at campaign level on Google Ads and Microsoft
+	// Advertising, on the campaign's one ad group on Reddit, on its one line item
+	// on X.
 	NegativeKeywords []*NegativeKeywordInputRequestBody `form:"negative_keywords" json:"negative_keywords" xml:"negative_keywords"`
 	// Reddit only, and required there: the revision get-keyword-targeting
 	// returned; an empty or blank one is 400. The add is refused (409) when the ad
-	// group's targeting no longer has that fingerprint. Microsoft Advertising and
-	// X refuse the field (400) whenever it is present, even empty.
+	// group's targeting no longer has that fingerprint. Google Ads, Microsoft
+	// Advertising and X refuse the field (400) whenever it is present, even empty.
 	Revision *string `form:"revision,omitempty" json:"revision,omitempty" xml:"revision,omitempty"`
 }
 
@@ -4101,19 +4102,22 @@ type NegativeKeywordResultResponseBody struct {
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
 	// The match type as sent to the platform
 	MatchType *string `form:"match_type,omitempty" json:"match_type,omitempty" xml:"match_type,omitempty"`
-	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Microsoft)
-	// or ad group / line item (Reddit / X) already had it, so the requested state
-	// holds; FAILED — definitely not added (see error_code); UNCONFIRMED — may
-	// have been added, verify in the ad platform before retrying.
+	// APPLIED — added by this request; ALREADY_PRESENT — the campaign (Google Ads,
+	// Microsoft) or ad group / line item (Reddit / X) already had it, so the
+	// requested state holds; FAILED — definitely not added (see error_code);
+	// UNCONFIRMED — may have been added, verify in the ad platform before retrying.
 	Outcome *string `form:"outcome,omitempty" json:"outcome,omitempty" xml:"outcome,omitempty"`
-	// The platform's id for a negative keyword this request added: Microsoft's
-	// NegativeKeyword id, or X's targeting criterion id. Absent on Reddit, where
-	// an excluded keyword has no id, and for every outcome other than APPLIED.
+	// The platform's id for a negative keyword this request added: Google's
+	// campaign criterion id, Microsoft's NegativeKeyword id, or X's targeting
+	// criterion id. Absent on Reddit, where an excluded keyword has no id. Present
+	// for ALREADY_PRESENT on Google Ads, which reads the campaign's existing
+	// negatives and reports the criterion id it already holds; absent for
+	// ALREADY_PRESENT elsewhere, and for FAILED and UNCONFIRMED everywhere.
 	NegativeKeywordID *string `form:"negative_keyword_id,omitempty" json:"negative_keyword_id,omitempty" xml:"negative_keyword_id,omitempty"`
 	// Why a keyword is FAILED. Microsoft Advertising: Microsoft's machine-readable
-	// error code, when it named one. Reddit and X: NOT_SENT (the request carrying
-	// it was never sent) or REJECTED (the platform refused it); their own text is
-	// never returned.
+	// error code, when it named one. Google Ads, Reddit and X: NOT_SENT (the
+	// request carrying it was never sent) or REJECTED (the platform refused it);
+	// their own text is never returned.
 	ErrorCode *string `form:"error_code,omitempty" json:"error_code,omitempty" xml:"error_code,omitempty"`
 }
 
@@ -4366,12 +4370,12 @@ type KeywordActionInputRequestBody struct {
 // types.
 type NegativeKeywordInputRequestBody struct {
 	// The negative keyword text. Letters, digits, spaces and & ' - . only; at most
-	// 100 characters.
+	// 100 characters — at most 80 on Google Ads, its own keyword text limit.
 	Text string `form:"text" json:"text" xml:"text"`
-	// How the negative keyword is compared with a search query. Microsoft
-	// Advertising: Exact or Phrase. X: Broad, Phrase or Exact. Reddit: Broad only
-	// (Reddit's excluded keywords carry no match type). Any other value for the
-	// platform is 400.
+	// How the negative keyword is compared with a search query. Google Ads: Broad,
+	// Phrase or Exact. Microsoft Advertising: Exact or Phrase. X: Broad, Phrase or
+	// Exact. Reddit: Broad only (Reddit's excluded keywords carry no match type).
+	// Any other value for the platform is 400.
 	MatchType string `form:"match_type" json:"match_type" xml:"match_type"`
 }
 
