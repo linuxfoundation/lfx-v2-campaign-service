@@ -208,6 +208,16 @@ not applied), distinct from the ambiguous `transportError`.
 UNCONFIRMED so a create that may have committed is not blind-retried into a
 duplicate; a `preSendError` is neither, so it stays a definite "not applied".
 
+The request-preparation exits are the fourth shape, `requestNotSentError`: `doRequestAbs` and the
+media upload's `doBodyRequest` return it when `buildOAuthHeader` (a `url.Parse` of the request URL)
+or `http.NewRequestWithContext` fails, so `httpClient.Do` never ran. It unwraps to BOTH
+`ErrWriteNotSent` — the marker the keyword write levers' callers and the dispatcher read as
+`NOT_SENT` — and the cause, and its `Error()` renders method, path label and stage only, because a
+URL parse error embeds the full request URL. Before it, both exits returned an unmarked error that
+the dispatcher's per-keyword default stamped `REJECTED`, a refusal X never issued. Both stages are
+deterministic in (method, URL) and the URL is fixed before the retry loop, so only the first
+attempt can fail there and the claim needs no attempt guard. `ProbeNotSent` matches it too.
+
 ## Authoring a promoted tweet (brief -> servable ad)
 
 `CreateCampaign` can author the ad's creative itself — text only — so a caller can
@@ -1230,7 +1240,8 @@ series instead of vanishing from it.
 
 The one error it claims beyond a dial failure is a caller that had ALREADY given up:
 `Client.doRequestAbs` checks `ctx.Err()` at its entry and returns `errRequestContextAlreadyDone`
-wrapped around it, and `ProbeNotSent` matches that marker alongside `preSendError`. X has no token
+wrapped around it, and `ProbeNotSent` matches that marker alongside `preSendError` and
+`requestNotSentError` (a request this client could not sign or build). X has no token
 leg for the sibling clients' `errTokenContextAlreadyDone` to guard, and `doRequestAbs` is the
 single path every Ads API call takes, so its entry is where the equivalent check belongs. The
 marker is deliberately NOT a `preSendError`: that type names a DIAL failure and exists to strip a
@@ -1280,7 +1291,8 @@ usable id or under another line item, an unusable cursor on a full page, the pag
 page is checked before it is decoded) is `ErrTargetingUnreadable`, never a shorter list, so the
 ownership and last-keyword gates never act on a last-wins reading. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
 `ErrWriteNotSent`, and so is a request `ProbeNotSent` proves never left the process — a DNS or
-connect-time failure, or a context already done at entry — checked before any API
+connect-time failure, a request that could not be signed or built, or a context already done at
+entry — checked before any API
 classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), sends one DELETE with the 429 never retried, maps 404 to
 `ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
 `deleted: true` — anything else, including an echo `identityjson.Check` refuses, is an

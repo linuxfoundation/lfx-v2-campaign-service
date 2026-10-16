@@ -906,6 +906,34 @@ func (e *preSendError) Error() string {
 
 func (e *preSendError) Unwrap() error { return e.err }
 
+// requestNotSentError is a failure while this client was still PREPARING a request — signing it
+// (buildOAuthHeader) or building it (http.NewRequestWithContext) — so httpClient.Do never ran and
+// nothing reached X. It carries ErrWriteNotSent, the marker every write caller and the dispatcher
+// already read as "never transmitted", so such a failure is classified NOT_SENT rather than
+// falling through to a REJECTED X never issued. It is not a preSendError, which names a DIAL
+// failure; ProbeNotSent matches both.
+//
+// Error() renders the method, the caller's path label and the failed stage only: the cause of a
+// URL parse failure embeds the full request URL, query included, and this text is copied into
+// persisted Steps. Unwrap keeps the cause reachable for errors.Is/As.
+//
+// Both stages are deterministic in (method, URL), and the URL is fixed before doRequestAbs's retry
+// loop, so a failure can only occur on the FIRST attempt: no earlier attempt of the same call has
+// been transmitted when this is returned, and the claim needs no attempt guard.
+type requestNotSentError struct {
+	Method string
+	Path   string
+	stage  string
+	// err is unexported for the reason transportError.err is — see there.
+	err error
+}
+
+func (e *requestNotSentError) Error() string {
+	return fmt.Sprintf("x ads api %s %s: %s failed, so the request was not sent", e.Method, e.Path, e.stage)
+}
+
+func (e *requestNotSentError) Unwrap() []error { return []error{ErrWriteNotSent, e.err} }
+
 // safeTransportCause returns a URL-free description of a round-trip error, chosen from
 // a FIXED vocabulary. It is an allowlist with a default-deny, not a peel-and-render, and
 // it mirrors hubspot.safeCause and the microsoft client's equivalent — deliberately, so
@@ -1248,12 +1276,12 @@ func (c *Client) doRequestAbsCounted(ctx context.Context, method, reqURL, logPat
 	for attempt := 0; attempt <= retryMax; attempt++ {
 		authHeader, err := c.buildOAuthHeader(method, reqURL, nil)
 		if err != nil {
-			return nil, err
+			return nil, &requestNotSentError{Method: method, Path: path, stage: "sign request", err: err}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, method, reqURL, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("build request: %w", err)
+			return nil, &requestNotSentError{Method: method, Path: path, stage: "build request", err: err}
 		}
 		req.Header.Set("Authorization", authHeader)
 

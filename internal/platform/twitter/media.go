@@ -455,7 +455,8 @@ func appendFraming(segment int) (prefix, suffix []byte, contentType string, err 
 
 // doBodyRequest issues ONE OAuth1-signed POST carrying a body, for the media upload endpoints
 // (the Ads API endpoints carry no body; see doRequestAbs). It classifies outcomes exactly as
-// doRequestAbs does — a pre-send dial failure is a definite preSendError, a failure after the
+// doRequestAbs does — a request it cannot sign or build is a definite requestNotSentError, a
+// pre-send dial failure is a definite preSendError, a failure after the
 // request may have been sent or an unreadable 2xx is an ambiguous transportError, and a non-2xx
 // is an apiError carrying status only — and it never retries: none of these writes converges
 // on a repeat, so a 429 is returned at once (and classified ambiguous by
@@ -471,7 +472,7 @@ func (c *Client) doBodyRequest(ctx context.Context, reqURL, logPath, contentType
 	method := http.MethodPost
 	authHeader, err := c.buildOAuthHeader(method, reqURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, &requestNotSentError{Method: method, Path: logPath, stage: "sign request", err: err}
 	}
 	readers := make([]io.Reader, 0, len(parts))
 	var length int64
@@ -485,7 +486,7 @@ func (c *Client) doBodyRequest(ctx context.Context, reqURL, logPath, contentType
 	}
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
+		return nil, &requestNotSentError{Method: method, Path: logPath, stage: "build request", err: err}
 	}
 	// Explicit: net/http cannot infer a length from an io.MultiReader and would otherwise send
 	// the upload chunked.
