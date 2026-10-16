@@ -389,6 +389,31 @@ func TestFindLineItemByName_ForeignParentRefuses(t *testing.T) {
 	}
 }
 
+// TestFindByName_DuplicateKeyPageIsAnError: a repeated key resolves last-wins in encoding/json,
+// so `"deleted":false,"deleted":true` (or a case-folded `"Deleted":true`) would skip a live match
+// and read as not-found, licensing a duplicate create. The page is refused instead, for both the
+// campaign and the line-item lookup (PR #358 review).
+func TestFindByName_DuplicateKeyPageIsAnError(t *testing.T) {
+	for name, row := range map[string]string{
+		"exact repeat":       `{"id":"live","name":"target","campaign_id":"camp1","deleted":false,"deleted":true}`,
+		"case-folded repeat": `{"id":"live","name":"target","campaign_id":"camp1","deleted":false,"Deleted":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`{"data":[` + row + `],"next_cursor":null}`))
+			}))
+			defer srv.Close()
+			c := newAuthorTweetTestClient(srv.URL)
+			if id, err := c.findByName(context.Background(), "campaigns?q=target", "target"); err == nil {
+				t.Errorf("findByName = %q, nil; want an error, not a not-found", id)
+			}
+			if id, err := c.findLineItemByName(context.Background(), "camp1", "target"); err == nil {
+				t.Errorf("findLineItemByName = %q, nil; want an error, not a not-found", id)
+			}
+		})
+	}
+}
+
 // TestFindByName_DeletedMatchIsNotReused: a match X reports deleted is skipped, and a
 // deleted twin does not make a live match ambiguous.
 func TestFindByName_DeletedMatchIsNotReused(t *testing.T) {

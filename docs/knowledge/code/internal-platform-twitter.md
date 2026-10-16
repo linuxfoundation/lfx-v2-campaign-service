@@ -1410,7 +1410,10 @@ so every level is found through something deterministic:
 | Promoted tweet | the reused line item (`listPromotedTweets`) | live, parent is that line item, see below |
 | Authored tweet | through its promoted tweet only | a published-but-unpromoted tweet is NOT found |
 
-`findByNameChecked` now walks every page and refuses when two or more live elements carry
+`findByNameChecked` checks every page's raw body with `identityjson` before decoding it (a
+repeated or case-folded key such as `"deleted":false,"deleted":true` would otherwise read
+last-wins, skip a live match as deleted and license a duplicate create; PR #358 review), and
+now walks every page and refuses when two or more live elements carry
 the exact name (X does not enforce uniqueness, and reusing whichever is listed first could
 adopt someone else's campaign), skips elements X reports `deleted`, and runs a provenance
 check on each match: a campaign whose `funding_instrument_id` differs from the connection's,

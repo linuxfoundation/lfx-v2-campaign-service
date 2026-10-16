@@ -37,6 +37,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
 )
 
@@ -1765,6 +1766,13 @@ func (c *Client) findByNameChecked(ctx context.Context, path, name string, check
 		}
 		if resp == nil {
 			return "", fmt.Errorf("lookup %q: empty response", name)
+		}
+		// The page's raw body must pass identityjson before it is decoded (PR #358 review):
+		// encoding/json resolves a repeated key — exact or case-folded — last-wins, so a row
+		// carrying `"deleted":false,"deleted":true` would read as deleted, be skipped, and turn
+		// a live match into a not-found the caller answers with a duplicate create.
+		if err := identityjson.Check(resp.raw); err != nil {
+			return "", fmt.Errorf("lookup %q: a page that cannot be trusted, so the name cannot be confirmed absent; aborting to avoid creating a duplicate: %w", name, err)
 		}
 		// Declared INSIDE the loop so it starts nil on every iteration and its nil-ness
 		// is decided by this page's body alone.
