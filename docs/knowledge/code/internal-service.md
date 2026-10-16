@@ -712,6 +712,36 @@ guard working, not a gap in it: this service has not verified the campaign can d
 reporting a successful activation of something that cannot serve is exactly what the sentinel
 exists to prevent.
 
+### The `adopted` flag and the `campaign_adopted` resume refusal (lfx-self-serve #3741)
+
+Clients could not tell an adopted campaign from a created one, and a refused resume answered the
+same reason-less 409 as every other not-provisioned toggle, so the UI could neither disable Resume
+on adopted rows nor say why it was refused. Both gaps are closed additively:
+
+- **One marker, stamped on every platform.** `AdoptCampaign` passes `ref.Result` through
+  `model.MarkResultAdopted` before persisting, which sets `"adopted": true` at the blob's top
+  level and keeps every other key (the account provenance the mismatch guards read back). Only
+  LinkedIn's adapter wrote that key before (`linkedin.AdoptedCampaignResult`); Google Ads'
+  lookup recorded only `customerId`, and Meta/Microsoft/Reddit/X only a prose Steps line. A blob
+  that is not a JSON object is refused (500, nothing bound) rather than overwritten.
+- **One reader.** `model.CampaignAdopted` reads that key and nothing else — not the Steps
+  prose. `campaignResult` maps it to the campaign's optional `adopted` (`adoptedFlag`: `true` or
+  ABSENT, never `false`), `campaignDoc` to `indexer.CampaignDoc.Adopted` (`omitempty`), and the
+  LinkedIn dispatcher's `linkedInAdopted` now delegates to it, so the bid/activate refusals and
+  the public flag cannot disagree. A row adopted before the stamp on any platform but LinkedIn
+  reads absent; absent therefore means "not recorded as adopted".
+- **Its own 409 reason.** In `ToggleCampaignStatus`'s `ErrCampaignNotProvisioned` arm, a RESUME
+  (`status == active`) of a row `model.CampaignAdopted` reports adopted answers
+  `ConflictError{Reason: "campaign_adopted"}` (`conflictReasonCampaignAdopted`) with fixed text
+  naming nothing upstream. It is decided from the ROW, never from the dispatcher's sentence, and
+  only for ACTIVE: a not-provisioned refusal of a PAUSE is some other cause and keeps the general
+  reason-less 409, as does every non-adopted row. Pause of an adopted campaign is unaffected.
+  The slug is in the shared `ConflictError` Enum in `design/connection.go`.
+
+Pinned by `campaign_adopted_test.go` (service) and `model/campaign_adopted_test.go`; each
+behaviour was mutation-checked (dropping the stamp, the reason arm, the ACTIVE condition, the
+index mapping, or the absent-not-false rule each fails a test).
+
 ## Account discovery
 
 `ConnectionService.ListGoogleAdsAccounts`, `ListMetaAdsAccounts`, `ListLinkedinAdsAccounts`,

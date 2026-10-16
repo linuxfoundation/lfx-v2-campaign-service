@@ -236,6 +236,7 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        c.SlotVersion,
+		Adopted:            c.Adopted != nil && *c.Adopted,
 		Version:            c.Version,
 	}
 }
@@ -969,6 +970,20 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		return nil, mapBriefErr(cerr)
 	}
 
+	// Stamp the adoption marker HERE, on every platform, rather than trusting each adapter to
+	// write it: it is the single source of the campaign's public `adopted` flag and of the
+	// resume refusal's `campaign_adopted` reason (model.CampaignAdopted), and only LinkedIn's
+	// adapter recorded it before. A blob that is not a JSON object is an adapter contract
+	// violation, refused like the missing variant above rather than overwritten — overwriting
+	// would discard the account provenance the mismatch guards read back.
+	result, merr := model.MarkResultAdopted(ref.Result)
+	if merr != nil {
+		slog.ErrorContext(ctx, "adapter returned a provenance blob that is not a JSON object; refusing to bind the campaign",
+			"project_id", p.ProjectID, "brief_id", p.BriefID, "platform", platform,
+			"platform_campaign_id", platformCampaignID)
+		return nil, &briefs.InternalServerError{Code: "500", Message: "the campaign could not be recorded"}
+	}
+
 	// ref.ID, not platformCampaignID: bind the id the PLATFORM reported. The two are equal on
 	// every correct response — googleads.GetCampaign errors when its own filter comes back
 	// unhonoured — so a platform that ever answers with a different campaign cannot have the
@@ -982,7 +997,8 @@ func (s *BriefService) AdoptCampaign(ctx context.Context, p *briefs.AdoptCampaig
 		// The adapter's provenance blob — for Google Ads, the customer id the campaign was
 		// verified under, which the account-mismatch guards read back on every later toggle
 		// and metrics read. An empty Result reads as "unknown" there and is waved through.
-		Result: ref.Result,
+		// Carries the adoption marker stamped above.
+		Result: result,
 		// The slot this campaign actually occupies, established by the adapter from what the
 		// PLATFORM reports the campaign is. Set explicitly rather than left to the column
 		// default: the default is 'default', and defaulting is precisely the bug — an adopted
@@ -1433,6 +1449,12 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 // actual state before a second call can race a possibly-already-applied change.
 const unconfirmedLockCooldown = 30 * time.Second
 
+// conflictReasonCampaignAdopted is toggle-campaign-status's ConflictError.reason for a RESUME
+// refused because the campaign was adopted (see ToggleCampaignStatus's ErrCampaignNotProvisioned arm). Pinned
+// literally by TestToggleCampaignStatus_ResumeOfAnAdoptedCampaignHasItsOwnReason and listed in
+// the design Enum in design/connection.go — keep the three in step by hand.
+const conflictReasonCampaignAdopted = "campaign_adopted"
+
 // ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
 // status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
 // updated only after the platform confirms, so a persisted "paused" always reflects reality.
@@ -1580,6 +1602,19 @@ func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.Toggl
 			// shape for all. A client/state error, NOT a platform rejection: a retry now would fail
 			// the same way, so this is a 409, not a 503. It avoids "wait" (a campaign missing a
 			// child never gains one by waiting) and points at the actual remedy.
+			//
+			// ONE CASE GETS ITS OWN REASON: a RESUME of an ADOPTED campaign. Every adopter
+			// records no serving children, so every dispatcher refuses its ACTIVATE this way,
+			// and "finish or recreate the campaign" is the wrong remedy for it — it is resumed in
+			// the ad platform's own UI. reason=campaign_adopted lets a client branch on that
+			// without matching this prose. Decided from the ROW's adoption marker (the same one
+			// the `adopted` flag reads), never from the dispatcher's text, and only for ACTIVE:
+			// a pause of an adopted campaign is supported, so a not-provisioned refusal of one
+			// is some other cause and keeps the general answer. The message is fixed text and
+			// names nothing upstream.
+			if p.Status == model.CampaignRunActive && model.CampaignAdopted(existing) {
+				return nil, &briefs.ConflictError{Code: "409", Reason: conflictReason(conflictReasonCampaignAdopted), Message: "this campaign was adopted (bound to this brief from the ad platform, not created by this service), so it records none of the serving entities a resume needs; resume it in the ad platform's own UI. It can still be paused here"}
+			}
 			return nil, &briefs.ConflictError{Code: "409", Message: "campaign is not fully provisioned — it has no platform campaign id yet, or it lacks the child entities needed to change its status (e.g. its ad group/ad, ad set, or creatives); finish or recreate the campaign before toggling its status"}
 		case errors.Is(terr, ErrCampaignAccountMismatch):
 			// The campaign belongs to a different ad account than the project's current
@@ -2019,9 +2054,23 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        model.NormalizeSlotVersion(c.SlotVersion),
+		Adopted:            adoptedFlag(c),
 		Version:            c.Version,
 		Etag:               optStr(briefETag(c.Version)),
 	}
+}
+
+// adoptedFlag is the campaign's optional `adopted` attribute: true for a row bound by
+// adopt-campaign, ABSENT otherwise. Absent rather than false because the marker is only as old
+// as its stamp — a row adopted before it, on any platform but LinkedIn, carries none — so
+// "not recorded as adopted" is the honest reading, and it is what the omitempty index field
+// says too.
+func adoptedFlag(c *model.Campaign) *bool {
+	if !model.CampaignAdopted(c) {
+		return nil
+	}
+	t := true
+	return &t
 }
 
 // parseBriefIfMatch converts the If-Match header to a version (428 if missing,
