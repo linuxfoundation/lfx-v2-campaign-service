@@ -11467,7 +11467,7 @@ func unmarshalTwitterAdsCredentialsRequestBodyToLfxv2campaignserviceconnectionsT
 func unmarshalMicrosoftAdsConnectionConfigRequestBodyToLfxv2campaignserviceconnectionsMicrosoftAdsConnectionConfig(v *MicrosoftAdsConnectionConfigRequestBody) *lfxv2campaignserviceconnections.MicrosoftAdsConnectionConfig {
 	res := &lfxv2campaignserviceconnections.MicrosoftAdsConnectionConfig{
 		Label:      v.Label,
-		AccountID:  *v.AccountID,
+		AccountID:  v.AccountID,
 		CustomerID: v.CustomerID,
 	}
 

@@ -18128,7 +18128,7 @@ definitions:
         properties:
             account_id:
                 type: string
-                description: Microsoft Advertising account ID (positive integer)
+                description: 'Microsoft Advertising account ID (positive integer). Optional: omit it to create the connection with credentials only, then choose one from GET .../connection-microsoft-ads/accounts and set it with PUT.'
                 example: "1234567"
                 pattern: ^[1-9][0-9]{0,17}$
                 maxLength: 18
@@ -18146,8 +18146,6 @@ definitions:
             account_id: "1234567"
             customer_id: "9999999"
             label: Impedit est consequatur aut est velit.
-        required:
-            - account_id
     MicrosoftAdsCredentials:
         title: MicrosoftAdsCredentials
         type: object
