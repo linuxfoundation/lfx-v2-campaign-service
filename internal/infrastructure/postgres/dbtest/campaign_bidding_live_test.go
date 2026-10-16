@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/infrastructure/postgres"
@@ -14,7 +16,7 @@ import (
 )
 
 // TestLiveCampaignBiddingStrategyRoundTrips pins migration 000047 (LFXV2-2665) against the real
-// schema and repository: the dispatch upsert writes the create's bidding_strategy and starting
+// schema and repository, through the dispatch's own claim-then-upsert order: the dispatch upsert writes the create's bidding_strategy and starting
 // max_cpc_bid; a later upsert on the same slot fills them only while empty (the stored value wins,
 // so a bid the lever set is never overwritten); ReplaceCampaign round-trips the strategy; and the
 // CHECK refuses a value outside the vocabulary.
@@ -24,10 +26,22 @@ func TestLiveCampaignBiddingStrategyRoundTrips(t *testing.T) {
 	repo := postgres.NewCampaignRepo(&postgres.Pool{Pool: pool})
 	briefID := insertBrief(ctx, t, pool)
 	projectID := dbtest.UniqueID(t, "project")
+	jobID := uuid.NewString()
+
+	// Every upsert finalises this job's claim, as Orchestrator.dispatchPlatform does: an
+	// upsert on a slot another live row holds is a lost claim (LFXV2-2023).
+	claimed, _, err := repo.ClaimCampaignDispatch(ctx, projectID, briefID,
+		model.ProviderMetaAds, "", model.FirstSlotVersion, jobID, nil)
+	if err != nil {
+		t.Fatalf("ClaimCampaignDispatch: %v", err)
+	}
+	if !claimed {
+		t.Fatal("precondition failed: the claim was not won on a fresh brief")
+	}
 
 	manual, bid := model.BiddingManual, 1.25
 	created, err := repo.UpsertCampaign(ctx, &model.Campaign{
-		ProjectID: projectID, BriefID: briefID, Platform: model.ProviderMetaAds,
+		ProjectID: projectID, BriefID: briefID, JobID: &jobID, Platform: model.ProviderMetaAds,
 		CampaignName: dbtest.UniqueID(t, "campaign"), Status: "created",
 		BiddingStrategy: &manual, MaxCPCBid: &bid,
 	}, nil)
@@ -41,7 +55,7 @@ func TestLiveCampaignBiddingStrategyRoundTrips(t *testing.T) {
 	// A later upsert on the same slot carrying other values (or none) must not replace them.
 	automatic, other := model.BiddingAutomatic, 9.0
 	again, err := repo.UpsertCampaign(ctx, &model.Campaign{
-		ProjectID: projectID, BriefID: briefID, Platform: model.ProviderMetaAds,
+		ProjectID: projectID, BriefID: briefID, JobID: &jobID, Platform: model.ProviderMetaAds,
 		CampaignName: created.CampaignName, Status: "created",
 		BiddingStrategy: &automatic, MaxCPCBid: &other,
 	}, nil)
@@ -52,7 +66,7 @@ func TestLiveCampaignBiddingStrategyRoundTrips(t *testing.T) {
 		t.Fatalf("a second upsert changed bidding to %v / %v; the stored values must win", *again.BiddingStrategy, *again.MaxCPCBid)
 	}
 	cleared, err := repo.UpsertCampaign(ctx, &model.Campaign{
-		ProjectID: projectID, BriefID: briefID, Platform: model.ProviderMetaAds,
+		ProjectID: projectID, BriefID: briefID, JobID: &jobID, Platform: model.ProviderMetaAds,
 		CampaignName: created.CampaignName, Status: "created",
 	}, nil)
 	if err != nil {
