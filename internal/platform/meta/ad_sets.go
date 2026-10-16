@@ -364,7 +364,18 @@ func decodeListedAdSet(raw json.RawMessage, campaignID, accountID string) (AdSet
 	return as, nil
 }
 
-// accountCurrency reads the ad account's ISO 4217 currency code.
+// errAccountCurrencyWrongAccount marks an account-currency answer that does not name the ad
+// account it was asked for (accountCurrency). getChecked vouches for the body's JSON integrity,
+// not for whose currency it is, and a currency taken from another account would scale every
+// budget by the wrong minor-unit offset — a USD account read as JPY paces 100x off (PR #316
+// review). The account monitor reads it as currency UNKNOWN (budgets unconverted, pacing unknown,
+// no currency published); the ad-set read fails, as for an account reporting no currency.
+var errAccountCurrencyWrongAccount = errors.New("the ad account's currency answer does not describe the requested account")
+
+// accountCurrency reads the ad account's ISO 4217 currency code. The answer must name the
+// requested account: its `id` (Graph returns it on every node read, whatever `fields` asks for)
+// is compared to accountID with the "act_" prefix ignored on both sides, as the reddit monitor's
+// account read compares its own. An absent or different id is errAccountCurrencyWrongAccount.
 func (c *Client) accountCurrency(ctx context.Context, accountID string) (string, error) {
 	path := "/" + accountID + "?fields=currency"
 	raw, err := c.getChecked(ctx, path)
@@ -372,12 +383,27 @@ func (c *Client) accountCurrency(ctx context.Context, accountID string) (string,
 		return "", fmt.Errorf("read the ad account's currency: %w", err)
 	}
 	var acct struct {
+		ID       *string `json:"id"`
 		Currency *string `json:"currency"`
 	}
-	if err := json.Unmarshal(raw, &acct); err != nil || acct.Currency == nil || !currencyRE.MatchString(*acct.Currency) {
+	if err := json.Unmarshal(raw, &acct); err != nil {
+		return "", &transportError{Method: http.MethodGet, Path: path, Err: errors.New("the ad account reported no ISO 4217 currency")}
+	}
+	if acct.ID == nil || !sameMetaAccount(*acct.ID, accountID) {
+		return "", fmt.Errorf("read the ad account's currency: %w", errAccountCurrencyWrongAccount)
+	}
+	if acct.Currency == nil || !currencyRE.MatchString(*acct.Currency) {
 		return "", &transportError{Method: http.MethodGet, Path: path, Err: errors.New("the ad account reported no ISO 4217 currency")}
 	}
 	return *acct.Currency, nil
+}
+
+// sameMetaAccount reports whether two ad-account ids name the same account, ignoring the "act_"
+// prefix Graph uses on the account node's id (and accountID carries) but not on every surface.
+// An empty id never matches.
+func sameMetaAccount(a, b string) bool {
+	a, b = strings.TrimPrefix(a, "act_"), strings.TrimPrefix(b, "act_")
+	return a != "" && a == b
 }
 
 type adSetCounters struct {

@@ -10,37 +10,69 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// monitorPageResponses serves ListAccountCampaigns' two upstream reads (campaign list and
-// insights) from canned per-path page bodies, one per request to that path, and records
-// every request URI seen — mirroring adAccountsServer in accounts_test.go.
+// monitorPageResponses serves ListAccountCampaigns' upstream reads (campaign list, account
+// currency — always USD here — and insights) from canned per-path page bodies, one per request
+// to that path, and records every request URI seen — mirroring adAccountsServer in
+// accounts_test.go. A test that reaches the ad-set budget read uses monitorServer directly.
 func monitorPageResponses(t *testing.T, campaignPages, insightsPages []string) (*httptest.Server, *recordedURIs) {
 	t.Helper()
+	return monitorServer(t, monitorFixture{campaigns: campaignPages, insights: insightsPages, currency: `{"currency":"USD","id":"act_123"}`})
+}
+
+// monitorFixture is every upstream body ListAccountCampaigns can read. currency is the raw body
+// of GET /act_…?fields=currency; adSets is served one page per /adsets request, and adSetsFn,
+// when set, answers every /adsets request instead (for walks longer than a canned list).
+type monitorFixture struct {
+	campaigns, insights, adSets []string
+	currency                    string
+	adSetsFn                    func(n int) string
+	// adSetsStatus, when set, answers every /adsets request with that status and a Graph error.
+	adSetsStatus int
+}
+
+func monitorServer(t *testing.T, f monitorFixture) (*httptest.Server, *recordedURIs) {
+	t.Helper()
 	rec := &recordedURIs{}
-	var campaignN, insightsN int
+	var mu sync.Mutex
+	var campaignN, insightsN, adSetsN int
+	serve := func(w http.ResponseWriter, what string, pages []string, n *int) {
+		if *n >= len(pages) {
+			t.Errorf("%s asked for page %d but only %d were canned", what, *n+1, len(pages))
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(pages[*n]))
+		*n++
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec.add(r.URL.RequestURI())
+		mu.Lock()
+		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/campaigns"):
-			if campaignN >= len(campaignPages) {
-				t.Errorf("campaign list asked for page %d but only %d were canned", campaignN+1, len(campaignPages))
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			_, _ = w.Write([]byte(campaignPages[campaignN]))
-			campaignN++
+			serve(w, "campaign list", f.campaigns, &campaignN)
 		case strings.HasSuffix(r.URL.Path, "/insights"):
-			if insightsN >= len(insightsPages) {
-				t.Errorf("insights asked for page %d but only %d were canned", insightsN+1, len(insightsPages))
-				w.WriteHeader(http.StatusInternalServerError)
+			serve(w, "insights", f.insights, &insightsN)
+		case strings.HasSuffix(r.URL.Path, "/adsets"):
+			if f.adSetsStatus != 0 {
+				w.WriteHeader(f.adSetsStatus)
+				_, _ = w.Write([]byte(`{"error":{"message":"Invalid parameter","type":"OAuthException","code":100}}`))
 				return
 			}
-			_, _ = w.Write([]byte(insightsPages[insightsN]))
-			insightsN++
+			if f.adSetsFn != nil {
+				_, _ = w.Write([]byte(f.adSetsFn(adSetsN)))
+				adSetsN++
+				return
+			}
+			serve(w, "ad-set budgets", f.adSets, &adSetsN)
+		case r.URL.Path == "/act_123" && r.URL.Query().Get("fields") == "currency":
+			_, _ = w.Write([]byte(f.currency))
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -84,8 +116,14 @@ func TestListAccountCampaigns_InsightsWindow_UsesCallerDaysNotHardcoded30(t *tes
 	fixedNow := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	c := NewClient(Credentials{AccessToken: "tok-secret-abc"}, AccountConfig{}, WithBaseURL(srv.URL), WithClock(func() time.Time { return fixedNow }))
 
-	if _, err := c.ListAccountCampaigns(context.Background(), "act_123", 7); err != nil {
+	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 7)
+	if err != nil {
 		t.Fatalf("ListAccountCampaigns: %v", err)
+	}
+	// The rows carry the bounds the read SENT, so the rules layer paces against exactly the days
+	// the spend covers rather than re-deriving them from its own clock (PR #316 review).
+	if len(rows) != 1 || rows[0].MetricsSince != "2026-09-11" || rows[0].MetricsUntil != "2026-09-17" {
+		t.Errorf("rows = %+v, want MetricsSince/MetricsUntil 2026-09-11/2026-09-17, the time_range sent", rows)
 	}
 
 	var insightsURI string
@@ -125,8 +163,9 @@ func TestListAccountCampaigns_SinglePage_ReturnsAllRows(t *testing.T) {
 	if rows[0].CampaignID != "111" || rows[0].Impressions != 1000 || rows[0].Clicks != 50 {
 		t.Errorf("unexpected row: %+v", rows[0])
 	}
-	if rec.count() != 2 {
-		t.Errorf("expected exactly one campaign-list request and one insights request, got %d requests: %v", rec.count(), rec.all())
+	// The campaign carries a campaign-level budget, so no ad-set read is made.
+	if rec.count() != 3 {
+		t.Errorf("expected exactly one campaign-list, one account-currency and one insights request, got %d requests: %v", rec.count(), rec.all())
 	}
 }
 
@@ -162,10 +201,10 @@ func TestListAccountCampaigns_MultiPage_ConcatenatesEveryPage(t *testing.T) {
 	if r, ok := byID["222"]; !ok || r.Impressions != 2000 || r.Clicks != 75 {
 		t.Errorf("missing or wrong row for campaign 222: %+v (ok=%v)", r, ok)
 	}
-	// Two pages of campaigns + two pages of insights = 4 requests. This asserts the walk
-	// actually followed paging.cursors.after rather than stopping after page one.
-	if rec.count() != 4 {
-		t.Errorf("expected 4 requests (2 campaign pages + 2 insights pages), got %d: %v", rec.count(), rec.all())
+	// Two pages of campaigns + one currency read + two pages of insights = 5 requests. This
+	// asserts the walk actually followed paging.cursors.after rather than stopping after page one.
+	if rec.count() != 5 {
+		t.Errorf("expected 5 requests (2 campaign pages + 1 currency + 2 insights pages), got %d: %v", rec.count(), rec.all())
 	}
 	for _, uri := range rec.all() {
 		if strings.Contains(uri, "tok-secret-abc") {
@@ -316,7 +355,11 @@ func TestListAccountCampaigns_MalformedDailyBudget_MarksFetchFailed(t *testing.T
 // string is NOT treated as a parse failure — only a non-empty, unparseable value is.
 func TestListAccountCampaigns_EmptyBudget_IsLegitimateZero(t *testing.T) {
 	emptyBudget := `{"data":[{"id":"111","name":"Campaign One","status":"ACTIVE","daily_budget":"","lifetime_budget":"","start_time":"2026-01-01T00:00:00-0800","stop_time":""}],"paging":{}}`
-	srv, _ := monitorPageResponses(t, []string{emptyBudget}, []string{insightsPage("111", 1000, 50, false)})
+	// No campaign-level budget sends the read to the ad sets; this account has none.
+	srv, _ := monitorServer(t, monitorFixture{
+		campaigns: []string{emptyBudget}, insights: []string{insightsPage("111", 1000, 50, false)},
+		currency: `{"currency":"USD","id":"act_123"}`, adSets: []string{`{"data":[],"paging":{}}`},
+	})
 	c := newMonitorClient(srv)
 
 	rows, err := c.ListAccountCampaigns(context.Background(), "act_123", 30)
@@ -348,11 +391,48 @@ func TestDateOnly(t *testing.T) {
 		{"empty", "", ""},
 		{"not a real calendar date", "0000-00-00T00:00:00-0800", ""},
 		{"malformed prefix", "not-a-date00", ""},
+		// The WHOLE timestamp must parse (PR #316 review): a valid date with trailing text, a
+		// bare date, or a time with no offset is not a Meta timestamp and is refused.
+		{"graph layout with positive offset", "2026-10-31T23:59:59+0000", "2026-10-31"},
+		{"RFC 3339 with Z", "2026-10-01T09:00:00Z", "2026-10-01"},
+		{"RFC 3339 with colon offset", "2026-10-01T09:00:00-07:00", "2026-10-01"},
+		{"date as written, not converted to UTC", "2026-10-01T23:30:00-0800", "2026-10-01"},
+		{"date followed by garbage", "2026-10-01garbage", ""},
+		{"timestamp followed by garbage", "2026-10-01T09:00:00-0700xyz", ""},
+		{"bare date", "2026-10-01", ""},
+		{"no offset", "2026-10-01T09:00:00", ""},
+		{"impossible time", "2026-10-01T25:00:00-0700", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := dateOnly(tc.in); got != tc.want {
 				t.Errorf("dateOnly(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEndDateOnly pins the PR #316 review fix: a flight END is its last inclusive day. A stop at
+// exactly midnight is the instant that date begins, so the flight's last day is the one before —
+// in the timestamp's own offset, the frame every flight date is written in. Anything else keeps
+// its own date, and what dateOnly refuses is still refused.
+func TestEndDateOnly(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"midnight UTC ends the day before", "2026-10-11T00:00:00+0000", "2026-10-10"},
+		{"23:59:59 (what CreateCampaign writes) is its own day", "2026-10-10T23:59:59+0000", "2026-10-10"},
+		{"one second past midnight is its own day", "2026-10-11T00:00:01+0000", "2026-10-11"},
+		{"midnight in a negative offset ends the day before, as written", "2026-10-11T00:00:00-0700", "2026-10-10"},
+		{"midnight in a positive offset ends the day before, as written", "2026-10-11T00:00:00+0900", "2026-10-10"},
+		{"RFC 3339 midnight", "2026-10-11T00:00:00Z", "2026-10-10"},
+		{"RFC 3339 colon-offset midnight", "2026-10-11T00:00:00-07:00", "2026-10-10"},
+		{"midnight UTC that is not midnight in its own offset", "2026-10-11T17:00:00-0700", "2026-10-11"},
+		{"a month boundary", "2026-11-01T00:00:00+0000", "2026-10-31"},
+		{"malformed", "2026-10-11garbage", ""},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := endDateOnly(tc.in); got != tc.want {
+				t.Errorf("endDateOnly(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

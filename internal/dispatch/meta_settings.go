@@ -43,12 +43,13 @@ const metaGraphTimeLayout = "2006-01-02T15:04:05-0700"
 // campaign-level CBO budget is deliberately not substituted: it is shared across ad sets, so it
 // is not the counterpart of the ad-set budget the row recorded.
 //
-// UNITS. Meta reports budgets in the account currency's MINOR units, and the create path wrote
+// UNITS. Meta reports budgets in the account currency's MINOR units, and the create path encodes
+// budget × offset exactly (meta.MinorUnitsExact, issue #235); rows recorded before #235 were sent
 // round(budget × offset). Both sides are therefore reduced to minor units with that same offset —
-// read from the account's own currency, the authority the create path used — and rendered back
-// to whole units by one function, so a JPY row recorded as 1000.40 and created as 1000 compares
-// as the 1000 the create path actually sent. A currency outside the supported map leaves the
-// amount `unknown` rather than guessing a scale.
+// read from the account's own currency, the authority the create path used — via
+// metaRecordedMinor, and rendered back to whole units by one function, so the recorded side
+// compares as the integer the create path actually sent. A currency outside the supported map
+// leaves the amount `unknown` rather than guessing a scale.
 //
 // DATES. The create path sends end_time = endDate + "T23:59:59+0000" and start_time = the start
 // day at 00:00 UTC, nudged forward to dispatch time + a buffer when that day has already begun.
@@ -157,10 +158,15 @@ func (d *MetaDispatcher) ReadSettings(ctx context.Context, projectID string, pla
 	return rb, nil
 }
 
-// metaRecordedMinor encodes a recorded whole-unit amount exactly as the create path's
-// budgetToMinorUnits did — round(amount × offset) — so the recorded side is compared as the
-// integer Meta was actually sent.
+// metaRecordedMinor encodes a recorded whole-unit amount exactly as the create path's encoder
+// does (meta.MinorUnitsExact — exact rational arithmetic, PR #316 review), so the recorded side
+// is compared as the integer Meta was actually sent. An amount that encoder would refuse can only
+// be a row recorded before #235 refused fractional minor units; it falls back to that era's
+// round(amount × offset), which is what was sent then.
 func metaRecordedMinor(amount float64, offset int64) int64 {
+	if minor, ok := meta.MinorUnitsExact(amount, offset); ok {
+		return minor
+	}
 	return int64(math.Round(amount * float64(offset)))
 }
 

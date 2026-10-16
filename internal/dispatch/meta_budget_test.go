@@ -250,6 +250,24 @@ func TestMeta_WriteBudget_Guards(t *testing.T) {
 			wantErr:   domain.ErrBudgetAmountRejected,
 			wantText:  "budget too small",
 		},
+		{
+			// #235: a fraction of a yen used to be rounded away and written as ¥1 with a
+			// 200. It is the caller's amount that is unacceptable, so a 400 — and nothing
+			// is written.
+			name:      "a fraction of a zero-decimal currency's unit is refused, not rounded",
+			adSetJSON: metaAdSetHead + `,"daily_budget":"5000"}`,
+			currency:  "JPY",
+			change:    model.BudgetChange{Amount: 1.4, Type: model.BudgetDaily},
+			wantErr:   domain.ErrBudgetAmountRejected,
+			wantText:  "enter whole amounts for this currency",
+		},
+		{
+			name:      "a fraction of a cent is refused, not rounded",
+			adSetJSON: metaAdSetHead + `,"daily_budget":"10000"}`,
+			change:    model.BudgetChange{Amount: 25.505, Type: model.BudgetDaily},
+			wantErr:   domain.ErrBudgetAmountRejected,
+			wantText:  "enter at most 2 decimal places",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

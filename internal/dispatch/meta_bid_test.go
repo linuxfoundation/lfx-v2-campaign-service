@@ -171,6 +171,9 @@ func TestMeta_WriteBid_AmountAndCurrencyRefusalsWriteNothing(t *testing.T) {
 	}{
 		{"under one cent", "USD", 0.004, domain.ErrBidAmountRejected},
 		{"under one yen", "JPY", 0.4, domain.ErrBidAmountRejected},
+		// #235: refused, never rounded to ¥1 / 235 cents and answered 200.
+		{"a fraction of a yen", "JPY", 1.4, domain.ErrBidAmountRejected},
+		{"a fraction of a cent", "USD", 2.355, domain.ErrBidAmountRejected},
 		{"over the ceiling", "USD", 1_000_001, domain.ErrBidAmountRejected},
 		{"currency with no known scale", "XXX", 2, domain.ErrBidUnwritable},
 	} {

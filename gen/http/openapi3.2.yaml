@@ -10693,7 +10693,7 @@ paths:
                                     - action: Broaden audience targeting or increase bid cap to improve delivery
                                       campaign_id: "120210000000000001"
                                       campaign_name: KubeCon NA 2026 - Prospecting
-                                      issue: 'Underspending: 40% of budget used ($960.00 of $2400.00)'
+                                      issue: 'Underspending: 40% of budget used (960.00 in account currency of 2400.00 in account currency)'
                                       priority: MED
                                 campaigns:
                                     - budget_day: 80
@@ -10724,7 +10724,7 @@ paths:
                                       pacing_pct: 80
                                       pacing_unknown: false
                                       platform_campaign_id: "120210000000000002"
-                                      spend: 2800
+                                      spend: 2360
                                       start_date: "2026-09-01"
                                       status: ACTIVE
                                       total_budget: 5900
@@ -10734,7 +10734,7 @@ paths:
                                     campaign_count: 2
                                     clicks: 3720
                                     impressions: 238000
-                                    spend: 3760
+                                    spend: 3320
                                     unmeasured_campaigns: 0
                 "400":
                     description: 'BadRequest: Bad request'
@@ -19581,7 +19581,7 @@ components:
                     description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
-                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
                     pattern: ^[A-Z]{3}$
                 days:
                     type: integer
@@ -21247,7 +21247,7 @@ components:
                     description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
-                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
                     example: USD
                     pattern: ^[A-Z]{3}$
                 days:
@@ -22113,7 +22113,7 @@ components:
                     description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
-                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
                     example: USD
                     pattern: ^[A-Z]{3}$
                 days:
@@ -22404,7 +22404,7 @@ components:
                     description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
-                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
                     example: USD
                     pattern: ^[A-Z]{3}$
                 days:
@@ -23281,7 +23281,7 @@ components:
                     description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
-                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
                     example: USD
                     pattern: ^[A-Z]{3}$
                 days:
@@ -23969,7 +23969,7 @@ components:
                     description: Every campaign visible on the account, with the rule engine's per-row pacing output attached.
                 currency:
                     type: string
-                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor unit is not 1/100 (e.g. JPY), whose budgets this service does not yet convert correctly. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
+                    description: The ad account's currency, as an ISO 4217 code; spend and budget amounts are in this currency, unconverted. Absent when the platform didn't report it. Never set on Google Ads. On LinkedIn Ads spend is read in the account's own currency (costInLocalCurrency), the currency its budgets are in; absent when the campaigns' budgets disagree about the currency, in which case those campaigns' pacing is unknown. On Meta, absent for a currency whose minor-unit scale this service does not know (its budgets are left unconverted), or when the insights rows' currency is not the ad account's. On Microsoft Ads, absent for a code in Microsoft's value set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
                     example: USD
                     pattern: ^[A-Z]{3}$
                 days:
