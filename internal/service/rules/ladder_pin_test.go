@@ -103,7 +103,7 @@ func monitorCallers(t *testing.T) []monitorCaller {
 			return pinOneRow(t, rows)
 		}},
 		{"meta", roundedMonitorWant, func(m model.AccountCampaignMetrics) model.AccountMonitorRow {
-			rows, _ := EvaluateMetaMonitor([]model.AccountCampaignMetrics{m}, 10, pinNow)
+			rows, _ := EvaluateMetaMonitor(withMetaWindow([]model.AccountCampaignMetrics{m}, 10, pinNow))
 			return pinOneRow(t, rows)
 		}},
 		{"reddit", roundedMonitorWant, func(m model.AccountCampaignMetrics) model.AccountMonitorRow {

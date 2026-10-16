@@ -197,7 +197,8 @@ over-limit copy fails before any paid campaign/ad-set exists rather than at
 non-fatal creative creation; `CampaignInput.Budget` is denominated in the ad
 ACCOUNT's own currency — the client does NO foreign-exchange conversion, so the
 caller must pass an amount already in that currency — and it is bounded
-(rejecting rounds-to-zero and overflow-scale values) then converted to minor
+(rejecting below-one-minor-unit, finer-than-one-minor-unit and overflow-scale values — a
+fraction of a minor unit is refused, never rounded, #235) then converted to minor
 units by multiplying by the account's minor-unit offset
 (`AccountConfig.CurrencyOffset`) rather than a hardcoded ×100. That offset is
 DERIVED from the account's ISO 4217 currency code, not fetched: the Meta AdAccount
@@ -390,8 +391,26 @@ decimal string. The currency-offset precedence described above is no longer inli
 same rules, same error texts — so an amount this service would refuse to create with cannot be
 reached by editing a live campaign. The scaling is likewise shared, as `budgetToMinorUnits`,
 which rejects NaN explicitly rather than relying on an ordered comparison (NaN fails every one,
-so it previously reached the `int64` conversion), refuses an amount below one minor unit, and
-refuses one that overflows the representable range after scaling. **Those three refusals wrap
+so it previously reached the `int64` conversion), refuses an amount below one minor unit,
+refuses one that overflows the representable range after scaling, and refuses one FINER than one
+minor unit (`1.4` on a JPY account, `25.505` on a USD one) instead of rounding it — it used to be
+written as ¥1 / $25.51 and answered 200 (#235). The whole conversion is EXACT
+(`minorUnitsExact`, PR #316 review): amount×offset is computed with `math/big.Rat` from the
+amount's shortest round-tripping decimal form (the digits the caller sent), and that exact product
+decides every refusal — above `MaxExactMinorUnits` (999,999,999,999,999 minor units) "too large to
+represent exactly", below 1 too small, a non-integer fractional — and is the integer encoded. So
+`19.99` is 1999 although `19.99*100` is `1998.9999999999998` as a float. The ceiling exists
+because the amount arrives already decoded into a float64, which keeps a decimal exactly only to
+15 significant digits: past it the caller's digits may be gone before any check runs (JSON
+`9007199254740992.4` decodes to `9007199254740992`; `90071992547253.9` USD was written as
+9007199254725391). 2^53 is not enough once the offset is above 1 — `90071992547409.91` USD is
+below 2^53 cents yet decodes to `…409.9`. More than 15 significant digits in a request cannot be
+made exact by any bound; that precision is lost in JSON decoding. No float tolerance is chosen,
+for any offset. `MinorUnitsExact` exports it for the settings readback
+(`dispatch.metaRecordedMinor`), which encodes the recorded amount the same way, falling back to
+`round(amount × offset)` only for a pre-#235 row the encoder would now refuse. The sentence ends "enter whole amounts for this currency" (offset 1) or
+"enter at most 2 decimal places for this currency" (offset 100). Because the encoder is shared,
+the create path refuses the same amounts. **Those four refusals wrap
 `ErrBudgetAmountInvalid`** and expose their sentence through `BudgetAmountReason(err)`; the
 currency-offset failures deliberately do NOT, because an unknown account currency is upstream
 configuration, not the caller's amount.
@@ -456,7 +475,10 @@ An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a l
   (`ErrInvalidAccountID`) before any request, since the id is spliced into the Graph path; then
   the account preflight plus `resolveCurrencyOffset` (the
   create/budget scale), then `bidToMinorUnits`: finite, positive, at most 1,000,000, at least one
-  minor unit; refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
+  minor unit, and no finer than one — the same exact `minorUnitsExact` conversion as
+  `budgetToMinorUnits` (a ¥1.4 bid is refused, never written as ¥1, #235; a product past
+  `MaxExactMinorUnits` is refused "too large to represent exactly", so nothing near the int64
+  range is ever converted; the bid encoded is the exact product, not a rounded float); refusals are `ErrBidAmountInvalid` with a sentence (`BidAmountReason`); an unknown
   currency wraps `ErrAccountCurrencyUnresolvable`.
 - `GetAdSetBid(ctx, adSetID)` — `GET /{id}?fields=id,campaign_id,bid_strategy,billing_event,optimization_goal,bid_amount`;
   a pure read; an answer for another ad set is an error; a non-numeric id is `ErrInvalidAdSetID`
@@ -526,7 +548,11 @@ values are validated BEFORE they reach the request string, but by DIFFERENT mean
 is checked against an allow-list of supported presets (`supportedMetricsWindows`), since Meta's
 insights endpoint has a fixed preset vocabulary, while the campaign id is checked against a
 numeric pattern (`numericIDRE`) — there is no enumerable set of valid ids to allow-list.
-Numeric metric fields arrive as JSON strings. `impressions` and `clicks` (integers) are
+Numeric metric fields arrive as JSON strings, but are decoded as `json.RawMessage` and read
+through `rawCounter` (shared with the ad-set Insights read): an ABSENT field is 0 (Meta omits
+zero-valued fields), while an explicit `null` or a non-string value is an error — decoded
+straight into a string field, `null` read as `""` and was reported as a measured zero (PR #316
+review). `impressions` and `clicks` (integers) are then
 parsed via `parseMetricInt`, which treats empty strings (Meta omits zero-valued optional
 fields) as zeros rather than parse errors, and rejects both unparseable and negative values.
 `spend` (decimal) is parsed separately via `strconv.ParseFloat`, then scaled to micros (cost
@@ -723,17 +749,146 @@ client's injected clock, rather than the BFF's hardcoded `date_preset=last_30d`.
 departures, the credential-scoping (`resolveOwned`, no system-account fallback), and
 the ported rule engine (`internal/service/rules/monitor_meta.go`).
 
-`ListAccountCampaignsWithCurrency` is the same read plus the account's currency for the
+**Read order and the campaign list (PR #316 review).** `ListAccountCampaigns` reads Insights
+FIRST, then the campaign list, then the account currency, then (only if needed) the ad sets. The
+campaign list is the budget and `updated_time` snapshot and must be the LATER read: taken before
+Insights, a CBO budget edited between the two calls showed neither in the budget nor in
+`updated_time`. Nothing needs the ids first — the Insights read is account-level and unfiltered,
+joined by `campaign_id` afterwards. Every campaign-list page now goes through `getChecked`
+(`identityjson.Check` on the raw bytes before decoding), because `encoding/json` keeps the LAST
+of a duplicated key: a recent `updated_time` followed by an old one would slip past the edit
+guard. A refused or undecodable page is a `transportError` and fails the read, as the currency
+read's refusal does. The page's `start_time`/`stop_time` are decoded RAW (`campaignFlightField`),
+keeping the cases `adSetWindow` keeps apart: absent is no bound; an empty `stop_time` is "no end";
+an empty `start_time`, an explicit `null`, a non-string, or a non-empty value that is not a whole
+Meta timestamp is unreadable and leaves the campaign-level budget unknown (`FlightUnknown`) — not
+`FetchFailed`, matching how the ad-set path treats an unreadable window (budget unknown, delivery
+kept). Decoded into strings, null and malformed read as a missing flight and a daily CBO budget
+was paced over the whole window.
+
+**Budgets: where the campaign keeps them, in the account currency (LFXV2-2665).** The read makes
+one `GET /{act}?fields=currency` (via `accountCurrency`, identity-checked: the raw body through
+`getChecked`, and the answer's `id` — which Graph returns on every node read — must name the
+requested account, `act_` prefix ignored on both sides, `sameMetaAccount`) per request and converts
+every minor-unit budget with that currency's own offset (`minorToWhole`); the BFF-ported
+`minorUnitsToWhole` divided by 100 unconditionally, reading a JPY/KRW budget 100x too small, and is
+gone. A currency outside the supported map leaves every budget 0 (pacing unknown), never guessed.
+So does an answer naming another account, or none (`errAccountCurrencyWrongAccount`, PR #316
+review): the monitor reads it as currency unknown — budgets unconverted, no ad-set read, and the
+published `currency` withheld by `monitorPublishableCurrency`, which compares the insights code
+against this same validated read — rather than converting a USD account's budgets at JPY's offset
+(100x off). The ad-set read (`ListCampaignAdSets`) fails on it, as it does on no currency.
+`CreateCampaign` puts the budget on the AD SET, so a campaign this service created reports no
+campaign-level budget and used to be `PacingUnknown` forever. When any admitted, non-failed
+campaign has neither a positive `daily_budget` nor `lifetime_budget`, `fetchAccountAdSetBudgets`
+makes ONE account-level paged read, `GET /{act}/adsets?fields=id,campaign_id,daily_budget,lifetime_budget,effective_status,start_time,end_time,updated_time,created_time&limit=500`
+(`id` is the duplicate-row proof), bounded at `monitorAdSetMaxPages` (20) × 500, every body through
+`identityjson.Check` before decoding, and sums the ad sets per campaign when every one is
+`effective_status == ACTIVE`; any other status (paused, campaign-paused, archived, in review)
+leaves that campaign unknown, because its Insights spend still carries what a stopped ad set spent
+earlier in the window and when it stopped is not on this read. Meta's default edge omits DELETED
+ad sets, so one deleted inside the window is not seen — a residual only ad-set-level Insights
+could close. The body is taken undecoded through `do`'s `rawBody` sink, so a syntax-invalid 2xx
+is an `adSetBudgetsUnreadableError` (budgets unknown, metrics kept) rather than a
+`transportError` that failed the whole monitor.
+A CBO campaign keeps its own budget. Per-ad-set defects (explicit `null`, non-string, fractional or
+negative amount, both or neither budget on an active ad set, an absent, null, non-string or
+malformed `effective_status` — decoded as raw JSON so a bad status cannot fail the whole row's decode) make
+only that campaign unknown; a mixed daily/lifetime sum is unknown; an untrustworthy answer as a
+whole — page cap hit, identity-check failure, no `data`, an unattributable or repeated row, an
+unfollowable cursor — is `adSetBudgetsUnreadableError` and leaves every campaign that needed it
+unknown (never a partial sum) while the monitor read still succeeds. A failed REQUEST (transport,
+Graph error) fails the monitor like its sibling reads. **Flight from the ad sets**: `CreateCampaign` writes `start_time`/`end_time` on the AD SET too, so
+the campaign-list row has no dates and a lifetime budget could not be paced. The same read takes
+the active ad sets' window: when they all share one it becomes the row's flight (and a lifetime
+budget is paced on it); when they disagree, or one's `start_time` is absent/null/malformed or its
+`end_time` null/malformed, the budget stays unknown, daily or lifetime — an absent or empty (`""`)
+`end_time` is an
+open-ended flight, and an open-ended window differs from a bounded one with the same start. A
+daily ad-set budget is likewise used only with one shared window, since daily pacing now counts
+the flight's days in the window too. "Malformed" is decided by `dateOnly`, which parses the WHOLE
+timestamp as Graph's `2006-01-02T15:04:05-0700` or RFC 3339 and takes the date as written; it used
+to check only the first 10 characters, so `"2026-10-01garbage"` passed as a flight date (it serves
+the campaign list's `start_time`/`stop_time` too). A flight END — the campaign list's `stop_time`
+and an ad set's `end_time` — goes through `endDateOnly` instead, which yields the LAST inclusive
+day: a stop at exactly `00:00:00` (in the timestamp's own offset, the frame every flight date is
+written in) is the instant that date begins, so the end is the day before. An externally managed
+campaign stopping at `"2026-10-11T00:00:00+0000"` used to read as ending 2026-10-11, counting one
+flight day too many — a 10-day, 1,000 lifetime flight spending exactly 700 over its first 7 days
+paced ~110%, a false overspend (PR #316 review). `CreateCampaign`'s `23:59:59` end is unchanged. An unknown budget is 0/0, which `metaPacingPct` already reports as not
+computable. A negative campaign-level budget is unreadable (`FetchFailed`), never "no budget" sent
+to the ad-set fallback. `rules/monitor_meta.go` changed in two ways: its action-item text prints
+money as "N.NN in account currency" (`metaMoney`, like X's `xMoney`), never `$`; and lifetime
+pacing (`metaExpectedSpend`) prorates the budget over the flight (end date inclusive) and expects
+only the requested window's flight days — spend covers only that window, so the old
+flight-to-date expectation reported every lifetime campaign past its first week as underspending.
+An open-ended lifetime flight is unknown (no length to prorate over), and daily pacing expects
+`BudgetDay` only on the window's flight days (an unreported start or end is the window's edge).
+The window is the read's own: `fetchAccountCampaignInsights` returns the `since`/`until` it sent,
+`ListAccountCampaigns` stamps them on every row (`MetricsSince`/`MetricsUntil`, carried to
+`model.AccountCampaignMetrics.MetricsWindowStart`/`End`), and `EvaluateMetaMonitor(rows)` takes no
+clock — so a request crossing UTC midnight cannot pace against different days than its spend.
+The monitor's Insights `impressions`, `clicks` and `spend` are decoded as `json.RawMessage`:
+an ABSENT field (or an empty string) is Meta's zero-delivery zero, but an explicit `null` or a
+non-string value marks that campaign `FetchFailed` — decoded into a string field, `null` read as
+`""`, so with the ad-set fallback supplying a budget a null spend paced at 0% and raised a false
+underspend (PR #316 review). Counters go through `rawCounter`; spend through `rawMonitorSpend`,
+then `parseMonitorSpend`, which accepts only a plain
+decimal string (`^[0-9]+(\.[0-9]+)?$` — what Meta sends) that parses to a finite value;
+`strconv.ParseFloat` alone admits `NaN`, `Inf`, negatives, exponents (`1e2`), hex floats
+(`0x1p+2`) and underscores. Anything else is a per-row parse failure and the row is `FetchFailed`,
+never paced. A campaign-list row reporting BOTH a positive `daily_budget` and `lifetime_budget`
+(Meta documents them as mutually exclusive) keeps neither — 0/0, pacing unknown, delivery intact,
+the same verdict as the mix on ad sets — and is not sent to the ad-set fallback;
+`metaExpectedSpend` refuses a row with both budgets too. **Budget edits inside the window**:
+pacing applies today's budget to every day of the window, and neither read carries budget
+history, so both reads also request `updated_time` and `created_time`. `budgetEditCutoff` is the
+window's first day at 00:00 UTC less one day (Meta reads since/until in the account timezone, up
+to ±14h), and `editedSince` is true for an `updated_time` that is absent, null or not a whole Meta
+timestamp, or that is at or after the cutoff — unless `created_time` is readable and
+`updated_time` is within `creationStampTolerance` (60s) of it. Meta stamps `updated_time` at
+creation, so without that exception every campaign or ad set CREATED inside the window looked
+edited and a campaign this service just created could never be paced; an absent or unreadable
+`created_time` keeps the conservative verdict, and an `updated_time` BEFORE a readable
+`created_time` is inconsistent and counts as edited — checked first, since the negative difference
+would otherwise always fall inside the tolerance. The CAMPAIGN's verdict also gates the ad-set
+fallback: pausing and resuming only the campaign leaves its ad sets ACTIVE with an old
+`updated_time`, so without the gate the paused days were expected to spend (a false underspend);
+a campaign edited in the window gets no ad-set budget. Whether a STATUS change moves a campaign's
+`updated_time` is not explicitly documented — Meta's Campaign reference describes the field only
+as the last time the campaign was updated — and is not verified against a live account; if it
+does not, this gate cannot see a pause/resume, a known residual. The guard is the conservative
+choice either way. A CBO campaign so edited keeps its budget unknown (no ad-set fallback); an
+ACTIVE ad set so edited makes its campaign's ad-set total unknown. `updated_time` moves on any
+edit, not only a budget change, so this errs towards unknown. Meta's ad-account `/activities` edge
+(AdActivity, with budget-update event types carrying old and new values) could reconstruct the
+plan per day; it is not used. The campaign-list `daily_budget`/`lifetime_budget` are decoded RAW
+(`campaignBudgetField`): absent is "no budget", but an explicit `null` or a non-string value is
+unreadable — the row is `FetchFailed` and never sent to the ad-set fallback, matching the ad-set
+parser's fail-closed nulls. The counters already refuse
+negatives through `parseMetricInt`.
+
+`ListAccountCampaignsWithCurrency` is the same read (the logic above lives in it) plus the account's currency for the
 monitor's `currency` field: the insights call also requests `account_currency`, and
 `metaAccountInsights.observeCurrency` keeps it only when every row names the same
 three-upper-case-letter code — the field read RAW, so `null` or a non-string costs only the
 currency, and each insights page checked with `identityjson`, an untrusted page withholding the
 currency (its rows are kept) — absent, malformed or disagreeing rows leave it `""` without
-failing the read. No extra request; an account with no insights rows in the window has no
-currency. `monitorPublishableCurrency` then withholds (and logs) any code whose
-`currencyOffsetFor` offset is not 100: `minorUnitsToWhole` divides every budget by 100, so a
-JPY/KRW/… account's budgets are wrong by that factor and must not be labelled as correct. #316
-makes the conversion currency-aware; drop the restriction when it merges. `ListAccountCampaigns` wraps it and drops the currency. See
+failing the read. No extra request for the label (the `?fields=currency` read above serves the budget conversion). An account with no insights rows in the window (no delivery yet)
+has no `account_currency` to disagree with, so — unless an insights page was refused as
+untrusted (`noCurrencyEvidence`) — that `accountCurrency` read stands in for it, still under the
+offset check below; a failed account read fails the monitor read, so it publishes nothing.
+`monitorPublishableCurrency` then publishes the code only when `currencyOffsetFor` knows its
+offset (1 or 100) and it equals the `accountCurrency` read above, the currency the budgets were
+converted in; it withholds (and logs) an unknown code, whose budgets are left unconverted, and a
+code the two reads disagree on. That disagreement — any row's readable insights code that is
+not the `accountCurrency` read, even when other rows carry it and the rows' disagreement among
+themselves already withholds the label (`conflictsWith`) — also leaves the budget currency unknown for the whole read (PR #316
+review): spend is reported in the insights currency, so a budget converted in the other one (a
+`"1000"` daily budget read as USD 10 against JPY spend) would raise a false pacing alert. No
+campaign-level budget is converted and no ad-set fallback is read, so pacing is unknown, while
+delivery (spend, impressions, clicks) is kept; insights with no readable code is not a disagreement.
+`ListAccountCampaigns` wraps it and drops the currency. See
 [Account-Monitor Endpoints § Currency](../architecture/account-monitor-endpoints.md#currency).
 
 See [internal/platform/meta](../../../internal/platform/meta).

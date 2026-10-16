@@ -93,7 +93,9 @@ func BidAmountReason(err error) (string, bool) {
 }
 
 // bidToMinorUnits converts a bid in the account's currency to the minor-unit integer bid_amount
-// carries, with budgetToMinorUnits's rounding (half away from zero). It is not an FX conversion.
+// carries. It is not an FX conversion. Like budgetToMinorUnits it REFUSES an amount finer than
+// one minor unit rather than rounding it (#235): a ¥1.4 bid silently written as ¥1 is a change to
+// money the caller never asked for.
 func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 	switch {
 	case math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0:
@@ -102,12 +104,24 @@ func bidToMinorUnits(amount float64, offset int64) (int64, error) {
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s exceeds the largest bid this service sets on Meta (%s)",
 			strconv.FormatFloat(amount, 'f', -1, 64), strconv.FormatFloat(metaMaxBid, 'f', -1, 64))}
 	}
-	minor := int64(math.Round(amount * float64(offset)))
-	if minor < 1 {
+	// Exact, like budgetToMinorUnits (PR #316 review): the product is computed in rational
+	// arithmetic, never as a binary float product, and is the authority for every refusal below.
+	// Its upper bound is MaxExactMinorUnits (999,999,999,999,999 — 15 digits, not 2^53; see that
+	// constant): metaMaxBid caps the AMOUNT, not the product, and a large currency offset can
+	// still push amount*offset past what a decoded float64 can carry exactly.
+	switch minor, verdict := minorUnitsExact(amount, offset); verdict {
+	case minorTooLarge:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is too large to represent exactly: at most %d minor units of the ad account's currency",
+			strconv.FormatFloat(amount, 'f', -1, 64), MaxExactMinorUnits)}
+	case minorTooSmall:
 		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is smaller than one minor unit of the ad account's currency, the smallest bid Meta accepts",
 			strconv.FormatFloat(amount, 'f', -1, 64))}
+	case minorFractional:
+		return 0, &bidAmountError{msg: fmt.Sprintf("the bid %s is finer than the ad account currency's smallest unit; %s",
+			strconv.FormatFloat(amount, 'f', -1, 64), wholeAmountsAdvice(offset))}
+	default:
+		return minor, nil
 	}
-	return minor, nil
 }
 
 // ResolveBidMinorUnits runs the account preflight and encodes a bid in the minor units of the
