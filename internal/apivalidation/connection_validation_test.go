@@ -366,8 +366,14 @@ func TestValidateRedditAdsConnectionConfig_AccountIDPattern(t *testing.T) {
 //
 // customer_id admits "" and account_id does not, and the asymmetry is the providers' own:
 // microsoft.ValidateCustomerID treats an empty customer_id as "no customer configured" — a
-// supported state in which discoveryCustomerIDs walks every customer the credential reaches —
-// while account_id is Required and has no unselected state on this provider.
+// supported state in which discoveryCustomerIDs walks every customer the credential reaches.
+//
+// account_id is no longer REQUIRED (issue #181 made Microsoft credentials-first, as LFXV2-3319
+// did X), so an OMITTED account_id is the legal bootstrap state — the connection is created
+// with credentials alone and pointed at an account after discovery. Goa's Required is a
+// presence check on the JSON KEY, so relaxing it makes ABSENCE legal without making a
+// malformed PRESENT value legal: "empty account_id" still fails (the pattern rejects ""), as
+// do the injection, dashed, overlong and zero cases. Only the missing-key case moved.
 func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -378,7 +384,8 @@ func TestValidateMicrosoftAdsConnectionConfig_IDPatterns(t *testing.T) {
 		{name: "digits", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("9999999")}},
 		{name: "customer_id absent", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567")}},
 		{name: "customer_id empty (no customer configured)", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("")}},
-		{name: "missing account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{}, wantErr: true, errSubstr: "account_id"},
+		{name: "missing account_id is the credentials-first state", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{}},
+		{name: "missing account_id with a customer configured", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{CustomerID: strp("9999999")}},
 		{name: "empty account_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("")}, wantErr: true, errSubstr: "account_id"},
 		{name: "non-numeric customer_id", body: &connsrv.MicrosoftAdsConnectionConfigRequestBody{AccountID: strp("1234567"), CustomerID: strp("abc")}, wantErr: true, errSubstr: "customer_id"},
 		// A header-injection attempt is the reason the charset is pinned at all.
