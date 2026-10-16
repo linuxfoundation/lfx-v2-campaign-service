@@ -349,6 +349,9 @@ func (c *Client) ResolveBudgetMinorUnits(ctx context.Context, budget float64) (i
 // The campaign's budget fields are fetched in the SAME request via field expansion rather than
 // a second call: two calls could observe the two levels at different moments, and a CBO budget
 // that appeared between them would be missed by exactly the guard that exists to catch it.
+//
+// The response must echo the requested ad set id; one naming another ad set, or naming none,
+// is refused.
 func (c *Client) GetAdSetBudget(ctx context.Context, adSetID string) (*AdSetBudget, error) {
 	adSetID = strings.TrimSpace(adSetID)
 	if adSetID == "" {
@@ -378,9 +381,19 @@ func (c *Client) GetAdSetBudget(ctx context.Context, adSetID string) (*AdSetBudg
 		return nil, fmt.Errorf("meta: read ad set %s budget: %w", adSetID, err)
 	}
 	// The platform must have answered about the ad set that was asked for. A response
-	// describing a different id is not a budget this caller may act on.
-	if resp.ID != "" && resp.ID != adSetID {
-		return nil, fmt.Errorf("meta: read ad set %s budget returned ad set %s instead", adSetID, resp.ID)
+	// describing a different id is not a budget this caller may act on. A response with NO id
+	// (absent, null or empty) is refused too: it proves nothing about which ad set it
+	// describes, so its fields — an absent daily_budget read as "this ad set does not use it",
+	// an absent campaign budget read as "not CBO" — would drive the dispatcher's guards from an
+	// answer about nothing in particular. GetAdSetBid reads the same object and already
+	// requires the echo.
+	if got := resp.ID; got != adSetID {
+		if got == "" {
+			got = "no ad set id"
+		} else {
+			got = "ad set " + got
+		}
+		return nil, fmt.Errorf("meta: read ad set %s budget returned %s instead", adSetID, got)
 	}
 
 	out := &AdSetBudget{AdSetID: adSetID, Status: resp.Status, CampaignID: resp.CampaignID}
