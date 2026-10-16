@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func testClient(serverURL string) *Client {
+func testClient(serverURL string, opts ...Option) *Client {
 	return NewClient(
 		Credentials{
 			ConsumerKey:       "key",
@@ -26,9 +26,11 @@ func testClient(serverURL string) *Client {
 			AccessTokenSecret: "token_secret",
 		},
 		AccountConfig{AccountID: "account123"},
-		WithBaseURL(serverURL),
-		WithAPIVersion("12"),
-		WithWriteDelay(0),
+		append([]Option{
+			WithBaseURL(serverURL),
+			WithAPIVersion("12"),
+			WithWriteDelay(0),
+		}, opts...)...,
 	)
 }
 

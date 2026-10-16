@@ -1638,10 +1638,14 @@ the orchestrator.
 ### Conversions: which platforms can report one (LFXV2-3314)
 
 `model.CampaignMetrics.Conversions` is a `*float64`, and the pointer is load-bearing: **absent
-means "this channel does not report a campaign-level conversion count", which is not the same
-claim as a measured zero.** Only three of the seven adapters populate it, and which three was
-settled field-by-field against each vendor's published reference rather than inferred from what
-the clients happened to request:
+means "not measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was
+incomplete — which is not the same claim as a measured zero.** The contract is stated over the
+READ, not the platform: LinkedIn withdraws the whole total to nil when any returned element omits
+`externalWebsiteConversions`, and Microsoft does the same on a missing column or blank
+`ConversionsQualified` cell (both below), so a nil from either is NOT evidence that the platform
+cannot report conversions. A consumer must not classify the channel from the nil. Only three of
+the seven adapters populate it, and which three was settled field-by-field against each vendor's
+published reference rather than inferred from what the clients happened to request:
 
 | Platform | Reports conversions? | Field / column | Type |
 |---|---|---|---|
@@ -1686,12 +1690,16 @@ Three corrections that a plausible-looking implementation would have got wrong:
   window, so `GetCampaignMetrics`'s `len(rows) == 0` branch means the query ran and the answer
   was nothing — not that conversions could not be measured. That branch originally returned a
   zero-value `CampaignMetrics`, which for a POINTER field is nil, so a genuinely quiet Google
-  campaign serialised as "not measured here" — the one shape `no_conversions` refuses to fire
-  on, and therefore precisely the campaign the rule exists to catch. It now materialises a
-  non-nil zero, matching what the row-decoding path produces and what the struct's own comment
-  already promised ("Google can, so this adapter never leaves it nil").
+  campaign serialised as "not measured" — a false statement about a window the query did
+  answer. It now materialises a non-nil zero, matching what the row-decoding path produces and
+  what the struct's own comment already promised ("Google can, so this adapter never leaves it
+  nil"). The fix is about the truth of the field, NOT about alerting: `no_conversions` also
+  requires `Clicks >= minClicksForConversions` (50), and a no-rows window reports zero clicks,
+  so the rule cannot fire on it either way. A campaign that delivered nothing is
+  `zero_delivery`'s finding, not `no_conversions`'s.
 
-For the four that cannot report one, the field is left **absent rather than zero**. A fabricated
+For the four that cannot report one, the field is left **absent rather than zero** (and the
+LinkedIn and Microsoft incomplete-read cases above are absent for the same reason). A fabricated
 zero is indistinguishable from a measured one to every consumer, and it would make the
 `no_conversions` rule fire on every campaign on those platforms forever. Deriving a single number
 for Meta or X would additionally require choosing which action types count as a conversion — a
@@ -3595,8 +3603,11 @@ render the full discovery request URL, pagination cursor included; `VerifyAccoun
 only layer that knows both the service's contract and this client's types, so doing it here is
 what lets `internal/service` classify the outcome without importing
 `internal/platform/linkedin` at all, exactly as it does for `ErrKeyUnavailable` and
-`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest that
-points the client at a closed server and asserts the result `errors.Is`
+`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest whose
+test transport refuses the discovery dial (`platformtest.RefusedDialTransport` from the shared
+`internal/platform/platformtest` test-support package, a real `http.Transport` that fails the
+connect with `ECONNREFUSED` instead of racing the OS for a closed port, issue #206) and
+asserts the result `errors.Is`
 `domain.ErrOrgVerificationInconclusive`, is NOT `linkedin.ErrOrgVerificationInconclusive`, and
 carries neither the request path nor the base URL in its text.
 
