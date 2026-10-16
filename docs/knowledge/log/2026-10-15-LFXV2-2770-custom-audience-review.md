@@ -199,3 +199,6 @@
   wrapper's flattened IN_LIST references, so "GDPR AND Global Opt-Outs" satisfied both suppression
   checks though a contact in only one child stays eligible. It now credits `CoveredListIDs`, the
   same rule check 4 uses: an OR wrapper applies each child, an AND wrapper none.
+- **A wrapper covering the audience is no suppression** (Copilot). A send-time wrapper that fully
+  covers the audited list, or a list every branch requires, excludes every contact; it now gets the
+  same treatment as the audited list sent directly and does not count.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1841,11 +1842,18 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		if l != nil && l.ObjectTypeID != "" && l.ObjectTypeID != "0-1" {
 			continue
 		}
-		sentAway[id] = true
+		// A wrapper that fully covers the audience itself (the audited list, or a list
+		// every branch requires) excludes every contact: it is no suppression either.
+		var covered []string
 		if l != nil {
-			for _, covered := range audience.CoveredListIDs(l.FilterBranch) {
-				sentAway[covered] = true
-			}
+			covered = audience.CoveredListIDs(l.FilterBranch)
+		}
+		if slices.ContainsFunc(covered, func(c string) bool { return notSuppression[c] }) {
+			continue
+		}
+		sentAway[id] = true
+		for _, c := range covered {
+			sentAway[c] = true
 		}
 		if alreadyExcluded[id] {
 			continue

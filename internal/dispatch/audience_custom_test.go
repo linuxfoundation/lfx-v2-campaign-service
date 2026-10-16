@@ -1024,3 +1024,42 @@ func TestRunQA_ASuppressionWrapperCreditsOnlyWhatItFullyCovers(t *testing.T) {
 		})
 	}
 }
+
+// A send-time wrapper that fully covers the audience itself excludes every contact,
+// so, like the audited list sent directly, it is no suppression: neither for the
+// audited list nor for a list every branch requires.
+func TestRunQA_ASuppressionWrapperCoveringTheAudienceIsNoSuppression(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	for name, tc := range map[string]struct {
+		audience, wrapper string
+	}{
+		"wrapper covers the audited list":        {wrapper: or(and(in("500")), and(in("602")))},
+		"wrapper covers a list every branch has": {audience: or(and(in("610"), in("611")), and(in("610"))), wrapper: or(and(in("610")), and(in("602")))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists["26Q4 - Seoul - Mailable Contacts"] = "500"
+			portal.lists["LF Global Opt-Outs"] = "602"
+			portal.lists["26Q4 - Seoul - Base"] = "610"
+			portal.lists["26Q4 - Seoul - Extra"] = "611"
+			portal.lists["26Q4 - Combined Suppression"] = "700"
+			portal.branches = map[string]string{"700": tc.wrapper}
+			if tc.audience != "" {
+				portal.branches["500"] = tc.audience
+			}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"700"})
+			require.NoError(t, err)
+			assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a wrapper that excludes the whole audience is no suppression")
+			assert.NotEqual(t, audience.VerdictPass, out.Checks.ExclusionCompleteness.Verdict)
+		})
+	}
+}
