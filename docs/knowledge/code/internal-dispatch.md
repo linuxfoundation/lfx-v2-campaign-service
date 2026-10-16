@@ -4523,9 +4523,12 @@ family. The check runs even when the warehouse returned no past editions (unconf
 first edition): only this edition's own name is known then, and any other is dropped with a note
 saying it could not be verified. This edition's name is year-qualified (`WithEventYear`) for the
 prompt and the check, as registrations are stored, while the response's `event` reports the name as
-the page declares it, as `discover` does. The past editions are a REGIONAL audience's default only (one with cities or countries): an
-audience of roles alone (speakers, ambassadors), or a topic-only education audience, gets none, since a registration branch would AND the role with a
-past registration.
+the page declares it, as `discover` does. The past editions are a REGIONAL audience's default only: one with cities or countries AND a
+location branch (`contact_location`, `event_registered` or `education_enrolled`); anything else
+gets none. Otherwise a registration branch would AND a role with a past registration (dropping
+first-time speakers) or add registrants beside a topic-only education audience. The system prompt
+says the same, so a model drafting an audience without a location copies the editions it wants
+from the EVENT block, and `knownEditions` checks them.
 
 Interpretation keeps every draft inside the contract preview enforces: an event audience's
 `registered_for` takes its editions capped at `CustomMaxRegisteredFor` (25) by

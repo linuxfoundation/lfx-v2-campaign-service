@@ -163,3 +163,13 @@
   display field's 200 characters, so a long edition name could never match its warehouse name and
   was dropped. Edition names (`registered_for`, `speakers.event_names`, the prompt's event name) now
   keep up to `customEditionMaxLen` (500).
+
+**Fix** — the maintainer's fifth review (approved, with one minor and three nits):
+
+- **The prompt states the regional-only default.** It still promised past editions to every event
+  audience; it now says they are added only for an audience with cities or countries, and tells the
+  model to copy the editions it wants for an audience without a location (`knownEditions` checks
+  them).
+- The regional rule and the two-word whole-label minimum are stated fully in `internal-dispatch.md`,
+  `internal-audience.md` and `GuardReuse`'s godoc, and the long-edition test now also checks the
+  prompt shows the whole name and that a long `speakers.event_names` value survives the parser.

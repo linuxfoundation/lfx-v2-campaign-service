@@ -873,4 +873,6 @@ func TestInterpretCustom_ALongEditionNameStaysWhole(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len([]rune(edition)), 200)
 	assert.Equal(t, []string{edition}, out.Draft.Criteria.RegisteredFor, "the long edition name is kept whole and known")
+	require.Len(t, llm.prompts, 2)
+	assert.Contains(t, llm.prompts[1], "name: "+edition, "the model is shown the whole edition name, or it cannot copy it")
 }

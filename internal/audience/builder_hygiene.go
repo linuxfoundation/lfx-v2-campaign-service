@@ -157,7 +157,8 @@ var audienceWords = []string{"mailable", "marketable", "contacts", "catchment"}
 // The audience's own cities and countries, and generic event words ("summit",
 // "europe"), are not distinctive: "Open Compliance Summit Tokyo 2025" shares
 // "Tokyo" with "AGNTCon + MCPCon Tokyo" and is still another event's list.
-// A label with no distinctive word left must appear whole in the list's name.
+// A label with no distinctive word left must appear whole in the list's name, and
+// only a label of two or more event words can match that way: a one-word label never does.
 //
 // A restricted audience (speakers, ambassadors, property filters) is narrower
 // than any list whose name does not carry the restriction, so such a list is at

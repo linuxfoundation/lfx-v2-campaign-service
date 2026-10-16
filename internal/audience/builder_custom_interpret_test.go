@@ -156,3 +156,15 @@ func TestCustomReusePrompt_CarriesTheAnswersAndRestrictions(t *testing.T) {
 	assert.NotContains(t, p, "CTO", "a filter value never reaches the external model")
 	assert.Less(t, strings.Index(p, "restriction:"), strings.Index(p, "END ANSWERS"), "restrictions are quoted inside the data block")
 }
+
+// Speaker event names are exact edition names too: one over a display field's 200
+// runes comes back whole.
+func TestParseCustomDraft_KeepsALongSpeakerEventNameWhole(t *testing.T) {
+	name := strings.Repeat("Synthetic ", 22) + "Summit 2026"
+	raw := `{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":{"scope":"current","event_names":["` + name + `"]},"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":[],"label":""},"questions":[],"notes":[]}`
+	d, err := ParseCustomDraft(raw)
+	require.NoError(t, err)
+	require.Greater(t, len([]rune(name)), 200)
+	require.NotNil(t, d.Criteria.Speakers)
+	assert.Equal(t, []string{name}, d.Criteria.Speakers.EventNames)
+}

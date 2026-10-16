@@ -479,8 +479,9 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   branches — `city`/`ip_city` (+ `country_dropdown`/`ip_country` when broadened), each gated by
   the brand master list; and event-history branches qualified INSIDE the `UNIFIED_EVENTS` node on
   the event's own `event_city`/`user_city` (+ country), gated only when `GateEventHistory` is set.
-  `RegisteredFor` adds a branch for the named editions' registrants (an event draft defaults to the
-  warehouse's past editions), gated like the other event history when `GateEventHistory` is set.
+  `RegisteredFor` adds a branch for the named editions' registrants (an event draft with a location —
+  cities or countries plus `contact_location`, `event_registered` or `education_enrolled` —
+  defaults to the warehouse's past editions), gated like the other event history when `GateEventHistory` is set.
   An audience of roles or properties alone has one base branch, which carries the gate under
   `GateEventHistory` too. `AllBranchesGated` reads these base branches rather than restating the
   rules, so preview's upper bound cannot drift from what is built.
@@ -562,7 +563,9 @@ signal:
   DISTINCTIVE label words: the audience's own cities and countries and generic event words
   ("summit", "tokyo") are dropped, so another event's list in the same city is never kept. A
   label with no distinctive word left ("Open Source Summit Japan") must instead appear whole, year
-  aside, in the list's name. Course topics are not a restriction: every education audience carries them as its brand
+  aside, in the list's name, and only a label of two or more event words can match this way: a
+  one-word label ("Seoul") never matches by name, since as a bare substring it would match another
+  event's list in the same city. Course topics are not a restriction: every education audience carries them as its brand
   fit, so counting them would make reuse unreachable (2026-10-15).
 
 **QA and send-time suppression (2026-10-12).** `CheckExclusionCompleteness(filters, sendTime)`
