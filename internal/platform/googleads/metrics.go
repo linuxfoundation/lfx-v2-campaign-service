@@ -155,6 +155,14 @@ type gaqlMetricsRow struct {
 		// reason Conversions is: the field reference declares it DOUBLE, so REST does not
 		// string-encode it. Named for the GAQL column it decodes rather than for the domain
 		// field it feeds, because this struct's only job is to match the wire.
+		//
+		// UNVERIFIED ASSUMPTION (flag before relying on this in production, same convention
+		// as the segments.date aggregation note on GetCampaignMetrics): the REST member name
+		// is the lowerCamelCase of the GAQL column, i.e. conversions_value -> conversionsValue,
+		// as cost_micros -> costMicros already is two fields above. If that is wrong the field
+		// never decodes, and because an absent member is deliberately read as a MEASURED 0.0,
+		// the failure is silent — every campaign would report conversionValue 0 and roas 0
+		// rather than erroring. No fixture can catch it; only a live response can.
 		ConversionsValue *float64 `json:"conversionsValue"`
 	} `json:"metrics"`
 }
@@ -167,6 +175,25 @@ func parseMetricInt(s string) (int64, error) {
 		return 0, nil
 	}
 	return strconv.ParseInt(s, 10, 64)
+}
+
+// isUsableMetricDouble reports whether v is a magnitude this package is willing to
+// report as a measurement. It exists so the conversion COUNT and the conversion
+// VALUE are held to one standard by construction rather than by two inline tests a
+// later edit can drift apart; each caller keeps its own error sentence, since the
+// two fields fail for the same reason but are not the same field.
+//
+// NaN and ±Inf both survive JSON decoding of a bare number in some encoders, and a
+// negative figure is upstream corruption rather than a small number — the same guard
+// meta/metrics.go and reddit/metrics.go apply to spend.
+//
+// The bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
+// exactly representable as a float64, so float64(math.MaxInt64) rounds UP to 2^63,
+// one more than MaxInt64. A value of exactly 2^63 would pass a '>' guard and then
+// wrap to MinInt64 wherever such a value is later narrowed. Same reasoning as
+// meta/metrics.go's spend-scaling guard.
+func isUsableMetricDouble(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v < float64(math.MaxInt64)
 }
 
 // GetCampaignMetrics reads impressions/clicks/cost for one campaign over window
@@ -316,18 +343,11 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		conv = *row.Metrics.Conversions
 	}
 	{
-		// Reject malformed magnitudes rather than folding them into a count. NaN and ±Inf
-		// both survive JSON decoding of a bare number in some encoders, a negative
-		// conversion count is upstream corruption rather than a small number, and a value
-		// beyond int64 would wrap into a negative on conversion. Each would otherwise become
-		// a figure the dashboard renders as a measurement — the same guard meta/metrics.go
-		// and reddit/metrics.go apply to spend.
-		//
-		// The bound is float64(math.MaxInt64) compared with '>=', not '>': MaxInt64 is not
-		// exactly representable as a float64, so float64(math.MaxInt64) rounds UP to 2^63,
-		// one more than MaxInt64. A value of exactly 2^63 would pass a '>' guard and then
-		// wrap to MinInt64. Same reasoning as meta/metrics.go's spend-scaling guard.
-		if math.IsNaN(conv) || math.IsInf(conv, 0) || conv < 0 || conv >= float64(math.MaxInt64) {
+		// Reject malformed magnitudes rather than folding them into a count: each would
+		// otherwise become a figure the dashboard renders as a measurement. See
+		// isUsableMetricDouble for what the four rejected shapes are and why the bound sits
+		// where it does.
+		if !isUsableMetricDouble(conv) {
 			return nil, &transportError{
 				Method: http.MethodPost,
 				Path:   c.customerPath("googleAds:search"),
@@ -349,18 +369,16 @@ func (c *Client) GetCampaignMetrics(ctx context.Context, campaignID string, wind
 		convValue = *row.Metrics.ConversionsValue
 	}
 	{
-		// The same magnitude guard the conversion COUNT gets, deliberately to the same bound.
-		// NaN and ±Inf both survive JSON decoding of a bare number in some encoders. A negative
-		// total is upstream corruption rather than a small number: conversion adjustments
+		// The same predicate the conversion COUNT gets, deliberately. A negative total is
+		// upstream corruption rather than a small number here too: conversion adjustments
 		// (retractions and restatements) subtract from this figure, but they subtract value
 		// that was credited, so the aggregate Google reports does not go below zero.
 		//
-		// The ceiling is float64(math.MaxInt64) not because this value is ever narrowed to an
-		// int64 — it is not, it stays a float64 all the way out — but so that the two numbers
-		// decoded from one row are held to one standard. A conversion value that large is
-		// corruption on any currency, and letting it through here while rejecting the same
-		// magnitude one field above would be an inconsistency a reader has to litigate.
-		if math.IsNaN(convValue) || math.IsInf(convValue, 0) || convValue < 0 || convValue >= float64(math.MaxInt64) {
+		// The shared ceiling binds this field even though it is never narrowed to an int64 —
+		// it stays a float64 all the way out. A conversion value that large is corruption on
+		// any currency, and letting it through while rejecting the same magnitude one field
+		// above would be an inconsistency a reader has to litigate.
+		if !isUsableMetricDouble(convValue) {
 			return nil, &transportError{
 				Method: http.MethodPost,
 				Path:   c.customerPath("googleAds:search"),
