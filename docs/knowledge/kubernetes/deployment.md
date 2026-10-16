@@ -237,9 +237,9 @@ present is still validated in full — while the four-column
 startup with `ErrMissingRequiredIndex`. Pinned live by `TestMigrateToleratesTheDroppedLegacySlotIndex`.
 The contract release also records a migration version this older image does not embed, which
 golang-migrate's `Up()` would otherwise refuse before any index check. `postgres.Migrate`
-therefore starts on a CLEAN schema newer than the image without migrating it or rewriting its
-version, and still runs the invalid- and required-index checks; a DIRTY newer schema is still
-refused. That leans on expand/contract — every release must stay compatible with the next
+therefore starts on a CLEAN schema exactly one version newer than the image without migrating it
+or rewriting its version, and still runs the invalid- and required-index checks; a DIRTY newer
+schema, or a clean one two or more versions ahead, is still refused. That leans on expand/contract — every release must stay compatible with the next
 release's schema — since nothing marks a newer migration as compatible. Pinned live by
 `TestMigrateStartsOnACleanSchemaNewerThanThisImage`.
 

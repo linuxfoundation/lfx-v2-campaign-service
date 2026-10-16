@@ -201,18 +201,21 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   advances `schema_migrations.version` past every version this image embeds, and golang-migrate
   v4.19.1's `Up()` refuses a recorded version its source does not contain ("no migration found
   for version N") before any index check runs. So `Migrate` first reads the recorded version
-  (`schemaIsNewerThanImage`): when it is CLEAN and above the highest embedded version (read from
+  (`schemaIsNewerThanImage`): when it is CLEAN and exactly one above the highest embedded version (read from
   the migration source, exported as `LatestMigrationVersion`, never hard-coded) it skips `Up()`,
   leaves the recorded version untouched, logs a warning, and runs `checkNoInvalidIndexes` as usual
   — so an invalid index, an impostor, or a missing REQUIRED index on the newer schema still
   refuses boot. A DIRTY newer version, and every other state, takes `Up()` exactly as before (a
   dirty one is still `migrate.ErrDirty`). The assumption is expand/contract, one release apart
   (`migrations/README.md`): a release's schema stays compatible with the previous release's
-  binary. Nothing in the chain marks a version as compatible, so the tolerance is not bounded to
-  known versions — it trusts that discipline, and the required-index check is the part of it
-  that is verified. Pinned live by `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (scratch
-  database at head, legacy index dropped, version set to latest+1 clean → boot succeeds and the
-  version is unchanged; dirty → `ErrDirty`; slot-version index dropped → `ErrMissingRequiredIndex`).
+  binary. Nothing in the chain marks a version as compatible, so the tolerance is bounded to that
+  one hop (PR #260 review): a clean version two or more ahead takes `Up()` and its loud "no
+  migration found" refusal. Within the hop it trusts that discipline, and the required-index check
+  is the part of it that is verified. Pinned live by
+  `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (scratch database at head, legacy index
+  dropped, version set to latest+1 clean → boot succeeds and the version is unchanged; dirty →
+  `ErrDirty`; latest+2 clean → refused; an invalid index → `ErrInvalidIndex`; slot-version index
+  dropped → `ErrMissingRequiredIndex`).
 
   **Per-slot advisory lock, staged one release BEFORE the index drop.** Once the three-column
   index is gone, nothing in the schema says "an adopt binds only an EMPTY slot": adopt always

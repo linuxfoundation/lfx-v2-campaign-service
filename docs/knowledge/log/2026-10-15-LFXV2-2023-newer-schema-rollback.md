@@ -15,5 +15,5 @@ release stays compatible with the next release's schema), documented in code and
 test `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (normal path; latest+1 clean with the legacy
 index dropped → boot succeeds, version unchanged; dirty → `ErrDirty`; slot-version index dropped →
 `ErrMissingRequiredIndex`); forcing the check off reproduces the reported "no migration found for
-version 47". See [internal/infrastructure/postgres](../code/internal-infrastructure-postgres.md)
+version N", with N = `LatestMigrationVersion()+1`. See [internal/infrastructure/postgres](../code/internal-infrastructure-postgres.md)
 and [deployment](../kubernetes/deployment.md).

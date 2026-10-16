@@ -188,7 +188,7 @@ func Migrate(dsn string) error {
 }
 
 // schemaIsNewerThanImage reports whether the database records a CLEAN migration version
-// above the highest one embedded in this image, logging the fact when it does.
+// exactly one above the highest one embedded in this image, logging the fact when it does.
 //
 // The highest embedded version is read from the migration source itself rather than kept as
 // a constant, so it cannot drift from the files when the next migration is added.
@@ -203,6 +203,12 @@ func Migrate(dsn string) error {
 // runs, so a newer release that dropped an index this image REQUIRES (as opposed to one it
 // lists as optional) still refuses boot with ErrMissingRequiredIndex.
 //
+// The trust is bounded to that one hop (PR #260 review): only recorded == latest+1 takes this
+// path. A clean version further ahead is a schema this release was never shown compatible
+// with, so it falls through to Up(), which refuses it loudly ("no migration found for
+// version N") exactly as it did before this path existed. A release that ships more than one
+// migration therefore cannot be image-rolled-back past; that is the conservative side.
+//
 // Errors reading the recorded version are not reported here: the caller falls through to
 // Up(), which reads it again under its lock and reports them as it always has. Only a
 // failure to enumerate this image's own migrations is returned.
@@ -215,7 +221,7 @@ func schemaIsNewerThanImage(m *migrate.Migrate, src source.Driver) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("read the embedded migration versions: %w", err)
 	}
-	if recorded <= latest {
+	if recorded != latest+1 {
 		return false, nil
 	}
 	slog.Warn("database schema is newer than this image; skipping migrations and validating "+
@@ -672,7 +678,11 @@ func LatestMigrationVersion() (uint, error) {
 		return 0, fmt.Errorf("open migration source: %w", err)
 	}
 	defer func() { _ = src.Close() }()
-	return highestEmbeddedVersion(src)
+	v, err := highestEmbeddedVersion(src)
+	if err != nil {
+		return 0, fmt.Errorf("read the embedded migration versions: %w", err)
+	}
+	return v, nil
 }
 
 // RequiredIndexRebuildSQL returns the statement that recreates the named required index,
