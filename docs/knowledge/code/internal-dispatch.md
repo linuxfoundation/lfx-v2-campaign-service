@@ -4153,6 +4153,16 @@ per item whenever any item has a definite outcome — `ALREADY_PRESENT`, `APPLIE
 with `REJECTED` / `NOT_SENT` — and error the whole call (UNCONFIRMED) only when every item is
 UNCONFIRMED. See [keyword-targeting-reddit-x](../architecture/keyword-targeting-reddit-x.md).
 
+X's already-present key is `targetingType + NUL + textfold.Key(collapsed value)`, collapsed
+**inside** `twitterNegativeKey` for the reason the Google key is: the key is built from two sources
+that do not arrive in the same shape — the request side is normalised by
+`NormalizeNegativeKeywordText`, the present side is X's raw `TargetingValue`, normalised by nobody
+— so collapsing in only one of them made them disagree on a stored `" free download"`,
+`"free  download"` or non-breaking space, which then read as ABSENT and was sent again as a
+duplicate criterion. Cheaper than the Google case (one paced POST per keyword, not an atomic
+batch) but the same defect, so the same fix. It only ever makes the present-set match MORE, and
+only for texts X itself treats as one keyword.
+
 **Interaction with the status cascade.** Nothing about a keyword action is persisted, so after a
 REMOVE the row's `keywordIds` still names the deleted keyword. On ACTIVATE `ToggleStatus` therefore
 narrows them to the live ones (`microsoftLiveKeywordIDs`, under a bounded 10s sub-budget) before
@@ -4192,8 +4202,15 @@ FAILS CLOSED, then the account-match guard, all before Google is contacted.
 keyword the campaign already excludes fails the WHOLE batch, taking down the keywords Google
 would have accepted. `ListCampaignNegativeKeywords` therefore runs first and anything already
 present is reported `ALREADY_PRESENT` with its existing criterion id rather than sent. The
-comparison key is `matchType + NUL + textfold.Key(text)` — the Unicode simple-case-fold key every
-negative-keyword comparison in this service uses, which `strings.ToLower` cannot replace (σ/ς).
+comparison key is `matchType + NUL + textfold.Key(collapsed text)` — the Unicode
+simple-case-fold key every negative-keyword comparison in this service uses, which
+`strings.ToLower` cannot replace (σ/ς), over text whose whitespace runs are collapsed to
+single spaces. The collapse is INSIDE the key because the key's two sides do not arrive in
+the same shape: the request side has been through `NormalizeNegativeKeywordText`, the present
+side is whatever Google returned. Collapsing in only one of them makes a criterion Google
+holds as `"free  download"` read as ABSENT, be sent again, and fail the atomic batch. It can
+only ever make the present-set match MORE, which is the safe direction here — a missed match
+costs the whole batch, a match costs one keyword correctly reported `ALREADY_PRESENT`.
 The read is a PURE read, so its failure is definite and returned unclassified.
 
 **Every keyword actually SENT shares one outcome**, which is atomicity restated rather than a

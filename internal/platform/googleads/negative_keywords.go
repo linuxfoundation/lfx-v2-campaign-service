@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -130,8 +131,16 @@ func (c *Client) ListCampaignNegativeKeywords(ctx context.Context, campaignID st
 			return nil, fmt.Errorf("google-ads: campaign %s negative keyword row at index %d reports a different campaign id %q; refusing to trust this response",
 				campaignID, i, row.Campaign.ID)
 		}
-		if row.CampaignCriterion.CriterionID == "" {
-			return nil, fmt.Errorf("google-ads: campaign %s negative keyword row at index %d carries no criterion id; refusing to trust this response", campaignID, i)
+		// The criterion id is checked for SHAPE, not just presence, because it is not an opaque
+		// token here: it is handed back to the caller as the NegativeKeywordID of an
+		// ALREADY_PRESENT outcome and recorded as the criterion the campaign holds. The mutate
+		// path on this same resource already refuses a criterion id that is not the base-10
+		// spelling of an integer (compositeResourceID's numericID check), so accepting one here
+		// would let the READ assert an identifier the WRITE would have rejected — an id no later
+		// lever can address, reported as though the campaign could be acted on through it.
+		if !numericID(row.CampaignCriterion.CriterionID) {
+			return nil, fmt.Errorf("google-ads: campaign %s negative keyword row at index %d carries the criterion id %q, which is not the base-10 spelling of an integer; refusing to trust this response",
+				campaignID, i, row.CampaignCriterion.CriterionID)
 		}
 		// The text is compared against caller input, so it must be well-formed UTF-8 before it
 		// is folded into a comparison key. Invalid bytes would fold unpredictably and could make
@@ -139,6 +148,15 @@ func (c *Client) ListCampaignNegativeKeywords(ctx context.Context, campaignID st
 		// new one read as present (silently dropped).
 		if !utf8.ValidString(row.CampaignCriterion.Keyword.Text) {
 			return nil, fmt.Errorf("google-ads: campaign %s negative keyword row at index %d carries a keyword text that is not valid UTF-8; refusing to trust this response", campaignID, i)
+		}
+		// Empty text is checked SEPARATELY from UTF-8 validity, because utf8.ValidString("")
+		// is true: an omitted, null or empty text would otherwise pass every guard here and be
+		// indexed under an empty key. A criterion that cannot carry a usable key is exactly as
+		// untrustworthy as one carrying no criterion id — the keyword it actually names would
+		// read as ABSENT, be sent again, and fail the entire atomic batch, presenting as a
+		// platform rejection of keywords that were perfectly acceptable.
+		if strings.TrimSpace(row.CampaignCriterion.Keyword.Text) == "" {
+			return nil, fmt.Errorf("google-ads: campaign %s negative keyword row at index %d carries no keyword text; refusing to trust this response", campaignID, i)
 		}
 		// The match type is HALF the comparison key, so it is checked like the text rather than
 		// passed through. An unrecognised one (UNSPECIFIED, UNKNOWN, a new enum member) cannot

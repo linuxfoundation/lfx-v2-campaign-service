@@ -187,6 +187,15 @@ func validateKeywordList(noun string, keywords []Keyword, max int) ([]Keyword, e
 		// could now be sent twice. That direction is bounded by this preflight being a
 		// best-effort guard, not the authority: Google refusing a duplicate is the atomic
 		// 4xx this check exists to make RARE, never the thing it promises cannot happen.
+		//
+		// Whitespace is the one input this key does not normalise itself: it trims but does
+		// not collapse internal runs, while googleAdsNegativeKey collapses both. The two
+		// still agree on the negative path, because every text reaching it has already been
+		// through NormalizeNegativeKeywordText (strings.Fields joined by one space) in
+		// validateNegativeKeywordBatch, so there is no internal run left to disagree about.
+		// Collapsing here as well would be inert on that path and would change the POSITIVE
+		// one, which no dispatcher key constrains — so the agreement is kept where it is
+		// load-bearing rather than widened where it is not.
 		key := matchType + "\x00" + textfold.Key(text)
 		if _, dup := seen[key]; dup {
 			continue

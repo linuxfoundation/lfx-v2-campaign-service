@@ -974,11 +974,22 @@ It carries **no status predicate** — GAQL excludes REMOVED resources from
 a duplicate. (`GetCampaignSettings` is the opposite case and names `campaign.status`
 explicitly to opt REMOVED back IN, because there the question is whether the campaign exists
 at all.) Every WHERE predicate is **re-applied in code** on each row — negative, KEYWORD
-type, the campaign id — plus a UTF-8 check on the text, for `GetKeywordPerformance`'s
-reason: the predicate is a request and the rows are the answer, and a positive, foreign or
-malformed row folded into the present-set would silently suppress a keyword the caller asked
-to add. Zero rows means "no negatives OR no such campaign"; the query cannot tell them
+type, the campaign id — for `GetKeywordPerformance`'s reason: the predicate is a request and
+the rows are the answer, and a positive, foreign or malformed row folded into the present-set
+would silently suppress a keyword the caller asked to add. Zero rows means "no negatives OR no such campaign"; the query cannot tell them
 apart, so the caller must not read an empty result as proof the campaign exists.
+
+**Each row must also be able to serve as a KEY, which is a separate question from whether it
+matches the predicate.** Three fields carry that weight, and each is refused independently:
+the text must be valid UTF-8 **and** non-blank (`utf8.ValidString("")` is true, so the second
+check is not implied by the first); the match type must be one of `EXACT`, `PHRASE`, `BROAD`,
+because an unrecognised one — `UNSPECIFIED`, `UNKNOWN`, a new enum member — cannot match any
+key the caller builds; and the criterion id must be the base-10 spelling of an integer, not
+merely present, because it is handed back as an `ALREADY_PRESENT` outcome's identifier and the
+mutate path on this same resource already refuses that spelling (`compositeResourceID`). A row
+that passes the predicate but cannot be keyed is as untrustworthy as a foreign one: the
+keyword it names would read as ABSENT, be sent again, and fail the entire atomic batch —
+presenting as a platform rejection of keywords that were perfectly acceptable.
 
 **`AddCampaignNegativeKeywords`** re-validates at the package boundary (an exported method
 must not let editing reach a keyword the create path would refuse), then delegates to

@@ -517,3 +517,68 @@ func TestGoogleAds_AddNegativeKeywords_RefusesAnUntrustworthyPreRead(t *testing.
 		})
 	}
 }
+
+// TestGoogleAdsNegativeKey_AgreesAcrossBothSources pins the one property this key exists for: the
+// PRESENT side (whatever Google returned, normalised by nobody) and the REQUEST side (normalised
+// by validateNegativeKeywordBatch through NormalizeNegativeKeywordText) must produce the same key
+// for the same keyword.
+//
+// Without the collapse inside googleAdsNegativeKey these rows disagree, and a disagreement is not
+// a cosmetic miss: the criterion reads as ABSENT, is sent again, and a duplicate fails the ATOMIC
+// campaignCriteria:mutate, taking every keyword that would have been accepted down with it.
+func TestGoogleAdsNegativeKey_AgreesAcrossBothSources(t *testing.T) {
+	for _, tc := range []struct{ name, stored, requested string }{
+		{"identical", "free download", "free download"},
+		{"leading and trailing space on the stored row", " free download ", "free download"},
+		{"a doubled internal space on the stored row", "free  download", "free download"},
+		{"a non-breaking space on the stored row", "free download", "free download"},
+		{"a tab on the stored row", "free\tdownload", "free download"},
+		{"case difference, which the fold already covered", "Free Download", "free download"},
+		{"both divergences at once", "  Free   DOWNLOAD ", "free download"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The request side as the dispatcher actually builds it: validated first, so the
+			// test cannot pass by normalising the input itself.
+			batch, err := validateNegativeKeywordBatch("google", []model.NegativeKeyword{
+				{Text: tc.requested, MatchType: negativeMatchPhrase},
+			}, 60, negativeMatchExact, negativeMatchPhrase, negativeMatchBroad)
+			if err != nil {
+				t.Fatalf("the requested text must survive validation: %v", err)
+			}
+			want := googleAdsNegativeKey(googleads.MatchTypePhrase, batch[0].Text)
+			got := googleAdsNegativeKey(googleads.MatchTypePhrase, tc.stored)
+			if got != want {
+				t.Errorf("stored %q keys as %q, requested %q keys as %q — the criterion would read as absent and be resent into an atomic batch",
+					tc.stored, got, tc.requested, want)
+			}
+		})
+	}
+}
+
+// TestGoogleAdsNegativeKey_StillSeparatesDifferentKeywords is the other half: the collapse above
+// must not make the key match MORE than Google's own notion of one keyword. Over-matching reports
+// a keyword ALREADY_PRESENT and never sends it, which silently drops an exclusion the caller
+// asked for — a worse failure than the one the collapse fixes, because nothing surfaces it.
+func TestGoogleAdsNegativeKey_StillSeparatesDifferentKeywords(t *testing.T) {
+	for _, tc := range []struct{ name, a, b string }{
+		{"different words", "free download", "paid download"},
+		{"a word boundary that the collapse must not erase", "free download", "freedownload"},
+		{"a prefix is not the whole text", "free", "freedom"},
+		{"punctuation is part of the text", "free-download", "free download"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if googleAdsNegativeKey(googleads.MatchTypePhrase, tc.a) == googleAdsNegativeKey(googleads.MatchTypePhrase, tc.b) {
+				t.Errorf("%q and %q must not share a key: one would be reported ALREADY_PRESENT and never sent", tc.a, tc.b)
+			}
+		})
+	}
+}
+
+// TestGoogleAdsNegativeKey_MatchTypeStillSeparates keeps the other half of the key honest: the
+// same text at two match types is two different criteria, and Google holds both.
+func TestGoogleAdsNegativeKey_MatchTypeStillSeparates(t *testing.T) {
+	text := "free download"
+	if googleAdsNegativeKey(googleads.MatchTypePhrase, text) == googleAdsNegativeKey(googleads.MatchTypeExact, text) {
+		t.Fatal("PHRASE and EXACT must not share a key")
+	}
+}

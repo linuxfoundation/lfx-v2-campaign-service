@@ -37,8 +37,24 @@ func googleAdsNegativeMatchType(matchType string) (string, bool) {
 // package uses — so a campaign already excluding "Free Download" (or "ΟΣ") matches a repeat
 // request for "free download" (or "ος"). strings.ToLower would not: it keeps σ and ς apart,
 // which simple case folding does not.
+//
+// Whitespace is collapsed the SAME way on both sides, for the reason the fold is shared. This key
+// is built from two sources that do not arrive in the same shape: the REQUEST side comes through
+// validateNegativeKeywordBatch, which normalises text with NormalizeNegativeKeywordText
+// (strings.Fields joined by one space — trimmed, every internal run collapsed), while the PRESENT
+// side is whatever Google returned, normalised by nobody. Collapsing in only one of them made the
+// two disagree on exactly the texts the caller cannot see: a criterion Google holds as
+// " free download" or "free  download" — or with a non-breaking space, which strings.Fields
+// splits on and Google does not have to — would not match the caller's "free download", would
+// read as ABSENT, would be sent again, and a duplicate fails this ATOMIC batch, taking every
+// keyword that would have been accepted down with it. Collapsing inside the key leaves both call
+// sites normalised by construction, and cannot drift the way two call sites would.
+//
+// It only ever makes the present-set match MORE, never less, and only for texts Google itself
+// treats as one keyword — which is the safe direction here: the cost of a missed match is the
+// whole batch refused, the cost of a match is one keyword correctly reported ALREADY_PRESENT.
 func googleAdsNegativeKey(matchType, text string) string {
-	return matchType + "\x00" + textfold.Key(text)
+	return matchType + "\x00" + textfold.Key(strings.Join(strings.Fields(text), " "))
 }
 
 // AddNegativeKeywords implements service.NegativeKeywordAdder for Google Ads: CAMPAIGN-level

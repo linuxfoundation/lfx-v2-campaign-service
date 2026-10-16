@@ -116,26 +116,77 @@ func TestListCampaignNegativeKeywords_EmptyIsNotAnError(t *testing.T) {
 // caller asked to add — the one failure mode this read exists to prevent, and the one that then
 // fails the whole atomic batch instead.
 func TestListCampaignNegativeKeywords_RefusesUntrustworthyRows(t *testing.T) {
-	for _, tc := range []struct{ name, body string }{
-		{"a positive criterion", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`},
-		{"a non-keyword criterion", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"LOCATION","keyword":{"text":"free","matchType":"BROAD"}}}]}`},
-		{"another campaign's row", `{"results":[{"campaign":{"id":"888"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`},
-		{"no criterion id", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`},
+	// Each case names the SENTENCE the guard it was written for produces, not merely that SOME
+	// guard tripped. Several rows are degenerate in more than one way at once — a row with no
+	// `keyword` object has neither a text nor a match type, and the guards run in a fixed order
+	// — so an err-is-not-nil assertion alone would stay green if a guard were deleted and its
+	// rows quietly absorbed by the next one down, which is how a row ends up proving nothing
+	// about the check it was added for.
+	for _, tc := range []struct{ name, body, want string }{
+		{"a positive criterion", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`,
+			"is not a negative keyword criterion"},
+		{"a non-keyword criterion", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"LOCATION","keyword":{"text":"free","matchType":"BROAD"}}}]}`,
+			"is not a negative keyword criterion"},
+		{"another campaign's row", `{"results":[{"campaign":{"id":"888"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`,
+			"reports a different campaign id"},
+		{"no criterion id", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`,
+			"is not the base-10 spelling of an integer"},
+		// The criterion id is reported back as an ALREADY_PRESENT outcome's NegativeKeywordID,
+		// so a non-numeric one is an identifier no later lever can address — and the mutate
+		// path on this same resource already refuses that spelling.
+		{"a non-numeric criterion id", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"abc","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`,
+			"is not the base-10 spelling of an integer"},
+		{"a criterion id with a sign", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"-11","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`,
+			"is not the base-10 spelling of an integer"},
+		{"a criterion id that is only whitespace", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"  ","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"BROAD"}}}]}`,
+			"is not the base-10 spelling of an integer"},
 		// Invalid bytes fold unpredictably, so an existing exclusion could read as absent
 		// (sent again, failing the whole atomic batch) or a new one as present (dropped).
-		{"keyword text that is not valid UTF-8", "{\"results\":[{\"campaign\":{\"id\":\"777\"},\"campaignCriterion\":{\"criterionId\":\"11\",\"negative\":true,\"type\":\"KEYWORD\",\"keyword\":{\"text\":\"fr\xed\xa0\x80ee\",\"matchType\":\"BROAD\"}}}]}"},
+		//
+		// The sentence this row must produce is the ENVELOPE's, not the row loop's: gaqlSearch
+		// runs `!utf8.Valid(raw) || hasUnpairedSurrogateEscape(raw)` over the whole response
+		// body before decoding it, and those bytes include every row, so the per-row
+		// utf8.ValidString check never sees a page the envelope would admit. That matches
+		// TestGetCampaignSettings_UnpairedSurrogateRefused, which records the same shadowing on
+		// its own sibling: the row check is kept because it names the campaign in its
+		// diagnostics, and this row is NOT revert-binding on it. Asserting the row sentence here
+		// would have been a false claim about which code the test exercises.
+		{"keyword text that is not valid UTF-8", "{\"results\":[{\"campaign\":{\"id\":\"777\"},\"campaignCriterion\":{\"criterionId\":\"11\",\"negative\":true,\"type\":\"KEYWORD\",\"keyword\":{\"text\":\"fr\xed\xa0\x80ee\",\"matchType\":\"BROAD\"}}}]}",
+			"cannot survive JSON decoding intact"},
+		// utf8.ValidString("") is TRUE, so empty text needs its own check or it passes every
+		// guard above and is indexed under an empty key — the keyword the row actually names
+		// then reads as absent, is sent again, and fails the whole atomic batch.
+		{"no keyword text at all", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"matchType":"BROAD"}}}]}`,
+			"carries no keyword text"},
+		{"null keyword text", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":null,"matchType":"BROAD"}}}]}`,
+			"carries no keyword text"},
+		{"empty keyword text", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"","matchType":"BROAD"}}}]}`,
+			"carries no keyword text"},
+		{"whitespace-only keyword text", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"   ","matchType":"BROAD"}}}]}`,
+			"carries no keyword text"},
+		// No `keyword` object at all is degenerate twice over — no text AND no match type — and
+		// the text guard runs first, so the text sentence is the one it must produce. Pinning
+		// that is the point: if the text guard were removed, this row would still refuse, on the
+		// match type, and an err-is-not-nil assertion would never notice.
+		{"no keyword object at all", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD"}}]}`,
+			"carries no keyword text"},
 		// The match type is half the comparison key, so an unrecognised or absent one cannot
 		// match any key the caller builds: the exclusion would read as ABSENT, be sent again,
 		// and fail the entire atomic batch — presenting as a platform rejection of keywords
 		// that were perfectly acceptable.
-		{"an unrecognised match type", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"UNKNOWN"}}}]}`},
-		{"no match type at all", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free"}}}]}`},
+		{"an unrecognised match type", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free","matchType":"UNKNOWN"}}}]}`,
+			"which is not one of"},
+		{"no match type at all", `{"results":[{"campaign":{"id":"777"},"campaignCriterion":{"criterionId":"11","negative":true,"type":"KEYWORD","keyword":{"text":"free"}}}]}`,
+			"which is not one of"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := negativeKeywordServers(t, func(string) string { return tc.body })
 			got, err := c.ListCampaignNegativeKeywords(context.Background(), "777")
 			if err == nil {
 				t.Fatalf("expected a refusal, got %+v", got)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the wrong guard refused this row:\n got: %v\nwant a message containing: %q", err, tc.want)
 			}
 			if got != nil {
 				t.Errorf("a refused read must return no negatives, got %+v", got)
