@@ -45,11 +45,12 @@ const metaGraphTimeLayout = "2006-01-02T15:04:05-0700"
 //
 // UNITS. Meta reports budgets in the account currency's MINOR units, and the create path encodes
 // budget × offset exactly (meta.MinorUnitsExact, issue #235); rows recorded before #235 were sent
-// round(budget × offset). Both sides are therefore reduced to minor units with that same offset —
-// read from the account's own currency, the authority the create path used — via
-// metaRecordedMinor, and rendered back to whole units by one function, so the recorded side
-// compares as the integer the create path actually sent. A currency outside the supported map
-// leaves the amount `unknown` rather than guessing a scale.
+// round(budget × offset). Meta already reports the ad-set side in minor units; the recorded side
+// is reduced to minor units with that same offset — read from the account's own currency, the
+// authority the create path used — by metaRecordedMinor, and both are rendered back to whole
+// units by one function (formatMinorUnits), so the recorded side compares as the integer the
+// create path actually sent. A currency outside the supported map leaves the amount `unknown`
+// rather than guessing a scale.
 //
 // DATES. The create path sends end_time = endDate + "T23:59:59+0000" and start_time = the start
 // day at 00:00 UTC, nudged forward to dispatch time + a buffer when that day has already begun.
