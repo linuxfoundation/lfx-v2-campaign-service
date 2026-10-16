@@ -5575,6 +5575,230 @@ func DecodeListMetaAdSetsResponse(decoder func(*http.Response) goahttp.Decoder, 
 	}
 }
 
+// BuildListMetaAdsRequest instantiates a HTTP request object with method and
+// path set to call the "lfx-v2-campaign-service-briefs" service
+// "list-meta-ads" endpoint
+func (c *Client) BuildListMetaAdsRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID  string
+		briefID    string
+		campaignID string
+		adSetID    string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.ListMetaAdsPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "list-meta-ads", "*lfxv2campaignservicebriefs.ListMetaAdsPayload", v)
+		}
+		projectID = p.ProjectID
+		briefID = p.BriefID
+		campaignID = p.CampaignID
+		adSetID = p.AdSetID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ListMetaAdsLfxV2CampaignServiceBriefsPath(projectID, briefID, campaignID, adSetID)}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "list-meta-ads", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeListMetaAdsRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs list-meta-ads server.
+func EncodeListMetaAdsRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.ListMetaAdsPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "list-meta-ads", "*lfxv2campaignservicebriefs.ListMetaAdsPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		values := req.URL.Query()
+		if p.Window != nil {
+			values.Add("window", *p.Window)
+		}
+		req.URL.RawQuery = values.Encode()
+		return nil
+	}
+}
+
+// DecodeListMetaAdsResponse returns a decoder for responses returned by the
+// lfx-v2-campaign-service-briefs list-meta-ads endpoint. restoreBody controls
+// whether the response body should be restored after having been read.
+// DecodeListMetaAdsResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeListMetaAdsResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body ListMetaAdsResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			res := NewListMetaAdsMetaAdsOK(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body ListMetaAdsBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, NewListMetaAdsBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body ListMetaAdsConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, NewListMetaAdsConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body ListMetaAdsServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, NewListMetaAdsServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body ListMetaAdsInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, NewListMetaAdsInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body ListMetaAdsNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, NewListMetaAdsNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body ListMetaAdsPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, NewListMetaAdsPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body ListMetaAdsUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			err = ValidateListMetaAdsUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, NewListMetaAdsUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "list-meta-ads", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "list-meta-ads", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildToggleMetaAdSetStatusRequest instantiates a HTTP request object with
 // method and path set to call the "lfx-v2-campaign-service-briefs" service
 // "toggle-meta-ad-set-status" endpoint
@@ -8440,6 +8664,27 @@ func unmarshalMetaAdSetResponseBodyToLfxv2campaignservicebriefsMetaAdSet(v *Meta
 		Ctr:                *v.Ctr,
 		Recorded:           *v.Recorded,
 		DeliberatelyPaused: *v.DeliberatelyPaused,
+	}
+
+	return res
+}
+
+// unmarshalMetaAdResponseBodyToLfxv2campaignservicebriefsMetaAd builds a value
+// of type *lfxv2campaignservicebriefs.MetaAd from a value of type
+// *MetaAdResponseBody.
+func unmarshalMetaAdResponseBodyToLfxv2campaignservicebriefsMetaAd(v *MetaAdResponseBody) *lfxv2campaignservicebriefs.MetaAd {
+	res := &lfxv2campaignservicebriefs.MetaAd{
+		ID:              *v.ID,
+		Listed:          *v.Listed,
+		Name:            v.Name,
+		Status:          v.Status,
+		EffectiveStatus: v.EffectiveStatus,
+		CreativeID:      v.CreativeID,
+		CreativeName:    v.CreativeName,
+		Impressions:     *v.Impressions,
+		Clicks:          *v.Clicks,
+		CostMicros:      *v.CostMicros,
+		Ctr:             *v.Ctr,
 	}
 
 	return res

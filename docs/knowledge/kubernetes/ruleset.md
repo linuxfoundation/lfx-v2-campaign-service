@@ -117,4 +117,4 @@ output is empty, because whether a skipped contextualizer's `Outputs` are
 safely absent vs. an error is not documented Heimdall behavior — the
 mutually-exclusive `if:` guards avoid relying on it.
 
-The Meta ad-set read and pause/resume (`campaigns/{id}/meta-ad-sets`, `campaigns/{id}/meta-ad-sets/{adSetId}/status`, LFXV2-2665) are routed and ruled by the `briefs` family with no entry of their own; `parity_test.go` pins both paths.
+The Meta ad-set read and pause/resume (`campaigns/{id}/meta-ad-sets`, `campaigns/{id}/meta-ad-sets/{adSetId}/status`, LFXV2-2665) and the read-only ad listing under one ad set (`campaigns/{id}/meta-ad-sets/{adSetId}/ads`) are routed and ruled by the `briefs` family with no entry of their own; `parity_test.go` pins all three paths.

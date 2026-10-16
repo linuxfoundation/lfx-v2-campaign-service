@@ -263,6 +263,12 @@ before the pause is 412, and the next one reads the record
 record, not Meta's — so the UI can explain why an ad set stayed paused after a campaign resume and
 that resuming it here is the way to clear it. Meta's `status` alone cannot say that.
 
+## The ads under one ad set
+
+A read-only listing of one ad set's ads (`list-meta-ads`, decision D7 first step) reuses this
+read's provenance, raw-body checks and error mapping; see
+[Meta Ad Read Under an Ad Set](meta-ads.md). A per-ad pause/resume is a later decision.
+
 ## Verified from Meta's docs only (not against a live account)
 
 The `/adsets` edge's default population (whether DELETED/ARCHIVED ad sets are omitted — the

@@ -849,6 +849,32 @@ type ListMetaAdSetsResponseBody struct {
 	AdSetCount *int `form:"ad_set_count,omitempty" json:"ad_set_count,omitempty" xml:"ad_set_count,omitempty"`
 }
 
+// ListMetaAdsResponseBody is the type of the "lfx-v2-campaign-service-briefs"
+// service "list-meta-ads" endpoint HTTP response body.
+type ListMetaAdsResponseBody struct {
+	// Campaign UUID
+	CampaignID *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty" xml:"campaign_id,omitempty"`
+	// The Meta campaign id the ad set was proven to belong to.
+	PlatformCampaignID *string `form:"platform_campaign_id,omitempty" json:"platform_campaign_id,omitempty" xml:"platform_campaign_id,omitempty"`
+	// The Meta ad set id the ads were read under.
+	AdSetID *string `form:"ad_set_id,omitempty" json:"ad_set_id,omitempty" xml:"ad_set_id,omitempty"`
+	// The reporting window the counters cover.
+	Window *string `form:"window,omitempty" json:"window,omitempty" xml:"window,omitempty"`
+	// The ad account's ISO 4217 currency; `cost_micros` is denominated in it.
+	Currency *string `form:"currency,omitempty" json:"currency,omitempty" xml:"currency,omitempty"`
+	// When Meta was read (RFC3339, UTC).
+	ReadAt *string `form:"read_at,omitempty" json:"read_at,omitempty" xml:"read_at,omitempty"`
+	// true when the ad LISTING reported more ads than the page cap allows (5 pages
+	// of 100): `ads` then holds the ads that were read, not every ad of the ad
+	// set. Delivery is never truncated — the Insights read is all or nothing.
+	Truncated *bool `form:"truncated,omitempty" json:"truncated,omitempty" xml:"truncated,omitempty"`
+	// Every ad the listing returned, in Meta's order, then any unlisted ad that
+	// delivered in the window, by id. Empty when the ad set has none.
+	Ads []*MetaAdResponseBody `form:"ads,omitempty" json:"ads,omitempty" xml:"ads,omitempty"`
+	// len(ads).
+	AdCount *int `form:"ad_count,omitempty" json:"ad_count,omitempty" xml:"ad_count,omitempty"`
+}
+
 // ToggleMetaAdSetStatusResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP response body.
@@ -2910,6 +2936,79 @@ type ListMetaAdSetsUnauthorizedResponseBody struct {
 	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
 }
 
+// ListMetaAdsBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "BadRequest" error.
+type ListMetaAdsBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Conflict" error.
+type ListMetaAdsConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// ListMetaAdsServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "ServiceUnavailable" error.
+type ListMetaAdsServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "InternalServerError" error.
+type ListMetaAdsInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "NotFound" error.
+type ListMetaAdsNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "PayloadTooLarge" error.
+type ListMetaAdsPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// ListMetaAdsUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "list-meta-ads" endpoint HTTP
+// response body for the "Unauthorized" error.
+type ListMetaAdsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
 // ToggleMetaAdSetStatusBadRequestResponseBody is the type of the
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint HTTP response body for the "BadRequest" error.
@@ -4110,6 +4209,38 @@ type MetaAdSetResponseBody struct {
 	// campaign; never assume it from the 503 alone. Always false on an adopted
 	// campaign.
 	DeliberatelyPaused *bool `form:"deliberately_paused,omitempty" json:"deliberately_paused,omitempty" xml:"deliberately_paused,omitempty"`
+}
+
+// MetaAdResponseBody is used to define fields on response body types.
+type MetaAdResponseBody struct {
+	// The Meta ad id
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// false for an ad that DELIVERED in the window but that Meta's ad listing did
+	// not return (typically deleted or archived since, or beyond the listing cap
+	// when `truncated` is true): its counters are this ad set's spend, so they are
+	// reported, but every descriptive field is absent.
+	Listed *bool `form:"listed,omitempty" json:"listed,omitempty" xml:"listed,omitempty"`
+	// The ad's name as Meta holds it. Absent when not reported.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// The ad's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED,
+	// ARCHIVED). Absent when not reported.
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED,
+	// PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without
+	// notice. Absent when not reported.
+	EffectiveStatus *string `form:"effective_status,omitempty" json:"effective_status,omitempty" xml:"effective_status,omitempty"`
+	// The id of the ad's creative. Absent when not reported.
+	CreativeID *string `form:"creative_id,omitempty" json:"creative_id,omitempty" xml:"creative_id,omitempty"`
+	// The creative's name. Absent when not reported.
+	CreativeName *string `form:"creative_name,omitempty" json:"creative_name,omitempty" xml:"creative_name,omitempty"`
+	// Impressions over the window. 0 when Meta reported no delivery for this ad.
+	Impressions *int64 `form:"impressions,omitempty" json:"impressions,omitempty" xml:"impressions,omitempty"`
+	// Clicks over the window.
+	Clicks *int64 `form:"clicks,omitempty" json:"clicks,omitempty" xml:"clicks,omitempty"`
+	// Spend over the window in micro-units of `currency`.
+	CostMicros *int64 `form:"cost_micros,omitempty" json:"cost_micros,omitempty" xml:"cost_micros,omitempty"`
+	// clicks/impressions, 0 when impressions is 0.
+	Ctr *float64 `form:"ctr,omitempty" json:"ctr,omitempty" xml:"ctr,omitempty"`
 }
 
 // PlatformResultResponseBody is used to define fields on response body types.
@@ -7141,6 +7272,110 @@ func NewListMetaAdSetsUnauthorized(body *ListMetaAdSetsUnauthorizedResponseBody,
 	return v
 }
 
+// NewListMetaAdsMetaAdsOK builds a "lfx-v2-campaign-service-briefs" service
+// "list-meta-ads" endpoint result from a HTTP "OK" response.
+func NewListMetaAdsMetaAdsOK(body *ListMetaAdsResponseBody) *lfxv2campaignservicebriefs.MetaAds {
+	v := &lfxv2campaignservicebriefs.MetaAds{
+		CampaignID:         *body.CampaignID,
+		PlatformCampaignID: *body.PlatformCampaignID,
+		AdSetID:            *body.AdSetID,
+		Window:             *body.Window,
+		Currency:           *body.Currency,
+		ReadAt:             *body.ReadAt,
+		Truncated:          *body.Truncated,
+		AdCount:            *body.AdCount,
+	}
+	v.Ads = make([]*lfxv2campaignservicebriefs.MetaAd, len(body.Ads))
+	for i, val := range body.Ads {
+		if val == nil {
+			v.Ads[i] = nil
+			continue
+		}
+		v.Ads[i] = unmarshalMetaAdResponseBodyToLfxv2campaignservicebriefsMetaAd(val)
+	}
+
+	return v
+}
+
+// NewListMetaAdsBadRequest builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint BadRequest error.
+func NewListMetaAdsBadRequest(body *ListMetaAdsBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsConflict builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint Conflict error.
+func NewListMetaAdsConflict(body *ListMetaAdsConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewListMetaAdsServiceUnavailable builds a lfx-v2-campaign-service-briefs
+// service list-meta-ads endpoint ServiceUnavailable error.
+func NewListMetaAdsServiceUnavailable(body *ListMetaAdsServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsInternalServerError builds a lfx-v2-campaign-service-briefs
+// service list-meta-ads endpoint InternalServerError error.
+func NewListMetaAdsInternalServerError(body *ListMetaAdsInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsNotFound builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint NotFound error.
+func NewListMetaAdsNotFound(body *ListMetaAdsNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service list-meta-ads endpoint PayloadTooLarge error.
+func NewListMetaAdsPayloadTooLarge(body *ListMetaAdsPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewListMetaAdsUnauthorized builds a lfx-v2-campaign-service-briefs service
+// list-meta-ads endpoint Unauthorized error.
+func NewListMetaAdsUnauthorized(body *ListMetaAdsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
 // NewToggleMetaAdSetStatusMetaAdSetStatusChangeOK builds a
 // "lfx-v2-campaign-service-briefs" service "toggle-meta-ad-set-status"
 // endpoint result from a HTTP "OK" response.
@@ -9111,6 +9346,54 @@ func ValidateListMetaAdSetsResponseBody(body *ListMetaAdSetsResponseBody) (err e
 	for _, e := range body.AdSets {
 		if e != nil {
 			if err2 := validateMetaAdSetResponseBody(e, "body.ad_sets[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateListMetaAdsResponseBody runs the validations defined on
+// ListMetaAdsResponseBody
+func ValidateListMetaAdsResponseBody(body *ListMetaAdsResponseBody) (err error) {
+	if body.CampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("campaign_id", "body"))
+	}
+	if body.PlatformCampaignID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("platform_campaign_id", "body"))
+	}
+	if body.AdSetID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_set_id", "body"))
+	}
+	if body.Window == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("window", "body"))
+	}
+	if body.Currency == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("currency", "body"))
+	}
+	if body.ReadAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("read_at", "body"))
+	}
+	if body.Truncated == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("truncated", "body"))
+	}
+	if body.Ads == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ads", "body"))
+	}
+	if body.AdCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ad_count", "body"))
+	}
+	if body.Window != nil {
+		if !(*body.Window == "today" || *body.Window == "yesterday" || *body.Window == "last_7_days" || *body.Window == "last_14_days" || *body.Window == "last_30_days" || *body.Window == "this_month" || *body.Window == "last_month") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.window", *body.Window, []any{"today", "yesterday", "last_7_days", "last_14_days", "last_30_days", "this_month", "last_month"}))
+		}
+	}
+	if body.ReadAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.read_at", *body.ReadAt, goa.FormatDateTime))
+	}
+	for _, e := range body.Ads {
+		if e != nil {
+			if err2 := validateMetaAdResponseBody(e, "body.ads[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -11654,6 +11937,95 @@ func ValidateListMetaAdSetsUnauthorizedResponseBody(body *ListMetaAdSetsUnauthor
 	return
 }
 
+// ValidateListMetaAdsBadRequestResponseBody runs the validations defined on
+// ListMetaAdsBadRequestResponseBody
+func ValidateListMetaAdsBadRequestResponseBody(body *ListMetaAdsBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsConflictResponseBody runs the validations defined on
+// ListMetaAdsConflictResponseBody
+func ValidateListMetaAdsConflictResponseBody(body *ListMetaAdsConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type"}))
+		}
+	}
+	return
+}
+
+// ValidateListMetaAdsServiceUnavailableResponseBody runs the validations
+// defined on ListMetaAdsServiceUnavailableResponseBody
+func ValidateListMetaAdsServiceUnavailableResponseBody(body *ListMetaAdsServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsInternalServerErrorResponseBody runs the validations
+// defined on ListMetaAdsInternalServerErrorResponseBody
+func ValidateListMetaAdsInternalServerErrorResponseBody(body *ListMetaAdsInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsNotFoundResponseBody runs the validations defined on
+// ListMetaAdsNotFoundResponseBody
+func ValidateListMetaAdsNotFoundResponseBody(body *ListMetaAdsNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsPayloadTooLargeResponseBody runs the validations defined
+// on ListMetaAdsPayloadTooLargeResponseBody
+func ValidateListMetaAdsPayloadTooLargeResponseBody(body *ListMetaAdsPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateListMetaAdsUnauthorizedResponseBody runs the validations defined on
+// ListMetaAdsUnauthorizedResponseBody
+func ValidateListMetaAdsUnauthorizedResponseBody(body *ListMetaAdsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
 // ValidateToggleMetaAdSetStatusBadRequestResponseBody runs the validations
 // defined on ToggleMetaAdSetStatusBadRequestResponseBody
 func ValidateToggleMetaAdSetStatusBadRequestResponseBody(body *ToggleMetaAdSetStatusBadRequestResponseBody) (err error) {
@@ -13337,6 +13709,53 @@ func validateMetaAdSetResponseBody(body *MetaAdSetResponseBody, path string) (er
 		if !(*body.BudgetType == "daily" || *body.BudgetType == "lifetime") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".budget_type", *body.BudgetType, []any{"daily", "lifetime"}))
 		}
+	}
+	return
+}
+
+// ValidateMetaAdResponseBody runs the validations defined on meta-ad
+func ValidateMetaAdResponseBody(body *MetaAdResponseBody) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Listed == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("listed", "body"))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", "body"))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", "body"))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", "body"))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", "body"))
+	}
+	return
+}
+
+// validateMetaAdResponseBody checks meta-ad and reports errors using the path
+// supplied by its caller
+func validateMetaAdResponseBody(body *MetaAdResponseBody, path string) (err error) {
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", path))
+	}
+	if body.Listed == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("listed", path))
+	}
+	if body.Impressions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("impressions", path))
+	}
+	if body.Clicks == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("clicks", path))
+	}
+	if body.CostMicros == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cost_micros", path))
+	}
+	if body.Ctr == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ctr", path))
 	}
 	return
 }

@@ -5121,6 +5121,173 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/ads:
+        get:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: list-meta-ads lfx-v2-campaign-service-briefs
+            description: 'Read the ADS under ONE ad set of a Meta campaign live (decision D7, first step): each ad''s name, configured and effective status and creative, with its impressions, clicks, spend and CTR over the window. STRICTLY READ-ONLY — the platform is only read and nothing is persisted; there is no per-ad pause or edit. Before anything is read the campaign must record which ad account it was created under and that account must be the connection''s (409 otherwise); a campaign with no platform campaign id is 409; any platform but Meta is 400; `ad_set_id` is validated before any connection work (400). Upstream: GET /{ad_set_id}?fields=id,campaign_id,account_id,status, which must report THIS campaign under THAT account (409 otherwise — the ad set does not belong to this campaign), then GET /{ad_set_id}/ads (bounded cursor paging; past the cap `truncated` is true), GET /act_{id}?fields=currency, and ONE level=ad Insights read on the ad account filtered to this ad set (bounded cursor paging, all or nothing). Every page is checked as raw bytes before it is decoded (a duplicated key, malformed UTF-8 or an unpaired surrogate escape refuses the read), every ad must report THIS ad set, THIS campaign and the connection''s ad account, every Insights row must name this ad set and campaign and the account''s currency, and an explicit null counter is refused while an absent one is 0. **404 when the campaign row does not exist or the project has no Meta connection** — never because of anything Meta answers: Meta''s 100/33 is a 503 like every other unverifiable upstream answer.'
+            operationId: lfx-v2-campaign-service-briefs#list-meta-ads
+            parameters:
+                - name: window
+                  in: query
+                  description: Platform-agnostic reporting window; defaults to last_30_days when omitted
+                  allowEmptyValue: true
+                  schema:
+                    type: string
+                    description: Platform-agnostic reporting window; defaults to last_30_days when omitted
+                    example: last_14_days
+                    enum:
+                        - today
+                        - yesterday
+                        - last_7_days
+                        - last_14_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+                  example: last_14_days
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+                - name: brief_id
+                  in: path
+                  description: Brief UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Brief UUID
+                    example: 9d5cc398-80b5-4a05-b318-14a289eae41b
+                    format: uuid
+                  example: 9d5cc398-80b5-4a05-b318-14a289eae41b
+                - name: campaign_id
+                  in: path
+                  description: Campaign UUID
+                  required: true
+                  schema:
+                    type: string
+                    description: Campaign UUID
+                    example: fdae2a4f-9a92-49d7-a347-f12292a714d5
+                    format: uuid
+                  example: fdae2a4f-9a92-49d7-a347-f12292a714d5
+                - name: ad_set_id
+                  in: path
+                  description: 'The Meta ad set id: digits, no leading zero, at most 32.'
+                  required: true
+                  schema:
+                    type: string
+                    description: 'The Meta ad set id: digits, no leading zero, at most 32.'
+                    example: "120210000000000888"
+                    pattern: ^[1-9][0-9]*$
+                    maxLength: 32
+                  example: "120210000000000888"
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/MetaAds'
+                            example:
+                                ad_count: 1
+                                ad_set_id: "120210000000000888"
+                                ads:
+                                    - clicks: 21
+                                      cost_micros: 6170000
+                                      creative_id: "120210000000000777"
+                                      creative_name: KubeCon NA — Image A
+                                      ctr: 0.0228
+                                      effective_status: ACTIVE
+                                      id: "120210000000000999"
+                                      impressions: 920
+                                      listed: true
+                                      name: KubeCon NA — Leads — Image A
+                                      status: ACTIVE
+                                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                                currency: USD
+                                platform_campaign_id: "120210000000000555"
+                                read_at: "2026-10-15T09:30:00Z"
+                                truncated: false
+                                window: last_30_days
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/briefs/{brief_id}/campaigns/{campaign_id}/meta-ad-sets/{ad_set_id}/status:
         post:
             tags:
@@ -22349,6 +22516,76 @@ components:
                 updated_at: Molestiae voluptatem unde iusto blanditiis facere consequuntur.
             required:
                 - id
+        MetaAd:
+            type: object
+            properties:
+                clicks:
+                    type: integer
+                    description: Clicks over the window.
+                    example: 21
+                    format: int64
+                cost_micros:
+                    type: integer
+                    description: Spend over the window in micro-units of `currency`.
+                    example: 6170000
+                    format: int64
+                creative_id:
+                    type: string
+                    description: The id of the ad's creative. Absent when not reported.
+                    example: "120210000000000777"
+                creative_name:
+                    type: string
+                    description: The creative's name. Absent when not reported.
+                    example: KubeCon NA — Image A
+                ctr:
+                    type: number
+                    description: clicks/impressions, 0 when impressions is 0.
+                    example: 0.0228
+                    format: double
+                effective_status:
+                    type: string
+                    description: The ad's EFFECTIVE status as Meta reports it (e.g. ADSET_PAUSED, PENDING_REVIEW, DISAPPROVED). Reported verbatim; Meta grows this set without notice. Absent when not reported.
+                    example: ACTIVE
+                id:
+                    type: string
+                    description: The Meta ad id
+                    example: "120210000000000999"
+                impressions:
+                    type: integer
+                    description: Impressions over the window. 0 when Meta reported no delivery for this ad.
+                    example: 920
+                    format: int64
+                listed:
+                    type: boolean
+                    description: 'false for an ad that DELIVERED in the window but that Meta''s ad listing did not return (typically deleted or archived since, or beyond the listing cap when `truncated` is true): its counters are this ad set''s spend, so they are reported, but every descriptive field is absent.'
+                    example: true
+                name:
+                    type: string
+                    description: The ad's name as Meta holds it. Absent when not reported.
+                    example: KubeCon NA — Leads — Image A
+                status:
+                    type: string
+                    description: The ad's CONFIGURED status as Meta reports it (ACTIVE, PAUSED, DELETED, ARCHIVED). Absent when not reported.
+                    example: ACTIVE
+            example:
+                clicks: 21
+                cost_micros: 6170000
+                creative_id: "120210000000000777"
+                creative_name: KubeCon NA — Image A
+                ctr: 0.0228
+                effective_status: ACTIVE
+                id: "120210000000000999"
+                impressions: 920
+                listed: true
+                name: KubeCon NA — Leads — Image A
+                status: ACTIVE
+            required:
+                - id
+                - listed
+                - impressions
+                - clicks
+                - cost_micros
+                - ctr
         MetaAdSet:
             type: object
             properties:
@@ -22608,6 +22845,121 @@ components:
                 - read_at
                 - ad_sets
                 - ad_set_count
+        MetaAds:
+            type: object
+            properties:
+                ad_count:
+                    type: integer
+                    description: len(ads).
+                    example: 1
+                    format: int64
+                ad_set_id:
+                    type: string
+                    description: The Meta ad set id the ads were read under.
+                    example: "120210000000000888"
+                ads:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/MetaAd'
+                    description: Every ad the listing returned, in Meta's order, then any unlisted ad that delivered in the window, by id. Empty when the ad set has none.
+                    example:
+                        - clicks: 21
+                          cost_micros: 6170000
+                          creative_id: "120210000000000777"
+                          creative_name: KubeCon NA — Image A
+                          ctr: 0.0228
+                          effective_status: ACTIVE
+                          id: "120210000000000999"
+                          impressions: 920
+                          listed: true
+                          name: KubeCon NA — Leads — Image A
+                          status: ACTIVE
+                        - clicks: 21
+                          cost_micros: 6170000
+                          creative_id: "120210000000000777"
+                          creative_name: KubeCon NA — Image A
+                          ctr: 0.0228
+                          effective_status: ACTIVE
+                          id: "120210000000000999"
+                          impressions: 920
+                          listed: true
+                          name: KubeCon NA — Leads — Image A
+                          status: ACTIVE
+                        - clicks: 21
+                          cost_micros: 6170000
+                          creative_id: "120210000000000777"
+                          creative_name: KubeCon NA — Image A
+                          ctr: 0.0228
+                          effective_status: ACTIVE
+                          id: "120210000000000999"
+                          impressions: 920
+                          listed: true
+                          name: KubeCon NA — Leads — Image A
+                          status: ACTIVE
+                campaign_id:
+                    type: string
+                    description: Campaign UUID
+                    example: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                currency:
+                    type: string
+                    description: The ad account's ISO 4217 currency; `cost_micros` is denominated in it.
+                    example: USD
+                platform_campaign_id:
+                    type: string
+                    description: The Meta campaign id the ad set was proven to belong to.
+                    example: "120210000000000555"
+                read_at:
+                    type: string
+                    description: When Meta was read (RFC3339, UTC).
+                    example: "1984-01-27T12:20:41Z"
+                    format: date-time
+                truncated:
+                    type: boolean
+                    description: 'true when the ad LISTING reported more ads than the page cap allows (5 pages of 100): `ads` then holds the ads that were read, not every ad of the ad set. Delivery is never truncated — the Insights read is all or nothing.'
+                    example: false
+                window:
+                    type: string
+                    description: The reporting window the counters cover.
+                    example: this_month
+                    enum:
+                        - today
+                        - yesterday
+                        - last_7_days
+                        - last_14_days
+                        - last_30_days
+                        - this_month
+                        - last_month
+            example:
+                ad_count: 1
+                ad_set_id: "120210000000000888"
+                ads:
+                    - clicks: 21
+                      cost_micros: 6170000
+                      creative_id: "120210000000000777"
+                      creative_name: KubeCon NA — Image A
+                      ctr: 0.0228
+                      effective_status: ACTIVE
+                      id: "120210000000000999"
+                      impressions: 920
+                      listed: true
+                      name: KubeCon NA — Leads — Image A
+                      status: ACTIVE
+                campaign_id: 6f9619ff-8b86-d011-b42d-00c04fc964ff
+                currency: USD
+                platform_campaign_id: "120210000000000555"
+                read_at: "2026-10-15T09:30:00Z"
+                truncated: false
+                window: last_30_days
+            required:
+                - campaign_id
+                - platform_campaign_id
+                - ad_set_id
+                - window
+                - currency
+                - read_at
+                - truncated
+                - ads
+                - ad_count
         MetaAdsAccountMonitor:
             type: object
             properties:

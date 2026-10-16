@@ -445,6 +445,10 @@ func TestRouteRuleSetParity(t *testing.T) {
 		// drops either.
 		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets", true},
 		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets/120210000000000888/status", true},
+		// The read-only ad listing under one ad set (list-meta-ads, decision D7 first step), three
+		// segments below the campaign. Like the ad-set read it inherits the briefs match and the
+		// campaign_manager rule; this row fails if a narrowing drops it.
+		{"/projects/p1/briefs/b-42/campaigns/c-9/meta-ad-sets/120210000000000888/ads", true},
 		// campaign_audiences (LFXV2-2783) is subordinate to a brief, so it inherits both
 		// the HTTPRoute `briefs(/.*)?` match and the Heimdall `/briefs/**` campaign_manager
 		// rule — no separate route/rule entry. These rows pin that coverage so a future
