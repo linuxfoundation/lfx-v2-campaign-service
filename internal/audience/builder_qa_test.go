@@ -866,3 +866,19 @@ func TestCoveredListIDs(t *testing.T) {
 	assert.Equal(t, []string{"3"}, CoveredListIDs(json.RawMessage(or(and(in("3")), and(in("1"), in("2"))))))
 	assert.Nil(t, CoveredListIDs(json.RawMessage(`{`)))
 }
+
+func TestTreeCoveredBy(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	tree := json.RawMessage(or(and(in("1"), in("9")), and(in("2"))))
+	assert.True(t, TreeCoveredBy(tree, []string{"1", "2"}), "every alternative needs a covered list")
+	assert.True(t, TreeCoveredBy(tree, []string{"9", "2"}), "one condition of an AND branch is enough")
+	assert.False(t, TreeCoveredBy(tree, []string{"1"}), "the second alternative remains")
+	assert.False(t, TreeCoveredBy(json.RawMessage(`{`), []string{"1"}))
+	assert.False(t, TreeCoveredBy(tree, nil))
+}

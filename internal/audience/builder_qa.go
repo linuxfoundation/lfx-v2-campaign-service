@@ -199,6 +199,22 @@ func CoveredListIDs(raw json.RawMessage) []string {
 	return out
 }
 
+// TreeCoveredBy reports whether excluding the lists in covered leaves nobody in the
+// filter tree: every path through it requires membership of one of them (an AND
+// branch is gone when any one of its conditions is a covered list; an OR is gone
+// only when every alternative is). An unreadable or empty tree is not covered.
+func TreeCoveredBy(raw json.RawMessage, covered []string) bool {
+	var root qaBranch
+	if len(raw) == 0 || len(covered) == 0 || json.Unmarshal(raw, &root) != nil {
+		return false
+	}
+	set := make(map[string]struct{}, len(covered))
+	for _, id := range covered {
+		set[id] = struct{}{}
+	}
+	return root.coveredBy(set)
+}
+
 type qaBranch struct {
 	FilterBranchType string     `json:"filterBranchType"`
 	FilterBranches   []qaBranch `json:"filterBranches"`
@@ -240,6 +256,45 @@ func (b qaBranch) covered() map[string]struct{} {
 		}
 	}
 	return out
+}
+
+func (b qaBranch) coveredBy(set map[string]struct{}) bool {
+	inSet := func(i int) bool {
+		f := b.Filters[i]
+		_, ok := set[strings.TrimSpace(f.ListID.String())]
+		return ok && f.FilterType == "IN_LIST" && f.Operator == "IN_LIST"
+	}
+	switch strings.ToUpper(b.FilterBranchType) {
+	case "AND":
+		for i := range b.Filters {
+			if inSet(i) {
+				return true
+			}
+		}
+		for _, c := range b.FilterBranches {
+			if c.coveredBy(set) {
+				return true
+			}
+		}
+		return false
+	case "OR":
+		alternatives := 0
+		for i := range b.Filters {
+			alternatives++
+			if !inSet(i) {
+				return false
+			}
+		}
+		for _, c := range b.FilterBranches {
+			alternatives++
+			if !c.coveredBy(set) {
+				return false
+			}
+		}
+		return alternatives > 0
+	default:
+		return false
+	}
 }
 
 func (b qaBranch) required() map[string]struct{} {

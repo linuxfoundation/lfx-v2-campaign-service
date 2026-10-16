@@ -1041,6 +1041,7 @@ func TestRunQA_ASuppressionWrapperCoveringTheAudienceIsNoSuppression(t *testing.
 	}{
 		"wrapper covers the audited list":        {wrapper: or(and(in("500")), and(in("602")))},
 		"wrapper covers a list every branch has": {audience: or(and(in("610"), in("611")), and(in("610"))), wrapper: or(and(in("610")), and(in("602")))},
+		"wrapper covers every OR alternative":    {audience: or(and(in("610")), and(in("611"))), wrapper: or(and(in("610")), and(in("611")))},
 	} {
 		t.Run(name, func(t *testing.T) {
 			portal := seoulPortal()
@@ -1062,4 +1063,29 @@ func TestRunQA_ASuppressionWrapperCoveringTheAudienceIsNoSuppression(t *testing.
 			assert.NotEqual(t, audience.VerdictPass, out.Checks.ExclusionCompleteness.Verdict)
 		})
 	}
+}
+
+// A suppression covering only one alternative of an OR audience still leaves the rest,
+// so it is credited.
+func TestRunQA_ASuppressionWrapperCoveringOneAlternativeStillCounts(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	portal := seoulPortal()
+	portal.lists["26Q4 - Seoul - Mailable Contacts"] = "500"
+	portal.lists["LF Global Opt-Outs"] = "602"
+	portal.lists["26Q4 - Seoul - Base"] = "610"
+	portal.lists["26Q4 - Seoul - Extra"] = "611"
+	portal.lists["26Q4 - Combined Suppression"] = "700"
+	portal.branches = map[string]string{"500": or(and(in("610")), and(in("611"))), "700": or(and(in("610")), and(in("602")))}
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "", false, false, []string{"700"})
+	require.NoError(t, err)
+	assert.Equal(t, 1, out.Checks.ExclusionCompleteness.SendTimeCount, "611 remains, so the wrapper is a real suppression")
 }

@@ -1851,6 +1851,11 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		if slices.ContainsFunc(covered, func(c string) bool { return notSuppression[c] }) {
 			continue
 		}
+		// Nor is one whose covered lists together cover every path through the audience
+		// ("1 OR 2" suppressed by a "1 OR 2" wrapper leaves nobody to send to).
+		if list != nil && audience.TreeCoveredBy(list.FilterBranch, covered) {
+			continue
+		}
 		sentAway[id] = true
 		for _, c := range covered {
 			sentAway[c] = true

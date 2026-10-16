@@ -202,3 +202,7 @@
 - **A wrapper covering the audience is no suppression** (Copilot). A send-time wrapper that fully
   covers the audited list, or a list every branch requires, excludes every contact; it now gets the
   same treatment as the audited list sent directly and does not count.
+- **A wrapper covering every alternative is no suppression** (Copilot). "1 OR 2" suppressed by a
+  "1 OR 2" wrapper leaves nobody, though neither list is required on its own. `TreeCoveredBy` checks
+  whether the wrapper's covered lists together cover every path through the audience; a wrapper
+  covering one alternative still counts.
