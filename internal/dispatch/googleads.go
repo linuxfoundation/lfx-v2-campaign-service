@@ -2225,6 +2225,13 @@ func (d *GoogleAdsDispatcher) ReadMetrics(ctx context.Context, projectID string,
 		// file, so a future path that legitimately returns nil would panic here instead of
 		// propagating the absence the type already knows how to express.
 		Conversions: m.Conversions,
+		// Both carried as pointers for the same reason and with the same restraint: no
+		// dereference here, so the one file that decides when a value is unmeasured stays the
+		// adapter. Roas is the field where that matters most — the adapter DOES legitimately
+		// return nil for it, on any window with no spend, so a flattening here would be a
+		// panic waiting on a quiet campaign rather than a theoretical one.
+		ConversionValue: m.ConversionValue,
+		Roas:            m.Roas,
 	}, nil
 }
 

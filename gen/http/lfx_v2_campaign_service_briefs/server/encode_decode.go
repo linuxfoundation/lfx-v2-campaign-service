@@ -6613,6 +6613,8 @@ func marshalLfxv2campaignservicebriefsCampaignMetricsToCampaignMetricsResponseBo
 		CostMicros:         v.CostMicros,
 		Ctr:                v.Ctr,
 		Conversions:        v.Conversions,
+		ConversionValue:    v.ConversionValue,
+		Roas:               v.Roas,
 	}
 	if v.Email != nil {
 		res.Email = marshalLfxv2campaignservicebriefsEmailMetricsToEmailMetricsResponseBody(v.Email)
