@@ -835,3 +835,21 @@ func TestInterpretCustom_ATopicOnlyEducationAudienceGetsNoPastEditions(t *testin
 	require.NoError(t, err)
 	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a topic-only education audience is not widened with past registrants")
 }
+
+// A label filled in from a long page title is cut to the contract's 200 runes, so
+// the unedited draft still passes preview.
+func TestInterpretCustom_ALongPageTitleIsCutToTheLabelLimit(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	x := NewAudienceExplorer(NewAudienceBuilder(&scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL)),
+		&stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: strings.Repeat("é", audience.CustomLabelMaxLen), StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len([]rune(out.Draft.Criteria.Label)), audience.CustomLabelMaxLen, "the year pushed the title past the limit")
+}

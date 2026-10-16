@@ -156,3 +156,6 @@
 - **The edition default needs a location** (Greptile). A topic-only education audience counted as
   regional, so past registrants who never enrolled were OR'd in. "Regional" now means a draft with
   cities or countries.
+- **A label filled from the page title is cut to the limit** (Greptile). It was set after the
+  parser's length checks, so a long or year-extended title failed preview; `FitLabel` cuts it to
+  `CustomLabelMaxLen` (200 runes).

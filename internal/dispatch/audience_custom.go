@@ -72,7 +72,9 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 			draft.BrandShort = event.BrandShort
 		}
 		if draft.Criteria.Label == "" {
-			draft.Criteria.Label = event.Name
+			// Filled in after the parser's length checks, so it is cut here: a long page
+			// title (or one the year pushed over) would fail preview unchanged.
+			draft.Criteria.Label = audience.FitLabel(event.Name)
 		}
 		// Past editions come from the warehouse, verbatim: they are exact filter values,
 		// and registered_for's default. Editions the request or the answers named are

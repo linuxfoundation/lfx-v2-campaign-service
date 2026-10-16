@@ -769,6 +769,13 @@ func VersionedName(name string, n int) string {
 // counted in runes as the generated validator counts it.
 const CustomNameMaxLen = 250
 
+// CustomLabelMaxLen is the criteria label's MaxLength (design/audience_builder.go).
+const CustomLabelMaxLen = 200
+
+// FitLabel cuts a label to CustomLabelMaxLen runes, so a label filled in from an
+// event page title is one preview accepts unchanged.
+func FitLabel(label string) string { return cutName(strings.TrimSpace(label), CustomLabelMaxLen) }
+
 // FitListName cuts a list name to CustomNameMaxLen runes, so a name preview returns
 // is one create accepts back unchanged.
 func FitListName(name string) string { return cutName(name, CustomNameMaxLen) }
