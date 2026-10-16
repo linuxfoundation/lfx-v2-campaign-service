@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 )
 
 // promotedTweetsPageSize is the count requested on the promoted_tweets list — X's documented
@@ -50,17 +52,30 @@ type promotedTweetElement struct {
 // unterminated — each an error rather than "none". So is any element it cannot account for:
 // a missing promoted-tweet id, a tweet id of the wrong shape, or a parent line item other
 // than lineItemID (the filter was not honoured, so nothing in the page is known to belong to
-// this line item). An element X reports deleted is skipped. Reads are unpaced, like every
+// this line item). An element X reports deleted is skipped.
+//
+// Each page's raw body must pass identityjson before it is decoded: a duplicated `data` key is
+// resolved last-wins by encoding/json, so a trailing empty array would read as "no
+// associations" and license authoring and promoting a second tweet. The same association id
+// repeated across pages (or within one) is one association, not two — counting it twice would
+// refuse a reuse as ambiguous — but the same id naming two different tweets is refused. Reads are unpaced, like every
 // GET on this client, and are retried on 429 by request().
 func (c *Client) listPromotedTweets(ctx context.Context, lineItemID string) ([]promotedTweetRef, error) {
 	path := "promoted_tweets?line_item_ids=" + url.QueryEscape(lineItemID) + "&with_deleted=false&count=" + strconv.Itoa(promotedTweetsPageSize)
 	refs := []promotedTweetRef{}
+	// tweetOf is every association id already in refs, with the tweet it promotes.
+	tweetOf := map[string]string{}
 	seen := map[string]struct{}{}
 	cursor := ""
 	for page := 0; page < maxListPages; page++ {
 		resp, err := c.requestPage(ctx, path, cursor)
 		if err != nil {
 			return nil, fmt.Errorf("x promoted tweets lookup failed: %w", err)
+		}
+		if resp != nil {
+			if err := identityjson.Check(resp.raw); err != nil {
+				return nil, fmt.Errorf("x promoted tweets lookup returned a page that cannot be trusted, so an existing promoted tweet cannot be ruled out: %w", err)
+			}
 		}
 		var items []promotedTweetElement
 		if resp != nil && len(resp.Data) > 0 {
@@ -89,6 +104,13 @@ func (c *Client) listPromotedTweets(ctx context.Context, lineItemID string) ([]p
 			if _, err := strconv.ParseInt(tweetID, 10, 64); err != nil {
 				return nil, fmt.Errorf("x promoted tweets lookup returned an association without a usable tweet id")
 			}
+			if prev, dup := tweetOf[id]; dup {
+				if prev != tweetID {
+					return nil, fmt.Errorf("x promoted tweets lookup returned one association naming two different tweets, so which one it promotes cannot be told")
+				}
+				continue
+			}
+			tweetOf[id] = tweetID
 			refs = append(refs, promotedTweetRef{ID: id, TweetID: tweetID})
 		}
 		switch cursorVerdict(resp) {

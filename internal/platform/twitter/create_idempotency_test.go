@@ -28,6 +28,9 @@ type fakeX struct {
 	// failPromotedTweetOnce commits the first promoted_tweets POST and then answers 502, so
 	// the caller sees an UNCONFIRMED outcome for an association that does exist.
 	failPromotedTweetOnce bool
+	// overlapPromotedTweetPages answers the promoted_tweets list in two pages that BOTH carry
+	// every association: X's cursor walk may repeat a row, and a repeat is not a second one.
+	overlapPromotedTweetPages bool
 
 	posts       map[string]int
 	nextID      int
@@ -95,6 +98,14 @@ func (f *fakeX) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if pt["line_item_id"] == q.Get("line_item_ids") {
 				out = append(out, pt)
 			}
+		}
+		if f.overlapPromotedTweetPages && q.Get("cursor") == "" {
+			if out == nil {
+				out = []map[string]any{}
+			}
+			b, _ := json.Marshal(map[string]any{"data": out, "next_cursor": "p2"})
+			_, _ = w.Write(b)
+			return
 		}
 		writeList(w, out)
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/promotable_users"):
@@ -395,11 +406,14 @@ func TestFindByName_DeletedMatchIsNotReused(t *testing.T) {
 // TestListPromotedTweets_FailsClosed covers the read's own refusals.
 func TestListPromotedTweets_FailsClosed(t *testing.T) {
 	cases := map[string]string{
-		"no data field":       `{"next_cursor":null}`,
-		"foreign line item":   `{"data":[{"id":"pt1","line_item_id":"other","tweet_id":"5"}],"next_cursor":null}`,
-		"no id":               `{"data":[{"line_item_id":"li1","tweet_id":"5"}],"next_cursor":null}`,
-		"bad tweet id":        `{"data":[{"id":"pt1","line_item_id":"li1","tweet_id":"x5"}],"next_cursor":null}`,
-		"full page no cursor": `{"data":[` + strings.TrimSuffix(strings.Repeat(`{"id":"pt1","line_item_id":"li1","tweet_id":"5"},`, promotedTweetsPageSize), ",") + `]}`,
+		"no data field":     `{"next_cursor":null}`,
+		"foreign line item": `{"data":[{"id":"pt1","line_item_id":"other","tweet_id":"5"}],"next_cursor":null}`,
+		"no id":             `{"data":[{"line_item_id":"li1","tweet_id":"5"}],"next_cursor":null}`,
+		"bad tweet id":      `{"data":[{"id":"pt1","line_item_id":"li1","tweet_id":"x5"}],"next_cursor":null}`,
+		// encoding/json would read the trailing empty array: "no associations" (PR #358 review).
+		"duplicated data key":         `{"data":[{"id":"pt1","line_item_id":"li1","tweet_id":"5"}],"data":[],"next_cursor":null}`,
+		"one association, two tweets": `{"data":[{"id":"pt1","line_item_id":"li1","tweet_id":"5"},{"id":"pt1","line_item_id":"li1","tweet_id":"6"}],"next_cursor":null}`,
+		"full page no cursor":         `{"data":[` + strings.TrimSuffix(strings.Repeat(`{"id":"pt1","line_item_id":"li1","tweet_id":"5"},`, promotedTweetsPageSize), ",") + `]}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -424,6 +438,43 @@ func TestListPromotedTweets_FailsClosed(t *testing.T) {
 			t.Fatalf("want no refs, got %v %v", refs, err)
 		}
 	})
+}
+
+// TestCreateCampaign_RepeatedAssociationAcrossPagesIsReused: X's cursor walk returning the same
+// association on two pages is ONE association (PR #358 review), so both retry paths — the
+// authored-text one and the explicit-TweetID one — reuse it instead of refusing it as ambiguous.
+func TestCreateCampaign_RepeatedAssociationAcrossPagesIsReused(t *testing.T) {
+	for name, tweetID := range map[string]string{"authored text": "", "explicit tweet": "1234567890"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeX()
+			f.failPromotedTweetOnce = true
+			c := newFakeXClient(t, f)
+			in := baseAuthorInput("Join us at KubeCon")
+			if tweetID != "" {
+				in = baseAuthorInput("")
+				in.TweetID = tweetID
+			}
+			if _, err := c.CreateCampaign(context.Background(), in); err != nil {
+				t.Fatalf("first attempt: %v", err)
+			}
+			f.mu.Lock()
+			f.overlapPromotedTweetPages = true
+			f.mu.Unlock()
+			second, err := c.CreateCampaign(context.Background(), in)
+			if err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+			if got := f.postCount("promoted_tweet"); got != 1 {
+				t.Errorf("promoted_tweets POSTs = %d, want 1", got)
+			}
+			if got := f.postCount("tweet"); tweetID == "" && got != 1 {
+				t.Errorf("tweet POSTs = %d, want 1", got)
+			}
+			if second.PromotedTweetID != f.promotedTweetID(0) || second.PromotedTweetWarning != "" {
+				t.Errorf("retry promoted = %q warning %q, want the one existing association and no warning", second.PromotedTweetID, second.PromotedTweetWarning)
+			}
+		})
+	}
 }
 
 // TestFindByName_TwinOnLaterPageRefuses pins the read-every-page rule: a same-named twin on

@@ -1423,7 +1423,11 @@ with no usable cursor or at `maxListPages`; with the server-side `q=` filter tha
 `listPromotedTweets` (`promoted_tweet_lookup.go`) reads `GET promoted_tweets?line_item_ids=
 <id>&with_deleted=false&count=200` and fails closed exactly as `findByName` does (no data
 field, a full page with no usable cursor, a repeated cursor, the page cap), plus on any element
-whose `line_item_id` is not this line item or whose id / `tweet_id` has the wrong shape. It runs
+whose `line_item_id` is not this line item or whose id / `tweet_id` has the wrong shape. Each
+page's raw body must also pass `identityjson` first (a duplicated `data` key would otherwise be
+read last-wins, so a trailing `[]` meant "none" and licensed a second tweet), and associations
+are counted by id: the same id repeated across or within pages is one association, while the
+same id naming two different tweets is refused (PR #358 review). It runs
 ONLY when the line item was reused — a line item created moments ago cannot hold one — so a
 first create is unchanged. What Step 4 does with the answer:
 
