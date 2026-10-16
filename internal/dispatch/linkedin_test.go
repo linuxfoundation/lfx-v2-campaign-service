@@ -19,6 +19,7 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/linkedin"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
@@ -217,12 +218,11 @@ func TestLinkedIn_VerifyAccountOrg(t *testing.T) {
 	// safe because the platform error's chain stops HERE. A *url.Error inside it renders the
 	// full discovery request URL, pagination cursor included.
 	t.Run("an inconclusive walk becomes the domain sentinel and carries no request url", func(t *testing.T) {
-		// A closed server: the dial fails, which is the real inconclusive case and the one
+		// A refused dial: the request fails, which is the real inconclusive case and the one
 		// whose error carries the URL.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-		closedURL := srv.URL
-		srv.Close()
-		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{}, linkedin.WithBaseURL(closedURL))
+		closedURL := platformtest.RefusedURL
+		d := NewLinkedInDispatcher(fakeConnReader{conn: activeLinkedInConn(goodLinkedInCreds)}, identityEncryptor{},
+			linkedin.WithBaseURL(closedURL), linkedin.WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)}))
 		err := d.VerifyAccountOrg(context.Background(), "cncf", model.ProviderLinkedInAds)
 		if err == nil {
 			t.Fatal("VerifyAccountOrg: want an error when ad-account discovery cannot be reached")

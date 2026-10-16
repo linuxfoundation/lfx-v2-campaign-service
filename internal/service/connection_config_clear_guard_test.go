@@ -75,7 +75,7 @@ func clearGuardProviders() []clearGuardProvider {
 			update: func(s *ConnectionService, sent map[string]*string, ifMatch string) error {
 				_, err := s.UpdateMicrosoftAds(ctx, &conn.UpdateMicrosoftAdsPayload{
 					ProjectID: "cncf", IfMatch: &ifMatch,
-					Config: &conn.MicrosoftAdsConnectionConfig{AccountID: "1234567", CustomerID: sent["customer_id"]},
+					Config: &conn.MicrosoftAdsConnectionConfig{AccountID: strPtr("1234567"), CustomerID: sent["customer_id"]},
 				})
 				return err
 			},

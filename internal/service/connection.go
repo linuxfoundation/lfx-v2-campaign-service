@@ -1623,7 +1623,7 @@ func (s *ConnectionService) CreateMicrosoftAds(ctx context.Context, p *conn.Crea
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderMicrosoftAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"customer_id": strVal(cfg.CustomerID),
 		},
@@ -1650,7 +1650,7 @@ func (s *ConnectionService) UpdateMicrosoftAds(ctx context.Context, p *conn.Upda
 		ProjectID: p.ProjectID,
 		Provider:  model.ProviderMicrosoftAds,
 		Label:     strVal(cfg.Label),
-		AccountID: cfg.AccountID,
+		AccountID: strVal(cfg.AccountID),
 		ProviderConfig: map[string]string{
 			"customer_id": strVal(cfg.CustomerID),
 		},

@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/identityjson"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/textfold"
 )
 
@@ -432,6 +433,8 @@ type msKeywordRead struct {
 // Microsoft documents "If no keywords exist, an empty array is returned", so absence (or null)
 // is a body that never answered the question — and reading it as "no keywords" would refuse
 // every action as foreign, while reading a malformed entry leniently could admit one that is not.
+// A body identityjson refuses (a duplicated key, malformed UTF-8, an unpaired surrogate escape) is
+// an error for the same reason.
 func (c *Client) GetAdGroupKeywords(ctx context.Context, adGroupID string) ([]AdGroupKeyword, error) {
 	if !canonicalPositiveID(adGroupID) {
 		return nil, fmt.Errorf("microsoft-ads: ad group id %q is not a numeric id", truncate(adGroupID, maxErrorBodyChars))
@@ -439,6 +442,12 @@ func (c *Client) GetAdGroupKeywords(ctx context.Context, adGroupID string) ([]Ad
 	body, err := c.doRequest(ctx, http.MethodPost, "Keywords/QueryByAdGroupId", queryKeywordsByAdGroupRequest{AdGroupId: json.Number(adGroupID)}, true)
 	if err != nil {
 		return nil, err
+	}
+	// The raw body, before any decode: a duplicated Keywords, Id or Status would resolve
+	// last-wins, and the ownership check would admit or refuse on one of two answers. Same guard
+	// as the campaign lookup and settings reads.
+	if cerr := identityjson.Check(body); cerr != nil {
+		return nil, fmt.Errorf("microsoft-ads: the keywords read for ad group %s: %w", adGroupID, cerr)
 	}
 	var probe map[string]json.RawMessage
 	if uerr := json.Unmarshal(body, &probe); uerr != nil {

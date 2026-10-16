@@ -2204,6 +2204,16 @@ written on either. See
 [Meta Ad-Set Monitor and Pause/Resume](../architecture/meta-ad-sets.md).
 Tests: `meta_ad_sets_test.go`, `meta_ad_set_pause_test.go`.
 
+## Meta ads under an ad set (`meta_ads.go`, decision D7 first step)
+
+`MetaDispatcher` implements `service.MetaAdReader` (`ReadMetaAds`), read-only. Window, `ad_set_id`
+(`ErrMetaAdSetInvalid`) and the stored campaign id (`ErrStoredPlatformIDInvalid`) are checked before
+any credential work; then `metaAdSetScope`; then `GetAdSetState` must report the row's campaign
+under the connection's account (`ErrMetaAdSetNotInCampaign`, 409, nothing else read); then
+`meta.Client.ListAdSetAds`, whose `ErrAdAccountMismatch` maps to
+`ErrCampaignUpstreamIdentityMismatch`. `ReadAt` comes from the `settingsNow` clock. See
+[Meta Ad Read Under an Ad Set](../architecture/meta-ads.md). Tests: `meta_ads_test.go`.
+
 `noOwnConnection` (`creds.go`) now wraps `domain.ErrConnectionAbsent` alongside `ErrNotFound`, so
 a caller can answer "no connection" precisely; every existing `ErrNotFound` match is unaffected.
 
@@ -2801,7 +2811,11 @@ sentinel, so no grep or reflection separates LinkedIn (tagged in a resolver `Dis
 from X (whose `Dispatch` calls the validator itself). `TestAccountDiscoveryProvidersIsASubsetOfAccountListers`
 therefore pins only the invariant that survives — every member holds the first half — and
 deliberately does not assert equality, because the sets are unequal on purpose and forcing that
-judgement to be relitigated as a test failure is what produced the serial corrections.
+judgement to be relitigated as a test failure is what produced the serial corrections. Since issue
+#181 (which admitted Microsoft) its candidate roster is itself derived: it walks
+`model.AllProviders()` filtered by `IsPaidAds()` and fails when a paid-ads provider has no entry in
+its dispatcher table, so a provider added later cannot be left out of the lister set it checks
+against, and it refuses a non-paid-ads member outright.
 
 **Draft emails are returned, with their state — archived ones are absent.** Same reasoning as Meta's disabled
 accounts: filtering the row the user is looking for answers "your portal has no such email"
@@ -3563,8 +3577,11 @@ render the full discovery request URL, pagination cursor included; `VerifyAccoun
 only layer that knows both the service's contract and this client's types, so doing it here is
 what lets `internal/service` classify the outcome without importing
 `internal/platform/linkedin` at all, exactly as it does for `ErrKeyUnavailable` and
-`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest that
-points the client at a closed server and asserts the result `errors.Is`
+`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest whose
+test transport refuses the discovery dial (`platformtest.RefusedDialTransport` from the shared
+`internal/platform/platformtest` test-support package, a real `http.Transport` that fails the
+connect with `ECONNREFUSED` instead of racing the OS for a closed port, issue #206) and
+asserts the result `errors.Is`
 `domain.ErrOrgVerificationInconclusive`, is NOT `linkedin.ErrOrgVerificationInconclusive`, and
 carries neither the request path nor the base URL in its text.
 

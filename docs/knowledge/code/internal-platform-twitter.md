@@ -1274,13 +1274,19 @@ test that only checked the error would still pass if the request were made and d
 `ListLineItemTargetingCriteria` lists a line item's targeting criteria
 (`targeting_criteria?line_item_ids=…&with_deleted=false&count=1000`, cursor-walked through
 `cursorVerdict` like `findByName`) and is all-or-error: no result set, a criterion without a
-usable id or under another line item, an unusable cursor on a full page, or the page cap is
-`ErrTargetingUnreadable`. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
+usable id or under another line item, an unusable cursor on a full page, the page cap, or a page
+`identityjson.Check` refuses over its RAW bytes (a duplicated key — `id`, `line_item_id`,
+`operator_type`, the envelope's `data` — malformed UTF-8 or an unpaired surrogate escape; every
+page is checked before it is decoded) is `ErrTargetingUnreadable`, never a shorter list, so the
+ownership and last-keyword gates never act on a last-wins reading. `DeleteTargetingCriterion` takes a write-pacer slot (a wait cut short is
 `ErrWriteNotSent`, and so is a request `ProbeNotSent` proves never left the process — a DNS or
 connect-time failure, or a context already done at entry — checked before any API
 classification, so the dispatcher reports `NOT_SENT` rather than `REJECTED`), sends one DELETE with the 429 never retried, maps 404 to
 `ErrTargetingCriterionNotFound`, and accepts a 2xx only when it names the criterion with
-`deleted: true` — anything else is an UNCONFIRMED `transportError`. The create path sets no
+`deleted: true` — anything else, including an echo `identityjson.Check` refuses, is an
+UNCONFIRMED `transportError` (the DELETE was sent, so a refused echo is never a definite
+refusal, and it is not retried). `CreateNegativeKeywordCriterion` (`negative_keywords.go`) treats
+its POST echo the same way: a refused echo is UNCONFIRMED. The create path sets no
 targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
 ## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)

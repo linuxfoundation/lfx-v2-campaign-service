@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/platformtest"
 )
 
 func testCreds() Credentials {
@@ -262,9 +264,10 @@ func TestClient_DoesNotFollowRedirects(t *testing.T) {
 func TestDoRequest_ConnectionRefusedIsPreSendNotUnconfirmed(t *testing.T) {
 	// A connection-refused dial failure is a DEFINITE pre-send error
 	// (isPreSendDialError: dial + ECONNREFUSED) — the request never reached HubSpot, so
-	// even a MUTATING call is NOT UNCONFIRMED (no mutation could have landed). Port 1 on
-	// loopback refuses immediately.
-	c := NewClient(testCreds(), testAccount(), WithBaseURL("http://127.0.0.1:1"), withRetryBaseDelay(0))
+	// even a MUTATING call is NOT UNCONFIRMED (no mutation could have landed). The test
+	// transport refuses every dial to platformtest.RefusedURL.
+	c := NewClient(testCreds(), testAccount(), WithBaseURL(platformtest.RefusedURL), withRetryBaseDelay(0),
+		WithHTTPClient(&http.Client{Transport: platformtest.RefusedDialTransport(t)}))
 	_, err := c.doRequest(context.Background(), http.MethodPost, "/crm/v3/lists", map[string]string{"x": "y"}, false)
 	if err == nil {
 		t.Fatal("expected a connection-refused dial failure to error")
