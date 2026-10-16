@@ -105,6 +105,10 @@ type CustomDraft struct {
 const (
 	customRequestMaxLen = 2000
 	customAnswerMaxLen  = 500
+	// customEditionMaxLen bounds an exact edition name. It is far longer than a
+	// display field's 200: these are compared verbatim with the warehouse's names,
+	// so a cut one could never match.
+	customEditionMaxLen = 500
 	// customPropertyNameMaxLen is a property name's MaxLength in the criteria contract.
 	customPropertyNameMaxLen = 100
 	customMaxAnswers         = 12
@@ -155,7 +159,7 @@ func CustomInterpretPrompt(request string, answers []CustomAnswer, event *Custom
 	if event != nil {
 		lines = append(lines, "BEGIN EVENT",
 			"url: "+blockSafe(event.URL, 500),
-			"name: "+blockSafe(event.Name, 200),
+			"name: "+blockSafe(event.Name, customEditionMaxLen),
 			"brand: "+blockSafe(event.BrandShort, 50),
 			"location: "+blockSafe(event.Location, 200),
 			"dates: "+blockSafe(strings.Join(event.Dates, ", "), 100),
@@ -246,6 +250,21 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 		return out
 	}
 	values := func(in []string) []string { return capped(in, customMaxValues) }
+	// editions keeps exact edition names whole (up to customEditionMaxLen): they are
+	// compared verbatim with the warehouse's, so the display cut would drop them.
+	editions := func(in []string) []string {
+		out := make([]string, 0, len(in))
+		for _, v := range in {
+			if v = blockSafe(v, customEditionMaxLen); v != "" {
+				out = append(out, v)
+			}
+		}
+		out = cleanValues(out)
+		if len(out) > customMaxValues {
+			out = out[:customMaxValues]
+		}
+		return out
+	}
 
 	c := w.Criteria
 	d := &CustomDraft{
@@ -259,7 +278,7 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 			Ambassadors:       c.Ambassadors,
 			EducationTopics:   values(c.EducationTopics),
 			PageViewURLs:      capped(c.PageViewURLs, CustomMaxPageViewURLs),
-			RegisteredFor:     values(c.RegisteredFor),
+			RegisteredFor:     editions(c.RegisteredFor),
 			Label:             field(c.Label),
 		},
 		BrandShort:          field(c.BrandShort),
@@ -288,7 +307,7 @@ func ParseCustomDraft(raw string) (*CustomDraft, error) {
 		default:
 			scope = SpeakerScopeCurrentPast
 		}
-		d.Criteria.Speakers = &CustomSpeakers{Scope: scope, EventNames: values(s.EventNames)}
+		d.Criteria.Speakers = &CustomSpeakers{Scope: scope, EventNames: editions(s.EventNames)}
 	}
 
 	for _, q := range w.Questions {

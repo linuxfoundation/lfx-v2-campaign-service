@@ -159,3 +159,7 @@
 - **A label filled from the page title is cut to the limit** (Greptile). It was set after the
   parser's length checks, so a long or year-extended title failed preview; `FitLabel` cuts it to
   `CustomLabelMaxLen` (200 runes).
+- **Exact edition names stay whole** (Greptile). The prompt and the parser cut every value to a
+  display field's 200 characters, so a long edition name could never match its warehouse name and
+  was dropped. Edition names (`registered_for`, `speakers.event_names`, the prompt's event name) now
+  keep up to `customEditionMaxLen` (500).

@@ -853,3 +853,24 @@ func TestInterpretCustom_ALongPageTitleIsCutToTheLabelLimit(t *testing.T) {
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len([]rune(out.Draft.Criteria.Label)), audience.CustomLabelMaxLen, "the year pushed the title past the limit")
 }
+
+// An edition name longer than a display field survives the prompt and the parser
+// whole, so the model copying it back still matches the known edition.
+func TestInterpretCustom_ALongEditionNameStaysWhole(t *testing.T) {
+	title := strings.Repeat("Synthetic ", 22) + "Summit"
+	edition := title + " 2026"
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":["Seoul"],"countries":[],"contact_location":true,"event_registered":true,"education_enrolled":false,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":[],"page_view_urls":[],"registered_for":["` + edition + `"],"label":""},"questions":[],"notes":[]}`,
+	}}
+	x := NewAudienceExplorer(NewAudienceBuilder(&scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}, identityEncryptor{}, &recordingResolver{events: []snowflake.Event{{EventName: title + " 2025"}}}, hubspot.WithBaseURL(srv.URL)),
+		&stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: title, StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	require.Greater(t, len([]rune(edition)), 200)
+	assert.Equal(t, []string{edition}, out.Draft.Criteria.RegisteredFor, "the long edition name is kept whole and known")
+}
