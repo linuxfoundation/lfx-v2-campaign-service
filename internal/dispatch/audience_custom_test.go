@@ -816,3 +816,22 @@ func TestInterpretCustom_ASpeakersOnlyAudienceGetsNoPastEditions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a speakers-only audience is not narrowed to past registrants")
 }
+
+// A topic-only education audience has no location, so it is not regional: past
+// editions would add registrants who never enrolled.
+func TestInterpretCustom_ATopicOnlyEducationAudienceGetsNoPastEditions(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	llm := &seqLLM{replies: []string{
+		`{"eventName":"","brandShort":"SYN","eventDates":[]}`,
+		`{"criteria":{"cities":[],"countries":[],"contact_location":false,"event_registered":false,"education_enrolled":true,"gate_event_history":false,"brand_short":"","property_filters":[],"speakers":null,"ambassadors":false,"education_topics":["Synthetics"],"page_view_urls":[],"registered_for":[],"label":""},"questions":[],"notes":[]}`,
+	}}
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, &recordingResolver{events: []snowflake.Event{{EventName: "Synthetic Summit 2025"}}}, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("<html/>")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit", StartDate: "2026-03-02"}}, llm)
+
+	out, err := x.InterpretCustom(context.Background(), "proj-1", "", "https://events.example.org/synthetic-summit", nil)
+	require.NoError(t, err)
+	assert.Empty(t, out.Draft.Criteria.RegisteredFor, "a topic-only education audience is not widened with past registrants")
+}

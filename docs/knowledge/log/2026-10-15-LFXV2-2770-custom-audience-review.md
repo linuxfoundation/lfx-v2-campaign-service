@@ -153,3 +153,6 @@
 - **Discovery resolves the fallback brand before classifying** (Copilot). It was inferred after
   every list was classified, so a brand-scoped education list stayed uncertain and education was
   reported missing.
+- **The edition default needs a location** (Greptile). A topic-only education audience counted as
+  regional, so past registrants who never enrolled were OR'd in. "Regional" now means a draft with
+  cities or countries.
