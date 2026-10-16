@@ -3577,8 +3577,11 @@ render the full discovery request URL, pagination cursor included; `VerifyAccoun
 only layer that knows both the service's contract and this client's types, so doing it here is
 what lets `internal/service` classify the outcome without importing
 `internal/platform/linkedin` at all, exactly as it does for `ErrKeyUnavailable` and
-`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest that
-points the client at a closed server and asserts the result `errors.Is`
+`ErrConnectionNotUsable`. `TestLinkedIn_VerifyAccountOrg` pins both halves with a subtest whose
+test transport refuses the discovery dial (`platformtest.RefusedDialTransport` from the shared
+`internal/platform/platformtest` test-support package, a real `http.Transport` that fails the
+connect with `ECONNREFUSED` instead of racing the OS for a closed port, issue #206) and
+asserts the result `errors.Is`
 `domain.ErrOrgVerificationInconclusive`, is NOT `linkedin.ErrOrgVerificationInconclusive`, and
 carries neither the request path nor the base URL in its text.
 
