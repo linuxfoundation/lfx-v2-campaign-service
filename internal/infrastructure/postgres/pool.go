@@ -669,7 +669,8 @@ func RequiredIndexIsOptional(name string) bool {
 }
 
 // LatestMigrationVersion returns the highest migration version embedded in this image — the
-// boundary above which Migrate treats a clean recorded version as a newer release's schema.
+// version whose successor (latest+1) is the only newer schema Migrate trusts without running
+// Up(); a clean recorded version further ahead is refused through Up().
 // Exported so the dbtest rollback test can record a version just past it rather than a
 // hard-coded number that the next migration would silently turn into an embedded one.
 func LatestMigrationVersion() (uint, error) {

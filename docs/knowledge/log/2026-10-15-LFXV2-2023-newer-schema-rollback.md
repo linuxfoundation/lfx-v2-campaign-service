@@ -6,12 +6,13 @@ advances `schema_migrations.version` past every migration this image embeds, and
 v4.19.1's `Up()` returns "no migration found for version N" for a recorded version its source does
 not contain — so `Migrate` failed before the index checks ran and startup closed the pool. The
 earlier live test dropped the index without advancing the version, so it never reached that path.
-`Migrate` now reads the recorded version first (`schemaIsNewerThanImage`): CLEAN and above the
-highest embedded version (read from the migration source; exported as `LatestMigrationVersion`)
-skips `Up()`, leaves the version untouched, logs a warning, and still runs `checkNoInvalidIndexes`.
-A DIRTY newer schema and every other state go through `Up()` unchanged. The tolerance is not bounded
-to known-compatible versions — the codebase has no such marker — and rests on expand/contract (a
-release stays compatible with the next release's schema), documented in code and below. New live
+`Migrate` now reads the recorded version first (`schemaIsNewerThanImage`): CLEAN and exactly one
+past the highest embedded version (read from the migration source; exported as
+`LatestMigrationVersion`) skips `Up()`, leaves the version untouched, logs a warning, and still runs
+`checkNoInvalidIndexes`. A DIRTY newer schema, a clean one two or more versions ahead, and every
+other state go through `Up()` unchanged, so a jump further ahead is refused. The one-hop tolerance
+rests on expand/contract (a release stays compatible with the next release's schema), documented in
+code and below; [the one-hop entry](2026-10-15-LFXV2-2023-newer-schema-one-hop.md) records the bound. New live
 test `TestMigrateStartsOnACleanSchemaNewerThanThisImage` (normal path; latest+1 clean with the legacy
 index dropped → boot succeeds, version unchanged; dirty → `ErrDirty`; slot-version index dropped →
 `ErrMissingRequiredIndex`); forcing the check off reproduces the reported "no migration found for
