@@ -257,3 +257,11 @@ sweep after review pagination hid them:
 - **The API contract no longer promises a missing banner** (Copilot, review body). The `warnings`
   description in `design/brief.go` and the API catalog now say the requested hero could not be added
   and the banner needs checking, matching the operator warning.
+- **Registration branches are positive evidence wherever they sit** (Greptile, Copilot).
+  All-or-nothing edition evidence dropped an explicit "registered for KubeCon 2026" branch from a
+  mixed list, so check 4 passed on a neutral name. `RegistrationEvidence` now collects every exact
+  completed-registration branch's editions as evidence, less any suppressed whole, and sets the name
+  aside only when those branches are the list's whole membership.
+- **An inline suppression that empties a registration-only audience earns no credit** (Copilot).
+  When every edition of an exclusive registration audience is in the verified suppressions'
+  `CoveredEditions`, the send has no recipients, and the set's credit is withheld.

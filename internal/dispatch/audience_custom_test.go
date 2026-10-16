@@ -1289,3 +1289,51 @@ func TestRunQA_EditionsReplaceTheNameOnlyWhenEveryPathIsARegistration(t *testing
 		})
 	}
 }
+
+// A registration branch is positive evidence wherever it sits: a mixed list that
+// explicitly includes this edition's registrants fails check 4 even when its name is
+// neutral. And an audience made only of a registration predicate is empty when a
+// suppression with the same predicate excludes it, so that suppression earns no credit.
+func TestRunQA_MixedListsAndInlineEmptyAudience(t *testing.T) {
+	ue := `{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+		`{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["KubeCon 2026"]}}]}`
+	regPath := `{"filterBranchType":"AND","filters":[],"filterBranches":[` + ue + `]}`
+	membership := `{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":905}]}`
+	location := `{"filterBranchType":"AND","filterBranches":[],"filters":[{"filterType":"PROPERTY","property":"city","operation":{"operationType":"MULTISTRING","operator":"IS_EQUAL_TO","values":["Seoul"]}},{"filterType":"IN_LIST","operator":"IN_LIST","listId":26716}]}`
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	for name, tc := range map[string]struct {
+		listName, tree string
+	}{
+		"registration OR a membership list": {listName: "26Q4 - Seoul Registration Push", tree: or(regPath, membership)},
+		"location OR registered_for":        {listName: "26Q4 - Seoul - Mailable Contacts - KubeCon 2026", tree: or(location, regPath)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			portal := seoulPortal()
+			portal.lists[tc.listName] = "500"
+			portal.lists["26Q4 - Imported Contacts"] = "905"
+			portal.branches = map[string]string{"500": tc.tree}
+			srv := portal.serve(t)
+			defer srv.Close()
+
+			out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, nil)
+			require.NoError(t, err)
+			assert.Equal(t, audience.VerdictFail, out.Checks.CurrentRegistrants.Verdict, "the explicit 2026 registration branch is included")
+		})
+	}
+
+	t.Run("an inline suppression emptying the audience", func(t *testing.T) {
+		portal := seoulPortal()
+		portal.lists["26Q4 - KubeCon Registrants"] = "500"
+		portal.lists["26Q4 - Combined Suppression"] = "700"
+		portal.branches = map[string]string{"500": or(regPath), "700": or(regPath)}
+		srv := portal.serve(t)
+		defer srv.Close()
+
+		out, err := explorerOver(srv, nil).RunQA(context.Background(), "proj-1", "500", "KubeCon 2026", false, false, []string{"700"})
+		require.NoError(t, err)
+		assert.Zero(t, out.Checks.ExclusionCompleteness.SendTimeCount, "a suppression leaving no recipients is no suppression")
+		assert.NotEqual(t, audience.VerdictPass, out.Checks.ExclusionCompleteness.Verdict)
+	})
+}

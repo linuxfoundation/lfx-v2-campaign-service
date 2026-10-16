@@ -1892,7 +1892,16 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		for id := range sentAway {
 			union = append(union, id)
 		}
-		if audience.TreeCoveredBy(list.FilterBranch, union) {
+		// An audience made only of exact registrations is empty, too, when the verified
+		// suppressions' inline predicates exclude every one of its editions.
+		editions, exclusive := audience.RegistrationEvidence(list.FilterBranch)
+		allEditionsAway := exclusive && len(editions) > 0
+		for _, e := range editions {
+			if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+				allEditionsAway = false
+			}
+		}
+		if audience.TreeCoveredBy(list.FilterBranch, union) || allEditionsAway {
 			sendTimeIDs = sendTimeIDs[:0]
 			sentAway = map[string]bool{}
 			editionsAway = map[string]bool{}
@@ -1913,17 +1922,23 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 	// the evidence, not its display name: "26Q4 - KubeCon 2026 - Event Registration" built
 	// for registered_for ["KubeCon 2025"] holds only 2025's registrants. The name is the
 	// fallback for a static or otherwise opaque list.
-	if editions := audience.RegisteredEditions(list.FilterBranch); len(editions) > 0 {
+	// Every edition a registration branch explicitly includes is evidence, less any a
+	// verified suppression excludes whole; the display name is evidence too unless those
+	// branches are the list's whole membership.
+	addEvidence := func(raw json.RawMessage, name string) {
+		editions, exclusive := audience.RegistrationEvidence(raw)
 		for _, e := range editions {
-			// An edition a verified suppression excludes whole is not sent to.
-			if editionsAway[strings.ToLower(strings.TrimSpace(e))] {
-				continue
+			if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+				inclusionNames = append(inclusionNames, e+" Registrants")
 			}
-			inclusionNames = append(inclusionNames, e+" Registrants")
 		}
-	} else if name := strings.TrimSpace(list.Name); name != "" {
-		inclusionNames = append(inclusionNames, name)
+		if !exclusive {
+			if name = strings.TrimSpace(name); name != "" {
+				inclusionNames = append(inclusionNames, name)
+			}
+		}
 	}
+	addEvidence(list.FilterBranch, list.Name)
 	// A list the send itself suppresses (sentAway, verified above) is not sent to: this
 	// edition's registrants included as "A OR B" and excluded at send time leave only B.
 	// A flattened NOT_IN_LIST reference may be local to one branch, so it is no proof
@@ -1932,19 +1947,11 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		if sentAway[id] {
 			continue
 		}
-		// A referenced registration list whose own predicates name exact editions is
-		// judged by those editions, less any a verified suppression excludes whole, so
-		// an inline "registered for 2026" suppression clears a 2026 registrants list.
-		// Without such predicates its name is the evidence, as before.
+		// A referenced list is judged the same way: its registration branches' editions
+		// (less any suppressed whole), and its name unless they are its whole membership.
 		if ref, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr == nil && ref != nil {
-			if editions := audience.RegisteredEditions(ref.FilterBranch); len(editions) > 0 {
-				for _, e := range editions {
-					if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
-						inclusionNames = append(inclusionNames, e+" Registrants")
-					}
-				}
-				continue
-			}
+			addEvidence(ref.FilterBranch, nameByID[id])
+			continue
 		}
 		if name := nameByID[id]; name != "" {
 			inclusionNames = append(inclusionNames, name)

@@ -161,43 +161,50 @@ func PickNameMatches(ref string, hits []ListCandidate) (chosen *ListCandidate, a
 	}
 }
 
-// RegisteredEditions are the exact edition names a list's registration predicates
-// select, read from its filter tree, or nil when they do not name every one. They say
-// which editions' registrants the list holds better than its display name does: a
-// list named for "KubeCon 2026" can select only 2025's registrants.
+// RegistrationEvidence reads a list's filter tree for the editions whose
+// registrants it explicitly includes: every completed-registration branch with an
+// exact event_name equality is POSITIVE evidence for its editions, wherever it sits
+// ("Seoul location OR registered for KubeCon 2026" includes 2026's registrants).
+// Negated, negative-comparison or substring branches add nothing: they name no edition
+// the list provably includes.
 //
-// Only provably EXACT, POSITIVE editions on EVERY registration path count: each
-// registration event branch must be "has completed" with an exact equality on
-// event_name. A path without that constraint (unrestricted registration, a negated
-// branch, a negative or substring comparison) can include any edition's registrants,
-// so the result is nil and the caller keeps the name-based check.
-func RegisteredEditions(raw json.RawMessage) []string {
+// exclusive says those editions are the WHOLE membership: every path runs through an
+// exact completed-registration branch, and no registration branch is inexact. Only
+// then may a caller set the list's display name aside as evidence; otherwise an
+// unrestricted or membership branch can hold any edition's registrants, and the name
+// stays in play beside the editions.
+func RegistrationEvidence(raw json.RawMessage) (editions []string, exclusive bool) {
 	var root qaBranch
 	if len(raw) == 0 || json.Unmarshal(raw, &root) != nil {
-		return nil
+		return nil, false
 	}
-	var out []string
+	allExact := true
 	sawRegistration := false
-	ok := true
 	root.walk(func(b qaBranch) {
 		if !strings.EqualFold(b.FilterBranchType, "UNIFIED_EVENTS") || b.EventTypeID != registrationEventTypeID {
 			return
 		}
 		sawRegistration = true
-		editions, exact := b.exactEditions()
+		found, exact := b.exactEditions()
 		if !exact {
-			ok = false
+			allExact = false
 			return
 		}
-		out = append(out, editions...)
+		editions = append(editions, found...)
 	})
-	// And EVERY path must run through such a branch: an OR alternative that is a list
-	// membership or any other condition ("2025 registrants OR an imported list") can
-	// hold any edition's registrants, so the editions alone are not the evidence.
-	if !ok || !sawRegistration || !root.everyPathRegistered() {
+	editions = UniqueIDs(editions)
+	exclusive = sawRegistration && allExact && len(editions) > 0 && root.everyPathRegistered()
+	return editions, exclusive
+}
+
+// RegisteredEditions are the editions a list's tree selects when they are its WHOLE
+// membership (RegistrationEvidence's exclusive case), or nil otherwise.
+func RegisteredEditions(raw json.RawMessage) []string {
+	editions, exclusive := RegistrationEvidence(raw)
+	if !exclusive {
 		return nil
 	}
-	return UniqueIDs(out)
+	return editions
 }
 
 // CoveredEditions are the editions whose registrants a list's tree includes whole: a
