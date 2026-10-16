@@ -73,3 +73,36 @@ type MetaAdSetStatusResult struct {
 	// PreviousStatus is the configured status the pre-write read observed.
 	PreviousStatus string
 }
+
+// MetaAd is one ad under a Meta ad set, read live (decision D7 first step, list-meta-ads). It is
+// never persisted.
+type MetaAd struct {
+	ID string
+	// Listed is false for an ad that delivered in the window but that the ad listing did not
+	// return (deleted or archived upstream since, or beyond the listing cap when Truncated): only
+	// its counters are known.
+	Listed          bool
+	Name            *string
+	Status          *string
+	EffectiveStatus *string
+	CreativeID      *string
+	CreativeName    *string
+	Impressions     int64
+	Clicks          int64
+	// CostMicros is spend over the window in micros of MetaAds.Currency.
+	CostMicros int64
+	Ctr        float64
+}
+
+// MetaAds is the ad read for one ad set of one campaign.
+type MetaAds struct {
+	CampaignID         string
+	PlatformCampaignID string
+	AdSetID            string
+	Window             MetricsWindow
+	Currency           string
+	ReadAt             time.Time
+	// Truncated is true when the ad listing hit its page cap: Ads is not every ad of the ad set.
+	Truncated bool
+	Ads       []MetaAd
+}

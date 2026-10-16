@@ -215,6 +215,9 @@ func TestResolverIdentity_Meta(t *testing.T) {
 		{"ToggleMetaAdSetStatus", idExisting, func(r connReader, c *model.Campaign) {
 			_, _ = d(r).ToggleMetaAdSetStatus(riCtx, resolverIdentityProject, p, c, "2002", "PAUSED", nil)
 		}},
+		{"ReadMetaAds", idExisting, func(r connReader, c *model.Campaign) {
+			_, _ = d(r).ReadMetaAds(riCtx, resolverIdentityProject, p, c, "2002", model.MetricsWindowLast7Days)
+		}},
 		// Not campaign-scoped: it reads across the project's campaigns, so there is no single
 		// recorded account to bind, and it deliberately resolves with none.
 		{"ReadMetaAudienceInsights", idFallback, func(r connReader, _ *model.Campaign) {
