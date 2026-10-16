@@ -285,3 +285,21 @@ func TestReddit_AddNegativeKeywords_MixedBatchKeepsAlreadyPresentWhenTheWriteFai
 		})
 	}
 }
+
+// The excluded-keywords append writes the whole targeting back from the same read, so a body
+// identityjson refuses is a definite read failure and NO PATCH is sent. The last-wins reading is
+// the clean body the revision came from: without the guard the write would go out.
+func TestReddit_AddNegativeKeywords_UntrustworthyReadWritesNothing(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	clean := redditExcludedBody(`["jobs"]`)
+	rev := redditRevisionOf(t, clean)
+	body := strings.Replace(clean, `"excluded_keywords":`, `"excluded_keywords":["other"],"excluded_keywords":`, 1)
+	s := newRedditKWTStub(t, kwtReply{http.StatusOK, `{}`}, kwtReply{http.StatusOK, body})
+	_, err := addRedditNegatives(s, redditBudgetCampaign(), rev, broad("free"))
+	if !errors.Is(err, domain.ErrKeywordTargetingUnaddressable) {
+		t.Fatalf("want an unreadable-targeting refusal, got %v", err)
+	}
+	if n := len(s.patches()); n != 0 {
+		t.Fatalf("an untrustworthy read issued %d PATCH(es)", n)
+	}
+}
