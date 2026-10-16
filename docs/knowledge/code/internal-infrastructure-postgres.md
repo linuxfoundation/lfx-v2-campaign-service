@@ -308,7 +308,20 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   max CPC bid most recently set through `update-campaign-bid` — a confirmed REQUEST, like
   `budget_amount`, never an observation. It is in `campaignCols`/`scanCampaign` (cast
   `::float8`) and in `replaceCampaignQuery`'s SET list (every other caller writes back the value
-  it loaded); the dispatch upsert never writes it, so a re-dispatch cannot erase the record.
+  it loaded). Since LFXV2-2665 the dispatch upsert writes the create's starting manual bid, but
+  FILLS ONLY WHILE EMPTY (`COALESCE(campaigns.max_cpc_bid, EXCLUDED.max_cpc_bid)`), so a bid the
+  lever set is never overwritten and a NULL never erases one.
+
+  `bidding_strategy` (added by `000047`, `TEXT`, nullable, `CHECK IN ('automatic','manual')`)
+  records the create path's bidding choice (LFXV2-2665); NULL means not recorded (legacy or
+  adopted). Same treatment: in `campaignCols`/`scanCampaign`, round-tripped by
+  `replaceCampaignQuery`, and filled-only-while-empty by the upsert. Pinned by
+  `TestUpsertCampaignFillsBiddingOnlyWhileEmpty` and live by
+  `TestLiveCampaignBiddingStrategyRoundTrips`. `000047` sits above `000043`–`000046`, claimed by
+  #328 (`fix/LFXV2-2665-adoption-binding-indexes`, now merged); 000047 MUST apply after them.
+  `TestMigration000047_RequiresItsPredecessorsEmbedded` (`migration_order_test.go`) fails if the
+  embedded migrations ever carry 000047 without 000043–000046; the temporary `allowedVersionGaps`
+  entry was removed once #328 merged.
 
   **Authoring rule — expand/contract, one release apart.** The general form of the
   constraint `000013`/`000014` had to break: *a migration that removes or narrows something

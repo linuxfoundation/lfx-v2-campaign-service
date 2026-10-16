@@ -587,11 +587,17 @@ func TestCreateCampaign_HappyPath(t *testing.T) {
 		t.Errorf("daily-budget campaign must not send totalBudget")
 	}
 
-	// costType CPC, not CPM: the objective is WEBSITE_CONVERSION, so the budget
-	// buys clicks. Flipping this to CPM silently changes what the money buys and
-	// nothing else in the payload would contradict it.
-	if campaignBody["costType"] != "CPC" {
-		t.Errorf("campaign costType: want CPC, got %v", campaignBody["costType"])
+	// Bidding (LFXV2-2665): no ManualCPCBid is AUTOMATIC — objectiveType WEBSITE_VISIT,
+	// optimizationTargetType MAX_CLICK, costType CPM, no unitCost (decision 2026-10-13: automatic
+	// LinkedIn campaigns optimise for clicks, since MAX_CONVERSION needs a conversion association).
+	// Before LFXV2-2665 this body sent WEBSITE_CONVERSION, costType CPC and NO
+	// optimizationTargetType — manual at unitCost 0, under which "the campaign does not deliver".
+	if campaignBody["objectiveType"] != "WEBSITE_VISIT" || campaignBody["optimizationTargetType"] != "MAX_CLICK" || campaignBody["costType"] != "CPM" {
+		t.Errorf("campaign objectiveType/optimizationTargetType/costType = %v/%v/%v, want WEBSITE_VISIT/MAX_CLICK/CPM",
+			campaignBody["objectiveType"], campaignBody["optimizationTargetType"], campaignBody["costType"])
+	}
+	if _, has := campaignBody["unitCost"]; has {
+		t.Errorf("an automatic campaign must not send unitCost: %v", campaignBody["unitCost"])
 	}
 
 	// offsiteDeliveryEnabled must stay false. true opts the campaign into the

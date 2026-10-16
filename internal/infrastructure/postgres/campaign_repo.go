@@ -495,7 +495,7 @@ func (r *CampaignRepo) ClearDispatchClaim(ctx context.Context, briefID string, p
 
 const campaignCols = `id::text, project_id::text, brief_id::text, job_id::text, platform, variant, slot_version, platform_campaign_id, campaign_name,
 	status, budget_amount, budget_type, start_date, end_date, config_snapshot, result, version,
-	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8`
+	created_by, updated_by, ran_on_system_account, created_at, updated_at, max_cpc_bid::float8, bidding_strategy`
 
 // getCampaignQuery and getCampaignByPlatformQuery both exclude soft-deleted rows;
 // pinned by TestCampaignRepo_ReadsExcludeSoftDeleted.
@@ -786,14 +786,22 @@ func (r *CampaignRepo) getCampaignBySlot(ctx context.Context, projectID, briefID
 const upsertCampaignQuery = `INSERT INTO campaigns
 	(project_id, brief_id, job_id, platform, variant, platform_campaign_id, campaign_name, status,
 	 budget_amount, budget_type, start_date, end_date, config_snapshot, result, created_by, updated_by,
-	 ran_on_system_account, slot_version)
-	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18)
+	 ran_on_system_account, slot_version, max_cpc_bid, bidding_strategy)
+	VALUES ($1,$2,$3,$4,$16,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$17,$18,$19,$20)
 	ON CONFLICT (brief_id, platform, variant, slot_version) WHERE status <> 'deleted' DO UPDATE SET
 		job_id=EXCLUDED.job_id, platform_campaign_id=EXCLUDED.platform_campaign_id,
 		campaign_name=EXCLUDED.campaign_name, status=EXCLUDED.status,
 		budget_amount=EXCLUDED.budget_amount, budget_type=EXCLUDED.budget_type,
 		start_date=EXCLUDED.start_date, end_date=EXCLUDED.end_date,
 		config_snapshot=EXCLUDED.config_snapshot, result=EXCLUDED.result,
+		-- The create path's bidding choice (000047) and its starting manual bid (000039), FILLED
+		-- ONLY WHILE EMPTY: the STORED value wins. On a normal dispatch this arm lands on the
+		-- claim row, whose two columns are still NULL, so the create's values are written. A
+		-- bid the update-campaign-bid endpoint set later lives in the same column, and an
+		-- upsert reaching this row afterwards (none does today; see created_by below) must not
+		-- put the create's starting bid back over it, nor a NULL over either value.
+		max_cpc_bid=COALESCE(campaigns.max_cpc_bid, EXCLUDED.max_cpc_bid),
+		bidding_strategy=COALESCE(campaigns.bidding_strategy, EXCLUDED.bidding_strategy),
 		-- created_by is NOT in the update list. What this arm does, on every path the
 		-- orchestrator actually takes, is FINALIZE THE CURRENT CLAIM: dispatchPlatform
 		-- reaches an upsert only when ClaimCampaignDispatch returned claimed=true, and
@@ -909,6 +917,8 @@ const replaceCampaignQuery = `UPDATE campaigns SET
 	-- max_cpc_bid (000039) is written from the loaded row, so every caller that does not
 	-- change the bid writes back exactly what it read. Only update-campaign-bid changes it.
 	max_cpc_bid=$14,
+	-- bidding_strategy (000047) likewise round-trips the loaded row: no update path changes it.
+	bidding_strategy=$15,
 	-- Same COALESCE reasoning as the upsert's conflict arm: an update whose caller had no
 	-- authenticated principal (attributedActor returned nil, having logged it) is an
 	-- ordinary unattributed write, not an instruction to forget the last actor we know.
@@ -1002,6 +1012,7 @@ func (r *CampaignRepo) UpsertCampaign(ctx context.Context, c *model.Campaign, in
 		// The slot version the claim took. It is part of the conflict target, so a wrong
 		// value here would land the result on a different campaign of the same slot.
 		model.NormalizeSlotVersion(c.SlotVersion),
+		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
 	)
 	upserted, err := scanCampaign(row)
 	if err != nil {
@@ -1303,7 +1314,7 @@ func (r *CampaignRepo) ReplaceCampaign(ctx context.Context, c *model.Campaign, e
 	updated, err := scanCampaign(tx.QueryRow(ctx, q,
 		c.CampaignName, c.Status, c.BudgetAmount, budgetTypeArg(c.BudgetType), c.StartDate, c.EndDate,
 		nullJSON(c.ConfigSnapshot), nullJSON(c.Result), updatedBy, c.ID, c.BriefID, c.ProjectID, expectedVersion,
-		c.MaxCPCBid,
+		c.MaxCPCBid, biddingStrategyArg(c.BiddingStrategy),
 	))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("replace campaign: %w", err)
@@ -2112,14 +2123,16 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		platform   string
 		pcID       *string
 		budgetType *string
-		createdBy  []byte
-		updatedBy  []byte
+		// bidding_strategy (000047): NULL on a legacy or adopted row.
+		biddingStrategy *string
+		createdBy       []byte
+		updatedBy       []byte
 	)
 	err := row.Scan(
 		&c.ID, &c.ProjectID, &c.BriefID, &c.JobID, &platform, &c.Variant, &c.SlotVersion, &pcID, &c.CampaignName,
 		&c.Status, &c.BudgetAmount, &budgetType, &c.StartDate, &c.EndDate,
 		&c.ConfigSnapshot, &c.Result, &c.Version, &createdBy, &updatedBy, &c.RanOnSystemAccount,
-		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid,
+		&c.CreatedAt, &c.UpdatedAt, &c.MaxCPCBid, &biddingStrategy,
 	)
 	if err != nil {
 		return nil, err
@@ -2138,7 +2151,20 @@ func scanCampaign(row pgx.Row) (*model.Campaign, error) {
 		bt := model.BudgetType(*budgetType)
 		c.BudgetType = &bt
 	}
+	if biddingStrategy != nil {
+		bs := model.BiddingStrategy(*biddingStrategy)
+		c.BiddingStrategy = &bs
+	}
 	return &c, nil
+}
+
+// biddingStrategyArg passes a nil strategy as SQL NULL ("not recorded") rather than "".
+func biddingStrategyArg(bs *model.BiddingStrategy) *string {
+	if bs == nil {
+		return nil
+	}
+	v := string(*bs)
+	return &v
 }
 
 func budgetTypeArg(bt *model.BudgetType) any {

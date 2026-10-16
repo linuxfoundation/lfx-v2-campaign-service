@@ -1,7 +1,7 @@
 ---
 type: "Go Package"
 title: "internal/platform/meta"
-description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, ad-set budget reads and writes in the account currency's minor units through the same currency-offset resolver and encoder the create path uses, an ad-set bid_amount write made only when the ad set is a link-click bid cap (which no campaign this service creates is), and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
+description: "Meta (Facebook/Instagram) Ads Graph API client: Campaign -> Ad Set -> Ad creation with objective mapping and geo/budget validation, optional single-image ad creatives attached EITHER by URL as `link_data.picture` OR by stored bytes uploaded to `/adimages` as `link_data.image_hash` (mutually exclusive per creative, both supported), campaign status toggle cascade over ad set and ads, live campaign metrics reads, ad-set budget reads and writes in the account currency's minor units through the same currency-offset resolver and encoder the create path uses, an ad-set bid_amount write made only when the ad set is a link-click bid cap (the shape a create with manual bidding now produces, CampaignInput.BidCap), and ad-account discovery — a paginated `/me/adaccounts` walk that asks about the TOKEN rather than any one account, returns known-bad accounts with their reason instead of filtering them, and fails rather than truncating when the walk cannot be completed."
 resource: "internal/platform/meta"
 tags:
   - platform-client
@@ -467,9 +467,10 @@ billing_events, the bid amount is for each occurrence, and has a minimum value 1
 **Decision**: a Meta bid cap is a max CPC only when `bid_strategy == LOWEST_COST_WITH_BID_CAP`
 AND `billing_event == LINK_CLICKS` AND `optimization_goal == LINK_CLICKS` (`AdSetBid.CPCBidCap`).
 An impression-billed cap is a CPM, `CLICKS` billing is any click rather than a link click,
-`COST_CAP` is a target average. **The create path sends `billing_event: IMPRESSIONS` and
-`bid_strategy: LOWEST_COST_WITHOUT_CAP`**, so every Meta campaign this service creates is refused
-(409) until an operator moves its ad set to a link-click bid cap.
+`COST_CAP` is a target average. **An AUTOMATIC create sends `billing_event: IMPRESSIONS` and
+`bid_strategy: LOWEST_COST_WITHOUT_CAP`**, which is refused (409) until an operator moves its ad
+set to a link-click bid cap; a MANUAL create (`CampaignInput.BidCap`, below) produces the bid cap
+this write accepts.
 
 - `ResolveBidMinorUnits(ctx, amount)` — refuses an account id that is not `act_<digits>`
   (`ErrInvalidAccountID`) before any request, since the id is spliced into the Graph path; then
@@ -997,6 +998,31 @@ fields are still copied for throttle detection and logging) with a non-zero code
 not code 1/2, not a 408 and not a throttle; every other `*APIError` is UNCONFIRMED. `ValidateAdSetID` is `ValidateCampaignID`'s rule and
 returns the existing `ErrInvalidAdSetID`. Tests: `ad_sets_test.go`.
 
+## Create-time bidding (`CampaignInput.BidCap`, LFXV2-2665)
+
+`BidCap` zero is AUTOMATIC: the ad set is created exactly as before (`LOWEST_COST_WITHOUT_CAP`,
+`billing_event` `IMPRESSIONS`, no `bid_amount`). A positive `BidCap` is MANUAL: the ad set is
+created as a link-click bid cap — `bid_strategy` `LOWEST_COST_WITH_BID_CAP`, `billing_event`
+`LINK_CLICKS`, `bid_amount` in minor units — the one shape `AdSetBid.CPCBidCap` (and so the bid
+lever) reads as a max CPC. Both checks run before the first mutating call: the objective must
+optimize for `LINK_CLICKS` (`ManualBidSupported`: traffic, or leads, which runs as traffic), and
+`CreateBidMinorUnits` encodes the amount at the account currency's offset with the same exact
+encoder as the lever's `bidToMinorUnits` (`minorUnitsExact`, PR #316), REFUSING an amount that is
+not a whole minor unit (`ErrBidAmountInvalid`).
+Campaign Budget Optimization is not used (`is_adset_budget_sharing_enabled: false`, budget on the
+ad set), so the strategy lives on the ad set, not the campaign.
+
+`CampaignResult.BidApplied` is true only when the run created the ad set; a reused ad set (reachable
+only with `ReconcileByName`) adds a "bid NOT applied to reused ad set" step. A daily budget under
+`BidCapDailyBudgetMultiple` (5) × the bid is refused before any mutation — the Ad Set reference's
+`LOWEST_COST_WITH_BID_CAP` minimum, "Clicks/Actions: 5x the bid_amount".
+
+Both bid encoders (`CreateBidMinorUnits`, `bidToMinorUnits`) refuse a product past
+`MaxExactMinorUnits` ("too large to represent exactly") before any conversion, as
+`budgetToMinorUnits` does. The create path still refuses a bid whose 5× required daily budget
+cannot be represented (`bidCapMinor > MaxInt64/5`) before forming the product; under the exact
+bound no encoded bid reaches it, so it is a backstop against a later change to that bound
+(PR #332 review).
 
 ## Ads under an ad set (`ads.go`, decision D7 first step)
 

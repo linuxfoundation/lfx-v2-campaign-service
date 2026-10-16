@@ -237,8 +237,12 @@ func campaignDoc(c *briefs.Campaign) indexer.CampaignDoc {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        c.SlotVersion,
-		Adopted:            c.Adopted != nil && *c.Adopted,
-		Version:            c.Version,
+		// The bidding fields the API returns (LFXV2-2665), so the Query Service index shows them
+		// too. Both pointers pass through: nil stays absent in the document.
+		BiddingStrategy: c.BiddingStrategy,
+		MaxCPCBid:       c.MaxCpcBid,
+		Adopted:         c.Adopted != nil && *c.Adopted,
+		Version:         c.Version,
 	}
 }
 
@@ -722,6 +726,11 @@ func (s *BriefService) CreateCampaigns(ctx context.Context, p *briefs.CreateCamp
 		}
 	}
 	config := marshalAny(p.Input.Config)
+	// The create-time `bidding` object exists only on the platforms that implement it; on any
+	// other selected platform it is refused rather than silently ignored.
+	if err := refuseUnsupportedBidding(platforms, config); err != nil {
+		return nil, err
+	}
 	// Refuse a request that can never produce what it asks for BEFORE the job exists. Dispatch
 	// runs after the 202 and reports every failure as one opaque job error, so a request shape
 	// that is knowably unsatisfiable (an A/B test on an email that sends by recipients' time
@@ -2118,10 +2127,22 @@ func campaignResult(c *model.Campaign) *briefs.Campaign {
 		CampaignName:       c.CampaignName,
 		Status:             c.Status,
 		SlotVersion:        model.NormalizeSlotVersion(c.SlotVersion),
+		BiddingStrategy:    biddingStrategyResult(c.BiddingStrategy),
+		MaxCpcBid:          c.MaxCPCBid,
 		Adopted:            adoptedFlag(c),
 		Version:            c.Version,
 		Etag:               optStr(briefETag(c.Version)),
 	}
+}
+
+// biddingStrategyResult renders the recorded create-time bidding strategy; nil (not recorded)
+// stays absent rather than becoming "".
+func biddingStrategyResult(bs *model.BiddingStrategy) *string {
+	if bs == nil {
+		return nil
+	}
+	v := string(*bs)
+	return &v
 }
 
 // adoptedFlag is the campaign's optional `adopted` attribute: true for a row bound by

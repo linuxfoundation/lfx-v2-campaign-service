@@ -4640,7 +4640,9 @@ identity-checked, with a 404 proven absent only by a confirming ad-account read 
   `campaign_name`, `start_date` (through `compareNudgedStart`, since `toMs` nudges a begun start)
   and `end_date`; upstream-only `status`, `bidding_strategy_type` (`optimizationTargetType`),
   `cost_type`, `unit_cost`, `unit_cost_currency` (`unitCost.currencyCode`; `unit_cost` is absent
-  whenever the currency is missing, never a bare number), `objective_type`. An `account` URN naming another account →
+  whenever the currency is missing, never a bare number); `objective_type` is COMPARED (LFXV2-2665)
+  against `linkedinRecordedObjective` — automatic → `WEBSITE_VISIT`, manual → `WEBSITE_CONVERSION`,
+  `unknown` with no recorded strategy. An `account` URN naming another account →
   `ErrCampaignUpstreamIdentityMismatch`; a 401 → the usual `linkedinExpiry` re-tag.
 - **Bid** (`WriteBid`): the bid is the CAMPAIGN's `unitCost`, so there is no child id to require.
   Order: provenance (fail closed), bid type CPC, adopted row → `ErrBidAdoptedCampaign` joined with `ErrBidUnwritable` (the handler
@@ -4690,6 +4692,58 @@ malformed stored account → `ErrConnectionNotUsable`), `linkedinConnectionDefec
 (503). Tests: `linkedin_audience_test.go` (every pivot mapped, LF fallback refused with zero upstream
 calls, foreign/legacy-URL/mixed provenance 409 with zero calls, unknown provenance proceeds, window
 and scope faults beat an inactive connection, 401 → expired, 5xx unclassified without its body).
+
+## Create-time bidding (`bidding.go`, LFXV2-2665)
+
+Every lane config (`microsoftConfig`, `metaConfig`, `redditConfig`, `twitterConfig`,
+`linkedInConfig`) carries an optional `bidding` object (`biddingConfig`: `strategy`
+`automatic`|`manual`, `bidAmount`). `resolveBidding` applies the shared rules — omitted =
+automatic; `automatic` with any `bidAmount` refused; `manual` needs a finite `bidAmount` > 0, at
+most 1,000,000 and a whole number of micro-units (`exactScaled`, a round-trip test that never
+rounds) — and each platform's `*BidPlan` adds its own: Microsoft `microsoft.ValidateMaxCPCBid`
+(0.01–1,000) plus the legacy `cpcBid` (alone = manual at that amount; with `bidding` it must agree,
+and `automatic` refuses it); Meta `meta.ManualBidSupported` (traffic/leads) and at most two
+decimals; Reddit `reddit.ManualCPCBidSupported` (traffic); LinkedIn `linkedin.ValidateBidAmount` (whole
+cents), the client choosing the objective from the strategy (automatic `WEBSITE_VISIT` +
+`MAX_CLICK`, manual `WEBSITE_CONVERSION`; decision 2026-10-13); X nothing further. Refusals wrap `domain.ErrCreateConfigInvalid` with
+`<configKey>.bidding: <reason>`, and `biddingInvalid` marks every one a `domain.PreflightRefusal`
+(issue #208): each is a pure check raised before any upstream call, its only caller-derived text is
+an amount or a config key rendered through `domain.CallerValue` (`quoteKey`), so when `Dispatch`
+raises it the async job reports it verbatim.
+
+The rules run twice: in each lane dispatcher's `PreflightCreate` (a `service.CreatePreflighter`, so
+the create path answers a synchronous 400 before any job; it returns `ErrPreflightNotApplicable`
+otherwise and never calls a platform), and again in `Dispatch` before any upstream call
+(`notCreated`, claim released). `Dispatch` passes the plan to the client (Microsoft
+`BiddingScheme` + `CpcBid`, Meta `BidCap`, Reddit `ManualCPCBid`, X `MaxBid`, LinkedIn
+`ManualCPCBid`); a deferred `plan.stamp(camp)` records `BiddingStrategy` and, for manual, the
+starting bid in `MaxCPCBid` ONLY when the dispatch succeeded (`err == nil`) AND the client's result
+reports `BidApplied` — the run created the entity carrying the bid. A reused entity (the client adds
+a "bid NOT applied to reused …" step) or a partial leaves both NULL, so the row never claims a bid
+the platform was not given. Microsoft also requires at most two decimals. Meta's 5 × bid daily-budget
+minimum (`meta.BidCapDailyBudgetMultiple`, from the Ad Set reference) is the CLIENT's, compared in
+encoded minor units once the account currency is known — the pre-check does not attempt it. `TestMicrosoft_ManualCreatedCampaignIsAcceptedByTheBidLever`
+drives a manual create and then `WriteBid` on the returned row.
+
+`TestCreateCampaigns_LanePlatformBiddingRefusalIsSynchronous400` (`bidding_create_e2e_test.go`)
+drives the real Meta and Microsoft dispatchers through `service.BriefService.CreateCampaigns`: a bad
+`bidding` is a synchronous 400 naming `<configKey>.bidding` and no job is created.
+`checkBiddingShape` runs first in every lane `PreflightCreate`. It type-checks `<configKey>.bidding`
+alone from the raw envelope, so a wrong-typed `bidAmount` or `strategy` is that 400 rather than a
+decode failure left to Dispatch. Other fields' type errors are still left to Dispatch, as before.
+PRESENCE is preserved: `biddingConfig.UnmarshalJSON` records which keys appeared, and only a
+genuinely absent field defaults — an explicit `null`/`""` strategy, a `null` bidAmount or a `null`
+bidding is a 400 (`checkBiddingShape`, which Dispatch also runs, and `resolveBidding`).
+KEYS ARE EXACT: encoding/json matches the config's `bidding` case-insensitively with the last key
+winning, so `checkBiddingShape` refuses any case variant of it, and `biddingKeyProblem` (shared with
+`biddingConfig.UnmarshalJSON`) refuses a case-variant or unknown key inside bidding — keys sorted,
+so the message is deterministic. Each lane `PreflightCreate` decodes its config BEST-EFFORT
+(encoding/json fills every field it can past a type error) and runs the bid plan on that, so an
+invalid bidding is the 400 even when an unrelated field fails the full decode; that decode error
+itself stays not-applicable (Reddit's asset checks still run only on a clean decode).
+SNAPSHOTS: every lane config tags `Bidding` `omitempty`, and `biddingConfig.MarshalJSON` writes only
+the fields that carry a value, so a stored `config_snapshot` re-decodes through the validator to the
+same plan (`TestConfigSnapshot_BiddingRoundTripsThroughTheValidator`).
 
 ## Operator-safe pre-flight refusals (issue #208)
 
@@ -4775,6 +4829,11 @@ profile and facet names — is rendered through `domain.CallerValue`, a strict A
 reaches a marked refusal (LinkedIn `toMs`/`validateSchedule`/`resolveAccountID`/`resolveOrgID`/
 targeting profile and facet checks, Meta `buildPromotedObject`, Microsoft keyword/geo/ad-copy
 validators, X `validateDate`/`validateImageInput`, Reddit's asset-id check) use it too.
+Create-time bidding (LFXV2-2665) follows the same rule: the dispatchers' `biddingInvalid`
+refusals, and the clients' own pre-send bid checks — X `manualMaxBidMicros` and bid-over-budget,
+Reddit's manual-bid objective and amount checks, LinkedIn `campaignBidding`, Microsoft
+`validateBiddingScheme` — are marked. Meta's bid-cap checks are NOT: they need the account currency,
+so they run after the account preflight GET.
 Refusals that can quote a URL
 (registration, image or post URL validators), carry credential-derived text (credential shape,
 JSON decode) or come after a read was sent (Meta's inactive-account check) are deliberately

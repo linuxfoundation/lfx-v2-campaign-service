@@ -55,6 +55,22 @@ const (
 	BidTypeCPC BidType = "cpc"
 )
 
+// BiddingStrategy is how a campaign was CREATED to bid (migration 000047): the per-campaign
+// choice a dispatch config makes with its optional `bidding` object (LFXV2-2665). It is a REQUEST
+// the create path sent, never an observation — an operator can switch the strategy in the ad
+// platform afterwards, and the platform is what the bid lever reads before it writes.
+type BiddingStrategy string
+
+// Bidding strategies. Automatic is the default when the dispatch config omits `bidding`.
+const (
+	// BiddingAutomatic lets the platform set every bid (Microsoft MaxClicks, Meta
+	// LOWEST_COST_WITHOUT_CAP, Reddit BIDLESS, X AUTO, LinkedIn WEBSITE_VISIT + MAX_CLICK).
+	BiddingAutomatic BiddingStrategy = "automatic"
+	// BiddingManual creates the campaign with a manual max cost-per-click bid, in the exact shape
+	// the bid lever (update-campaign-bid) accepts, so that lever can change it later.
+	BiddingManual BiddingStrategy = "manual"
+)
+
 // BidChange is a request to set an existing campaign's MANUAL max CPC bid on its ad
 // platform: the payload of the BidWriter capability. A REQUEST, never an observation, in
 // the same sense as BudgetChange.
@@ -231,18 +247,22 @@ type Campaign struct {
 	Status             string
 	BudgetAmount       *float64
 	BudgetType         *BudgetType
-	// MaxCPCBid is the manual max cost-per-click bid most recently SET through the
-	// update-campaign-bid endpoint, in the ad account's own currency (migration 000039). Like
-	// BudgetAmount it records a REQUEST the platform confirmed, never an observation. nil means
-	// "never set through that endpoint" — NOT "no bid": a bid given at creation lives in the
-	// dispatch config (ConfigSnapshot), and a bid changed in the platform's own UI is not
-	// recorded anywhere here.
-	MaxCPCBid      *float64
-	StartDate      *time.Time
-	EndDate        *time.Time
-	ConfigSnapshot json.RawMessage
-	Result         json.RawMessage
-	Version        int64
+	// MaxCPCBid is the manual max cost-per-click bid most recently SET by this service, in the ad
+	// account's own currency (migration 000039): the starting bid a create with manual bidding
+	// sent (LFXV2-2665), then whatever the update-campaign-bid endpoint set. Like BudgetAmount it
+	// records a REQUEST the platform confirmed, never an observation. nil means "never set by this
+	// service" — NOT "no bid": a legacy Microsoft cpcBid lives only in the dispatch config
+	// (ConfigSnapshot) on rows created before LFXV2-2665, and a bid changed in the platform's own
+	// UI is not recorded anywhere here.
+	MaxCPCBid *float64
+	// BiddingStrategy is the strategy the create path asked for (migration 000047). nil means the
+	// row predates the column or was ADOPTED — not recorded, NOT "automatic".
+	BiddingStrategy *BiddingStrategy
+	StartDate       *time.Time
+	EndDate         *time.Time
+	ConfigSnapshot  json.RawMessage
+	Result          json.RawMessage
+	Version         int64
 	// CreatedBy / UpdatedBy name the human behind the write, with the same three
 	// causes for nil as CampaignBrief.CreatedBy — read that doc first, it is the
 	// canonical statement and is not repeated here.
