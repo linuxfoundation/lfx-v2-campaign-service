@@ -539,6 +539,43 @@ type CampaignMetrics struct {
 	// on a nil precisely so a platform that cannot measure conversions is never reported as
 	// a campaign that failed to earn any.
 	Conversions *float64
+	// ConversionValue is the summed monetary value of those conversions over Window, in WHOLE
+	// units of the ad account's currency — NOT micros, and deliberately asymmetric with
+	// CostMicros above. The platforms that report a conversion value report it as a decimal
+	// amount, so scaling it to micros here would manufacture precision the upstream number
+	// does not carry. Roas below exists so that no consumer has to reconcile the two units.
+	//
+	// The currency is the AD ACCOUNT'S, and this struct does not carry a currency code — the
+	// same gap CostMicros already has. A consumer that renders a figure with a currency symbol
+	// is asserting something this type does not tell it.
+	//
+	// A POINTER for the nil-versus-zero reason Conversions is one, but read its nil MORE
+	// CONSERVATIVELY. On Conversions, nil is a statement about the vendor API, audited field
+	// by field. Here it is only a statement about THIS READ: today Google Ads is the single
+	// adapter that populates it (from metrics.conversions_value, typed DOUBLE in the field
+	// reference and always in that adapter's SELECT list, so an absent member is a measured
+	// 0.0 and materialises as a non-nil zero). The other six leave it nil, and that is a scope
+	// boundary rather than a finding about LinkedIn, Microsoft, Meta, X, Reddit or HubSpot —
+	// none of them was audited for a value field, and adding one later is adapter work that
+	// changes no contract here.
+	//
+	// What that means for a consumer is simply the rule Conversions already carries, and for
+	// one more reason: never render a nil as 0. A zero here would claim a campaign earned
+	// nothing when the truthful statement is that nothing was measured.
+	ConversionValue *float64
+	// Roas is return on ad spend: ConversionValue divided by cost over the same Window and in
+	// the same currency, which makes it dimensionless and safe to compare across accounts in
+	// different currencies — the one figure in this struct that is.
+	//
+	// Derived by the ADAPTER, not by consumers, and nil wherever the division would not be a
+	// measurement: no conversion value, or no spend. A window that earned value without
+	// spending has an UNDEFINED return on ad spend rather than an infinite or a zero one, and
+	// those two substitutions fail in opposite directions — so the pointer withholds instead.
+	//
+	// It is derived once, upstream, because the alternative is each consumer dividing the same
+	// two fields and eventually disagreeing about the zero-cost case, which surfaces as two
+	// dashboard numbers for one campaign and no way to tell which is right.
+	Roas *float64
 	// Email carries the counters that only an email channel has, and is nil for every ad
 	// platform. It exists because the four fields above cannot express an email send
 	// without lying: delivery, bounces and unsubscribes have no ad-platform analogue at
