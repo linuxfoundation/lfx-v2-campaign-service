@@ -640,6 +640,23 @@ make build-release # build a static release binary for Linux
 make run           # build and run locally (needs PG* env; see above)
 ```
 
+### Verifying a gated metrics read (`cmd/verify-metrics`)
+
+Before flipping `REDDIT_METRICS_ENABLED`, `MICROSOFT_METRICS_ENABLED` or
+`TWITTER_METRICS_ENABLED`, run the gated read against a live account with the
+same database and key settings as `make run`:
+
+```sh
+go run ./cmd/verify-metrics -provider reddit-ads -project <slug|lf-system> \
+  -campaign <platform campaign id> -window last_7_days [-raw]
+```
+
+It resolves the connection and calls the dispatcher's `ReadMetrics` exactly as
+the service does, forces the flag on in its own process only, is read-only
+(read-only DB session; non-read upstream requests refused before sending) and
+redacts every secret. `google-ads` is refused. See
+[docs/knowledge/code/cmd-verify-metrics.md](docs/knowledge/code/cmd-verify-metrics.md).
+
 ### MegaLinter (local)
 
 CI runs MegaLinter on pull requests and merge-queue entries

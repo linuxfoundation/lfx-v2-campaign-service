@@ -1924,6 +1924,16 @@ type PlatformResult struct {
 	// operator-readable sentences. For the email channel this reports a hero image
 	// that could not be added; the draft exists but has no hero banner.
 	Warnings []string
+	// Present only when this dispatch's claim was lost before its result was
+	// recorded: the identifiers of what it created upstream (ids, names, urns,
+	// image hashes, X media keys — never state, platform text, URLs or other
+	// key-like fields), which this service no longer tracks, sorted by key. The
+	// only handle on an id-less partial (no campaign_id).
+	Reconcile []*ReconcileIdentifier
+	// True when the result held more identifiers than one job result may carry, so
+	// reconcile is incomplete: top-level identifiers are always kept, and only the
+	// most deeply nested or latest entries are cut
+	ReconcileTruncated *bool
 }
 
 type PreconditionFailedError struct {
@@ -1938,6 +1948,21 @@ type PreconditionRequiredError struct {
 	Code string
 	// Error message
 	Message string
+}
+
+type ReconcileIdentifier struct {
+	// Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds,
+	// imageUrns; a dotted path for one found in a nested object or list, e.g.
+	// abTestVariant.id, adGroups[0].adIds
+	Key string
+	// The identifier(s): one element for a single id or name, several for a list
+	// such as creativeAssetIds. Absent when entries is set.
+	Values []string
+	// For a keyed identifier map such as LinkedIn imageUrns (stored asset id to
+	// image urn). Absent when values is set.
+	Entries map[string]string
+	// True when a value was longer than the 1024-character cap and was cut
+	Truncated *bool
 }
 
 // RemoveKeywordTargetingPayload is the payload type of the

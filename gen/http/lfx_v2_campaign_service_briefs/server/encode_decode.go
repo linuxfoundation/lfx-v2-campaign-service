@@ -6822,16 +6822,53 @@ func marshalLfxv2campaignservicebriefsMetaAdToMetaAdResponseBody(v *lfxv2campaig
 // *lfxv2campaignservicebriefs.PlatformResult.
 func marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody(v *lfxv2campaignservicebriefs.PlatformResult) *PlatformResultResponseBody {
 	res := &PlatformResultResponseBody{
-		Platform:   v.Platform,
-		OK:         v.OK,
-		CampaignID: v.CampaignID,
-		Error:      v.Error,
-		HubspotURL: v.HubspotURL,
+		Platform:           v.Platform,
+		OK:                 v.OK,
+		CampaignID:         v.CampaignID,
+		Error:              v.Error,
+		HubspotURL:         v.HubspotURL,
+		ReconcileTruncated: v.ReconcileTruncated,
 	}
 	if v.Warnings != nil {
 		res.Warnings = make([]string, len(v.Warnings))
 		for i, val := range v.Warnings {
 			res.Warnings[i] = val
+		}
+	}
+	if v.Reconcile != nil {
+		res.Reconcile = make([]*ReconcileIdentifierResponseBody, len(v.Reconcile))
+		for i, val := range v.Reconcile {
+			if val == nil {
+				res.Reconcile[i] = nil
+				continue
+			}
+			res.Reconcile[i] = marshalLfxv2campaignservicebriefsReconcileIdentifierToReconcileIdentifierResponseBody(val)
+		}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsReconcileIdentifierToReconcileIdentifierResponseBody
+// builds a value of type *ReconcileIdentifierResponseBody from a value of type
+// *lfxv2campaignservicebriefs.ReconcileIdentifier.
+func marshalLfxv2campaignservicebriefsReconcileIdentifierToReconcileIdentifierResponseBody(v *lfxv2campaignservicebriefs.ReconcileIdentifier) *ReconcileIdentifierResponseBody {
+	res := &ReconcileIdentifierResponseBody{
+		Key:       v.Key,
+		Truncated: v.Truncated,
+	}
+	if v.Values != nil {
+		res.Values = make([]string, len(v.Values))
+		for i, val := range v.Values {
+			res.Values[i] = val
+		}
+	}
+	if v.Entries != nil {
+		res.Entries = make(map[string]string, len(v.Entries))
+		for key, val := range v.Entries {
+			tk := key
+			tv := val
+			res.Entries[tk] = tv
 		}
 	}
 

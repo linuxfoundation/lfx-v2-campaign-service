@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"regexp"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"github.com/exaring/otelpgx"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	// pgxv5 is aliased because golang-migrate's driver above already occupies the
 	// identifier `pgx` (see the pgx.Postgres reference at the foot of this file).
@@ -120,6 +122,10 @@ func (p *Pool) checkReady(ctx context.Context, ping func(context.Context) error)
 // IsPermanentMigrationErr) and refuses to proceed until an operator forces the
 // version, since partial migration SQL is not assumed idempotent.
 //
+// A CLEAN schema recorded at a version newer than any this image embeds (an image-only
+// rollback after a later release migrated forward) is not migrated and its version is not
+// rewritten; startup goes straight to the index checks below. See schemaIsNewerThanImage.
+//
 // On success it verifies the schema carries no INVALID index (checkNoInvalidIndexes) —
 // the one failure a migration can leave behind that a re-run reports as success.
 func Migrate(dsn string) error {
@@ -141,6 +147,24 @@ func Migrate(dsn string) error {
 	}
 	defer func() { _, _ = m.Close() }()
 
+	// A CLEAN schema recorded at a version this image does not embed is the image-only
+	// rollback case: a newer release migrated forward, then the image was reverted and the
+	// schema was not. Up() cannot run there — golang-migrate's readUp checks that the
+	// recorded version exists in THIS binary's source and fails with "no migration found
+	// for version N" — so it is skipped, the recorded version is left exactly as it is, and
+	// startup falls through to the index validation below. See schemaIsNewerThanImage for
+	// the compatibility assumption this rests on. Every other state takes Up() unchanged,
+	// a DIRTY newer schema included: Up() re-reads the version under its lock and refuses
+	// it with ErrDirty exactly as before.
+	newer, err := schemaIsNewerThanImage(m, src)
+	if err != nil {
+		return err
+	}
+	if newer {
+		// dsn, NOT migrateURL — see the note at the foot of this function.
+		return checkNoInvalidIndexes(dsn)
+	}
+
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		// golang-migrate marks the schema version dirty (SetVersion(target, true))
 		// BEFORE running a migration's SQL, then returns the raw SQL/driver error if
@@ -161,6 +185,68 @@ func Migrate(dsn string) error {
 	// dsn, NOT migrateURL: pgxURL rewrites the scheme to golang-migrate's INTERNAL
 	// pgx5://, which pgx itself cannot parse.
 	return checkNoInvalidIndexes(dsn)
+}
+
+// schemaIsNewerThanImage reports whether the database records a CLEAN migration version
+// exactly one above the highest one embedded in this image, logging the fact when it does.
+//
+// The highest embedded version is read from the migration source itself rather than kept as
+// a constant, so it cannot drift from the files when the next migration is added.
+//
+// The assumption it rests on is expand/contract, one release apart
+// (internal/infrastructure/postgres/migrations/README.md): a release's schema changes must
+// stay compatible with the PREVIOUS release's binary, because that binary is both what a
+// rolling deploy still runs and what an image-only rollback returns to. Nothing in the
+// migration chain marks a version as compatible or not, so this does not — and cannot —
+// verify that the newer migrations kept that rule; it trusts it. What it does keep is the
+// part that IS checkable: the newer schema must be clean, and checkNoInvalidIndexes still
+// runs, so a newer release that dropped an index this image REQUIRES (as opposed to one it
+// lists as optional) still refuses boot with ErrMissingRequiredIndex.
+//
+// The trust is bounded to that one hop (PR #260 review): only recorded == latest+1 takes this
+// path. A clean version further ahead is a schema this release was never shown compatible
+// with, so it falls through to Up(), which refuses it loudly ("no migration found for
+// version N") exactly as it did before this path existed. A release that ships more than one
+// migration therefore cannot be image-rolled-back past; that is the conservative side.
+//
+// Errors reading the recorded version are not reported here: the caller falls through to
+// Up(), which reads it again under its lock and reports them as it always has. Only a
+// failure to enumerate this image's own migrations is returned.
+func schemaIsNewerThanImage(m *migrate.Migrate, src source.Driver) (bool, error) {
+	recorded, dirty, err := m.Version()
+	if err != nil || dirty {
+		return false, nil
+	}
+	latest, err := highestEmbeddedVersion(src)
+	if err != nil {
+		return false, fmt.Errorf("read the embedded migration versions: %w", err)
+	}
+	if recorded != latest+1 {
+		return false, nil
+	}
+	slog.Warn("database schema is newer than this image; skipping migrations and validating "+
+		"indexes only, on the expand/contract assumption that a release stays compatible with "+
+		"the next release's schema",
+		"recorded_version", recorded, "image_latest_version", latest)
+	return true, nil
+}
+
+// highestEmbeddedVersion walks the migration source to its last version.
+func highestEmbeddedVersion(src source.Driver) (uint, error) {
+	v, err := src.First()
+	if err != nil {
+		return 0, err
+	}
+	for {
+		next, err := src.Next(v)
+		if errors.Is(err, fs.ErrNotExist) {
+			return v, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+		v = next
+	}
 }
 
 // invalidIndexCheckTimeout bounds the post-migration catalog read. It is a single
@@ -356,17 +442,26 @@ var requiredIndexes = []requiredIndex{{
 	keys: []string{"brief_id", "platform", "variant"},
 	// Deparsed, and character-identical to the form 000023's guard compares against.
 	predicate: "(status <> 'deleted'::text)",
+	// OPTIONAL from the lock release on (LFXV2-2023, PR #260): absent is a healthy boot,
+	// present is still checked in full. This image is the image-only rollback target for
+	// the later release that drops the index, so it must start on the schema that release
+	// leaves behind — staging the drop a release after the lock promises exactly that, and
+	// a hard requirement here would turn the rollback into a boot loop on
+	// ErrMissingRequiredIndex. The N-1 binary that still relies on the index for its claims
+	// is not this one: its own boot check keeps it required, and a rollback to it happens
+	// only before the drop.
+	optional: true,
 }, {
 	// at most one live campaign per (brief, platform, variant, slot_version) — 000037. The
 	// four-column successor to the entry above, widening the slot so a DELIBERATE second
 	// campaign on one slot is distinguishable from a RETRY of the first.
 	//
 	// Both entries are listed on purpose while expand/contract runs. The three-column
-	// index is what the N-1 binary's claims key on and must stay enforced through a
-	// rollout; the four-column one is what this release's claim, upsert and adopt name as
-	// their ON CONFLICT arbiter. The follow-up release drops the narrower index and this
-	// list loses the entry above with it — until then a missing EITHER index is a boot
-	// failure, because each one serializes a different binary's writes.
+	// index is what the N-1 binary's claims key on; the four-column one is what this
+	// release's claim, upsert and adopt name as their ON CONFLICT arbiter. Only THIS one is
+	// required: the entry above is optional (see its comment) so this image still boots
+	// once the follow-up release drops the narrower index, and a missing four-column index
+	// is still a boot failure.
 	name:   "uq_campaigns_brief_platform_variant_slot_version_live",
 	table:  "campaigns",
 	unique: true,
@@ -547,8 +642,9 @@ func (r requiredIndex) createSQL() string {
 	return b.String()
 }
 
-// RequiredIndexNames returns the names of every index Migrate refuses to boot without, in
-// the order the error reports them.
+// RequiredIndexNames returns the names of every index Migrate validates, in the order the
+// error reports them. Migrate refuses to boot without each one except those
+// RequiredIndexIsOptional reports, whose absence it tolerates.
 //
 // It is exported for the live-database tests in the dbtest package, which are in a
 // different package and so cannot reach the unexported list — and driving them off the real
@@ -561,6 +657,32 @@ func RequiredIndexNames() []string {
 		out = append(out, r.name)
 	}
 	return out
+}
+
+// RequiredIndexIsOptional reports whether Migrate tolerates the named index's ABSENCE (it is
+// still validated when present). False for a name not in the list. Exported, like
+// RequiredIndexNames, so the dbtest drop-each-index tests can tell the two kinds apart off
+// the real list instead of a hand-written copy.
+func RequiredIndexIsOptional(name string) bool {
+	i := slices.IndexFunc(requiredIndexes, func(r requiredIndex) bool { return r.name == name })
+	return i >= 0 && requiredIndexes[i].optional
+}
+
+// LatestMigrationVersion returns the highest migration version embedded in this image — the
+// boundary above which Migrate treats a clean recorded version as a newer release's schema.
+// Exported so the dbtest rollback test can record a version just past it rather than a
+// hard-coded number that the next migration would silently turn into an embedded one.
+func LatestMigrationVersion() (uint, error) {
+	src, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		return 0, fmt.Errorf("open migration source: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	v, err := highestEmbeddedVersion(src)
+	if err != nil {
+		return 0, fmt.Errorf("read the embedded migration versions: %w", err)
+	}
+	return v, nil
 }
 
 // RequiredIndexRebuildSQL returns the statement that recreates the named required index,
@@ -600,6 +722,11 @@ type requiredIndex struct {
 	// renders it: a bare column name, or the deparsed text of an expression key.
 	keys      []string
 	predicate string // deparsed; "" means the index must NOT be partial
+	// optional tolerates the index's ABSENCE — an index a contract migration is scheduled to
+	// drop, which this image must still boot without (see the entry that sets it). A
+	// PRESENT optional index is checked exactly like a required one: invalid, not ready, or
+	// carrying the name with the wrong definition is still refused.
+	optional bool
 }
 
 // createIndexRe matches the CREATE statement for a named index in a migration file.
@@ -799,6 +926,9 @@ func checkRequiredIndexes(ctx context.Context, conn *pgxv5.Conn, expected map[st
 		var keys []string
 		row := conn.QueryRow(ctx, requiredIndexQuery, want.name, want.table)
 		switch scanErr := row.Scan(&unique, &live, &rightTable, &predicate, &keys); {
+		case errors.Is(scanErr, pgxv5.ErrNoRows) && want.optional:
+			// Dropped on schedule by a contract migration: nothing to enforce, nothing to report.
+			continue
 		case errors.Is(scanErr, pgxv5.ErrNoRows), scanErr == nil && !live:
 			missing = append(missing, want.name)
 			continue

@@ -263,6 +263,12 @@ func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
 	// Character-identical to the deparsed form 000023's guard compares against. Two
 	// checks on one definition are only two checks while they agree on what it is.
 	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
+	// Optional from the lock release on (PR #260): this image is the rollback target for the
+	// release that drops the index, so it must boot without it — while still checking the
+	// definition of any index carrying the name.
+	assert.True(t, got.optional, "a required legacy index makes this image unbootable once "+
+		"the contract release drops it, so an image-only rollback boot-loops")
+	assert.True(t, RequiredIndexIsOptional(dispatchUnique))
 }
 
 // describeInvalid's annotation is derived from the migrations, not from requiredIndexes,
@@ -437,4 +443,8 @@ func TestRequiredIndexes_CoversTheSlotVersionUniqueIndex(t *testing.T) {
 	// bumps, so an index on it would give one campaign a new slot identity per write.
 	assert.Equal(t, []string{"brief_id", "platform", "variant", "slot_version"}, got.keys)
 	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
+	// REQUIRED, unlike its three-column predecessor: with the legacy index dropped it is the
+	// only thing keeping a retry from creating a duplicate paid campaign.
+	assert.False(t, got.optional, "%s must not be optional", slotUnique)
+	assert.False(t, RequiredIndexIsOptional(slotUnique))
 }

@@ -4280,6 +4280,123 @@ refuses a removal that would leave no keyword (`ErrKeywordTargetingWouldEmpty`),
 deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
+## Reddit, X and Microsoft negative-keyword adapters (LFXV2-2665)
+
+Four dispatchers implement `service.NegativeKeywordAdder` (`add-negative-keywords`): Google Ads
+(above), Microsoft (`microsoft_keywords.go`), Reddit (`reddit_negative_keywords.go`) and X
+(`twitter_negative_keywords.go`). This section covers the last three and the shared batch check.
+The design and the upstream research are in
+[Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md); the clients are
+in [internal/platform/reddit](internal-platform-reddit.md) ("Ad-group excluded keywords"),
+[internal/platform/twitter](internal-platform-twitter.md) ("Line-item negative keywords") and
+[internal/platform/microsoft](internal-platform-microsoft.md) ("Keyword levers on a live campaign").
+
+**Shared batch check (`negative_keywords.go`).** `validateNegativeKeywordBatch(label, keywords, max,
+allowed...)` runs before any platform is contacted and returns the batch normalised and
+index-aligned. Every refusal is `ErrNegativeKeywordInvalid`: an entry count outside 1..max; a text
+`microsoft.NormalizeNegativeKeywordText` refuses (Microsoft's text rules, applied to every platform
+because the endpoint publishes one input contract); a match type outside the platform's `allowed`
+set (any casing is accepted, via `canonicalNegativeMatchType`); the same (match type,
+`textfold.Key(text)`) twice. Duplicates are REFUSED, not de-duplicated, because outcomes are
+positional. `maxNegativeKeywordsPerRequest` is 60. Reddit and X (and Google) call it; Microsoft
+calls `microsoft.ValidateNegativeKeywords`, the same rules with Exact/Phrase.
+
+| | Reddit | X | Microsoft |
+|---|---|---|---|
+| Match types | Broad only | Broad / Phrase / Exact → `BROAD_` / `PHRASE_` / `EXACT_KEYWORD` (`twitterNegativeTargetingType`) | Exact / Phrase |
+| Max per request | 60 | 20 (`maxTwitterNegativeKeywords`: one paced POST per keyword inside the 45 s mutation timeout) | 60 |
+| `revision` | required, non-blank | refused if non-empty | refused if non-empty |
+| Gate | `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED` exactly `"true"`, else `ErrNegativeKeywordsUnsupported` | none | none |
+| Target | the row's recorded ad group (`redditTargetingAdGroup`) | the row's recorded line item | the row's `PlatformCampaignID` (`microsoftCampaignIDRE`) |
+| Provenance | fails closed: no recorded creating account is `ErrCampaignProvenanceUnknown` | fails closed (`ownedTwitterLineItem(..., true)`) | fails closed (`microsoftKeywordLeverClient`) |
+| Account | `verifyRedditAccountMatch` | `verifyTwitterAccountMatch` | `verifyMicrosoftAccountMatch` |
+| Ownership read | `readOwnedRedditTargeting`: the ad group exists and Reddit reports it under THIS campaign (an unreported `campaign_id` is refused like a different one) | `ownedTwitterLineItem`: the line item is live and X reports it under THIS campaign | none — the only id sent is the campaign's own, from the row |
+| Read before write | the same targeting read: compare-and-set on `revision` (`ErrKeywordTargetingChanged`, 409), then the already-present set | `ListLineItemTargetingCriteria` (all-or-error; unreadable → `ErrKeywordTargetingUnaddressable`), then the already-present set | none — Microsoft's own 4335 reports a duplicate per item |
+
+Every refusal in that table happens before the write, so it changes nothing. Guard order:
+- *Reddit:* the gate; the batch; `revision` present; the recorded ad group; provenance; the
+  account; the ownership read; `revision` equal to that read's; `excluded_keywords` legible; the
+  already-present set; the 2,000-element cap; a fingerprint of every other targeting member
+  (`FingerprintExceptExcluded`, unreadable → `ErrKeywordTargetingUnaddressable`), kept for the
+  post-write comparison.
+- *X:* the batch; no `revision`; then `ownedTwitterLineItem` — a platform campaign id, provenance,
+  a recorded line item, the account, the line item read live and under this campaign; then the
+  complete criteria list.
+- *Microsoft:* the batch; no `revision`; a well-formed platform campaign id; provenance (refused
+  before credentials are decrypted); the account.
+
+On every platform a malformed batch therefore masks a contingent fault.
+
+**No last-keyword guard.** The removal's `ErrKeywordTargetingWouldEmpty` / `WOULD_EMPTY` guard exists
+because taking out the last positive keyword widens delivery. Adding a negative only narrows it, so
+none of the three adapters checks it, and X does not re-list the criteria before each POST (the
+removal does).
+
+**Idempotency and duplicates.**
+- *Reddit:* a keyword whose exact text is already in `excluded_keywords` is `ALREADY_PRESENT` and
+  not sent; if nothing is new, no write is made. The comparison is exact, not case-folded (the
+  request side is normalised by the batch check). The array cap is counted in elements, `null`
+  elements kept from the read included (`ErrNegativeKeywordLimit`, 409).
+- *X:* the already-present key is `twitterNegativeKey(targetingType, value)` =
+  `targetingType + NUL + textfold.Key(whitespace-collapsed value)`, built the same way for X's raw
+  stored value and the normalised request text, so a stored `"Free Download"`, `" free download"`,
+  doubled space or non-breaking space matches. Only live `NE` criteria count; a positive criterion
+  with the same text does not. A match is `ALREADY_PRESENT` and not sent.
+- *Microsoft:* there is no pre-read. The add is sent and Microsoft's
+  `CampaignServiceNegativeKeywordAlreadyExists` / 4335, as an item's ONLY error, becomes
+  `ALREADY_PRESENT`; the client matches it strictly.
+
+**Outcomes and error classification.**
+- *Reddit:* one `AddAdGroupExcludedKeywords` PATCH carries every new keyword, so they share its
+  outcome. `reddit.IsOutcomeUnconfirmed` → UNCONFIRMED; `reddit.IsPlatformRefusal` (4xx other than
+  429) → FAILED `REJECTED`; any other error is treated as never reaching Reddit → FAILED `NOT_SENT`.
+  An acknowledged PATCH is then confirmed by a re-read: the ad group missing, a read error, an
+  excluded list other than the one written (`reddit.SameKeywords`), or any other targeting member's
+  fingerprint changed (logged at ERROR) is UNCONFIRMED; otherwise APPLIED. No id is returned.
+- *X:* one `CreateNegativeKeywordCriterion` per remaining keyword, in request order. A context
+  already done before an item is sent → FAILED `NOT_SENT`; success → APPLIED with the criterion id
+  as `NegativeKeywordID`; `ErrWriteNotSent` → FAILED `NOT_SENT`; `twitter.IsOutcomeUnconfirmed` →
+  UNCONFIRMED; any other error → FAILED `REJECTED` (see the pre-send gap noted in the X client
+  concept).
+- *Microsoft:* per-item outcomes from the client map through `microsoftKeywordOutcome`; anything it
+  does not name is UNCONFIRMED. A whole-call UNCONFIRMED from the client is wrapped
+  `unconfirmedKeywordLeverError`; a whole-call definite failure (e.g. the entity-level
+  `negativeKeywordEntityError`) is returned as is.
+- *When the call errors.* Reddit and X answer per item whenever any item has a definite outcome —
+  `ALREADY_PRESENT`, `APPLIED`, or FAILED with `REJECTED` / `NOT_SENT`. Only a batch whose every item
+  is UNCONFIRMED is returned as `unconfirmedKeywordLeverError` (`Unconfirmed()`), the service's
+  verify-before-retry arm. On Reddit, `ALREADY_PRESENT` items found before the PATCH are kept
+  whatever happens to the write. Microsoft errors only on a whole-call failure.
+
+The pre-reads (`GetAdGroupTargeting`, `ListLineItemTargetingCriteria`) and the X create echo are
+checked with `identityjson` before they are decoded (#359): a refused pre-read is a definite
+failure with nothing sent, and a refused X echo is UNCONFIRMED, because the write was sent.
+
+**Tests.**
+- `reddit_negative_keywords_test.go`: `TestReddit_AddNegativeKeywords_OffByDefault` (`"TRUE"` is not
+  `"true"`; zero requests); `_AppendsToExcludedKeywordsThenConfirms` (one PATCH, `null` element kept,
+  every other member as read, `ALREADY_PRESENT` not resent); `_CreatesAnAbsentMember`;
+  `_AllAlreadyPresentWritesNothing`; `_RefusalsWriteNothing` (Exact, Phrase, a disallowed
+  character, duplicates incl. Unicode folding, missing/blank revision, provenance unknown,
+  unprovisioned, another campaign's ad group, stale revision, an unreadable `excluded_keywords`, over
+  2,000, `null` elements counting toward 2,000 — no PATCH, and no request at all for the local ones);
+  `_AmbiguityIsUnconfirmed` (5xx, 429, a re-read missing the keyword or with another dimension moved,
+  a wrong echo — each with the PATCH sent exactly once; a 400 answered per item as `REJECTED`);
+  `_MixedBatchKeepsAlreadyPresentWhenTheWriteFails`.
+- `twitter_negative_keywords_test.go`: `TestTwitter_AddNegativeKeywords_OnePostPerKeywordMappedToNE`;
+  `_AlreadyPresentIgnoresCase`; `_PerItemOutcomes` (a 400 REJECTED, a 429 and an `EQ` echo UNCONFIRMED, one
+  APPLIED, four POSTs, no upstream text leaked); `_NotSentIsDefinite`; `_UnicodeCaseFolding`;
+  `_AllAmbiguousIsUnconfirmed` (502, 429, `"data": null` — one POST each);
+  `_DeadlineSendsNothing`; `_RefusalsPostNothing` (over 20, unknown match type, duplicate, a
+  revision, provenance unknown, account mismatch, no recorded line item, another campaign's or a
+  deleted line item, an unreadable criteria list); `TestTwitterNegativeKey_AgreesAcrossBothSources`,
+  `_StillSeparatesDifferentKeywords`, `_TargetingTypeStillSeparates`.
+- `microsoft_keywords_test.go`: `TestMicrosoft_AddNegativeKeywords_HappyPath` (an id → APPLIED, a
+  4335 → ALREADY_PRESENT, the campaign id taken from the row); `_RefusedBeforeAnyCall` (Broad, over
+  100 characters, a malformed batch beating unprovisioned, a revision, a Unicode-folded duplicate,
+  unprovisioned, provenance unknown, account mismatch — Microsoft never called);
+  `_AmbiguityIsUnconfirmed` (a 429 is `Unconfirmed()` and not retried).
+
 ## Also here: the audience EXPLORER (LFXV2-2770)
 
 `AudienceExplorer` (`audience_explorer.go`) is a SEPARATE type from `AudienceBuilder` even though

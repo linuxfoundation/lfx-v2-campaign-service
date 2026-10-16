@@ -8695,16 +8695,53 @@ func unmarshalMetaAdResponseBodyToLfxv2campaignservicebriefsMetaAd(v *MetaAdResp
 // value of type *PlatformResultResponseBody.
 func unmarshalPlatformResultResponseBodyToLfxv2campaignservicebriefsPlatformResult(v *PlatformResultResponseBody) *lfxv2campaignservicebriefs.PlatformResult {
 	res := &lfxv2campaignservicebriefs.PlatformResult{
-		Platform:   *v.Platform,
-		OK:         *v.OK,
-		CampaignID: v.CampaignID,
-		Error:      v.Error,
-		HubspotURL: v.HubspotURL,
+		Platform:           *v.Platform,
+		OK:                 *v.OK,
+		CampaignID:         v.CampaignID,
+		Error:              v.Error,
+		HubspotURL:         v.HubspotURL,
+		ReconcileTruncated: v.ReconcileTruncated,
 	}
 	if v.Warnings != nil {
 		res.Warnings = make([]string, len(v.Warnings))
 		for i, val := range v.Warnings {
 			res.Warnings[i] = val
+		}
+	}
+	if v.Reconcile != nil {
+		res.Reconcile = make([]*lfxv2campaignservicebriefs.ReconcileIdentifier, len(v.Reconcile))
+		for i, val := range v.Reconcile {
+			if val == nil {
+				res.Reconcile[i] = nil
+				continue
+			}
+			res.Reconcile[i] = unmarshalReconcileIdentifierResponseBodyToLfxv2campaignservicebriefsReconcileIdentifier(val)
+		}
+	}
+
+	return res
+}
+
+// unmarshalReconcileIdentifierResponseBodyToLfxv2campaignservicebriefsReconcileIdentifier
+// builds a value of type *lfxv2campaignservicebriefs.ReconcileIdentifier from
+// a value of type *ReconcileIdentifierResponseBody.
+func unmarshalReconcileIdentifierResponseBodyToLfxv2campaignservicebriefsReconcileIdentifier(v *ReconcileIdentifierResponseBody) *lfxv2campaignservicebriefs.ReconcileIdentifier {
+	res := &lfxv2campaignservicebriefs.ReconcileIdentifier{
+		Key:       *v.Key,
+		Truncated: v.Truncated,
+	}
+	if v.Values != nil {
+		res.Values = make([]string, len(v.Values))
+		for i, val := range v.Values {
+			res.Values[i] = val
+		}
+	}
+	if v.Entries != nil {
+		res.Entries = make(map[string]string, len(v.Entries))
+		for key, val := range v.Entries {
+			tk := key
+			tv := val
+			res.Entries[tk] = tv
 		}
 	}
 

@@ -1304,6 +1304,48 @@ refusal, and it is not retried). `CreateNegativeKeywordCriterion` (`negative_key
 its POST echo the same way: a refused echo is UNCONFIRMED. The create path sets no
 targeting criteria. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
+## Line-item negative keywords (`negative_keywords.go`, LFXV2-2665)
+
+The client half of `TwitterDispatcher.AddNegativeKeywords` (see [internal/dispatch](internal-dispatch.md),
+"Reddit, X and Microsoft negative-keyword adapters"). An X negative keyword is a keyword targeting
+criterion of the line item with `operator_type` `NE` (`OperatorNE`); the file's header cites X's
+Campaign Management guide and reference for the keyword types and `NE`. It has not been exercised
+against a live ad account.
+
+- **`TargetingCriterion.NegativeKeyword()`** is true for a live (not `deleted`) keyword-type
+  criterion with `operator_type` `NE` and a non-empty value — the dispatcher's already-present
+  test. `PositiveKeyword()` is its counterpart for the removal.
+- **Request shape.** `CreateNegativeKeywordCriterion(ctx, lineItemID, targetingType, keyword)` sends
+  one `POST accounts/:account_id/targeting_criteria` with `line_item_id`, `operator_type=NE`,
+  `targeting_type` and `targeting_value`. One POST per keyword, not the batch endpoint: the batch
+  (up to 40) succeeds or fails as a group and cannot give each keyword its own outcome.
+- **Refused before sending:** an unusable line-item id (`lineItemPath`); a targeting type other than
+  `BROAD_KEYWORD`, `PHRASE_KEYWORD` or `EXACT_KEYWORD` (`UNORDERED_KEYWORD` is deprecated; the legacy
+  `NEGATIVE_*` types are not sent); a blank keyword.
+- **Pacing and NOT_SENT.** It takes a slot on the client's shared write pacer first; a pacer wait cut
+  short, or a request `ProbeNotSent` proves never left the process, is `ErrWriteNotSent`.
+- **Sent once, never retried on a 429** (`doRequest(..., false)`): X has no idempotency key for a
+  criterion, so a retry after a committed write would add a second one. A 429, transport failure,
+  3xx or 5xx is UNCONFIRMED (`createOutcomeAmbiguous`, read by `IsOutcomeUnconfirmed`); any other
+  4xx is a definite refusal.
+- **Echo check.** A 2xx is success only when it reports a criterion with a usable id, under THIS
+  line item, of the requested type, `NE`, not deleted, and for this keyword compared with
+  `textfold.Equal` (X may return the value case-normalised). Anything else — including
+  `"data": null` — is an UNCONFIRMED `transportError`. The echo is checked with
+  `identityjson` before decoding (#359); a refused echo is UNCONFIRMED, since the write was sent.
+- **Known gap (pre-existing).** `doRequestAbs` has two pre-send exits that carry no not-sent
+  marker — a `buildOAuthHeader` failure and an `http.NewRequestWithContext` failure — so they are
+  neither `ErrWriteNotSent` nor UNCONFIRMED, and the dispatcher reports them `REJECTED`. Recorded
+  in `log/2026-10-16-LFXV2-2665-google-request-not-transmitted.md`; not fixed.
+
+**Tests** (`negative_keywords_test.go`): `TestCreateNegativeKeywordCriterion_PostsANegatedKeyword`
+(the query parameters, and a case-normalised echo accepted);
+`TestCreateNegativeKeywordCriterion_RefusesBeforeSending` (`UNORDERED_KEYWORD`,
+`NEGATIVE_PHRASE_KEYWORD`, a malformed line item, a blank keyword — zero requests);
+`TestCreateNegativeKeywordCriterion_UnprovenEchoIsUnconfirmed` (null data, no id, another line
+item, `EQ`, another type, another keyword; 429 and 502 UNCONFIRMED after exactly one request; a
+400 definite).
+
 ## Campaign-ref id rule (`campaign_ref.go`, LFXV2-2665)
 
 `ValidateCampaignID` is the id rule `resolve-twitter-ads-campaign` applies before any lookup:

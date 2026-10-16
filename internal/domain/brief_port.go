@@ -178,11 +178,13 @@ type CampaignReader interface {
 	// Scoped by projectID, which is what stops it answering questions about another
 	// foundation's campaigns on the shared ad account.
 	ResolvePlatformCampaign(ctx context.Context, projectID string, platform model.Provider, platformCampaignID string) ([]model.LocalCampaignRef, error)
-	// ClaimCampaignDispatch atomically claims the right to dispatch (brief,
-	// platform) by inserting a placeholder campaign row (status 'pending') via
-	// INSERT ... ON CONFLICT (brief_id, platform) DO NOTHING. Exactly one worker
-	// wins across all replicas — the (brief_id, platform) unique index arbitrates,
-	// with no held connection and no blocking lock. It returns:
+	// ClaimCampaignDispatch atomically claims the right to dispatch one slot version of
+	// (brief, platform, variant) by inserting a placeholder campaign row (status 'pending')
+	// via INSERT ... ON CONFLICT (brief_id, platform, variant, slot_version) ... DO NOTHING.
+	// Exactly one worker wins across all replicas — the four-column unique index arbitrates.
+	// The INSERT runs in a short transaction under the per-slot advisory lock, so it waits
+	// only for local statements on the same slot (or one whose key hashes alike) and holds
+	// nothing once it commits. It returns:
 	//   - claimed=true, row=the pending row  → this worker owns the dispatch;
 	//   - claimed=false, row=the existing row → another worker already claimed or
 	//     completed it; the caller reuses that row instead of dispatching again.
@@ -200,13 +202,17 @@ type CampaignReader interface {
 	//
 	// slotVersion names WHICH campaign on the slot is being claimed (model.Campaign.
 	// SlotVersion); 1 for the first. A claim for a slot version the schema cannot hold yet
-	// returns domain.ErrSlotVersionUnavailable, having written nothing.
+	// returns domain.ErrSlotVersionUnavailable, having written nothing. A claim is serialized
+	// per (brief, platform, variant) against AdoptCampaign, so an adopt never lands beside a
+	// claimed row on the same slot.
 	ClaimCampaignDispatch(ctx context.Context, projectID, briefID string, platform model.Provider, variant string, slotVersion int, jobID string, by *model.Actor) (claimed bool, row *model.Campaign, err error)
-	// DeleteDispatchClaim removes a still-'pending' claim row for (brief, platform)
-	// so the pair can be retried after a dispatch fails before the upstream
-	// campaign is created. It only deletes rows still in 'pending' status, so it
-	// can never remove a real (created) campaign.
-	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error
+	// DeleteDispatchClaim removes the still-'pending' claim row jobID took on (brief,
+	// platform, variant, slot version) so the slot can be retried after a dispatch fails
+	// before the upstream campaign is created. It only deletes rows still in 'pending'
+	// status, so it can never remove a real (created) campaign, and only the row whose
+	// stored job_id is jobID, so a stale release after an operator cleared the claim can
+	// never delete a successor job's claim. An empty jobID is an error.
+	DeleteDispatchClaim(ctx context.Context, briefID string, platform model.Provider, variant string, slotVersion int, jobID string) error
 }
 
 // CampaignLockToken is an opaque handle identifying one successful ClaimCampaignVersion call.
@@ -238,8 +244,14 @@ func (t CampaignLockToken) Handle() any {
 
 // CampaignWriter mutates campaigns.
 type CampaignWriter interface {
-	// UpsertCampaign inserts or updates the campaign row for a (brief, platform).
-	// Campaigns are updated in place when a brief changes after they exist.
+	// UpsertCampaign records a dispatch's result on its (brief, platform, variant, slot
+	// version), under the per-slot advisory lock. It updates the live row at that version ONLY
+	// when that row is the claim this write's JobID took — the row's stored job_id equals
+	// c.JobID. When this job's claim is gone, it INSERTs only into a WHOLLY EMPTY slot: no live
+	// row at ANY version. A live row at another version (an adoption, which takes slot 1, or
+	// another dispatch's claim) makes the write ErrDispatchClaimLost even though this version
+	// has no row, so a stale slot-2 write can never land beside an adopted slot 1. Any refused
+	// write leaves every row untouched, and a write with no JobID never updates an existing row.
 	UpsertCampaign(ctx context.Context, c *model.Campaign, indexPayload CampaignIndexPayloadFunc) (*model.Campaign, error)
 
 	// AdoptCampaign INSERTs the campaign row for a (brief, platform) pair that has no live
@@ -252,9 +264,14 @@ type CampaignWriter interface {
 	// one — still spending, with nothing in this service referring to it. AdoptCampaign
 	// returns ErrConflict instead and leaves the existing binding alone.
 	//
-	// The check is the INSERT itself (ON CONFLICT DO NOTHING against the live partial
-	// unique index), not a preceding read, so two concurrent adopts of the same pair cannot
-	// both observe "no campaign yet" and race. A second live index rejects binding the same
+	// The check is a read made SAFE by a lock, then the INSERT as the final guard. The
+	// implementation takes the per-slot advisory lock (brief, platform, variant) — the same lock
+	// ClaimCampaignDispatch and UpsertCampaign take — and, holding it, refuses with ErrConflict
+	// if ANY live row exists on the slot, at any slot version. That locked read is load-bearing:
+	// it is what stops an adopt from landing beside a claim of another slot version, which no
+	// unique index covers once slot versions are allowed. The INSERT keeps ON CONFLICT DO NOTHING
+	// against the live partial unique index as the final same-version guard. An implementation
+	// that drops either the lock or the any-version check reopens the race. A second live index rejects binding the same
 	// upstream campaign to a DIFFERENT brief (ErrPlatformCampaignAlreadyBound) -- in any project,
 	// not just this one, because providers like Google Ads put every project on one shared
 	// upstream account, and a project-scoped rejection would miss the collisions that follow.

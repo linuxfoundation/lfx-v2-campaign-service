@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
@@ -468,7 +469,7 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 	return true, pending, nil
 }
 
-func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string, slotVersion int) error {
+func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string, platform model.Provider, variant string, slotVersion int, jobID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	slotVersion = model.NormalizeSlotVersion(slotVersion)
@@ -489,7 +490,11 @@ func (r *fakeCampaignRepo) DeleteDispatchClaim(_ context.Context, briefID string
 		if key == legacySlotKey(briefID, platform) && model.NormalizeVariant(variant) != model.VariantDefault {
 			continue
 		}
-		if c, ok := r.existing[key]; ok && c.Status == "pending" && model.NormalizeSlotVersion(c.SlotVersion) == slotVersion {
+		// And only THIS job's claim, as the real DELETE keys on job_id: a stale release must
+		// not free a successor's claim. A row with no job id (seeded directly by a test) is
+		// treated as matching any release, since no test seeds a competing claimant that way.
+		if c, ok := r.existing[key]; ok && c.Status == "pending" && model.NormalizeSlotVersion(c.SlotVersion) == slotVersion &&
+			(c.JobID == nil || *c.JobID == jobID) {
 			delete(r.existing, key)
 		}
 	}
@@ -3710,5 +3715,452 @@ func TestOrchestrator_DispatchOntoABoundCampaignNamesTheConflict(t *testing.T) {
 	}
 	if !strings.Contains(string(j.Result), "pc-google-ads") {
 		t.Errorf("result = %s, want the upstream id preserved for reconciliation", j.Result)
+	}
+}
+
+// lostClaimCampaignRepo fails UpsertCampaign as the real repo does when the dispatch's pending
+// claim was cleared mid-flight and another row (an adoption, a later job's claim) took the
+// slot: the conflict arm's job_id guard declines and nothing is written.
+type lostClaimCampaignRepo struct{ fakeCampaignRepo }
+
+func (r *lostClaimCampaignRepo) UpsertCampaign(_ context.Context, c *model.Campaign, _ domain.CampaignIndexPayloadFunc) (*model.Campaign, error) {
+	return nil, fmt.Errorf("upsert campaign: %w: %s campaign %s (slot version 1) is no longer held by job %s",
+		domain.ErrDispatchClaimLost, c.Platform, c.PlatformCampaignID, *c.JobID)
+}
+
+// A lost claim is neither a success nor an ordinary persist failure: the paid campaign exists
+// upstream and nothing here tracks it. Both persist paths (the success upsert and the
+// retained-partial upsert) must fail the platform, name reconciliation, and keep the upstream
+// id in the job result so an operator can find the untracked campaign.
+func TestOrchestrator_LostClaimIsReportedForReconciliationWithTheUpstreamID(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		dispatcher PlatformDispatcher
+		wantID     string
+	}{
+		{"success persist", okDispatcher{}, "pc-" + string(model.ProviderGoogleAds)},
+		{"retained-partial persist", partialResultDispatcher{}, "pc-orphan-" + string(model.ProviderGoogleAds)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jobs := newFakeJobRepo()
+			orch := NewOrchestrator(&lostClaimCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+				model.ProviderGoogleAds: tc.dispatcher,
+			})
+			brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+			id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderGoogleAds}, nil)
+			j := waitForTerminal(t, jobs, id)
+			if j.Status != model.JobFailed {
+				t.Errorf("status = %s, want failed", j.Status)
+			}
+			res := string(j.Result)
+			if !strings.Contains(res, "reconciliation required") || !strings.Contains(res, "claim was cleared") {
+				t.Errorf("result = %s, want the lost claim named as needing reconciliation", res)
+			}
+			if strings.Contains(res, "failed to record it") || strings.Contains(res, "platform campaign creation failed") {
+				t.Errorf("result = %s, want the lost-claim outcome, not a generic persist/creation failure", res)
+			}
+			if !strings.Contains(res, tc.wantID) {
+				t.Errorf("result = %s, want the untracked upstream id %s kept for reconciliation", res, tc.wantID)
+			}
+		})
+	}
+}
+
+// idLessPartialDispatcher returns the id-less partial shape (an ambiguous create / LinkedIn
+// group-only orphan): no upstream campaign id, its reconcile detail ONLY in Result, alongside an
+// error. Steps and the URL stand in for the blob's non-identifying content, which must not leave
+// the row it was meant for.
+type idLessPartialDispatcher struct{}
+
+const idLessPartialStepText = "platform said: quota exceeded for account 42"
+
+func (idLessPartialDispatcher) Dispatch(_ context.Context, _ *model.CampaignBrief, _ model.Provider, _ json.RawMessage) (*model.Campaign, error) {
+	blob, _ := json.Marshal(map[string]any{
+		"platform":          "linkedin",
+		"campaignGroupName": "grp-name-7",
+		"campaignGroupId":   "grp-id-7",
+		"campaignName":      "camp-name-7",
+		"campaignId":        "",
+		"accountId":         "acct-7",
+		"linkedInUrl":       "https://example.invalid/should-not-copy",
+		"steps":             []string{idLessPartialStepText},
+	})
+	return &model.Campaign{Status: model.CampaignStatusUnconfirmed, CampaignName: "camp-name-7", Result: blob},
+		errors.New(idLessPartialDispatchErr)
+}
+
+const idLessPartialDispatchErr = "campaign create outcome unknown"
+
+// An id-less partial whose claim is lost has NO campaign_id, so the identifiers in its Result
+// blob are the only way to find what it created — and the row that would have held the blob was
+// never written. The job result and the ERROR log must both carry those identifiers (and only
+// those: no Steps text, no URL), and the message must say no id was captured.
+func TestOrchestrator_IDLessPartialWithALostClaimKeepsItsReconcileDetail(t *testing.T) {
+	h := &capturingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	jobs := newFakeJobRepo()
+	orch := NewOrchestrator(&lostClaimCampaignRepo{}, jobs, map[model.Provider]PlatformDispatcher{
+		model.ProviderLinkedInAds: idLessPartialDispatcher{},
+	})
+	brief := &model.CampaignBrief{ID: "b1", ProjectID: "cncf"}
+	id, _ := orch.Start(context.Background(), brief, brief.Version, []model.Provider{model.ProviderLinkedInAds}, nil)
+	j := waitForTerminal(t, jobs, id)
+	if j.Status != model.JobFailed {
+		t.Errorf("status = %s, want failed", j.Status)
+	}
+
+	var stored []platformResult
+	if err := json.Unmarshal(j.Result, &stored); err != nil || len(stored) != 1 {
+		t.Fatalf("decode job result %s: %v", j.Result, err)
+	}
+	got := stored[0]
+	if got.Error != lostClaimNoIDResultError {
+		t.Errorf("error = %q, want the id-less lost-claim message", got.Error)
+	}
+	if got.CampaignID != "" {
+		t.Errorf("campaign_id = %q, want none (no upstream id was captured)", got.CampaignID)
+	}
+	want := map[string]string{
+		"campaignGroupId": "grp-id-7", "campaignGroupName": "grp-name-7",
+		"campaignName": "camp-name-7", "accountId": "acct-7",
+	}
+	for k, v := range want {
+		if got.Reconcile[k] != v {
+			t.Errorf("reconcile[%s] = %q, want %q (reconcile = %v)", k, got.Reconcile[k], v, got.Reconcile)
+		}
+	}
+	// Status is state, not a lookup handle: it belongs in the log, never in reconcile.
+	if _, ok := got.Reconcile["status"]; ok {
+		t.Errorf("reconcile carries status (%v); it holds identifiers only", got.Reconcile["status"])
+	}
+	if strings.Contains(string(j.Result), idLessPartialDispatchErr) {
+		t.Errorf("job result %s carries the provider error; the client message must stay generic", j.Result)
+	}
+	if strings.Contains(string(j.Result), idLessPartialStepText) || strings.Contains(string(j.Result), "should-not-copy") {
+		t.Errorf("job result %s carries non-identifying blob content (steps / URL)", j.Result)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	found := false
+	for _, rec := range h.recs {
+		if !strings.Contains(rec.Message, "dispatch claim lost") {
+			continue
+		}
+		var gotJob, reconcile, dispatchErr, status string
+		rec.Attrs(func(a slog.Attr) bool {
+			switch a.Key {
+			case "job_id":
+				gotJob = a.Value.String()
+			case "reconcile":
+				reconcile = fmt.Sprint(a.Value.Any())
+			case "dispatch_error":
+				dispatchErr = fmt.Sprint(a.Value.Any())
+			case "status":
+				status = a.Value.String()
+			}
+			return true
+		})
+		if gotJob != id {
+			continue
+		}
+		found = true
+		// The provider's own failure: returning through the lost-claim path skips the
+		// retained-partial log line that normally carries it, so this record must.
+		if status != model.CampaignStatusUnconfirmed {
+			t.Errorf("lost-claim log status = %q, want %q (kept in the log, not in reconcile)", status, model.CampaignStatusUnconfirmed)
+		}
+		if !strings.Contains(dispatchErr, idLessPartialDispatchErr) {
+			t.Errorf("lost-claim log dispatch_error = %q, want the provider error %q", dispatchErr, idLessPartialDispatchErr)
+		}
+		if !strings.Contains(reconcile, "grp-id-7") || !strings.Contains(reconcile, "camp-name-7") {
+			t.Errorf("lost-claim log reconcile = %q, want the group id and campaign name", reconcile)
+		}
+		if strings.Contains(reconcile, idLessPartialStepText) {
+			t.Errorf("lost-claim log reconcile = %q carries Steps text", reconcile)
+		}
+	}
+	if !found {
+		t.Fatal("no lost-claim ERROR log for this job")
+	}
+}
+
+// reconcileRef must never drop a legitimate identifier. LinkedIn (and X, Meta creatives) accept
+// names of 255 CHARACTERS; a 255-rune multibyte name is ~765 bytes, which a byte cap of 256
+// dropped — leaving nothing to find an id-less orphan by. A value past the rune cap is
+// truncated (to valid UTF-8) and flagged, never dropped.
+func TestReconcileRefKeepsLongMultibyteNamesAndFlagsTruncation(t *testing.T) {
+	name255 := strings.Repeat("日", 255) // 255 runes, 765 bytes
+	if utf8.RuneCountInString(name255) != 255 || len(name255) <= 256 {
+		t.Fatalf("fixture: %d runes / %d bytes, want 255 runes over 256 bytes", utf8.RuneCountInString(name255), len(name255))
+	}
+	huge := strings.Repeat("é", reconcileRefMaxRunes+10)
+	blob, _ := json.Marshal(map[string]any{
+		"campaignGroupName": name255,
+		"campaignGroupId":   "grp-1",
+		"campaignName":      huge,
+	})
+	ref, _ := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: blob})
+
+	if ref["campaignGroupName"] != name255 {
+		t.Errorf("255-rune multibyte name was not kept verbatim (got %d runes)", utf8.RuneCountInString(fmt.Sprint(ref["campaignGroupName"])))
+	}
+	if _, flagged := ref["campaignGroupNameTruncated"]; flagged {
+		t.Error("a name within the cap was flagged as truncated")
+	}
+	got, _ := ref["campaignName"].(string)
+	if utf8.RuneCountInString(got) != reconcileRefMaxRunes || !utf8.ValidString(got) {
+		t.Errorf("over-cap name: %d runes (valid UTF-8: %v), want truncated to %d valid runes",
+			utf8.RuneCountInString(got), utf8.ValidString(got), reconcileRefMaxRunes)
+	}
+	if ref["campaignNameTruncated"] != true {
+		t.Errorf("over-cap name was not flagged as truncated: %v", ref["campaignNameTruncated"])
+	}
+	if ref["campaignGroupId"] != "grp-1" {
+		t.Errorf("campaignGroupId = %q, want grp-1", ref["campaignGroupId"])
+	}
+}
+
+// reconcileRef keeps the identifier COLLECTIONS a partial-result contract records for
+// reconciliation, not just scalar ids: Google Ads' creativeAssetIds / extensionAssetIds (the only
+// handle on account-level assets a failed create leaves behind) and LinkedIn's imageUrns (stored
+// asset id -> urn:li:image). A lost claim never writes the row that holds them, so dropping them
+// loses every handle. Steps, URLs and non-string shapes stay out; long elements are capped and
+// the field flagged.
+func TestReconcileRefKeepsIdentifierCollections(t *testing.T) {
+	longID := strings.Repeat("x", reconcileRefMaxRunes+5)
+	google, _ := json.Marshal(map[string]any{
+		"campaignId":        "",
+		"campaignName":      "g-camp",
+		"creativeAssetIds":  []string{"asset-1", "asset-2", longID},
+		"extensionAssetIds": []string{"ext-1"},
+		"steps":             []string{"provider said: internal error"},
+		"finalUrl":          "https://example.invalid/landing",
+		"budgetIds":         []int{7},
+	})
+	linkedin, _ := json.Marshal(map[string]any{
+		"campaignGroupId": "grp-9",
+		"imageUrns":       map[string]string{"stored-asset-1": "urn:li:image:C4D10AQ"},
+		"linkedInUrl":     "https://example.invalid/li",
+		"steps":           []string{"provider said: bad creative"},
+	})
+
+	g, _ := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: google})
+	assets, _ := g["creativeAssetIds"].([]string)
+	if len(assets) != 3 || assets[0] != "asset-1" || assets[1] != "asset-2" || utf8.RuneCountInString(assets[2]) != reconcileRefMaxRunes {
+		t.Errorf("creativeAssetIds = %v, want both asset ids and the long one capped", g["creativeAssetIds"])
+	}
+	if g["creativeAssetIdsTruncated"] != true {
+		t.Errorf("creativeAssetIds with an over-cap element was not flagged: %v", g["creativeAssetIdsTruncated"])
+	}
+	if ext, _ := g["extensionAssetIds"].([]string); len(ext) != 1 || ext[0] != "ext-1" {
+		t.Errorf("extensionAssetIds = %v, want [ext-1]", g["extensionAssetIds"])
+	}
+	if _, ok := g["extensionAssetIdsTruncated"]; ok {
+		t.Error("extensionAssetIds flagged as truncated with nothing over the cap")
+	}
+
+	l, _ := reconcileRef(&model.Campaign{Status: model.CampaignStatusGroupCreated, Result: linkedin})
+	if urns, _ := l["imageUrns"].(map[string]string); urns["stored-asset-1"] != "urn:li:image:C4D10AQ" {
+		t.Errorf("imageUrns = %v, want the stored asset id -> image urn", l["imageUrns"])
+	}
+	if l["campaignGroupId"] != "grp-9" {
+		t.Errorf("campaignGroupId = %v, want grp-9", l["campaignGroupId"])
+	}
+
+	for name, ref := range map[string]map[string]any{"google": g, "linkedin": l} {
+		dump := fmt.Sprint(ref)
+		for _, banned := range []string{"provider said", "example.invalid"} {
+			if strings.Contains(dump, banned) {
+				t.Errorf("%s reconcile %s carries non-identifier content %q", name, dump, banned)
+			}
+		}
+		if _, ok := ref["budgetIds"]; ok {
+			t.Errorf("%s reconcile kept a non-string collection: %v", name, ref["budgetIds"])
+		}
+	}
+}
+
+// Dispatchers keep identifiers in NESTED structures too, and a lost claim never writes the row
+// that holds them: HubSpot's abTestVariant (the A/B variant email), Google's adGroups (every ad
+// group the cascade attempted, with its ads and criteria), and Meta's Ads (per-ad ad, creative
+// and image-hash ids). reconcileRef descends into objects and arrays of objects and keeps their
+// identifier-keyed values under a dotted path, while still dropping text (subjects, Steps),
+// URLs, numbers and state.
+func TestReconcileRefKeepsNestedIdentifiers(t *testing.T) {
+	hubspot, _ := json.Marshal(map[string]any{
+		"id": "email-1", "name": "Launch email", "subject": "Big news inside", "state": "DRAFT",
+		"hubspotUrl":    "https://example.invalid/hs",
+		"abTestVariant": map[string]any{"id": "email-2", "name": "Launch email (B)", "subject": "Variant subject"},
+	})
+	google, _ := json.Marshal(map[string]any{
+		"campaignId": "", "campaignName": "LFX | Search Campaign | x",
+		"adGroups": []map[string]any{
+			{"name": "grp-a", "id": "111", "adIds": []string{"a1", "a2"}, "keywordCriteriaIds": []string{"k1"}},
+			{"name": "grp-b", "id": ""},
+		},
+		"steps": []string{"provider said: partial failure"},
+	})
+	meta, _ := json.Marshal(map[string]any{
+		"CampaignID": "c-1", "AdSetID": "as-1", "AdCount": 2, "MetaURL": "https://example.invalid/meta",
+		"Ads": []map[string]any{
+			{"Variant": 1, "AdID": "ad-1", "CreativeID": "cr-1", "ImageHash": "h-1"},
+			{"Variant": 2, "AdID": "ad-2", "CreativeID": "cr-2"},
+		},
+		"Steps": []string{"provider said: variant 3 failed"},
+	})
+
+	for _, tc := range []struct {
+		name string
+		blob []byte
+		want map[string]any
+	}{
+		{"hubspot", hubspot, map[string]any{
+			"id": "email-1", "name": "Launch email",
+			"abTestVariant.id": "email-2", "abTestVariant.name": "Launch email (B)",
+		}},
+		{"google", google, map[string]any{
+			"campaignName":     "LFX | Search Campaign | x",
+			"adGroups[0].name": "grp-a", "adGroups[0].id": "111",
+			"adGroups[0].adIds": []string{"a1", "a2"}, "adGroups[0].keywordCriteriaIds": []string{"k1"},
+			"adGroups[1].name": "grp-b",
+		}},
+		{"meta", meta, map[string]any{
+			"CampaignID": "c-1", "AdSetID": "as-1",
+			"Ads[0].AdID": "ad-1", "Ads[0].CreativeID": "cr-1", "Ads[0].ImageHash": "h-1",
+			"Ads[1].AdID": "ad-2", "Ads[1].CreativeID": "cr-2",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ref, capped := reconcileRef(&model.Campaign{Status: model.CampaignStatusUnconfirmed, Result: tc.blob})
+			if capped {
+				t.Error("a small blob was reported as capped")
+			}
+			for k, v := range tc.want {
+				if fmt.Sprint(ref[k]) != fmt.Sprint(v) {
+					t.Errorf("ref[%s] = %v, want %v (ref = %v)", k, ref[k], v, ref)
+				}
+			}
+			if len(ref) != len(tc.want) {
+				t.Errorf("ref has %d keys, want exactly %d: %v", len(ref), len(tc.want), ref)
+			}
+			dump := fmt.Sprint(ref)
+			for _, banned := range []string{"provider said", "example.invalid", "subject", "Big news", "DRAFT", "Unconfirmed", "unconfirmed"} {
+				if strings.Contains(dump, banned) {
+					t.Errorf("reconcile %s carries non-identifier content %q", dump, banned)
+				}
+			}
+		})
+	}
+}
+
+// The recursion and the payload are bounded: a blob deeper than reconcileRefMaxDepth is not
+// followed past it, and one with more identifiers than reconcileRefMaxStrings stops at the cap
+// and says so, in sorted key order so the same blob always keeps the same prefix.
+func TestReconcileRefIsBounded(t *testing.T) {
+	deep, _ := json.Marshal(map[string]any{
+		"a": map[string]any{"id": "d2", "b": map[string]any{"id": "d3", "c": map[string]any{"id": "d4"}}},
+	})
+	ref, _ := reconcileRef(&model.Campaign{Result: deep})
+	if ref["a.id"] != "d2" || ref["a.b.id"] != "d3" {
+		t.Errorf("depth 2 and 3 identifiers missing: %v", ref)
+	}
+	if _, ok := ref["a.b.c.id"]; ok {
+		t.Errorf("descended past depth %d: %v", reconcileRefMaxDepth, ref)
+	}
+
+	ads := make([]map[string]any, reconcileRefMaxStrings+50)
+	for i := range ads {
+		ads[i] = map[string]any{"AdID": fmt.Sprintf("ad-%04d", i)}
+	}
+	huge, _ := json.Marshal(map[string]any{"Ads": ads})
+	ref, capped := reconcileRef(&model.Campaign{Result: huge})
+	if !capped {
+		t.Error("a blob past the string cap was not reported as capped")
+	}
+	if len(ref) != reconcileRefMaxStrings {
+		t.Errorf("kept %d identifiers, want exactly the %d cap", len(ref), reconcileRefMaxStrings)
+	}
+	if ref["Ads[0].AdID"] != "ad-0000" {
+		t.Errorf("the first identifier in key order was not kept: %v", ref["Ads[0].AdID"])
+	}
+}
+
+// The payload bound must never cost the campaign's own handles. A Google-shaped blob with
+// hundreds of ad-group criterion ids used to exhaust the 256-string bound inside adGroups —
+// visited before campaignId/budgetId in a depth-first, sorted walk — so the top-level campaign
+// and budget ids and names were dropped. Breadth-first, scalars first, they always survive and
+// only the nested tail is cut.
+func TestReconcileRefKeepsTopLevelHandlesWhenNestedListsExhaustTheBound(t *testing.T) {
+	groups := make([]map[string]any, 5)
+	for g := range groups {
+		ids := make([]string, 120)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("kw-%d-%03d", g, i)
+		}
+		groups[g] = map[string]any{"name": fmt.Sprintf("grp-%d", g), "id": fmt.Sprintf("ag-%d", g), "keywordCriteriaIds": ids}
+	}
+	blob, _ := json.Marshal(map[string]any{
+		// "adGroups" sorts BEFORE every one of these keys.
+		"adGroups":     groups,
+		"budgetId":     "budget-1",
+		"budgetName":   "LFX | Budget | x",
+		"campaignId":   "camp-1",
+		"campaignName": "LFX | Search Campaign | x",
+	})
+	ref, capped := reconcileRef(&model.Campaign{Result: blob})
+	if !capped {
+		t.Fatal("600 criterion ids did not hit the bound; the fixture no longer exercises it")
+	}
+	for k, v := range map[string]string{
+		"budgetId": "budget-1", "budgetName": "LFX | Budget | x",
+		"campaignId": "camp-1", "campaignName": "LFX | Search Campaign | x",
+	} {
+		if ref[k] != v {
+			t.Errorf("top-level %s = %v, want %q: the bound was spent on nested ids first", k, ref[k], v)
+		}
+	}
+	// Depth-2 scalars come before depth-2 collections, so every group's id and name survive.
+	for g := 0; g < 5; g++ {
+		if ref[fmt.Sprintf("adGroups[%d].id", g)] != fmt.Sprintf("ag-%d", g) {
+			t.Errorf("adGroups[%d].id missing: nested scalars must outrank nested lists", g)
+		}
+	}
+	if _, ok := ref["adGroups[4].keywordCriteriaIds"]; ok {
+		t.Error("the LAST group's criterion ids were kept; truncation must cut the latest entries")
+	}
+}
+
+// X uploads the creative image BEFORE the campaign POST, so its name-only partial carries the
+// Media Library mediaKey as the only handle on that upload. The suffix rule cannot see it (no
+// id/name/urn/hash ending), so it is an EXACT, case-insensitive allowlist entry — and only that:
+// a broad "key" suffix would let credential-shaped fields through, which this pins too.
+func TestReconcileRefKeepsXMediaKeyButNoOtherKeyFields(t *testing.T) {
+	blob, _ := json.Marshal(map[string]any{
+		"Platform":     "twitter-ads",
+		"CampaignName": "LFX | Event | x",
+		"AccountID":    "18ce54d4x5t",
+		"MediaKey":     "3_1234567890123456789",
+		"TwitterURL":   "https://example.invalid/x",
+		"Steps":        []string{"provider said: campaign create timed out"},
+		"apiKey":       "should-never-appear",
+		"tokenKey":     "should-never-appear",
+	})
+	ref, _ := reconcileRef(&model.Campaign{Result: blob})
+	if ref["MediaKey"] != "3_1234567890123456789" {
+		t.Errorf("MediaKey = %v, want the media library key kept (ref = %v)", ref["MediaKey"], ref)
+	}
+	if ref["CampaignName"] != "LFX | Event | x" || ref["AccountID"] != "18ce54d4x5t" {
+		t.Errorf("X name-only partial lost its name/account: %v", ref)
+	}
+	lower, _ := reconcileRef(&model.Campaign{Result: json.RawMessage(`{"mediakey":"3_9"}`)})
+	if lower["mediakey"] != "3_9" {
+		t.Errorf("the mediaKey match must be case-insensitive: %v", lower)
+	}
+	if dump := fmt.Sprint(ref); strings.Contains(dump, "should-never-appear") || strings.Contains(dump, "example.invalid") {
+		t.Errorf("reconcile %s carries a non-identifier key field or URL", dump)
 	}
 }

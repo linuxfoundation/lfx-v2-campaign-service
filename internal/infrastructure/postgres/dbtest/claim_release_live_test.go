@@ -73,7 +73,7 @@ func TestLiveClaimAndReleaseDriveTheRealRepoMethods(t *testing.T) {
 	}
 
 	// Release, then re-claim: the slot must be free again.
-	if err := repo.DeleteDispatchClaim(ctx, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion); err != nil {
+	if err := repo.DeleteDispatchClaim(ctx, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID); err != nil {
 		t.Fatalf("DeleteDispatchClaim: %v", err)
 	}
 	reclaimed, _, err := repo.ClaimCampaignDispatch(ctx, project, briefID, model.ProviderGoogleAds, variant, model.FirstSlotVersion, jobID4, nil)
