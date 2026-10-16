@@ -1449,15 +1449,15 @@ func (s *BriefService) UpdateCampaign(ctx context.Context, p *briefs.UpdateCampa
 // actual state before a second call can race a possibly-already-applied change.
 const unconfirmedLockCooldown = 30 * time.Second
 
-// ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
-// status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
-// updated only after the platform confirms, so a persisted "paused" always reflects reality.
 // conflictReasonCampaignAdopted is toggle-campaign-status's ConflictError.reason for a RESUME
-// refused because the campaign was adopted (see the ErrCampaignNotProvisioned arm below). Pinned
+// refused because the campaign was adopted (see ToggleCampaignStatus's ErrCampaignNotProvisioned arm). Pinned
 // literally by TestToggleCampaignStatus_ResumeOfAnAdoptedCampaignHasItsOwnReason and listed in
 // the design Enum in design/connection.go — keep the three in step by hand.
 const conflictReasonCampaignAdopted = "campaign_adopted"
 
+// ToggleCampaignStatus pauses/resumes a campaign ON THE AD PLATFORM, then persists the new
+// status. Unlike UpdateCampaign (DB-only), the platform call happens FIRST — the row is
+// updated only after the platform confirms, so a persisted "paused" always reflects reality.
 func (s *BriefService) ToggleCampaignStatus(ctx context.Context, p *briefs.ToggleCampaignStatusPayload) (*briefs.Campaign, error) {
 	_, campaignRepo, _, orch, err := s.ready()
 	if err != nil {
