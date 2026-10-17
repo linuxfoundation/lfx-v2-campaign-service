@@ -62,11 +62,24 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
 - **Reddit concurrency.** The read returns `revision`, `sha256:` of the whole targeting object's
   canonical JSON (keys sorted, numbers kept exact). The removal re-reads, refuses (409
   `ErrKeywordTargetingChanged`) unless the fingerprint still matches, and writes back exactly
-  that read with the named keywords taken out — every other member byte-for-byte. Reddit
-  documents no conditional write, so the milliseconds between that read and the PATCH remain a
-  window; a re-read afterwards must show exactly the written keywords and an unchanged
-  fingerprint of every other member, or the outcome is UNCONFIRMED (and logged at ERROR when a
-  non-keyword dimension moved).
+  that read with the named keywords taken out — every other member byte-for-byte. A re-read
+  afterwards must show exactly the written keywords and an unchanged fingerprint of every other
+  member, or the outcome is UNCONFIRMED (and logged at ERROR when a non-keyword dimension moved).
+  **LFX against LFX is serialized.** The removal and the negative-keyword add (the same
+  whole-object write) hold a per-ad-group lock — a Postgres session advisory lock
+  (`postgres.KeywordTargetingWriteLock`, two-int key `RKTW` + FNV of
+  `reddit/{account}/ad_groups/{ad group}`) shared by every replica — from the fresh read through
+  the compare, the PATCH and the re-read. Without it two requests on one ad group could both pass
+  the revision check before either PATCH landed, and the later PATCH would write back stale
+  targeting (restoring a removed keyword, a widening). The second request now waits, polling
+  `pg_try_advisory_lock` (no pooled connection held while waiting), then reads the first's
+  result and refuses as changed; if the lock is still held after 10 s it is 409
+  (`ErrKeywordTargetingWriteInProgress`: retry after reading again), nothing sent. **What
+  remains** is an edit made OUTSIDE LFX (Ads Manager, another API client): Reddit documents no
+  conditional write, so one landing between the fresh read and the PATCH is overwritten and the
+  re-read cannot tell (it sees what was written); one landing between the PATCH and the re-read
+  is caught as UNCONFIRMED. The lock, like the campaign claim, lives as long as its session — a
+  contention guard, not durable ownership.
 - **X concurrency.** The guard's list is not enough on its own: two removals of DIFFERENT
   criteria (two requests, or a request and an operator in X Ads Manager) would each pass it and
   together empty the line item. So the targeting is re-listed immediately before EACH DELETE: an

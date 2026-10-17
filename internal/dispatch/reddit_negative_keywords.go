@@ -30,9 +30,11 @@ import (
 //     promise a matching mode Reddit does not offer — no duplicates, and a revision present.
 //  2. The campaign must be provisioned with a recorded ad group.
 //  3. PROVENANCE FAILS CLOSED; then the account must match the connection.
-//  4. The ad group is read and must report THIS campaign; its excluded keywords must be legible.
-//  5. COMPARE-AND-SET: the targeting's fingerprint must equal the caller's revision (409).
-//  6. Keywords the ad group already excludes (exact text) are ALREADY_PRESENT and not sent; the
+//  4. The ad group's write lock must be taken within its bounded wait, else
+//     ErrKeywordTargetingWriteInProgress (409); held through the confirming re-read, the removal's.
+//  5. The ad group is read and must report THIS campaign; its excluded keywords must be legible.
+//  6. COMPARE-AND-SET: the targeting's fingerprint must equal the caller's revision (409).
+//  7. Keywords the ad group already excludes (exact text) are ALREADY_PRESENT and not sent; the
 //     rest must fit Reddit's 2,000 array elements, null elements kept from the read included
 //     (ErrNegativeKeywordLimit, 409).
 //
@@ -71,6 +73,14 @@ func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID st
 	if err := verifyRedditAccountMatch(op, campaign, client); err != nil {
 		return nil, err
 	}
+	// SERIALIZED from here to the confirming re-read: another LFX write on this ad group — on any
+	// replica — would otherwise pass the same revision check before this PATCH lands, and one of
+	// the two whole-object writes would put back targeting the other had changed.
+	unlock, err := d.lockRedditTargeting(ctx, op, created, adGroupID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	current, err := readOwnedRedditTargeting(ctx, op, client, res, campaign, adGroupID)
 	if err != nil {
 		return nil, err

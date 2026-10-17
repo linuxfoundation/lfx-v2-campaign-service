@@ -173,3 +173,9 @@ config, binds it into the X dispatcher (`SetStatsJobLease`) and records it; `Clo
 dedicated session (one connection outside the pool, opened on first use) under its own reserved
 slice of the shutdown budget, `statsLeaseCloseTimeout` (250ms), which `ContainerCloseTimeout`
 includes (`TestShutdownBudgetComposes`). See [internal/infrastructure/postgres](internal-infrastructure-postgres.md).
+
+`bindKeywordTargetingWriteLock` (both wiring paths, next to `bindStatsJobLease`) binds a
+`postgres.KeywordTargetingWriteLock` on the pool into the Reddit dispatcher
+(`SetKeywordTargetingWriteLock`), so its whole-targeting keyword writes serialize per ad group
+across replicas. It opens nothing of its own and needs no `Close`: each held lock rides a pooled
+connection the write releases.

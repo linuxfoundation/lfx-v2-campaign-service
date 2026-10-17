@@ -117,9 +117,12 @@ func (d *RedditDispatcher) ReadKeywordTargeting(ctx context.Context, projectID s
 //  2. The campaign must be provisioned with a recorded ad group.
 //  3. PROVENANCE FAILS CLOSED, as for every mutation: a row recording no creating account is
 //     refused; then the account must match the connection.
-//  4. The ad group is read and must report THIS campaign; its targeting must be legible.
-//  5. COMPARE-AND-SET: the targeting's fingerprint must equal the caller's revision.
-//  6. Every named keyword must be in the targeting, and at least one keyword must remain.
+//  4. The ad group's write lock (lockRedditTargeting) must be taken within its bounded wait,
+//     else ErrKeywordTargetingWriteInProgress (409). It is held from here through the confirming
+//     re-read, so no other LFX write to this ad group — on any replica — interleaves.
+//  5. The ad group is read and must report THIS campaign; its targeting must be legible.
+//  6. COMPARE-AND-SET: the targeting's fingerprint must equal the caller's revision.
+//  7. Every named keyword must be in the targeting, and at least one keyword must remain.
 //
 // Then ONE PATCH carries every removal, and a re-read confirms the keyword list is exactly what
 // was written and no other targeting member moved. All items share the PATCH's outcome.
@@ -149,6 +152,14 @@ func (d *RedditDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID
 	if err := verifyRedditAccountMatch(op, campaign, client); err != nil {
 		return nil, err
 	}
+	// SERIALIZED from here to the confirming re-read: another LFX write on this ad group — on any
+	// replica — would otherwise pass the same revision check before this PATCH lands, and one of
+	// the two whole-object writes would put back targeting the other had changed.
+	unlock, err := d.lockRedditTargeting(ctx, op, created, adGroupID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	current, err := readOwnedRedditTargeting(ctx, op, client, res, campaign, adGroupID)
 	if err != nil {
 		return nil, err

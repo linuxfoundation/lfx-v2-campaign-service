@@ -634,14 +634,15 @@ unusable-connection 409 messages name the campaign's platform (Google's wording 
 
 `AddNegativeKeywords` (`brief_negative_keywords.go`, `POST …/campaigns/{campaign_id}/negative-keywords`)
 is the new sibling. It follows `ApplyKeywordActions`, not the toggle or budget write, because it
-persists nothing: no `If-Match`, no write lock, no ETag, no index event. Google Ads, Microsoft
+persists nothing: no `If-Match`, no campaign write lock, no ETag, no index event. Google Ads, Microsoft
 Advertising, Reddit and X (`negativeKeywordPlatform`); any other platform is 400 at the handler,
 and a
 dispatcher without the capability is 400 via `Orchestrator.AddNegativeKeywords`'s type assertion on
 the optional `NegativeKeywordAdder`. The payload's optional `revision` (Reddit's compare-and-set
 token) is passed through untouched; each adapter validates it. Reddit/X-only refusals map to fixed
-messages: a stale revision (`ErrKeywordTargetingChanged`), the excluded-keyword cap
-(`ErrNegativeKeywordLimit`) and an unaddressable ad group / line item
+messages: a stale revision (`ErrKeywordTargetingChanged`), another LFX write to the same Reddit
+ad group still holding its targeting lock after the wait (`ErrKeywordTargetingWriteInProgress`),
+the excluded-keyword cap (`ErrNegativeKeywordLimit`) and an unaddressable ad group / line item
 (`ErrKeywordTargetingUnaddressable`) are 409, and the 404 / unusable-connection 409 name the
 campaign's own platform.
 The orchestrator applies the same mutation timeout and the same outcome-count check
@@ -2103,9 +2104,11 @@ generated OpenAPI (route, window enum, required fields, composite example, no de
 
 `GetKeywordTargeting` and `RemoveKeywordTargeting` serve `get-keyword-targeting` and
 `remove-keyword-targeting`. Like the other keyword levers they persist nothing (no If-Match, no
-ETag, no write lock), refuse any platform but Reddit and X with 400 before the orchestrator, and
-map failures through `classifyKeywordTargetingError` — the keyword-action arms plus the four
-targeting sentinels — with fixed messages; adapter text is only logged. An outcome the adapter
+ETag, no campaign write lock — Reddit's per-ad-group targeting lock is the dispatcher's), refuse
+any platform but Reddit and X with 400 before the orchestrator, and map failures through
+`classifyKeywordTargetingError` — the keyword-action arms plus the targeting sentinels, among them
+`ErrKeywordTargetingWriteInProgress` (409: another LFX write to the ad group outlasted the lock
+wait; nothing was removed) — with fixed messages; adapter text is only logged. An outcome the adapter
 did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
 `RemoveKeywordTargeting` type-assert the capabilities, instrument `read_keyword_targeting` /
 `remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See

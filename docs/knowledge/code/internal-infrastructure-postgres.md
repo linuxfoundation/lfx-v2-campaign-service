@@ -2145,3 +2145,27 @@ ONE-connection business pool, three accounts' leases sit on one session and an o
 `TestStatsJobLease_CloseHonoursTheCallerDeadline`, `TestStatsJobLease_EndedRequestSkipsThePing`,
 `TestStatsJobLease_CloseReturnsWhileAnOwnIsStuck`, `TestStatsJobLease_CloseCancelsAnInFlightOwn`
 and `TestLiveStatsJobLease_CollidingKeysShareOneLock`.
+
+## `KeywordTargetingWriteLock` — one LFX whole-targeting write per ad group (LFXV2-2665)
+
+`keyword_targeting_lock.go` implements `domain.KeywordTargetingWriteLock` for Reddit's
+whole-object keyword-targeting writes (the removal and the negative-keyword add): a SESSION
+advisory lock `pg_try_advisory_lock(keywordTargetingLockClass, fnv32a(scope))`, class `RKTW` —
+the two-int form, so it shares no key space with `ClaimCampaignVersion`'s one-bigint locks or the
+binding lock, and its class keeps it apart from the X stats-job lease (`XSTJ`). The scope is
+`reddit/{account}/ad_groups/{ad group}`; colliding scopes share one lock, which only
+over-serializes. No migration. It is the `ClaimCampaignVersion` mechanism (a pooled connection
+holds the lock for the guarded span; unlock on a detached bounded context; a connection whose
+try-lock errored, or whose unlock failed or answered false, is DESTROYED, never returned to the
+pool with a lock on it) with a bounded WAIT instead of an immediate refusal: `Lock` polls the
+try-lock every 100 ms for up to 10 s (`keywordTargetingLockWait`), returning the connection to the
+pool between attempts, so waiting costs no held connection — only the holder pins one, for its
+three platform requests inside the mutation timeout. Still held at the deadline (one last attempt
+is made AT it) is `domain.ErrKeywordTargetingWriteInProgress` (409); a pool or query failure, or
+the request ending mid-wait, is a plain error (503 by default) — either way the caller sends
+nothing. The returned unlock is idempotent. Like the campaign claim, the lock lives as long as its
+session: a contention guard, not durable ownership. `KeywordTargetingLockKeys` exposes the keys as
+they appear in `pg_locks`; `NewKeywordTargetingWriteLockWithWait` shortens the wait for tests.
+Live tests: `dbtest/keyword_targeting_lock_live_test.go` (two instances serialize one scope — the
+second refused only after its wait, granted once the first releases, another scope never waits,
+nothing left in `pg_locks`; a cancelled wait is the context's error, not "in progress").

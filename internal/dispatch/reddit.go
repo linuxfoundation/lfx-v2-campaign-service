@@ -120,12 +120,17 @@ type RedditDispatcher struct {
 	// A nil assetURLs is the feature OFF.
 	assets    redditAssetSizer
 	assetURLs *assetsign.Signer
+	// targetingLock serializes the whole-targeting keyword writes (RemoveKeywordTargeting,
+	// AddNegativeKeywords) per ad group: in-process by default, the Postgres advisory lock once
+	// the container binds it (SetKeywordTargetingWriteLock), so replicas serialize too.
+	targetingLock domain.KeywordTargetingWriteLock
 }
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
 	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts,
-		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance]()}
+		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance](),
+		targetingLock: newLocalTargetingLock(redditTargetingLockWait)}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.
