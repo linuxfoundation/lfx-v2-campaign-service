@@ -229,7 +229,15 @@ func (h *keywordTargetingHold) unlock(bound time.Duration) {
 			// the lock with the session.
 			slog.WarnContext(h.ctx, "keyword targeting lock was not released cleanly; destroying its connection",
 				"scope", h.scope, "unlocked", unlocked, "error", err)
-			destroyKeywordTargetingLockConnBounded(h.ctx, h.conn, h.scope, bound, "failed to close keyword targeting lock connection after unlock failure")
+			//
+			// uctx, NOT a fresh timeout: the unlock and the close share one bound, as
+			// releaseCampaignLock's do, so on the shutdown path the pair fits Close's remaining
+			// budget together. An expired uctx still closes the underlying socket, which is what
+			// frees the pool slot.
+			if cerr := h.conn.Conn().Close(uctx); cerr != nil {
+				slog.WarnContext(h.ctx, "failed to close keyword targeting lock connection after unlock failure",
+					"scope", h.scope, "error", cerr)
+			}
 		}
 		h.conn.Release()
 	})
@@ -237,13 +245,7 @@ func (h *keywordTargetingHold) unlock(bound time.Duration) {
 
 // destroyKeywordTargetingLockConn closes conn's underlying session so the pool discards it.
 func destroyKeywordTargetingLockConn(ctx context.Context, conn *pgxpool.Conn, scope, msg string) {
-	destroyKeywordTargetingLockConnBounded(ctx, conn, scope, keywordTargetingUnlockTimeout, msg)
-}
-
-// destroyKeywordTargetingLockConnBounded is destroyKeywordTargetingLockConn with the close bounded
-// by bound (a shutdown's remaining budget, on that path).
-func destroyKeywordTargetingLockConnBounded(ctx context.Context, conn *pgxpool.Conn, scope string, bound time.Duration, msg string) {
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keywordTargetingUnlockTimeout)
 	defer cancel()
 	if err := conn.Conn().Close(cctx); err != nil {
 		slog.WarnContext(ctx, msg, "scope", scope, "error", err)

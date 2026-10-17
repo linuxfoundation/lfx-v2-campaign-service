@@ -35,3 +35,5 @@ Reddit's lack of a conditional write leaves open. Concepts updated:
 [internal/platform/reddit](../code/internal-platform-reddit.md),
 [internal/service](../code/internal-service.md) and
 [internal/container](../code/internal-container.md).
+
+When an unlock fails, the connection close reuses the unlock's own bounded context instead of starting a fresh timeout, so the unlock and the close share one bound and fit `StopCooldownsForShutdown`'s allowance together, as `releaseCampaignLock` does.
