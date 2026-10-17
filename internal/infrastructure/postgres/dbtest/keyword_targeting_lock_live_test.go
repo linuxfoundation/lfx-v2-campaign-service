@@ -63,7 +63,7 @@ func TestLiveKeywordTargetingWriteLock_SerializesOneScopeAcrossInstances(t *test
 	if err != nil {
 		t.Fatalf("b.Lock of another scope while a holds %s: %v", scope, err)
 	}
-	unlockOther()
+	unlockOther.Release()
 
 	// A waiter gets the scope once the holder releases it, inside its wait.
 	patient := postgres.NewKeywordTargetingWriteLockWithWait(&postgres.Pool{Pool: pool}, 10*time.Second, 20*time.Millisecond)
@@ -71,7 +71,7 @@ func TestLiveKeywordTargetingWriteLock_SerializesOneScopeAcrossInstances(t *test
 	go func() {
 		unlock, err := patient.Lock(ctx, scope)
 		if err == nil {
-			unlock()
+			unlock.Release()
 		}
 		got <- err
 	}()
@@ -81,8 +81,8 @@ func TestLiveKeywordTargetingWriteLock_SerializesOneScopeAcrossInstances(t *test
 		t.Fatalf("the waiter finished while a held the lock: %v", err)
 	default:
 	}
-	unlockA()
-	unlockA() // idempotent: must not unlock or release anything twice
+	unlockA.Release()
+	unlockA.Release() // idempotent: must not unlock or release anything twice
 	select {
 	case err := <-got:
 		if err != nil {
@@ -107,7 +107,7 @@ func TestLiveKeywordTargetingWriteLock_CancelledWait(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lock: %v", err)
 	}
-	defer unlock()
+	defer unlock.Release()
 	cctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	_, err = l.Lock(cctx, scope)
@@ -159,7 +159,7 @@ func TestLiveKeywordTargetingWriteLock_SaturatedPoolRefusesAtTheWait(t *testing.
 		t.Errorf("b was refused after %s; want about its %s wait", took, wait)
 	}
 
-	unlockA()
+	unlockA.Release()
 	if s := one.Stat(); s.AcquiredConns() != 0 {
 		t.Errorf("%d connections still checked out after release", s.AcquiredConns())
 	}
@@ -167,5 +167,5 @@ func TestLiveKeywordTargetingWriteLock_SaturatedPoolRefusesAtTheWait(t *testing.
 	if err != nil {
 		t.Fatalf("b.Lock after a released: %v", err)
 	}
-	unlockB()
+	unlockB.Release()
 }

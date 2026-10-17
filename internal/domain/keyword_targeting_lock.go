@@ -77,9 +77,34 @@ func RecordLockWait(ctx context.Context, d time.Duration) {
 // API client) between the read and the PATCH is not excluded by it, because the platform offers no
 // conditional write.
 type KeywordTargetingWriteLock interface {
-	// Lock waits a bounded time for scope's lock and returns the function that releases it
-	// (idempotent; safe to defer). When the wait runs out with the lock held elsewhere it returns
-	// ErrKeywordTargetingWriteInProgress. Any other error means the lock could not be asked for
-	// (database unreachable, request ended) — and, like a timeout, the caller must not write.
-	Lock(ctx context.Context, scope string) (unlock func(), err error)
+	// Lock waits a bounded time for scope's lock and returns the hold that releases it. When the
+	// wait runs out with the lock held elsewhere it returns ErrKeywordTargetingWriteInProgress.
+	// Any other error means the lock could not be asked for (database unreachable, request ended)
+	// — and, like a timeout, the caller must not write.
+	Lock(ctx context.Context, scope string) (KeywordTargetingLockHold, error)
 }
+
+// KeywordTargetingLockHold is one granted KeywordTargetingWriteLock. Exactly one release takes
+// effect: Release after ReleaseAfterCooldown ends the cooldown early, and every later call is a
+// no-op, so the caller may combine an explicit choice with a deferred Release.
+type KeywordTargetingLockHold interface {
+	// Release releases the lock now.
+	Release()
+	// ReleaseAfterCooldown keeps the lock for cooldown, detached from the request, then releases
+	// it — or sooner, on process shutdown, so a cooling hold never outlives the process's
+	// orderly close or leaks its connection. For a write that was SENT but whose outcome is not
+	// settled (timed out, cancelled, or not confirmed by the re-read): the platform may still be
+	// applying it, and releasing at once would let the next LFX write read a targeting that the
+	// delayed write later overwrites from its stale snapshot. A finite cooldown narrows that
+	// window; it cannot guarantee the upstream write has finished.
+	ReleaseAfterCooldown(cooldown time.Duration)
+}
+
+// KeywordTargetingUnconfirmedCooldown is how long a keyword-targeting write lock is kept after a
+// write whose outcome is UNCONFIRMED. 15s: one and a half lock waits, so a writer queued when the
+// unconfirmed write returns is refused (ErrKeywordTargetingWriteInProgress) rather than let
+// through mid-cooldown, and half the claim's 30s unconfirmedLockCooldown because the Postgres
+// hold keeps a POOLED connection checked out for the whole cooldown, after a call that may have
+// held it for the 45s mutation timeout already. A guess at how long a request Reddit received
+// can take to land, not a bound on it.
+const KeywordTargetingUnconfirmedCooldown = 15 * time.Second

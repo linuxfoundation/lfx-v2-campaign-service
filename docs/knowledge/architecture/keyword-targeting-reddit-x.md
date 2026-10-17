@@ -77,7 +77,15 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
   saturated that no connection can ask for it by then — it is 409
   (`ErrKeywordTargetingWriteInProgress`: retry after reading again), nothing sent. The holder
   occupies one pooled connection for the length of its Reddit calls, as a toggle's campaign claim
-  does. A refusal at the lock is not recorded as an upstream Reddit call, and the lock wait is
+  does. **Release follows the outcome**: a settled write (nothing sent, a definite refusal, every
+  item APPLIED or ALREADY_PRESENT) releases at once; a write whose PATCH was sent and is
+  UNCONFIRMED — an error, or any per-item UNCONFIRMED in the negative add's answer, which can
+  carry a nil error — keeps the lock for `domain.KeywordTargetingUnconfirmedCooldown` (15 s),
+  detached from the request and cut short at shutdown (the campaign claim's
+  `StopCooldownsForShutdown` machinery). Otherwise a late-landing PATCH would overwrite the next
+  LFX write from its stale snapshot (a delayed negative add restoring a removed keyword, or a
+  delayed removal erasing a confirmed negative). The cooldown narrows that window but cannot
+  close it: a PATCH Reddit finishes after the cooldown can still overwrite a later write. A refusal at the lock is not recorded as an upstream Reddit call, and the lock wait is
   kept out of Reddit's upstream latency. **What
   remains** is an edit made OUTSIDE LFX (Ads Manager, another API client): Reddit documents no
   conditional write, so one landing between the fresh read and the PATCH is overwritten and the

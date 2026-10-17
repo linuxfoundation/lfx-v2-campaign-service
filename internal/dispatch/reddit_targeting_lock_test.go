@@ -33,7 +33,13 @@ type redditStatefulStub struct {
 	gets      map[string]int
 	patchN    map[string]int
 
-	hold        map[string]bool
+	hold map[string]bool
+	// delay marks ad groups whose PATCH COMMITS LATE: Reddit answers 502 (so the write is
+	// UNCONFIRMED) and the targeting it carried is stashed in pending until commit lands it.
+	delay   map[string]bool
+	pending map[string]json.RawMessage
+	// refuse answers an ad group's PATCH with this status, applying nothing (a definite refusal).
+	refuse      map[string]int
 	patched     chan string
 	release     chan struct{}
 	releaseOnce sync.Once
@@ -50,6 +56,7 @@ func newRedditStatefulStub(t *testing.T, initial map[string]string, hold ...stri
 	s := &redditStatefulStub{
 		targeting: map[string]json.RawMessage{}, gets: map[string]int{}, patchN: map[string]int{},
 		hold: map[string]bool{}, patched: make(chan string, 8), release: make(chan struct{}),
+		delay: map[string]bool{}, pending: map[string]json.RawMessage{}, refuse: map[string]int{},
 	}
 	for id, obj := range initial {
 		s.targeting[id] = json.RawMessage(obj)
@@ -85,6 +92,19 @@ func newRedditStatefulStub(t *testing.T, initial map[string]string, hold ...stri
 			s.mu.Lock()
 			s.patchN[id]++
 			held := s.hold[id]
+			if st := s.refuse[id]; st != 0 {
+				s.mu.Unlock()
+				w.WriteHeader(st)
+				_, _ = io.WriteString(w, `{"error":{}}`)
+				return
+			}
+			if s.delay[id] {
+				s.pending[id] = body.Data.Targeting
+				s.mu.Unlock()
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, `{}`)
+				return
+			}
 			s.mu.Unlock()
 			if held {
 				select {
@@ -113,6 +133,17 @@ func newRedditStatefulStub(t *testing.T, initial map[string]string, hold ...stri
 		reddit.WithNowFunc(func() time.Time { return time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC) }),
 	)
 	return s
+}
+
+// commit lands id's delayed PATCH, as Reddit finishing a request this service stopped waiting for.
+func (s *redditStatefulStub) commit(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tg, ok := s.pending[id]; ok {
+		s.targeting[id] = tg
+		delete(s.pending, id)
+	}
+	s.delay[id] = false
 }
 
 func (s *redditStatefulStub) counts(id string) (gets, patches int) {
@@ -271,10 +302,11 @@ type recordingTargetingLock struct {
 	err      error
 	scopes   []string
 	released int
+	cooled   []time.Duration
 	onLock   func()
 }
 
-func (l *recordingTargetingLock) Lock(_ context.Context, scope string) (func(), error) {
+func (l *recordingTargetingLock) Lock(_ context.Context, scope string) (domain.KeywordTargetingLockHold, error) {
 	l.scopes = append(l.scopes, scope)
 	if l.err != nil {
 		return nil, l.err
@@ -282,8 +314,13 @@ func (l *recordingTargetingLock) Lock(_ context.Context, scope string) (func(), 
 	if l.onLock != nil {
 		l.onLock()
 	}
-	return func() { l.released++ }, nil
+	return recordingHold{l}, nil
 }
+
+type recordingHold struct{ l *recordingTargetingLock }
+
+func (h recordingHold) Release()                             { h.l.released++ }
+func (h recordingHold) ReleaseAfterCooldown(d time.Duration) { h.l.cooled = append(h.l.cooled, d) }
 
 // The lock is scoped to the account and the ad group, taken before the fresh read and released
 // only after the confirming re-read; a lock that cannot be had sends nothing.
@@ -339,7 +376,7 @@ func TestLocalTargetingLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("another scope must not wait: %v", err)
 	}
-	unlockB()
+	unlockB.Release()
 
 	// A waiter gets the lock once the holder releases it.
 	got := make(chan error, 1)
@@ -348,13 +385,13 @@ func TestLocalTargetingLock(t *testing.T) {
 	go func() {
 		u2, err := waiting.Lock(ctx, "a")
 		if err == nil {
-			u2()
+			u2.Release()
 		}
 		got <- err
 	}()
 	time.Sleep(20 * time.Millisecond)
-	u()
-	u() // idempotent
+	u.Release()
+	u.Release() // idempotent
 	if err := <-got; err != nil {
 		t.Fatalf("waiter: %v", err)
 	}
@@ -365,7 +402,7 @@ func TestLocalTargetingLock(t *testing.T) {
 		t.Errorf("a cancelled wait = %v, want the context's error", err)
 	}
 
-	unlock()
+	unlock.Release()
 	l.mu.Lock()
 	n := len(l.slots)
 	l.mu.Unlock()
@@ -392,5 +429,181 @@ func TestReddit_KeywordTargetingWrites_ReportLockWait(t *testing.T) {
 	}
 	if got := waited(); got < wait {
 		t.Errorf("lock wait reported = %s, want at least %s", got, wait)
+	}
+}
+
+// targetingWithExcluded is redditTargetingObject(keywords) with an excluded_keywords member.
+func targetingWithExcluded(keywords, excluded string) string {
+	return strings.Replace(redditTargetingObject(keywords), `"keywords":`, `"excluded_keywords":`+excluded+`,"keywords":`, 1)
+}
+
+func (s *redditStatefulStub) member(t *testing.T, id, name string) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var tg map[string]json.RawMessage
+	if err := json.Unmarshal(s.targeting[id], &tg); err != nil {
+		t.Fatalf("stub targeting: %v", err)
+	}
+	return compactRaw(t, tg[name])
+}
+
+func revisionOfTargeting(t *testing.T, obj string) string {
+	t.Helper()
+	return redditRevisionOf(t, `{"data":{"id":"t5_ag","campaign_id":"t3_c","targeting":`+obj+`}}`)
+}
+
+// A DELAYED NEGATIVE ADD vs a waiting removal. The add's PATCH is UNCONFIRMED (502) and lands
+// later; the batch also carries an ALREADY_PRESENT keyword, so the add answers per item with a nil
+// error. Its lock must be kept for the cooldown: the removal waits, the delayed add lands inside
+// the cooldown, and the removal then reads the changed targeting and refuses as changed — instead
+// of removing "jobs", confirming, and having the late add put "jobs" back from its stale snapshot.
+func TestReddit_UnconfirmedNegativeAddHoldsTheLockThroughTheCooldown(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	before := targetingWithExcluded(`["kubernetes","jobs"]`, `["spam"]`)
+	s := newRedditStatefulStub(t, map[string]string{"t5_ag": before})
+	s.d.SetKeywordTargetingWriteLock(newLocalTargetingLock(5 * time.Second))
+	const cooldown = 400 * time.Millisecond
+	s.d.targetingCooldown = cooldown
+	s.delay["t5_ag"] = true
+	rev := revisionOfTargeting(t, before)
+
+	out, err := s.d.AddNegativeKeywords(context.Background(), "proj", model.ProviderRedditAds, redditCampaignOn("t5_ag"),
+		[]model.NegativeKeyword{broad("spam"), broad("free")}, rev)
+	if err != nil || len(out) != 2 || out[0].Outcome != model.KeywordOutcomeAlreadyPresent || out[1].Outcome != model.KeywordOutcomeUnconfirmed {
+		t.Fatalf("add = %+v, %v; want [ALREADY_PRESENT, UNCONFIRMED] with a nil error", out, err)
+	}
+	gets, _ := s.counts("t5_ag")
+
+	start := time.Now()
+	removal := goRemove(s, redditCampaignOn("t5_ag"), rev, "jobs")
+	time.Sleep(cooldown / 4)
+	if g, _ := s.counts("t5_ag"); g != gets {
+		t.Fatalf("the removal read the ad group %d time(s) during the unconfirmed add's cooldown", g-gets)
+	}
+	s.commit("t5_ag") // Reddit finishes the add late, inside the cooldown
+	r := <-removal
+	if waited := time.Since(start); waited < cooldown*3/4 {
+		t.Errorf("the removal proceeded after %s, inside the %s cooldown", waited, cooldown)
+	}
+	if !errors.Is(r.err, domain.ErrKeywordTargetingChanged) {
+		t.Fatalf("removal after the late add = %+v, %v; want ErrKeywordTargetingChanged", r.out, r.err)
+	}
+	if got := s.keywords(t, "t5_ag"); got != `["kubernetes","jobs"]` {
+		t.Errorf("keywords = %s; nothing should have been removed on a stale revision", got)
+	}
+	if got := s.member(t, "t5_ag", "excluded_keywords"); got != `["spam","free"]` {
+		t.Errorf("excluded_keywords = %s, want the late add to stand", got)
+	}
+}
+
+// A DELAYED REMOVAL vs a waiting negative add: the symmetric case. The removal's PATCH is
+// UNCONFIRMED and lands later; the add waits out the cooldown and then refuses as changed, instead
+// of adding, confirming, and being erased by the late removal's stale snapshot.
+func TestReddit_UnconfirmedRemovalHoldsTheLockThroughTheCooldown(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	before := redditTargetingObject(`["kubernetes","jobs"]`)
+	s := newRedditStatefulStub(t, map[string]string{"t5_ag": before})
+	s.d.SetKeywordTargetingWriteLock(newLocalTargetingLock(5 * time.Second))
+	const cooldown = 400 * time.Millisecond
+	s.d.targetingCooldown = cooldown
+	s.delay["t5_ag"] = true
+	rev := revisionOfTargeting(t, before)
+
+	r := <-goRemove(s, redditCampaignOn("t5_ag"), rev, "jobs")
+	if !redditWriteUnsettled(r.err) {
+		t.Fatalf("removal = %+v, %v; want UNCONFIRMED", r.out, r.err)
+	}
+	gets, _ := s.counts("t5_ag")
+
+	start := time.Now()
+	added := make(chan error, 1)
+	go func() {
+		_, err := s.d.AddNegativeKeywords(context.Background(), "proj", model.ProviderRedditAds, redditCampaignOn("t5_ag"), []model.NegativeKeyword{broad("free")}, rev)
+		added <- err
+	}()
+	time.Sleep(cooldown / 4)
+	if g, _ := s.counts("t5_ag"); g != gets {
+		t.Fatalf("the add read the ad group %d time(s) during the unconfirmed removal's cooldown", g-gets)
+	}
+	s.commit("t5_ag")
+	err := <-added
+	if waited := time.Since(start); waited < cooldown*3/4 {
+		t.Errorf("the add proceeded after %s, inside the %s cooldown", waited, cooldown)
+	}
+	if !errors.Is(err, domain.ErrKeywordTargetingChanged) {
+		t.Fatalf("add after the late removal: %v; want ErrKeywordTargetingChanged", err)
+	}
+	if got := s.keywords(t, "t5_ag"); got != `["kubernetes"]` {
+		t.Errorf("keywords = %s, want the late removal to stand", got)
+	}
+}
+
+// A cooldown longer than the waiter's own wait refuses the waiter as in progress, with nothing
+// read or sent.
+func TestReddit_CooldownLongerThanTheWaitRefusesTheWaiter(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	before := redditTargetingObject(`["kubernetes","jobs"]`)
+	s := newRedditStatefulStub(t, map[string]string{"t5_ag": before})
+	s.d.SetKeywordTargetingWriteLock(newLocalTargetingLock(100 * time.Millisecond))
+	s.d.targetingCooldown = 5 * time.Second
+	s.delay["t5_ag"] = true
+	rev := revisionOfTargeting(t, before)
+
+	if _, err := s.d.AddNegativeKeywords(context.Background(), "proj", model.ProviderRedditAds, redditCampaignOn("t5_ag"), []model.NegativeKeyword{broad("free")}, rev); !redditWriteUnsettled(err) {
+		t.Fatalf("add: %v; want UNCONFIRMED", err)
+	}
+	gets, patches := s.counts("t5_ag")
+	r := <-goRemove(s, redditCampaignOn("t5_ag"), rev, "jobs")
+	if !errors.Is(r.err, domain.ErrKeywordTargetingWriteInProgress) {
+		t.Fatalf("removal during the cooldown: %v; want ErrKeywordTargetingWriteInProgress", r.err)
+	}
+	if g, p := s.counts("t5_ag"); g != gets || p != patches {
+		t.Errorf("the refused removal sent %d read(s) and %d PATCH(es)", g-gets, p-patches)
+	}
+}
+
+// Release is by OUTCOME: a settled write releases at once, an UNCONFIRMED one is held for the
+// cooldown — on both paths, including the add's per-item UNCONFIRMED with a nil error.
+func TestReddit_TargetingLockReleaseFollowsTheOutcome(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	before := targetingWithExcluded(`["kubernetes","jobs"]`, `["spam"]`)
+	cases := []struct {
+		name     string
+		patch    int // 0: commit normally; >0: answer this status without applying
+		delay    bool
+		remove   bool
+		keywords []model.NegativeKeyword
+		cooled   bool
+	}{
+		{name: "removal applied", remove: true},
+		{name: "removal refused by Reddit (definite 400)", remove: true, patch: http.StatusBadRequest},
+		{name: "removal unconfirmed (502)", remove: true, delay: true, cooled: true},
+		{name: "add applied", keywords: []model.NegativeKeyword{broad("free")}},
+		{name: "add all already present (nothing sent)", keywords: []model.NegativeKeyword{broad("spam")}},
+		{name: "add refused by Reddit (definite 400)", keywords: []model.NegativeKeyword{broad("free")}, patch: http.StatusBadRequest},
+		{name: "add unconfirmed (502)", keywords: []model.NegativeKeyword{broad("free")}, delay: true, cooled: true},
+		{name: "add mixed already present + unconfirmed", keywords: []model.NegativeKeyword{broad("spam"), broad("free")}, delay: true, cooled: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newRedditStatefulStub(t, map[string]string{"t5_ag": before})
+			s.refuse["t5_ag"] = tc.patch
+			lock := &recordingTargetingLock{}
+			s.d.SetKeywordTargetingWriteLock(lock)
+			s.delay["t5_ag"] = tc.delay
+			rev := revisionOfTargeting(t, before)
+			if tc.remove {
+				<-goRemove(s, redditCampaignOn("t5_ag"), rev, "jobs")
+			} else {
+				_, _ = s.d.AddNegativeKeywords(context.Background(), "proj", model.ProviderRedditAds, redditCampaignOn("t5_ag"), tc.keywords, rev)
+			}
+			switch {
+			case tc.cooled && (len(lock.cooled) != 1 || lock.cooled[0] != domain.KeywordTargetingUnconfirmedCooldown || lock.released != 0):
+				t.Errorf("released = %d, cooled = %v; want held for %s", lock.released, lock.cooled, domain.KeywordTargetingUnconfirmedCooldown)
+			case !tc.cooled && (lock.released != 1 || len(lock.cooled) != 0):
+				t.Errorf("released = %d, cooled = %v; a settled outcome must release at once", lock.released, lock.cooled)
+			}
+		})
 	}
 }

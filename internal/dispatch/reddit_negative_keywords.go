@@ -43,7 +43,7 @@ import (
 // The new keywords share the PATCH's outcome — APPLIED, FAILED (REJECTED by Reddit, or NOT_SENT)
 // or UNCONFIRMED — and ALREADY_PRESENT ones keep theirs. The call errors only when no item has a
 // definite outcome: every item rode on the write and its outcome is UNCONFIRMED.
-func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
+func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) (retOut []model.NegativeKeywordOutcome, retErr error) {
 	const op = "add reddit negative keywords"
 	if !redditKeywordTargetingWritesEnabled() {
 		return nil, fmt.Errorf("reddit negative keywords are disabled (%s is not \"true\") until the whole-targeting write is exercised against a live ad account: %w",
@@ -76,11 +76,20 @@ func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID st
 	// SERIALIZED from here to the confirming re-read: another LFX write on this ad group — on any
 	// replica — would otherwise pass the same revision check before this PATCH lands, and one of
 	// the two whole-object writes would put back targeting the other had changed.
-	unlock, err := d.lockRedditTargeting(ctx, op, created, adGroupID)
+	hold, err := d.lockRedditTargeting(ctx, op, created, adGroupID)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
+	// Released by OUTCOME (releaseRedditTargeting): at once when settled, after a cooldown when
+	// the PATCH was sent and is UNCONFIRMED — which settle can report PER ITEM with a nil error,
+	// when some keywords were ALREADY_PRESENT, so the outcomes are checked as well as the error.
+	defer func() {
+		outcomes := make([]string, 0, len(retOut))
+		for _, o := range retOut {
+			outcomes = append(outcomes, o.Outcome)
+		}
+		d.releaseRedditTargeting(hold, redditWriteUnsettled(retErr, outcomes...))
+	}()
 	current, err := readOwnedRedditTargeting(ctx, op, client, res, campaign, adGroupID)
 	if err != nil {
 		return nil, err

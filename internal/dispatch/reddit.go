@@ -124,13 +124,17 @@ type RedditDispatcher struct {
 	// AddNegativeKeywords) per ad group: in-process by default, the Postgres advisory lock once
 	// the container binds it (SetKeywordTargetingWriteLock), so replicas serialize too.
 	targetingLock domain.KeywordTargetingWriteLock
+	// targetingCooldown is how long the lock is kept after an UNCONFIRMED whole-targeting write
+	// (releaseRedditTargeting): domain.KeywordTargetingUnconfirmedCooldown; a field only so tests
+	// can shorten it.
+	targetingCooldown time.Duration
 }
 
 // NewRedditDispatcher builds the adapter from the connection repo + encryptor.
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
 	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts,
 		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance](),
-		targetingLock: newLocalTargetingLock(domain.KeywordTargetingLockWait)}
+		targetingLock: newLocalTargetingLock(domain.KeywordTargetingLockWait), targetingCooldown: domain.KeywordTargetingUnconfirmedCooldown}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.

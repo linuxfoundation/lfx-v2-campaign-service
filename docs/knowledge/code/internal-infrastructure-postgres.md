@@ -2168,10 +2168,18 @@ it), or no connection to ask with by then, is `domain.ErrKeywordTargetingWriteIn
 pool or query failure, or the request ending mid-wait, is a plain error that the dispatcher tags
 `domain.ErrKeywordTargetingLockUnavailable` (503) — either way the caller sends nothing. A
 try-lock whose query failed, even one only cut short by the deadline, destroys its connection,
-since Postgres may have granted the lock. The returned unlock is idempotent.
+since Postgres may have granted the lock. `Lock` returns a `domain.KeywordTargetingLockHold`:
+`Release` unlocks now; `ReleaseAfterCooldown` (used after an UNCONFIRMED write) keeps the lock,
+on a context detached from the request, until the cooldown ends or `StopCooldownsForShutdown`
+runs — through `releaseAfterSharedCooldown`, the runner `ReleaseCampaignLockAfterCooldown` now
+also uses, so `Container.Close`'s existing cooldown stop covers both and the unlock fits Close's
+remaining budget (`shutdownReleaseBound`). Exactly one release takes effect; a `Release` after
+`ReleaseAfterCooldown` ends the cooldown early. The runner captures `cooldownShutdown` under
+`cooldownMu` when it parks, instead of reading the variable later.
 **Pool cost — the holder occupies one pooled connection for the length of its Reddit calls**
 (up to three requests, inside the 45 s mutation timeout), because the session that took the lock
-must stay checked out until the re-read: the same cost as a toggle's `ClaimCampaignVersion`.
+must stay checked out until the re-read — plus, after an UNCONFIRMED write, the 15 s cooldown:
+the same cost as a toggle's `ClaimCampaignVersion` (whose own UNCONFIRMED cooldown is 30 s).
 Writes to different ad groups take one slot each; with `pool_max_conns=1` one write holds the
 pool's only connection and every other request waits for it (a second write is refused at its
 deadline). It is bounded by "one request, one ad group, behind a default-off flag", not
@@ -2188,4 +2196,8 @@ second refused only after its wait, granted once the first releases, another sco
 nothing left in `pg_locks`; a cancelled wait is the context's error, not "in progress"; on a
 one-connection pool a second write is refused as in progress at about its wait, not at its 30 s
 caller deadline) and, in-package, `TestLiveKeywordTargetingWriteLock_FailedTryLockDestroysTheConnection`
-(a failure injected after the grant leaves no lock held and no connection checked out).
+(a failure injected after the grant leaves no lock held and no connection checked out) and
+`TestLiveKeywordTargetingWriteLock_CooldownHoldAndShutdown` (a cooling hold survives the
+request's cancellation and refuses a second writer, ends at its cooldown or at an explicit
+`Release`, and `StopCooldownsForShutdown` releases it at once and returns the connection; a hold
+cooled after shutdown began releases immediately).

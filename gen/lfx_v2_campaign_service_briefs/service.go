@@ -475,26 +475,28 @@ type Service interface {
 	// lock shared by every replica from that re-read through the confirmation, so
 	// two LFX writes to one ad group never interleave (Reddit offers no
 	// conditional write, so an edit made outside LFX in that span is not
-	// excluded). All items share one outcome. Reddit writes are OFF until
-	// REDDIT_KEYWORD_TARGETING_WRITES_ENABLED is "true" (answered 400 like an
-	// unsupported platform), because the write replaces the whole targeting object
-	// and has not yet been exercised against a live ad account. X: items name
-	// `criterion_id`; each is one DELETE of that targeting criterion, in request
-	// order, with its own outcome; `revision` must be absent. The targeting is
-	// re-read before EACH delete, and an item whose criterion has meanwhile gone
-	// (NOT_FOUND) or that is now the last keyword (WOULD_EMPTY) is not sent — a
-	// concurrent removal can no longer combine with this one to empty the line
-	// item, though X offers no conditional delete, so the moment between that
-	// re-read and the DELETE remains. Removing a keyword cannot be undone here:
-	// re-add it in the platform. **400** for a malformed batch (empty or over 20,
-	// an item naming the wrong field for the platform, the same keyword twice, a
-	// keyword not in the current targeting, a missing Reddit revision) or an
-	// unsupported platform. **409** as for the read, plus a changed Reddit
-	// targeting, another LFX change to the same Reddit ad group's targeting still
-	// in progress after a short wait (retry after reading it again), and the
-	// every-keyword refusal. **503** only when no item was answered. Its MESSAGE
-	// separates a DEFINITE failure (nothing was removed — retry) from an
-	// UNCONFIRMED one (read the targeting again before retrying).
+	// excluded). After an UNCONFIRMED write the lock is kept a further 15 seconds,
+	// since Reddit may still apply it; that narrows, but cannot close, the window
+	// in which a late write overwrites the next one. All items share one outcome.
+	// Reddit writes are OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED is
+	// "true" (answered 400 like an unsupported platform), because the write
+	// replaces the whole targeting object and has not yet been exercised against a
+	// live ad account. X: items name `criterion_id`; each is one DELETE of that
+	// targeting criterion, in request order, with its own outcome; `revision` must
+	// be absent. The targeting is re-read before EACH delete, and an item whose
+	// criterion has meanwhile gone (NOT_FOUND) or that is now the last keyword
+	// (WOULD_EMPTY) is not sent — a concurrent removal can no longer combine with
+	// this one to empty the line item, though X offers no conditional delete, so
+	// the moment between that re-read and the DELETE remains. Removing a keyword
+	// cannot be undone here: re-add it in the platform. **400** for a malformed
+	// batch (empty or over 20, an item naming the wrong field for the platform,
+	// the same keyword twice, a keyword not in the current targeting, a missing
+	// Reddit revision) or an unsupported platform. **409** as for the read, plus a
+	// changed Reddit targeting, another LFX change to the same Reddit ad group's
+	// targeting still in progress after a short wait (retry after reading it
+	// again), and the every-keyword refusal. **503** only when no item was
+	// answered. Its MESSAGE separates a DEFINITE failure (nothing was removed —
+	// retry) from an UNCONFIRMED one (read the targeting again before retrying).
 	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
 	// Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name,
 	// configured and effective status, bid strategy and own budget, with its

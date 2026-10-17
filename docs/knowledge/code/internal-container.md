@@ -110,7 +110,9 @@ mid-drain.
 **Cooldown stop, then pool close — in that order.** An UNCONFIRMED status toggle keeps its
 campaign advisory lock past the request via `postgres.ReleaseCampaignLockAfterCooldown`, which
 holds a checked-out connection for up to `unconfirmedLockCooldown` (30s). `pgxpool.Close`
-blocks until every checked-out connection is returned, so `Close` calls
+blocks until every checked-out connection is returned — and so does a Reddit keyword-targeting
+lock kept after an UNCONFIRMED write (`domain.KeywordTargetingUnconfirmedCooldown`, 15s), which
+parks on the same machinery — so `Close` calls
 `postgres.StopCooldownsForShutdown(cooldownStopTimeout)` first to make each pending release
 happen immediately. That budget bounds the CONNECTION, not just the wait:
 `StopCooldownsForShutdown` passes it down as the `pg_advisory_unlock` round-trip's own

@@ -4272,10 +4272,19 @@ cannot get it within `domain.KeywordTargetingLockWait` (10 s) is
 `domain.ErrKeywordTargetingWriteInProgress` (409), nothing sent, and any other lock failure is
 tagged `domain.ErrKeywordTargetingLockUnavailable` (503, nothing sent). `lockRedditTargeting`
 reports the time it waited through `domain.RecordLockWait`, so the orchestrator keeps it out of
-Reddit's upstream latency.
+Reddit's upstream latency. The hold is released BY OUTCOME (`releaseRedditTargeting`,
+`redditWriteUnsettled`): at once when settled, after `targetingCooldown`
+(`domain.KeywordTargetingUnconfirmedCooldown`, 15 s; `ReleaseAfterCooldown`) when the PATCH was
+sent and the error or any per-item outcome is UNCONFIRMED, so a late-landing write cannot
+overwrite the next LFX write the moment it is admitted (a mitigation, not a guarantee). Both
+methods have named results so the deferred release can read them.
 Tests: `reddit_targeting_lock_test.go` (same ad group serializes and the waiter then refuses as
 changed; refusal on timeout sends nothing; different ad groups do not block; scope and span; a
-refusal is classed as a lock refusal; the lock wait is reported). X's
+refusal is classed as a lock refusal; the lock wait is reported; delayed-commit tests for both
+orderings — a late negative add vs a waiting removal, with a mixed ALREADY_PRESENT/UNCONFIRMED
+answer, and a late removal vs a waiting add — where the waiter is held for the cooldown and then
+refuses as changed; a cooldown longer than the waiter's wait refuses it as in progress; and a
+table pinning that every settled outcome releases at once). X's
 deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 

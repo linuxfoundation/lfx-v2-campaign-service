@@ -57,7 +57,9 @@ const (
 // Concurrent writes to DIFFERENT ad groups take one pool slot each, and enough of them starve
 // ordinary reads and the readiness probe — with pool_max_conns=1 a single write holds the pool's
 // only connection, and every other request (a second write included, which is refused at its
-// deadline) waits for it. What bounds it is that each holder is one request writing one ad group,
+// deadline) waits for it. After an UNCONFIRMED write the holder keeps that connection for a further
+// cooldown (domain.KeywordTargetingUnconfirmedCooldown, 15s, ReleaseAfterCooldown), so the worst
+// case per ad group is the call plus 15s. What bounds it is that each holder is one request writing one ad group,
 // behind a default-off flag (REDDIT_KEYWORD_TARGETING_WRITES_ENABLED); it is not bounded
 // structurally.
 //
@@ -116,7 +118,7 @@ func KeywordTargetingLockKeys(scope string) (int32, int32) {
 }
 
 // Lock implements domain.KeywordTargetingWriteLock. See the type comment.
-func (l *KeywordTargetingWriteLock) Lock(ctx context.Context, scope string) (func(), error) {
+func (l *KeywordTargetingWriteLock) Lock(ctx context.Context, scope string) (domain.KeywordTargetingLockHold, error) {
 	if l == nil || l.pool == nil || l.pool.Pool == nil {
 		return nil, errors.New("keyword targeting lock: no database pool")
 	}
@@ -128,7 +130,7 @@ func (l *KeywordTargetingWriteLock) Lock(ctx context.Context, scope string) (fun
 			return nil, err
 		}
 		if got {
-			return l.releaser(ctx, conn, scope, key), nil
+			return &keywordTargetingHold{ctx: context.WithoutCancel(ctx), conn: conn, scope: scope, key: key}, nil
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -185,31 +187,63 @@ func (l *KeywordTargetingWriteLock) try(ctx context.Context, deadline time.Time,
 	return conn, true, nil
 }
 
-// releaser returns the idempotent unlock for a granted lock held on conn.
-func (l *KeywordTargetingWriteLock) releaser(ctx context.Context, conn *pgxpool.Conn, scope string, key int32) func() {
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keywordTargetingUnlockTimeout)
-			defer cancel()
-			var unlocked bool
-			err := conn.QueryRow(uctx, keywordTargetingUnlockSQL, keywordTargetingLockClass, key).Scan(&unlocked)
-			if err != nil || !unlocked {
-				// A session advisory lock survives the connection's return to the pool, so a
-				// connection whose unlock did not succeed is destroyed, never reused: Postgres
-				// drops the lock with the session.
-				slog.WarnContext(ctx, "keyword targeting lock was not released cleanly; destroying its connection",
-					"scope", scope, "unlocked", unlocked, "error", err)
-				destroyKeywordTargetingLockConn(ctx, conn, scope, "failed to close keyword targeting lock connection after unlock failure")
-			}
-			conn.Release()
-		})
-	}
+// keywordTargetingHold is one granted lock: the pooled connection whose session holds it.
+type keywordTargetingHold struct {
+	ctx   context.Context // the request's values, never its cancellation
+	conn  *pgxpool.Conn
+	scope string
+	key   int32
+	// done makes exactly one release take effect: Release, a cooldown's release, or shutdown's.
+	done sync.Once
+}
+
+var _ domain.KeywordTargetingLockHold = (*keywordTargetingHold)(nil)
+
+// Release implements domain.KeywordTargetingLockHold: unlock now, on the ordinary bound.
+func (h *keywordTargetingHold) Release() { h.unlock(keywordTargetingUnlockTimeout) }
+
+// ReleaseAfterCooldown implements domain.KeywordTargetingLockHold through the SAME shutdown-aware
+// machinery as the campaign claim's UNCONFIRMED cooldown (releaseAfterSharedCooldown): the hold
+// ends when the cooldown elapses or when StopCooldownsForShutdown runs, whichever is first, and
+// its unlock fits Close's remaining budget, so pgxpool.Close never waits on it.
+//
+// POOL COST. The connection stays checked out for the whole cooldown
+// (domain.KeywordTargetingUnconfirmedCooldown, 15s), on top of the write's own call. It is paid
+// only after an UNCONFIRMED write, never on a definite one.
+func (h *keywordTargetingHold) ReleaseAfterCooldown(cooldown time.Duration) {
+	slog.WarnContext(h.ctx, "keeping the keyword targeting lock after an unconfirmed write, so the next LFX write cannot read a targeting the pending write may still overwrite",
+		"scope", h.scope, "cooldown", cooldown)
+	releaseAfterSharedCooldown(cooldown, h.unlock)
+}
+
+// unlock releases the lock, its round-trip bounded by bound, exactly once.
+func (h *keywordTargetingHold) unlock(bound time.Duration) {
+	h.done.Do(func() {
+		uctx, cancel := context.WithTimeout(h.ctx, bound)
+		defer cancel()
+		var unlocked bool
+		err := h.conn.QueryRow(uctx, keywordTargetingUnlockSQL, keywordTargetingLockClass, h.key).Scan(&unlocked)
+		if err != nil || !unlocked {
+			// A session advisory lock survives the connection's return to the pool, so a
+			// connection whose unlock did not succeed is destroyed, never reused: Postgres drops
+			// the lock with the session.
+			slog.WarnContext(h.ctx, "keyword targeting lock was not released cleanly; destroying its connection",
+				"scope", h.scope, "unlocked", unlocked, "error", err)
+			destroyKeywordTargetingLockConnBounded(h.ctx, h.conn, h.scope, bound, "failed to close keyword targeting lock connection after unlock failure")
+		}
+		h.conn.Release()
+	})
 }
 
 // destroyKeywordTargetingLockConn closes conn's underlying session so the pool discards it.
 func destroyKeywordTargetingLockConn(ctx context.Context, conn *pgxpool.Conn, scope, msg string) {
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keywordTargetingUnlockTimeout)
+	destroyKeywordTargetingLockConnBounded(ctx, conn, scope, keywordTargetingUnlockTimeout, msg)
+}
+
+// destroyKeywordTargetingLockConnBounded is destroyKeywordTargetingLockConn with the close bounded
+// by bound (a shutdown's remaining budget, on that path).
+func destroyKeywordTargetingLockConnBounded(ctx context.Context, conn *pgxpool.Conn, scope string, bound time.Duration, msg string) {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
 	defer cancel()
 	if err := conn.Conn().Close(cctx); err != nil {
 		slog.WarnContext(ctx, msg, "scope", scope, "error", err)

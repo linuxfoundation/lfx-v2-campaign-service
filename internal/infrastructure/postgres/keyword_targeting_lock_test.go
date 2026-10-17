@@ -65,5 +65,95 @@ func TestLiveKeywordTargetingWriteLock_FailedTryLockDestroysTheConnection(t *tes
 	if err != nil {
 		t.Fatalf("Lock after the failure: %v", err)
 	}
-	unlock()
+	unlock.Release()
+}
+
+// waitForKeywordTargetingLockState polls until scope's lock has want holders and no connection is
+// checked out of pool (when free), failing after 5s. Release is asynchronous on the cooldown
+// paths, and Postgres drops a destroyed session's lock only as its backend exits.
+func waitForKeywordTargetingLockState(ctx context.Context, t *testing.T, pool *pgxpool.Pool, scope string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		n := keywordTargetingLockHolders(ctx, t, pool, scope)
+		acquired := pool.Stat().AcquiredConns()
+		if n == want && (want != 0 || acquired == 0) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("scope %s: %d holders (want %d), %d connections checked out", scope, n, want, acquired)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A hold kept after an UNCONFIRMED write stays held, detached from the request, until its cooldown
+// ends; a later Release ends it early; and process shutdown (StopCooldownsForShutdown — what
+// Container.Close calls before closing the pool) releases a cooling hold at once and returns its
+// connection, so it can neither outlive the process's orderly close nor block pgxpool.Close.
+func TestLiveKeywordTargetingWriteLock_CooldownHoldAndShutdown(t *testing.T) {
+	resetCooldownState(t)
+	t.Cleanup(func() { resetCooldownState(t) })
+	ctx := context.Background()
+	pool := liveLeasePool(t)
+	l := NewKeywordTargetingWriteLockWithWait(&Pool{Pool: pool}, 50*time.Millisecond, 10*time.Millisecond)
+	suffix := time.Now().Format("150405.000000000")
+
+	t.Run("held through the cooldown, then released", func(t *testing.T) {
+		scope := "reddit/kwt-cool-" + suffix + "/ad_groups/t5_a"
+		reqCtx, cancel := context.WithCancel(ctx)
+		hold, err := l.Lock(reqCtx, scope)
+		if err != nil {
+			t.Fatalf("Lock: %v", err)
+		}
+		hold.ReleaseAfterCooldown(300 * time.Millisecond)
+		cancel() // the request ends; the hold must not
+		if _, err := l.Lock(ctx, scope); !errors.Is(err, domain.ErrKeywordTargetingWriteInProgress) {
+			t.Fatalf("Lock during the cooldown: %v, want ErrKeywordTargetingWriteInProgress", err)
+		}
+		waitForKeywordTargetingLockState(ctx, t, pool, scope, 0)
+		next, err := l.Lock(ctx, scope)
+		if err != nil {
+			t.Fatalf("Lock after the cooldown: %v", err)
+		}
+		next.Release()
+	})
+
+	t.Run("an explicit Release ends the cooldown early", func(t *testing.T) {
+		scope := "reddit/kwt-early-" + suffix + "/ad_groups/t5_b"
+		hold, err := l.Lock(ctx, scope)
+		if err != nil {
+			t.Fatalf("Lock: %v", err)
+		}
+		hold.ReleaseAfterCooldown(time.Hour)
+		hold.Release()
+		waitForKeywordTargetingLockState(ctx, t, pool, scope, 0)
+	})
+
+	t.Run("shutdown releases a cooling hold", func(t *testing.T) {
+		scope := "reddit/kwt-shutdown-" + suffix + "/ad_groups/t5_c"
+		hold, err := l.Lock(ctx, scope)
+		if err != nil {
+			t.Fatalf("Lock: %v", err)
+		}
+		hold.ReleaseAfterCooldown(time.Hour)
+		if n := keywordTargetingLockHolders(ctx, t, pool, scope); n != 1 {
+			t.Fatalf("%d holders while cooling, want 1", n)
+		}
+		start := time.Now()
+		StopCooldownsForShutdown(2 * time.Second)
+		if took := time.Since(start); took > 2*time.Second {
+			t.Errorf("shutdown waited %s for the cooling hold", took)
+		}
+		waitForKeywordTargetingLockState(ctx, t, pool, scope, 0)
+
+		// After shutdown began, a new cooling hold releases at once rather than parking.
+		late := "reddit/kwt-late-" + suffix + "/ad_groups/t5_d"
+		h2, err := l.Lock(ctx, late)
+		if err != nil {
+			t.Fatalf("Lock after shutdown: %v", err)
+		}
+		h2.ReleaseAfterCooldown(time.Hour)
+		waitForKeywordTargetingLockState(ctx, t, pool, late, 0)
+	})
 }

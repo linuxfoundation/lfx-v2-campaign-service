@@ -126,7 +126,7 @@ func (d *RedditDispatcher) ReadKeywordTargeting(ctx context.Context, projectID s
 //
 // Then ONE PATCH carries every removal, and a re-read confirms the keyword list is exactly what
 // was written and no other targeting member moved. All items share the PATCH's outcome.
-func (d *RedditDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) ([]model.KeywordTargetingOutcome, error) {
+func (d *RedditDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, removals []model.KeywordTargetingRemoval, revision string) (_ []model.KeywordTargetingOutcome, retErr error) {
 	const op = "remove reddit keyword targeting"
 	if !redditKeywordTargetingWritesEnabled() {
 		return nil, fmt.Errorf("reddit keyword targeting writes are disabled (%s is not \"true\") until the whole-targeting write is exercised against a live ad account: %w",
@@ -155,11 +155,13 @@ func (d *RedditDispatcher) RemoveKeywordTargeting(ctx context.Context, projectID
 	// SERIALIZED from here to the confirming re-read: another LFX write on this ad group — on any
 	// replica — would otherwise pass the same revision check before this PATCH lands, and one of
 	// the two whole-object writes would put back targeting the other had changed.
-	unlock, err := d.lockRedditTargeting(ctx, op, created, adGroupID)
+	hold, err := d.lockRedditTargeting(ctx, op, created, adGroupID)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
+	// Released by OUTCOME: at once when it is settled, after a cooldown when the PATCH was sent
+	// and is UNCONFIRMED (releaseRedditTargeting). Every unconfirmed return below is an error.
+	defer func() { d.releaseRedditTargeting(hold, redditWriteUnsettled(retErr)) }()
 	current, err := readOwnedRedditTargeting(ctx, op, client, res, campaign, adGroupID)
 	if err != nil {
 		return nil, err

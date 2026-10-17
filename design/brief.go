@@ -2520,7 +2520,9 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			"`revision` the caller sends (from get-keyword-targeting), and writes back exactly what it read with the " +
 			"named keywords taken out, then reads it again to confirm, holding a per-ad-group lock shared by every " +
 			"replica from that re-read through the confirmation, so two LFX writes to one ad group never interleave " +
-			"(Reddit offers no conditional write, so an edit made outside LFX in that span is not excluded). " +
+			"(Reddit offers no conditional write, so an edit made outside LFX in that span is not excluded). After an " +
+			"UNCONFIRMED write the lock is kept a further 15 seconds, since Reddit may still apply it; that narrows, but " +
+			"cannot close, the window in which a late write overwrites the next one. " +
 			"All items share one outcome. Reddit writes are " +
 			"OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED is \"true\" (answered 400 like an unsupported " +
 			"platform), because the write replaces the whole targeting object and has not yet been exercised " +

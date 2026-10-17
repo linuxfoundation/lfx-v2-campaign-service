@@ -19,7 +19,13 @@ removed/added; read again and resend"), with nothing sent; any other lock failur
 `ErrKeywordTargetingLockUnavailable` (503, nothing sent). The holder occupies one pooled connection
 for its Reddit calls (why not a dedicated session is in the postgres concept). Neither refusal is
 recorded as an upstream Reddit call, and the lock wait is taken out of the recorded upstream
-latency (`Orchestrator.recordLockedUpstream`). The CONCURRENCY note in
+latency (`Orchestrator.recordLockedUpstream`). Release follows the write's outcome (PR #371
+review): a write whose PATCH was sent and is UNCONFIRMED — including a negative add answered per
+item with an UNCONFIRMED keyword and a nil error — keeps the lock for
+`domain.KeywordTargetingUnconfirmedCooldown` (15 s), detached from the request and released at
+shutdown through the campaign claim's cooldown machinery (`releaseAfterSharedCooldown`), so a
+late-landing PATCH cannot immediately overwrite the next LFX write from its stale snapshot. A
+finite cooldown narrows that window; it cannot guarantee Reddit has finished the write. The CONCURRENCY note in
 `internal/platform/reddit/keyword_targeting.go`, the design text and `docs/api-catalog.md` now
 state the window that remains: an edit made outside LFX between the read and the PATCH, which
 Reddit's lack of a conditional write leaves open. Concepts updated:

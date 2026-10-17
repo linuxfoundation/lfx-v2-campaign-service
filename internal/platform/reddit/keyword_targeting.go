@@ -46,7 +46,14 @@ import (
 // dispatch.RedditDispatcher.lockRedditTargeting) from that fresh read through the PATCH and the
 // re-read, so two LFX writes on one ad group (a removal and a negative add, say) cannot both pass
 // the revision check before either PATCH lands. The second waits, then re-reads and sees the
-// first's revision; if the wait runs out it is refused with nothing sent.
+// first's revision; if the wait runs out it is refused with nothing sent. When the first write's
+// PATCH was SENT but its outcome is UNCONFIRMED (timed out, cancelled, a re-read that could not
+// confirm it), the lock is kept for a further cooldown (domain.KeywordTargetingUnconfirmedCooldown,
+// 15s) before the next LFX write may read: Reddit may still be applying that PATCH, and a write
+// admitted at once would read the targeting as it is now, pass its check, and then be overwritten
+// by the late PATCH from its stale snapshot. A finite cooldown narrows that window but cannot
+// close it — nothing says when, or whether, Reddit finishes a request this service stopped
+// waiting for — so a PATCH landing after the cooldown can still overwrite a later LFX write.
 //
 // What remains is an edit made OUTSIDE this service (Reddit Ads Manager, another API client)
 // between the fresh read and the PATCH: the PATCH writes the targeting back as read and silently
