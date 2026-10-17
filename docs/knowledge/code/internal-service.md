@@ -2108,7 +2108,13 @@ ETag, no campaign write lock — Reddit's per-ad-group targeting lock is the dis
 any platform but Reddit and X with 400 before the orchestrator, and map failures through
 `classifyKeywordTargetingError` — the keyword-action arms plus the targeting sentinels, among them
 `ErrKeywordTargetingWriteInProgress` (409: another LFX write to the ad group outlasted the lock
-wait; nothing was removed) — with fixed messages; adapter text is only logged. An outcome the adapter
+wait; nothing was removed) — with fixed messages. The removal and the negative-keyword add record
+their upstream call through `recordLockedUpstream`: a refusal AT the dispatcher's write lock
+(`domain.IsKeywordTargetingLockRefusal` — in progress, or `ErrKeywordTargetingLockUnavailable`)
+made no platform call and records nothing, and the time spent waiting for the lock
+(`domain.WithLockWaitRecorder`) is taken out of the measured latency, so LFX's own contention
+never shows as Reddit errors or latency; a stale revision is still recorded
+(`TestKeywordTargetingLockIsNotUpstream`); adapter text is only logged. An outcome the adapter
 did not name renders UNCONFIRMED. The orchestrator's `ReadKeywordTargeting` /
 `RemoveKeywordTargeting` type-assert the capabilities, instrument `read_keyword_targeting` /
 `remove_keyword_targeting`, and treat a short outcome slice as UNCONFIRMED. See

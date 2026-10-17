@@ -9,11 +9,17 @@ removed positive keyword and widen delivery. Both writes now hold a per-ad-group
 (`domain.KeywordTargetingWriteLock`, scope `reddit/{account}/ad_groups/{ad group}`) from the fresh
 read through the compare, the PATCH and the confirming re-read. The container binds
 `postgres.KeywordTargetingWriteLock` — a session advisory lock (`pg_try_advisory_lock`, two-int
-class `RKTW`), the `ClaimCampaignVersion` mechanism, polled every 100 ms for up to 10 s with no
-connection held while waiting — so replicas serialize; without it the dispatcher's in-process lock
-serializes one replica. A write still locked out at the deadline is
+class `RKTW`), the `ClaimCampaignVersion` mechanism, polled every 100 ms for up to
+`domain.KeywordTargetingLockWait` (10 s, shared with the fallback) with no connection held while
+waiting, and every attempt's pool checkout cut off at that deadline — so replicas serialize;
+without it the dispatcher's in-process lock serializes one replica. A write still locked out at
+the deadline (or unable to check out a connection by then) is
 `ErrKeywordTargetingWriteInProgress`, mapped to 409 beside the stale-revision refusal ("nothing was
-removed/added; read again and resend"), with nothing sent. The CONCURRENCY note in
+removed/added; read again and resend"), with nothing sent; any other lock failure is
+`ErrKeywordTargetingLockUnavailable` (503, nothing sent). The holder occupies one pooled connection
+for its Reddit calls (why not a dedicated session is in the postgres concept). Neither refusal is
+recorded as an upstream Reddit call, and the lock wait is taken out of the recorded upstream
+latency (`Orchestrator.recordLockedUpstream`). The CONCURRENCY note in
 `internal/platform/reddit/keyword_targeting.go`, the design text and `docs/api-catalog.md` now
 state the window that remains: an edit made outside LFX between the read and the PATCH, which
 Reddit's lack of a conditional write leaves open. Concepts updated:

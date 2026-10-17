@@ -118,3 +118,54 @@ func TestLiveKeywordTargetingWriteLock_CancelledWait(t *testing.T) {
 		t.Errorf("%d holders, want only the first", n)
 	}
 }
+
+// A SATURATED POOL is bounded by the lock's wait, not by the caller's longer deadline. With
+// pool_max_conns=1 — a real configuration — the holder's session is the pool's only connection, so
+// a second write cannot even check one out to ask; it must still be refused as in progress (409)
+// at about its wait, not block until its request deadline and end as a 503.
+func TestLiveKeywordTargetingWriteLock_SaturatedPoolRefusesAtTheWait(t *testing.T) {
+	ctx := context.Background()
+	_ = dbtest.Pool(t) // skip/fail semantics and the migrated schema
+	cfg, err := pgxpool.ParseConfig(dbtest.DSN())
+	if err != nil {
+		t.Fatalf("parse DSN: %s", dbtest.SafeDSNErr(err))
+	}
+	cfg.MaxConns = 1
+	one, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open one-connection pool: %s", dbtest.SafeDSNErr(err))
+	}
+	t.Cleanup(one.Close)
+
+	scope := "reddit/" + dbtest.UniqueID(t, "acct") + "/ad_groups/t5_ag"
+	const wait = 300 * time.Millisecond
+	a := postgres.NewKeywordTargetingWriteLockWithWait(&postgres.Pool{Pool: one}, wait, 20*time.Millisecond)
+	b := postgres.NewKeywordTargetingWriteLockWithWait(&postgres.Pool{Pool: one}, wait, 20*time.Millisecond)
+	unlockA, err := a.Lock(ctx, scope)
+	if err != nil {
+		t.Fatalf("a.Lock: %v", err)
+	}
+
+	// The caller's own deadline is far longer than the wait, as the 45s mutation timeout is.
+	callerCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err = b.Lock(callerCtx, scope)
+	took := time.Since(start)
+	if !errors.Is(err, domain.ErrKeywordTargetingWriteInProgress) {
+		t.Fatalf("b.Lock on a saturated pool: err = %v, want ErrKeywordTargetingWriteInProgress", err)
+	}
+	if took < wait || took > wait+2*time.Second {
+		t.Errorf("b was refused after %s; want about its %s wait", took, wait)
+	}
+
+	unlockA()
+	if s := one.Stat(); s.AcquiredConns() != 0 {
+		t.Errorf("%d connections still checked out after release", s.AcquiredConns())
+	}
+	unlockB, err := b.Lock(ctx, scope)
+	if err != nil {
+		t.Fatalf("b.Lock after a released: %v", err)
+	}
+	unlockB()
+}

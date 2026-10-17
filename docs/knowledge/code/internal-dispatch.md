@@ -4268,9 +4268,14 @@ negative-keyword add takes too. The lock is a `domain.KeywordTargetingWriteLock`
 replicas serialize; without it the dispatcher falls back to an in-process lock
 (`localTargetingLock`, one replica only). It is taken before the fresh read and released after the
 re-read, so a second LFX write on the ad group waits and then reads the first's result; one that
-cannot get it within 10 s is `domain.ErrKeywordTargetingWriteInProgress` (409), nothing sent.
+cannot get it within `domain.KeywordTargetingLockWait` (10 s) is
+`domain.ErrKeywordTargetingWriteInProgress` (409), nothing sent, and any other lock failure is
+tagged `domain.ErrKeywordTargetingLockUnavailable` (503, nothing sent). `lockRedditTargeting`
+reports the time it waited through `domain.RecordLockWait`, so the orchestrator keeps it out of
+Reddit's upstream latency.
 Tests: `reddit_targeting_lock_test.go` (same ad group serializes and the waiter then refuses as
-changed; refusal on timeout sends nothing; different ad groups do not block; scope and span). X's
+changed; refusal on timeout sends nothing; different ad groups do not block; scope and span; a
+refusal is classed as a lock refusal; the lock wait is reported). X's
 deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 

@@ -313,8 +313,11 @@ func TestReddit_KeywordTargetingWrites_LockScopeAndSpan(t *testing.T) {
 		s2 := newRedditStatefulStub(t, map[string]string{"t5_ag": redditTargetingObject(`["kubernetes","jobs"]`)})
 		s2.d.SetKeywordTargetingWriteLock(&recordingTargetingLock{err: refusal})
 		_, err := s2.d.AddNegativeKeywords(context.Background(), "proj", model.ProviderRedditAds, redditCampaignOn("t5_ag"), []model.NegativeKeyword{broad("free")}, rev)
-		if !errors.Is(err, refusal) {
-			t.Errorf("err = %v, want %v", err, refusal)
+		if !errors.Is(err, refusal) || !domain.IsKeywordTargetingLockRefusal(err) {
+			t.Errorf("err = %v, want %v, classed as a lock refusal (not a Reddit failure)", err, refusal)
+		}
+		if refusal != domain.ErrKeywordTargetingWriteInProgress && !errors.Is(err, domain.ErrKeywordTargetingLockUnavailable) {
+			t.Errorf("a lock that could not be asked for must be ErrKeywordTargetingLockUnavailable: %v", err)
 		}
 		if gets, patches := s2.counts("t5_ag"); gets != 0 || patches != 0 {
 			t.Errorf("%v: gets = %d, patches = %d; a refused lock must send nothing", refusal, gets, patches)
@@ -371,5 +374,23 @@ func TestLocalTargetingLock(t *testing.T) {
 	waiting.mu.Unlock()
 	if n != 0 || m != 0 {
 		t.Errorf("slots left behind: %d, %d", n, m)
+	}
+}
+
+// The time a write spends waiting for the lock is reported to the caller's lock-wait recorder, so
+// the orchestrator can keep it out of Reddit's upstream latency.
+func TestReddit_KeywordTargetingWrites_ReportLockWait(t *testing.T) {
+	t.Setenv(constants.EnvRedditKeywordTargetingWritesEnabled, "true")
+	s := newRedditStatefulStub(t, map[string]string{"t5_ag": redditTargetingObject(`["kubernetes","jobs"]`)})
+	const wait = 80 * time.Millisecond
+	s.d.SetKeywordTargetingWriteLock(&recordingTargetingLock{onLock: func() { time.Sleep(wait) }})
+	ctx, waited := domain.WithLockWaitRecorder(context.Background())
+	rev := readRedditRevision(t, `["kubernetes","jobs"]`)
+	if _, err := s.d.RemoveKeywordTargeting(ctx, "proj", model.ProviderRedditAds, redditCampaignOn("t5_ag"),
+		[]model.KeywordTargetingRemoval{{Keyword: "jobs"}}, rev); err != nil {
+		t.Fatalf("removal: %v", err)
+	}
+	if got := waited(); got < wait {
+		t.Errorf("lock wait reported = %s, want at least %s", got, wait)
 	}
 }

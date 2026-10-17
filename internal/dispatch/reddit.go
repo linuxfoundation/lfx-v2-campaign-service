@@ -130,7 +130,7 @@ type RedditDispatcher struct {
 func NewRedditDispatcher(repo connReader, enc domain.Encryptor, opts ...reddit.Option) *RedditDispatcher {
 	return &RedditDispatcher{creds: newCredsSource(repo, enc), clients: newClientCache(), opts: opts,
 		audience: newRedditReportGuard[reddit.AudienceInsights](), keywords: newRedditReportGuard[reddit.KeywordPerformance](),
-		targetingLock: newLocalTargetingLock(redditTargetingLockWait)}
+		targetingLock: newLocalTargetingLock(domain.KeywordTargetingLockWait)}
 }
 
 // Dispatch implements service.PlatformDispatcher for Reddit.

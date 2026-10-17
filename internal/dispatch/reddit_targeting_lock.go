@@ -5,16 +5,13 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
-
-// redditTargetingLockWait bounds the in-process fallback lock's wait; the Postgres lock the
-// container binds uses the same bound (postgres.keywordTargetingLockWait).
-const redditTargetingLockWait = 10 * time.Second
 
 // SetKeywordTargetingWriteLock binds the cross-replica lock that serializes Reddit's
 // whole-targeting writes per ad group (see domain.KeywordTargetingWriteLock). The container binds
@@ -37,9 +34,20 @@ func redditTargetingLockScope(accountID, adGroupID string) string {
 // lockRedditTargeting takes the ad group's write lock. The caller holds it across the fresh read,
 // the revision compare, the PATCH and the confirming re-read, and defers the returned unlock. A
 // refusal here is definite: nothing was read for the write and nothing was sent.
+//
+// The wait is reported to the caller's lock-wait recorder (domain.RecordLockWait), so the
+// orchestrator can keep it out of Reddit's upstream latency. Any other lock failure — the database,
+// or the request ending mid-wait (its context's error stays wrapped) — is tagged
+// domain.ErrKeywordTargetingLockUnavailable, so no refusal at the lock is mistaken for a Reddit
+// failure.
 func (d *RedditDispatcher) lockRedditTargeting(ctx context.Context, op, accountID, adGroupID string) (func(), error) {
+	start := time.Now()
 	unlock, err := d.targetingLock.Lock(ctx, redditTargetingLockScope(accountID, adGroupID))
+	domain.RecordLockWait(ctx, time.Since(start))
 	if err != nil {
+		if !errors.Is(err, domain.ErrKeywordTargetingWriteInProgress) {
+			err = fmt.Errorf("%w: %w", domain.ErrKeywordTargetingLockUnavailable, err)
+		}
 		return nil, fmt.Errorf("%s: ad group %s: %w", op, adGroupID, err)
 	}
 	return unlock, nil

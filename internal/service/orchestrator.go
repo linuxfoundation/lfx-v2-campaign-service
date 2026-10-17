@@ -905,6 +905,19 @@ func (o *Orchestrator) recordUpstream(ctx context.Context, platform model.Provid
 	o.dispatchMetrics().RecordUpstreamCall(ctx, platform, operation, outcome, time.Since(start).Seconds())
 }
 
+// recordLockedUpstream is recordUpstream for a call that may wait on this service's own
+// keyword-targeting write lock (Reddit's whole-targeting writes). A refusal AT the lock —
+// domain.IsKeywordTargetingLockRefusal: a timeout or an unavailable lock — made no platform call,
+// so nothing is recorded; otherwise the time spent waiting for the lock is taken out of the
+// measured latency, so LFX's own contention never reads as the platform's errors or latency.
+// ErrKeywordTargetingChanged is still recorded: the fresh read behind it was a platform call.
+func (o *Orchestrator) recordLockedUpstream(ctx context.Context, platform model.Provider, operation string, start time.Time, lockWait time.Duration, err error) {
+	if domain.IsKeywordTargetingLockRefusal(err) {
+		return
+	}
+	o.recordUpstream(ctx, platform, operation, start.Add(min(lockWait, time.Since(start))), err)
+}
+
 // Upstream call outcome tokens, mirroring internal/infrastructure/metrics for the
 // same reason as the dispatch outcomes above.
 const (
@@ -3772,9 +3785,10 @@ func (o *Orchestrator) AddNegativeKeywords(ctx context.Context, projectID string
 	}
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
+	callCtx, lockWaited := domain.WithLockWaitRecorder(callCtx)
 	start := time.Now()
 	outcomes, aerr := adder.AddNegativeKeywords(callCtx, projectID, platform, campaign, keywords, revision)
-	o.recordUpstream(ctx, platform, opNegativeKeywords, start, aerr)
+	o.recordLockedUpstream(ctx, platform, opNegativeKeywords, start, lockWaited(), aerr)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -3834,9 +3848,10 @@ func (o *Orchestrator) RemoveKeywordTargeting(ctx context.Context, projectID str
 	}
 	callCtx, cancel := context.WithTimeout(ctx, toggleCallTimeout)
 	defer cancel()
+	callCtx, lockWaited := domain.WithLockWaitRecorder(callCtx)
 	start := time.Now()
 	outcomes, rerr := remover.RemoveKeywordTargeting(callCtx, projectID, platform, campaign, removals, revision)
-	o.recordUpstream(ctx, platform, opRemoveKeywordTargeting, start, rerr)
+	o.recordLockedUpstream(ctx, platform, opRemoveKeywordTargeting, start, lockWaited(), rerr)
 	if rerr != nil {
 		return nil, rerr
 	}

@@ -73,8 +73,12 @@ exact `targeting_criteria` list envelope are taken from the SDK and docs, not ob
   the revision check before either PATCH landed, and the later PATCH would write back stale
   targeting (restoring a removed keyword, a widening). The second request now waits, polling
   `pg_try_advisory_lock` (no pooled connection held while waiting), then reads the first's
-  result and refuses as changed; if the lock is still held after 10 s it is 409
-  (`ErrKeywordTargetingWriteInProgress`: retry after reading again), nothing sent. **What
+  result and refuses as changed; if the lock is still held after 10 s — or the pool is so
+  saturated that no connection can ask for it by then — it is 409
+  (`ErrKeywordTargetingWriteInProgress`: retry after reading again), nothing sent. The holder
+  occupies one pooled connection for the length of its Reddit calls, as a toggle's campaign claim
+  does. A refusal at the lock is not recorded as an upstream Reddit call, and the lock wait is
+  kept out of Reddit's upstream latency. **What
   remains** is an edit made OUTSIDE LFX (Ads Manager, another API client): Reddit documents no
   conditional write, so one landing between the fresh read and the PATCH is overwritten and the
   re-read cannot tell (it sees what was written); one landing between the PATCH and the re-read

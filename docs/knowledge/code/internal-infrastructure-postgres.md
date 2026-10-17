@@ -2158,14 +2158,34 @@ over-serializes. No migration. It is the `ClaimCampaignVersion` mechanism (a poo
 holds the lock for the guarded span; unlock on a detached bounded context; a connection whose
 try-lock errored, or whose unlock failed or answered false, is DESTROYED, never returned to the
 pool with a lock on it) with a bounded WAIT instead of an immediate refusal: `Lock` polls the
-try-lock every 100 ms for up to 10 s (`keywordTargetingLockWait`), returning the connection to the
-pool between attempts, so waiting costs no held connection — only the holder pins one, for its
-three platform requests inside the mutation timeout. Still held at the deadline (one last attempt
-is made AT it) is `domain.ErrKeywordTargetingWriteInProgress` (409); a pool or query failure, or
-the request ending mid-wait, is a plain error (503 by default) — either way the caller sends
-nothing. The returned unlock is idempotent. Like the campaign claim, the lock lives as long as its
+try-lock every 100 ms for up to `domain.KeywordTargetingLockWait` (10 s — the one constant the
+dispatcher's in-process fallback uses too), returning the connection to the pool between attempts,
+so waiting costs no held connection. Every attempt — the pool checkout included — runs on a
+context cut off at the wait's deadline, so a SATURATED pool cannot stretch the wait to the
+caller's 45 s mutation timeout: an attempt cut off by that deadline (not by the caller's own
+context) counts as the wait running out. Still held at the deadline (one last attempt is made AT
+it), or no connection to ask with by then, is `domain.ErrKeywordTargetingWriteInProgress` (409); a
+pool or query failure, or the request ending mid-wait, is a plain error that the dispatcher tags
+`domain.ErrKeywordTargetingLockUnavailable` (503) — either way the caller sends nothing. A
+try-lock whose query failed, even one only cut short by the deadline, destroys its connection,
+since Postgres may have granted the lock. The returned unlock is idempotent.
+**Pool cost — the holder occupies one pooled connection for the length of its Reddit calls**
+(up to three requests, inside the 45 s mutation timeout), because the session that took the lock
+must stay checked out until the re-read: the same cost as a toggle's `ClaimCampaignVersion`.
+Writes to different ad groups take one slot each; with `pool_max_conns=1` one write holds the
+pool's only connection and every other request waits for it (a second write is refused at its
+deadline). It is bounded by "one request, one ad group, behind a default-off flag", not
+structurally. **A dedicated session, as `StatsJobLease` uses, was not chosen:** one shared session
+would serialize every lock, poll and unlock of all in-flight writes through one `pgx.Conn` and
+drop every holder's lock at once when lost; a session per write adds a connect (and TLS
+handshake) to each write and an unbounded number of connections outside `pool_max_conns`. Both
+trade a bounded, visible pool cost for an unbounded or shared one. Like the campaign claim, the lock lives as long as its
 session: a contention guard, not durable ownership. `KeywordTargetingLockKeys` exposes the keys as
-they appear in `pg_locks`; `NewKeywordTargetingWriteLockWithWait` shortens the wait for tests.
+they appear in `pg_locks`; `NewKeywordTargetingWriteLockWithWait` shortens the wait for tests, and
+`lockSQL` is a field only so an in-package test can make the try-lock fail after the grant.
 Live tests: `dbtest/keyword_targeting_lock_live_test.go` (two instances serialize one scope — the
 second refused only after its wait, granted once the first releases, another scope never waits,
-nothing left in `pg_locks`; a cancelled wait is the context's error, not "in progress").
+nothing left in `pg_locks`; a cancelled wait is the context's error, not "in progress"; on a
+one-connection pool a second write is refused as in progress at about its wait, not at its 30 s
+caller deadline) and, in-package, `TestLiveKeywordTargetingWriteLock_FailedTryLockDestroysTheConnection`
+(a failure injected after the grant leaves no lock held and no connection checked out).
