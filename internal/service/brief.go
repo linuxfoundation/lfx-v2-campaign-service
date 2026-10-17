@@ -1939,12 +1939,13 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 		// The stored result is the orchestrator's per-platform outcome array; decode
 		// it into the typed response shape so the OpenAPI contract is honored.
 		var stored []struct {
-			Platform   string `json:"platform"`
-			OK         bool   `json:"ok"`
-			CampaignID string `json:"campaign_id"`
-			Error      string `json:"error"`
-			Skipped    bool   `json:"skipped"`
-			HubspotURL string `json:"hubspot_url"`
+			Platform   string   `json:"platform"`
+			OK         bool     `json:"ok"`
+			CampaignID string   `json:"campaign_id"`
+			Error      string   `json:"error"`
+			Skipped    bool     `json:"skipped"`
+			HubspotURL string   `json:"hubspot_url"`
+			Warnings   []string `json:"warnings"`
 			// Reconcile is the orchestrator's platformResult.Reconcile (see reconcileRef):
 			// identifier fields of what a lost-claim dispatch created. Decoded per value so an
 			// unexpected shape is skipped rather than failing the whole poll.
@@ -1977,6 +1978,9 @@ func (s *BriefService) GetJob(ctx context.Context, p *briefs.GetJobPayload) (*br
 			if r.HubspotURL != "" {
 				u := r.HubspotURL
 				pr.HubspotURL = &u
+			}
+			if len(r.Warnings) > 0 {
+				pr.Warnings = append([]string(nil), r.Warnings...)
 			}
 			pr.Reconcile = reconcileIdentifiers(r.Reconcile)
 			if r.ReconcileTruncated {

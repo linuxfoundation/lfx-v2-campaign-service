@@ -404,6 +404,502 @@ paths:
                                 message: The service is unavailable.
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/audience-builder/custom/create:
+        post:
+            tags:
+                - lfx-v2-campaign-service-audience-builder
+            summary: create-custom-audience lfx-v2-campaign-service-audience-builder
+            description: Create one custom contact list in the project's HubSpot portal from reviewed criteria. NOT idempotent.
+            operationId: lfx-v2-campaign-service-audience-builder#create-custom-audience
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            requestBody:
+                description: Request body for create-custom-audience.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/PreviewCustomAudienceRequestBody'
+                        example:
+                            custom:
+                                criteria:
+                                    cities:
+                                        - Seoul
+                                    contact_location: true
+                                    countries:
+                                        - South Korea
+                                    gate_list_id: "26716"
+                                    label: OSS Korea
+            responses:
+                "201":
+                    description: Created response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AudienceComposedList'
+                            example:
+                                hubspot_url: Qui dolor.
+                                list_id: Aut sint sit.
+                                name: Fuga sint sit expedita impedit officia.
+                                size: 1831051534920062221
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'ComposePartial: The create is unconfirmed; do not retry'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AudienceComposePartialError'
+                            example:
+                                code: "500"
+                                master:
+                                    hubspot_url: Aliquam quis dicta voluptas odio quo.
+                                    list_id: Quia nihil qui ab accusamus tempora culpa.
+                                    name: Eaque dicta qui numquam.
+                                    size: 4504693386713616226
+                                master_name: Hic eum et eligendi in repellendus qui.
+                                message: Compose failed after creating or possibly creating platform state that must be reconciled before retrying.
+                                suppression:
+                                    hubspot_url: Aliquam quis dicta voluptas odio quo.
+                                    list_id: Quia nihil qui ab accusamus tempora culpa.
+                                    name: Eaque dicta qui numquam.
+                                    size: 4504693386713616226
+                                suppression_name: Dolores dolores cupiditate.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/audience-builder/custom/interpret:
+        post:
+            tags:
+                - lfx-v2-campaign-service-audience-builder
+            summary: interpret-custom-audience lfx-v2-campaign-service-audience-builder
+            description: Interpret a free-text audience request into draft criteria and blocking questions. Uses a model; creates nothing.
+            operationId: lfx-v2-campaign-service-audience-builder#interpret-custom-audience
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            requestBody:
+                description: Request body for interpret-custom-audience.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/InterpretCustomAudienceRequestBody'
+                        example:
+                            answers:
+                                - answer: yuv
+                                  question: Dolorum corrupti enim eos.
+                                  question_id: Saepe quis eum.
+                                - answer: yuv
+                                  question: Dolorum corrupti enim eos.
+                                  question_id: Saepe quis eum.
+                                - answer: yuv
+                                  question: Dolorum corrupti enim eos.
+                                  question_id: Saepe quis eum.
+                            event_url: ww5
+                            request: b
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AudienceCustomInterpretResult'
+                            example:
+                                brand_short: Tempore est quis et.
+                                criteria:
+                                    ambassadors: true
+                                    cities:
+                                        - Autem modi neque.
+                                        - Corrupti nobis nostrum.
+                                        - Consequatur nulla culpa magnam.
+                                    contact_location: true
+                                    countries:
+                                        - Praesentium vel et quia.
+                                        - Cumque dolorem.
+                                        - Possimus explicabo in aut aut ratione fuga.
+                                    education_enrolled: true
+                                    education_topic_property: Vel ut est.
+                                    education_topics:
+                                        - Est in et sed corrupti et.
+                                        - Minima dolor non impedit.
+                                        - Non totam culpa iusto occaecati necessitatibus pariatur.
+                                    event_registered: false
+                                    gate_event_history: false
+                                    gate_list_id: Magnam aliquid non iure natus dolor.
+                                    label: an4
+                                    page_view_urls:
+                                        - Aspernatur laudantium aut autem doloribus laboriosam.
+                                        - Molestiae nulla earum illo est.
+                                        - Animi consequatur eum.
+                                    property_filters:
+                                        - operator: is_known
+                                          property: p
+                                          values:
+                                            - Sequi sint porro.
+                                            - Earum quibusdam modi eos et ratione eum.
+                                            - Consequuntur quis.
+                                        - operator: is_known
+                                          property: p
+                                          values:
+                                            - Sequi sint porro.
+                                            - Earum quibusdam modi eos et ratione eum.
+                                            - Consequuntur quis.
+                                        - operator: is_known
+                                          property: p
+                                          values:
+                                            - Sequi sint porro.
+                                            - Earum quibusdam modi eos et ratione eum.
+                                            - Consequuntur quis.
+                                    registered_for:
+                                        - Nam alias dicta assumenda sunt.
+                                        - Porro soluta laboriosam sed explicabo dicta.
+                                        - Non nemo in similique ex dolore soluta.
+                                    speakers:
+                                        event_names:
+                                            - Ea ut enim similique sit assumenda.
+                                            - Ab temporibus sed est.
+                                            - Dolores aliquam dignissimos.
+                                        list_id: Qui enim eos.
+                                        scope: current
+                                event:
+                                    brand_short: KubeCon
+                                    event_dates:
+                                        - Dolore iusto numquam libero laudantium deleniti.
+                                        - Est maiores.
+                                    event_name: KubeCon Europe 2026
+                                gate:
+                                    hubspot_url: Sequi hic ut culpa repellat.
+                                    list_id: Necessitatibus non adipisci.
+                                    name: Nam assumenda sit dolorem cupiditate.
+                                    size: 3935453728792165491
+                                notes:
+                                    - Ea quasi ab corporis itaque eius.
+                                    - Sint omnis et atque omnis quia.
+                                questions:
+                                    - id: Laboriosam ut modi vero ab natus.
+                                      options:
+                                        - Aperiam possimus culpa dolores natus fugiat molestiae.
+                                        - Fugit error laudantium reprehenderit vero.
+                                        - Culpa adipisci officia.
+                                      question: Eius rerum voluptates.
+                                      why: Facilis esse aut eligendi.
+                                    - id: Laboriosam ut modi vero ab natus.
+                                      options:
+                                        - Aperiam possimus culpa dolores natus fugiat molestiae.
+                                        - Fugit error laudantium reprehenderit vero.
+                                        - Culpa adipisci officia.
+                                      question: Eius rerum voluptates.
+                                      why: Facilis esse aut eligendi.
+                                similar:
+                                    - list:
+                                        hubspot_url: Sequi hic ut culpa repellat.
+                                        list_id: Necessitatibus non adipisci.
+                                        name: Nam assumenda sit dolorem cupiditate.
+                                        size: 3935453728792165491
+                                      reason: Porro ratione quos maiores.
+                                      recommendation: unrelated
+                                    - list:
+                                        hubspot_url: Sequi hic ut culpa repellat.
+                                        list_id: Necessitatibus non adipisci.
+                                        name: Nam assumenda sit dolorem cupiditate.
+                                        size: 3935453728792165491
+                                      reason: Porro ratione quos maiores.
+                                      recommendation: unrelated
+                                    - list:
+                                        hubspot_url: Sequi hic ut culpa repellat.
+                                        list_id: Necessitatibus non adipisci.
+                                        name: Nam assumenda sit dolorem cupiditate.
+                                        size: 3935453728792165491
+                                      reason: Porro ratione quos maiores.
+                                      recommendation: unrelated
+                                speakers_list:
+                                    hubspot_url: Sequi hic ut culpa repellat.
+                                    list_id: Necessitatibus non adipisci.
+                                    name: Nam assumenda sit dolorem cupiditate.
+                                    size: 3935453728792165491
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
+    /projects/{project_id}/audience-builder/custom/preview:
+        post:
+            tags:
+                - lfx-v2-campaign-service-audience-builder
+            summary: preview-custom-audience lfx-v2-campaign-service-audience-builder
+            description: Validate custom criteria against the portal and return the list that would be created. Creates nothing.
+            operationId: lfx-v2-campaign-service-audience-builder#preview-custom-audience
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Project UUID or slug that scopes the connection
+                  required: true
+                  schema:
+                    type: string
+                    description: Project UUID or slug that scopes the connection
+                    example: cncf
+                  example: cncf
+            requestBody:
+                description: Request body for preview-custom-audience.
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/PreviewCustomAudienceRequestBody'
+                        example:
+                            custom:
+                                criteria:
+                                    cities:
+                                        - Seoul
+                                    contact_location: true
+                                    countries:
+                                        - South Korea
+                                    gate_list_id: "26716"
+                                    label: OSS Korea
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AudienceCustomPreviewResult'
+                            example:
+                                branch_count: 4
+                                criteria:
+                                    cities:
+                                        - Seoul
+                                    contact_location: true
+                                    countries:
+                                        - South Korea
+                                    gate_list_id: "26716"
+                                    label: OSS Korea
+                                gate:
+                                    hubspot_url: https://app.hubspot.com/contacts/8675309/lists/26716
+                                    list_id: "26716"
+                                    name: 26Q2 - The Linux Foundation - Master-list
+                                    size: 2500000
+                                name: 26Q4 - Seoul and South Korea - Mailable Contacts - OSS Korea
+                                upper_bound: 2500000
+                                warnings: []
+                "400":
+                    description: 'BadRequest: Bad request'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BadRequestError'
+                            example:
+                                code: "400"
+                                message: The request was invalid.
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            schema:
+                                type: string
+                                description: Authentication challenge (RFC 9110 §15.5.2)
+                                example: Bearer
+                            example: Bearer
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UnauthorizedError'
+                            example:
+                                code: "401"
+                                message: Unauthorized.
+                "404":
+                    description: 'NotFound: Resource not found'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/NotFoundError'
+                            example:
+                                code: "404"
+                                message: The connection was not found.
+                "409":
+                    description: 'Conflict: Conflict'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConflictError'
+                            example:
+                                code: "409"
+                                message: A connection for this provider already exists on the project.
+                                reason: already_exists
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/PayloadTooLargeError'
+                            example:
+                                code: "413"
+                                message: The request payload was too large.
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/InternalServerError'
+                            example:
+                                code: "500"
+                                message: An internal server error occurred.
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ConnServiceUnavailableError'
+                            example:
+                                code: "503"
+                                message: The service is unavailable.
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/audience-builder/discover:
         post:
             tags:
@@ -444,6 +940,7 @@ paths:
                                         - Dolore iusto numquam libero laudantium deleniti.
                                         - Est maiores.
                                     event_name: KubeCon Europe 2026
+                                hidden: 7278541439620773255
                                 inspected: 4968061369652934428
                                 lists:
                                     - hubspot_url: Inventore occaecati omnis iste velit.
@@ -1151,6 +1648,10 @@ paths:
                         example:
                             event_name: ki
                             list_ref: e
+                            send_suppression_list_ids:
+                                - Nihil incidunt omnis.
+                                - Et dolor placeat vel.
+                                - Qui non eos veritatis.
                             targets_ca: true
                             targets_eu: true
             responses:
@@ -1196,6 +1697,7 @@ paths:
                                             - fix: Aut sint neque.
                                               message: Veniam qui possimus iure quo.
                                               severity: MEDIUM
+                                        send_time_count: 2796294809724295964
                                         verdict: FAIL
                                     signal_mapping:
                                         findings:
@@ -14397,6 +14899,10 @@ paths:
                                             - Aspernatur odio recusandae.
                                             - Labore dolorem cupiditate vero.
                                       reconcile_truncated: false
+                                      warnings:
+                                        - Ducimus aut laudantium.
+                                        - Et consequatur blanditiis eaque.
+                                        - A sint dolorum consequatur at et.
                                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                                       error: Eaque omnis quo fugit eum.
                                       hubspot_url: Ab magnam quis qui labore.
@@ -14440,6 +14946,10 @@ paths:
                                             - Aspernatur odio recusandae.
                                             - Labore dolorem cupiditate vero.
                                       reconcile_truncated: false
+                                      warnings:
+                                        - Ducimus aut laudantium.
+                                        - Et consequatur blanditiis eaque.
+                                        - A sint dolorum consequatur at et.
                                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                                       error: Eaque omnis quo fugit eum.
                                       hubspot_url: Ab magnam quis qui labore.
@@ -14483,6 +14993,10 @@ paths:
                                             - Aspernatur odio recusandae.
                                             - Labore dolorem cupiditate vero.
                                       reconcile_truncated: false
+                                      warnings:
+                                        - Ducimus aut laudantium.
+                                        - Et consequatur blanditiis eaque.
+                                        - A sint dolorum consequatur at et.
                                 status: succeeded
                 "400":
                     description: 'BadRequest: Bad request'
@@ -16907,6 +17421,615 @@ components:
                 - list_id
                 - name
                 - hubspot_url
+        AudienceCustomAnswer:
+            type: object
+            properties:
+                answer:
+                    type: string
+                    description: The chosen option or the operator's own words
+                    example: yuv
+                    maxLength: 500
+                question:
+                    type: string
+                    description: The question text, echoed back
+                    example: Dolorum corrupti enim eos.
+                question_id:
+                    type: string
+                    description: The question's id
+                    example: Saepe quis eum.
+            example:
+                answer: yuv
+                question: Dolorum corrupti enim eos.
+                question_id: Saepe quis eum.
+            required:
+                - answer
+        AudienceCustomCriteria:
+            type: object
+            properties:
+                ambassadors:
+                    type: boolean
+                    description: Restrict to community ambassadors
+                    example: true
+                cities:
+                    type: array
+                    items:
+                        type: string
+                        example: Autem modi neque.
+                    description: Cities, matched on city and ip_city
+                    example:
+                        - Autem modi neque.
+                        - Corrupti nobis nostrum.
+                        - Consequatur nulla culpa magnam.
+                    maxItems: 25
+                contact_location:
+                    type: boolean
+                    description: Include the contact-location branches (always gated by gate_list_id)
+                    example: true
+                countries:
+                    type: array
+                    items:
+                        type: string
+                        example: Praesentium vel et quia.
+                    description: Countries; broadens location to country_dropdown and ip_country
+                    example:
+                        - Praesentium vel et quia.
+                        - Cumque dolorem.
+                        - Possimus explicabo in aut aut ratione fuga.
+                    maxItems: 25
+                education_enrolled:
+                    type: boolean
+                    description: Include contacts who enrolled in education from the location
+                    example: true
+                education_topic_property:
+                    type: string
+                    description: The education event's course/topic property. On input, honoured only when it is one of the portal's candidates; otherwise the service picks the best one
+                    example: Vel ut est.
+                education_topics:
+                    type: array
+                    items:
+                        type: string
+                        example: Est in et sed corrupti et.
+                    description: Course/topic keywords narrowing education enrolment to the brand's own courses
+                    example:
+                        - Est in et sed corrupti et.
+                        - Minima dolor non impedit.
+                        - Non totam culpa iusto occaecati necessitatibus pariatur.
+                    maxItems: 25
+                event_registered:
+                    type: boolean
+                    description: Include contacts who registered for an event held in the location
+                    example: false
+                gate_event_history:
+                    type: boolean
+                    description: Also gate the event-history branches by gate_list_id
+                    example: false
+                gate_list_id:
+                    type: string
+                    description: The brand master list gated branches must be in
+                    example: Magnam aliquid non iure natus dolor.
+                label:
+                    type: string
+                    description: The event(s) the audience is for; feeds the list name
+                    example: an4
+                    maxLength: 200
+                page_view_urls:
+                    type: array
+                    items:
+                        type: string
+                        example: Aspernatur laudantium aut autem doloribus laboriosam.
+                    description: Contacts who viewed a page whose URL contains any of these
+                    example:
+                        - Aspernatur laudantium aut autem doloribus laboriosam.
+                        - Molestiae nulla earum illo est.
+                        - Animi consequatur eum.
+                    maxItems: 10
+                property_filters:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AudienceCustomPropertyFilter'
+                    description: Extra conditions ANDed into every branch
+                    example:
+                        - operator: is_known
+                          property: p
+                          values:
+                            - Sequi sint porro.
+                            - Earum quibusdam modi eos et ratione eum.
+                            - Consequuntur quis.
+                        - operator: is_known
+                          property: p
+                          values:
+                            - Sequi sint porro.
+                            - Earum quibusdam modi eos et ratione eum.
+                            - Consequuntur quis.
+                        - operator: is_known
+                          property: p
+                          values:
+                            - Sequi sint porro.
+                            - Earum quibusdam modi eos et ratione eum.
+                            - Consequuntur quis.
+                    maxItems: 10
+                registered_for:
+                    type: array
+                    items:
+                        type: string
+                        example: Nam alias dicta assumenda sunt.
+                    description: 'Exact event names: contacts registered for any of them'
+                    example:
+                        - Nam alias dicta assumenda sunt.
+                        - Porro soluta laboriosam sed explicabo dicta.
+                        - Non nemo in similique ex dolore soluta.
+                    maxItems: 25
+                speakers:
+                    $ref: '#/components/schemas/AudienceCustomSpeakers'
+            example:
+                ambassadors: true
+                cities:
+                    - Autem modi neque.
+                    - Corrupti nobis nostrum.
+                    - Consequatur nulla culpa magnam.
+                contact_location: true
+                countries:
+                    - Praesentium vel et quia.
+                    - Cumque dolorem.
+                    - Possimus explicabo in aut aut ratione fuga.
+                education_enrolled: true
+                education_topic_property: Vel ut est.
+                education_topics:
+                    - Est in et sed corrupti et.
+                    - Minima dolor non impedit.
+                    - Non totam culpa iusto occaecati necessitatibus pariatur.
+                event_registered: false
+                gate_event_history: false
+                gate_list_id: Magnam aliquid non iure natus dolor.
+                label: an4
+                page_view_urls:
+                    - Aspernatur laudantium aut autem doloribus laboriosam.
+                    - Molestiae nulla earum illo est.
+                    - Animi consequatur eum.
+                property_filters:
+                    - operator: is_known
+                      property: p
+                      values:
+                        - Sequi sint porro.
+                        - Earum quibusdam modi eos et ratione eum.
+                        - Consequuntur quis.
+                    - operator: is_known
+                      property: p
+                      values:
+                        - Sequi sint porro.
+                        - Earum quibusdam modi eos et ratione eum.
+                        - Consequuntur quis.
+                    - operator: is_known
+                      property: p
+                      values:
+                        - Sequi sint porro.
+                        - Earum quibusdam modi eos et ratione eum.
+                        - Consequuntur quis.
+                registered_for:
+                    - Nam alias dicta assumenda sunt.
+                    - Porro soluta laboriosam sed explicabo dicta.
+                    - Non nemo in similique ex dolore soluta.
+                speakers:
+                    event_names:
+                        - Ea ut enim similique sit assumenda.
+                        - Ab temporibus sed est.
+                        - Dolores aliquam dignissimos.
+                    list_id: Qui enim eos.
+                    scope: current
+        AudienceCustomInput:
+            type: object
+            properties:
+                criteria:
+                    $ref: '#/components/schemas/AudienceCustomCriteria'
+                name:
+                    type: string
+                    description: Explicit list name; derived from the criteria when omitted. A taken name is versioned, never reused
+                    example: np4
+                    maxLength: 250
+            example:
+                criteria:
+                    cities:
+                        - Seoul
+                    contact_location: true
+                    countries:
+                        - South Korea
+                    gate_list_id: "26716"
+                    label: OSS Korea
+            required:
+                - criteria
+        AudienceCustomInterpretResult:
+            type: object
+            properties:
+                brand_short:
+                    type: string
+                    description: The brand the model inferred
+                    example: Tempore est quis et.
+                criteria:
+                    $ref: '#/components/schemas/AudienceCustomCriteria'
+                event:
+                    $ref: '#/components/schemas/AudienceEventIdentity'
+                gate:
+                    $ref: '#/components/schemas/AudienceListSearchResult'
+                notes:
+                    type: array
+                    items:
+                        type: string
+                        example: Ea quasi ab corporis itaque eius.
+                    description: Caveats about the draft
+                    example:
+                        - Ea quasi ab corporis itaque eius.
+                        - Sint omnis et atque omnis quia.
+                questions:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AudienceCustomQuestion'
+                    description: Questions that still block the draft
+                    example:
+                        - id: Laboriosam ut modi vero ab natus.
+                          options:
+                            - Aperiam possimus culpa dolores natus fugiat molestiae.
+                            - Fugit error laudantium reprehenderit vero.
+                            - Culpa adipisci officia.
+                          question: Eius rerum voluptates.
+                          why: Facilis esse aut eligendi.
+                        - id: Laboriosam ut modi vero ab natus.
+                          options:
+                            - Aperiam possimus culpa dolores natus fugiat molestiae.
+                            - Fugit error laudantium reprehenderit vero.
+                            - Culpa adipisci officia.
+                          question: Eius rerum voluptates.
+                          why: Facilis esse aut eligendi.
+                similar:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AudienceCustomSimilarList'
+                    description: Existing lists that may already be this audience, found by name search and ranked by the model; it never adds one
+                    example:
+                        - list:
+                            hubspot_url: Sequi hic ut culpa repellat.
+                            list_id: Necessitatibus non adipisci.
+                            name: Nam assumenda sit dolorem cupiditate.
+                            size: 3935453728792165491
+                          reason: Porro ratione quos maiores.
+                          recommendation: unrelated
+                        - list:
+                            hubspot_url: Sequi hic ut culpa repellat.
+                            list_id: Necessitatibus non adipisci.
+                            name: Nam assumenda sit dolorem cupiditate.
+                            size: 3935453728792165491
+                          reason: Porro ratione quos maiores.
+                          recommendation: unrelated
+                        - list:
+                            hubspot_url: Sequi hic ut culpa repellat.
+                            list_id: Necessitatibus non adipisci.
+                            name: Nam assumenda sit dolorem cupiditate.
+                            size: 3935453728792165491
+                          reason: Porro ratione quos maiores.
+                          recommendation: unrelated
+                speakers_list:
+                    $ref: '#/components/schemas/AudienceListSearchResult'
+            example:
+                brand_short: Tempore est quis et.
+                criteria:
+                    ambassadors: true
+                    cities:
+                        - Autem modi neque.
+                        - Corrupti nobis nostrum.
+                        - Consequatur nulla culpa magnam.
+                    contact_location: true
+                    countries:
+                        - Praesentium vel et quia.
+                        - Cumque dolorem.
+                        - Possimus explicabo in aut aut ratione fuga.
+                    education_enrolled: true
+                    education_topic_property: Vel ut est.
+                    education_topics:
+                        - Est in et sed corrupti et.
+                        - Minima dolor non impedit.
+                        - Non totam culpa iusto occaecati necessitatibus pariatur.
+                    event_registered: false
+                    gate_event_history: false
+                    gate_list_id: Magnam aliquid non iure natus dolor.
+                    label: an4
+                    page_view_urls:
+                        - Aspernatur laudantium aut autem doloribus laboriosam.
+                        - Molestiae nulla earum illo est.
+                        - Animi consequatur eum.
+                    property_filters:
+                        - operator: is_known
+                          property: p
+                          values:
+                            - Sequi sint porro.
+                            - Earum quibusdam modi eos et ratione eum.
+                            - Consequuntur quis.
+                        - operator: is_known
+                          property: p
+                          values:
+                            - Sequi sint porro.
+                            - Earum quibusdam modi eos et ratione eum.
+                            - Consequuntur quis.
+                        - operator: is_known
+                          property: p
+                          values:
+                            - Sequi sint porro.
+                            - Earum quibusdam modi eos et ratione eum.
+                            - Consequuntur quis.
+                    registered_for:
+                        - Nam alias dicta assumenda sunt.
+                        - Porro soluta laboriosam sed explicabo dicta.
+                        - Non nemo in similique ex dolore soluta.
+                    speakers:
+                        event_names:
+                            - Ea ut enim similique sit assumenda.
+                            - Ab temporibus sed est.
+                            - Dolores aliquam dignissimos.
+                        list_id: Qui enim eos.
+                        scope: current
+                event:
+                    brand_short: KubeCon
+                    event_dates:
+                        - Dolore iusto numquam libero laudantium deleniti.
+                        - Est maiores.
+                    event_name: KubeCon Europe 2026
+                gate:
+                    hubspot_url: Sequi hic ut culpa repellat.
+                    list_id: Necessitatibus non adipisci.
+                    name: Nam assumenda sit dolorem cupiditate.
+                    size: 3935453728792165491
+                notes:
+                    - Ea quasi ab corporis itaque eius.
+                    - Sint omnis et atque omnis quia.
+                questions:
+                    - id: Laboriosam ut modi vero ab natus.
+                      options:
+                        - Aperiam possimus culpa dolores natus fugiat molestiae.
+                        - Fugit error laudantium reprehenderit vero.
+                        - Culpa adipisci officia.
+                      question: Eius rerum voluptates.
+                      why: Facilis esse aut eligendi.
+                    - id: Laboriosam ut modi vero ab natus.
+                      options:
+                        - Aperiam possimus culpa dolores natus fugiat molestiae.
+                        - Fugit error laudantium reprehenderit vero.
+                        - Culpa adipisci officia.
+                      question: Eius rerum voluptates.
+                      why: Facilis esse aut eligendi.
+                similar:
+                    - list:
+                        hubspot_url: Sequi hic ut culpa repellat.
+                        list_id: Necessitatibus non adipisci.
+                        name: Nam assumenda sit dolorem cupiditate.
+                        size: 3935453728792165491
+                      reason: Porro ratione quos maiores.
+                      recommendation: unrelated
+                    - list:
+                        hubspot_url: Sequi hic ut culpa repellat.
+                        list_id: Necessitatibus non adipisci.
+                        name: Nam assumenda sit dolorem cupiditate.
+                        size: 3935453728792165491
+                      reason: Porro ratione quos maiores.
+                      recommendation: unrelated
+                    - list:
+                        hubspot_url: Sequi hic ut culpa repellat.
+                        list_id: Necessitatibus non adipisci.
+                        name: Nam assumenda sit dolorem cupiditate.
+                        size: 3935453728792165491
+                      reason: Porro ratione quos maiores.
+                      recommendation: unrelated
+                speakers_list:
+                    hubspot_url: Sequi hic ut culpa repellat.
+                    list_id: Necessitatibus non adipisci.
+                    name: Nam assumenda sit dolorem cupiditate.
+                    size: 3935453728792165491
+            required:
+                - criteria
+                - questions
+                - notes
+                - similar
+        AudienceCustomPreviewResult:
+            type: object
+            properties:
+                branch_count:
+                    type: integer
+                    description: Filter branches after expanding roles
+                    example: 6857487235144582774
+                    format: int64
+                criteria:
+                    $ref: '#/components/schemas/AudienceCustomCriteria'
+                education_topic_candidates:
+                    type: array
+                    items:
+                        type: string
+                        example: Molestiae libero alias praesentium ab velit quia.
+                    description: The education event's properties that could hold a course topic, best first
+                    example:
+                        - Molestiae libero alias praesentium ab velit quia.
+                        - Praesentium perferendis id dolores.
+                gate:
+                    $ref: '#/components/schemas/AudienceListSearchResult'
+                name:
+                    type: string
+                    description: The name the list would be created under
+                    example: Sed voluptatibus earum temporibus enim.
+                upper_bound:
+                    type: integer
+                    description: The gate list's size when every branch is gated; absent otherwise
+                    example: 2547515972424224129
+                    format: int64
+                warnings:
+                    type: array
+                    items:
+                        type: string
+                        example: Aut omnis.
+                    description: Things that may make the list smaller than intended
+                    example:
+                        - Aut omnis.
+                        - Molestiae nihil eaque quisquam ab.
+                        - Velit libero fuga quis facere et placeat.
+            example:
+                branch_count: 4
+                criteria:
+                    cities:
+                        - Seoul
+                    contact_location: true
+                    countries:
+                        - South Korea
+                    gate_list_id: "26716"
+                    label: OSS Korea
+                gate:
+                    hubspot_url: https://app.hubspot.com/contacts/8675309/lists/26716
+                    list_id: "26716"
+                    name: 26Q2 - The Linux Foundation - Master-list
+                    size: 2500000
+                name: 26Q4 - Seoul and South Korea - Mailable Contacts - OSS Korea
+                upper_bound: 2500000
+                warnings: []
+            required:
+                - name
+                - criteria
+                - branch_count
+                - warnings
+        AudienceCustomPropertyFilter:
+            type: object
+            properties:
+                operator:
+                    type: string
+                    description: Comparison
+                    example: is_known
+                    enum:
+                        - is_equal_to
+                        - contains
+                        - is_any_of
+                        - is_not_any_of
+                        - is_known
+                        - is_unknown
+                property:
+                    type: string
+                    description: HubSpot internal contact property name; verified against the portal
+                    example: p
+                    pattern: ^[A-Za-z0-9_]+$
+                    minLength: 1
+                    maxLength: 100
+                values:
+                    type: array
+                    items:
+                        type: string
+                        example: Sequi sint porro.
+                    description: Values; ignored for is_known/is_unknown
+                    example:
+                        - Sequi sint porro.
+                        - Earum quibusdam modi eos et ratione eum.
+                        - Consequuntur quis.
+                    maxItems: 25
+            example:
+                operator: is_known
+                property: p
+                values:
+                    - Sequi sint porro.
+                    - Earum quibusdam modi eos et ratione eum.
+                    - Consequuntur quis.
+            required:
+                - property
+                - operator
+        AudienceCustomQuestion:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: Stable id to send back with the answer
+                    example: Laboriosam ut modi vero ab natus.
+                options:
+                    type: array
+                    items:
+                        type: string
+                        example: Aperiam possimus culpa dolores natus fugiat molestiae.
+                    description: Clickable options; free text is also accepted
+                    example:
+                        - Aperiam possimus culpa dolores natus fugiat molestiae.
+                        - Fugit error laudantium reprehenderit vero.
+                        - Culpa adipisci officia.
+                question:
+                    type: string
+                    description: The question
+                    example: Eius rerum voluptates.
+                why:
+                    type: string
+                    description: Why it blocks the draft
+                    example: Facilis esse aut eligendi.
+            example:
+                id: Laboriosam ut modi vero ab natus.
+                options:
+                    - Aperiam possimus culpa dolores natus fugiat molestiae.
+                    - Fugit error laudantium reprehenderit vero.
+                    - Culpa adipisci officia.
+                question: Eius rerum voluptates.
+                why: Facilis esse aut eligendi.
+            required:
+                - id
+                - question
+                - options
+        AudienceCustomSimilarList:
+            type: object
+            properties:
+                list:
+                    $ref: '#/components/schemas/AudienceListSearchResult'
+                reason:
+                    type: string
+                    description: Why
+                    example: Porro ratione quos maiores.
+                recommendation:
+                    type: string
+                    description: The model's suggestion; absent when it could not assess the list
+                    example: unrelated
+                    enum:
+                        - reuse
+                        - update
+                        - unrelated
+            example:
+                list:
+                    hubspot_url: Sequi hic ut culpa repellat.
+                    list_id: Necessitatibus non adipisci.
+                    name: Nam assumenda sit dolorem cupiditate.
+                    size: 3935453728792165491
+                reason: Porro ratione quos maiores.
+                recommendation: unrelated
+            required:
+                - list
+        AudienceCustomSpeakers:
+            type: object
+            properties:
+                event_names:
+                    type: array
+                    items:
+                        type: string
+                        example: Ea ut enim similique sit assumenda.
+                    description: Exact event_name values, including co-located tracks
+                    example:
+                        - Ea ut enim similique sit assumenda.
+                        - Ab temporibus sed est.
+                        - Dolores aliquam dignissimos.
+                    maxItems: 25
+                list_id:
+                    type: string
+                    description: An existing speakers list; preferred over event_names when set
+                    example: Qui enim eos.
+                scope:
+                    type: string
+                    description: Which editions' speakers
+                    example: current
+                    enum:
+                        - current
+                        - past
+                        - current_past
+            example:
+                event_names:
+                    - Ea ut enim similique sit assumenda.
+                    - Ab temporibus sed est.
+                    - Dolores aliquam dignissimos.
+                list_id: Qui enim eos.
+                scope: current
+            required:
+                - scope
         AudienceDiscoveredList:
             type: object
             properties:
@@ -16978,6 +18101,11 @@ components:
             properties:
                 event:
                     $ref: '#/components/schemas/AudienceEventIdentity'
+                hidden:
+                    type: integer
+                    description: 'Lists found but not offered for inclusion: suppressions, masters, test and staff lists'
+                    example: 7278541439620773255
+                    format: int64
                 inspected:
                     type: integer
                     description: How many candidate lists were inspected before the bound was reached
@@ -17047,6 +18175,7 @@ components:
                         - Dolore iusto numquam libero laudantium deleniti.
                         - Est maiores.
                     event_name: KubeCon Europe 2026
+                hidden: 7278541439620773255
                 inspected: 4968061369652934428
                 lists:
                     - hubspot_url: Inventore occaecati omnis iste velit.
@@ -17191,10 +18320,23 @@ components:
                     type: boolean
                     description: True when this email's list selection could not be read. The two list arrays are then empty because they are UNKNOWN, not because the send targeted nothing.
                     example: true
+                match_reason:
+                    type: string
+                    description: 'Why this send is listed: event_name, subject, related_words or brand_only'
+                    example: related_words
+                    enum:
+                        - event_name
+                        - subject
+                        - related_words
+                        - brand_only
                 sent_at:
                     type: string
                     description: When the email was published/sent, RFC 3339
                     example: Non et dolor.
+                subject:
+                    type: string
+                    description: The email's subject line
+                    example: Ut iusto laudantium.
                 suppression_lists:
                     type: array
                     items:
@@ -17434,6 +18576,7 @@ components:
                         - fix: Aut sint neque.
                           message: Veniam qui possimus iure quo.
                           severity: MEDIUM
+                    send_time_count: 2796294809724295964
                     verdict: FAIL
                 signal_mapping:
                     findings:
@@ -17470,7 +18613,7 @@ components:
             properties:
                 exclusion_count:
                     type: integer
-                    description: How many exclusion branches the filter carries
+                    description: 'How many exclusions apply: the list''s own plus send-time suppressions'
                     example: 926306291075617734
                     format: int64
                 findings:
@@ -17485,6 +18628,11 @@ components:
                         - fix: Aut sint neque.
                           message: Veniam qui possimus iure quo.
                           severity: MEDIUM
+                send_time_count:
+                    type: integer
+                    description: How many of those are send-time suppression lists rather than filters on the list
+                    example: 2796294809724295964
+                    format: int64
                 verdict:
                     type: string
                     description: Check verdict
@@ -17502,6 +18650,7 @@ components:
                     - fix: Aut sint neque.
                       message: Veniam qui possimus iure quo.
                       severity: MEDIUM
+                send_time_count: 2796294809724295964
                 verdict: FAIL
             required:
                 - verdict
@@ -17629,6 +18778,7 @@ components:
                             - fix: Aut sint neque.
                               message: Veniam qui possimus iure quo.
                               severity: MEDIUM
+                        send_time_count: 2796294809724295964
                         verdict: FAIL
                     signal_mapping:
                         findings:
@@ -20577,6 +21727,52 @@ components:
             required:
                 - code
                 - message
+        InterpretCustomAudienceRequestBody:
+            type: object
+            properties:
+                answers:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/AudienceCustomAnswer'
+                    description: Answers to earlier questions
+                    example:
+                        - answer: yuv
+                          question: Dolorum corrupti enim eos.
+                          question_id: Saepe quis eum.
+                        - answer: yuv
+                          question: Dolorum corrupti enim eos.
+                          question_id: Saepe quis eum.
+                        - answer: yuv
+                          question: Dolorum corrupti enim eos.
+                          question_id: Saepe quis eum.
+                    maxItems: 12
+                event_url:
+                    type: string
+                    description: 'An event page: makes this an event audience, planned from the page''s name, brand, location and dates'
+                    example: ww5
+                    maxLength: 2048
+                request:
+                    type: string
+                    description: The audience, described in plain words
+                    example: b
+                    minLength: 1
+                    maxLength: 2000
+            description: Request body for interpret-custom-audience.
+            example:
+                answers:
+                    - answer: yuv
+                      question: Dolorum corrupti enim eos.
+                      question_id: Saepe quis eum.
+                    - answer: yuv
+                      question: Dolorum corrupti enim eos.
+                      question_id: Saepe quis eum.
+                    - answer: yuv
+                      question: Dolorum corrupti enim eos.
+                      question_id: Saepe quis eum.
+                event_url: ww5
+                request: b
+            required:
+                - request
         JobCreateResponse:
             type: object
             properties:
@@ -20671,6 +21867,10 @@ components:
                                 - Aspernatur odio recusandae.
                                 - Labore dolorem cupiditate vero.
                           reconcile_truncated: false
+                          warnings:
+                            - Ducimus aut laudantium.
+                            - Et consequatur blanditiis eaque.
+                            - A sint dolorum consequatur at et.
                         - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                           error: Eaque omnis quo fugit eum.
                           hubspot_url: Ab magnam quis qui labore.
@@ -20714,6 +21914,10 @@ components:
                                 - Aspernatur odio recusandae.
                                 - Labore dolorem cupiditate vero.
                           reconcile_truncated: false
+                          warnings:
+                            - Ducimus aut laudantium.
+                            - Et consequatur blanditiis eaque.
+                            - A sint dolorum consequatur at et.
                         - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                           error: Eaque omnis quo fugit eum.
                           hubspot_url: Ab magnam quis qui labore.
@@ -20757,6 +21961,10 @@ components:
                                 - Aspernatur odio recusandae.
                                 - Labore dolorem cupiditate vero.
                           reconcile_truncated: false
+                          warnings:
+                            - Ducimus aut laudantium.
+                            - Et consequatur blanditiis eaque.
+                            - A sint dolorum consequatur at et.
                 status:
                     type: string
                     description: Job status
@@ -20814,6 +22022,10 @@ components:
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
                       reconcile_truncated: false
+                      warnings:
+                        - Ducimus aut laudantium.
+                        - Et consequatur blanditiis eaque.
+                        - A sint dolorum consequatur at et.
                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                       error: Eaque omnis quo fugit eum.
                       hubspot_url: Ab magnam quis qui labore.
@@ -20857,6 +22069,10 @@ components:
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
                       reconcile_truncated: false
+                      warnings:
+                        - Ducimus aut laudantium.
+                        - Et consequatur blanditiis eaque.
+                        - A sint dolorum consequatur at et.
                     - campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                       error: Eaque omnis quo fugit eum.
                       hubspot_url: Ab magnam quis qui labore.
@@ -20900,6 +22116,10 @@ components:
                             - Aspernatur odio recusandae.
                             - Labore dolorem cupiditate vero.
                       reconcile_truncated: false
+                      warnings:
+                        - Ducimus aut laudantium.
+                        - Et consequatur blanditiis eaque.
+                        - A sint dolorum consequatur at et.
                 status: succeeded
             required:
                 - job_id
@@ -23119,6 +24339,17 @@ components:
                     type: boolean
                     description: 'True when the result held more identifiers than one job result may carry, so reconcile is incomplete: top-level identifiers are always kept, and only the most deeply nested or latest entries are cut'
                     example: false
+                warnings:
+                    type: array
+                    items:
+                        type: string
+                        example: Ducimus aut laudantium.
+                    description: Best-effort steps of a successful create that did not apply, in operator-readable sentences. For the email channel this reports a requested hero image that could not be added; the draft exists, and its banner needs checking in the HubSpot editor (it may have none, or still carry the template's).
+                    example:
+                        - Ducimus aut laudantium.
+                        - Et consequatur blanditiis eaque.
+                        - A sint dolorum consequatur at et.
+                    maxItems: 10
             example:
                 campaign_id: Expedita id soluta minus quaerat ullam voluptas.
                 error: Eaque omnis quo fugit eum.
@@ -23163,6 +24394,10 @@ components:
                         - Aspernatur odio recusandae.
                         - Labore dolorem cupiditate vero.
                 reconcile_truncated: false
+                warnings:
+                    - Ducimus aut laudantium.
+                    - Et consequatur blanditiis eaque.
+                    - A sint dolorum consequatur at et.
             required:
                 - platform
                 - ok
@@ -23219,6 +24454,24 @@ components:
                     - Rerum tempora est.
             required:
                 - list_ids
+        PreviewCustomAudienceRequestBody:
+            type: object
+            properties:
+                custom:
+                    $ref: '#/components/schemas/AudienceCustomInput'
+            description: Request body for preview-custom-audience.
+            example:
+                custom:
+                    criteria:
+                        cities:
+                            - Seoul
+                        contact_location: true
+                        countries:
+                            - South Korea
+                        gate_list_id: "26716"
+                        label: OSS Korea
+            required:
+                - custom
         ReconcileIdentifier:
             type: object
             properties:
@@ -23667,6 +24920,17 @@ components:
                     description: List id or name to audit
                     example: e
                     minLength: 1
+                send_suppression_list_ids:
+                    type: array
+                    items:
+                        type: string
+                        example: Nihil incidunt omnis.
+                    description: Suppression lists the send applies on top of this list; counted like the list's own exclusions
+                    example:
+                        - Nihil incidunt omnis.
+                        - Et dolor placeat vel.
+                        - Qui non eos veritatis.
+                    maxItems: 200
                 targets_ca:
                     type: boolean
                     description: The send targets Canada, so a CASL opt-out suppression is expected
@@ -23679,6 +24943,10 @@ components:
             example:
                 event_name: ki
                 list_ref: e
+                send_suppression_list_ids:
+                    - Nihil incidunt omnis.
+                    - Et dolor placeat vel.
+                    - Qui non eos veritatis.
                 targets_ca: true
                 targets_eu: true
             required:

@@ -15,6 +15,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/utm"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/redact"
@@ -601,7 +602,7 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		// Assigns the NAMED return, not a local: the deferred stampProvenance reads `camp`,
 		// and a local here would leave the named return nil for any later edit that turns this
 		// into a bare `return` or inserts a statement before it.
-		camp = campaignFromHubSpot(ctx, email, cfg, portalID, nil)
+		camp = campaignFromHubSpot(ctx, email, cfg, portalID, nil, nil)
 		return camp, fmt.Errorf("hubspot email %s cloned but setting its send list failed (verify before retrying): %w", email.ID, serr)
 	}
 
@@ -622,7 +623,15 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 	// with ABTestEnabled doesn't upload the same image twice.
 	sponsors := toHubSpotSponsors(cfg.Sponsors)
 	heroImageURL := strings.TrimSpace(cfg.HeroImageURL)
-	hostedHeroURL := uploadHeroImage(ctx, client, heroImageURL)
+	hostedHeroURL, heroWarning := uploadHeroImage(ctx, client, heroImageURL)
+	// A hero that could not be re-hosted leaves the draft without a hero section. That stays
+	// non-fatal, but it must not stay SILENT: the operator sees a clean "draft created" and only
+	// finds the missing banner after opening the draft. The warning travels in the Result blob
+	// to the job-poll response (see hubspotWarningsFromResult in internal/service).
+	var warnings []string
+	if heroWarning != "" {
+		warnings = append(warnings, heroWarning)
+	}
 	applyEmailContentWithHero(ctx, client, email.ID, cfg.Subject, cfg.BodyHTML, hostedHeroURL, cfg.HeroLinkURL, cfg.HeroImageAlt, cfg.ButtonText, cfg.ButtonURL, sponsors, cfg.SentByOrg, cfg.PreviewText)
 
 	// STEP 3B (mutating, BEST-EFFORT, OPT-IN): create a native A/B test variant of the clone and
@@ -655,16 +664,21 @@ func (d *HubSpotDispatcher) Dispatch(ctx context.Context, brief *model.CampaignB
 		tagEmailLinks(ctx, client, abVariant.ID, cloneName, cfg.UTMCampaign)
 	}
 
-	return campaignFromHubSpot(ctx, email, cfg, portalID, abVariant), nil
+	return campaignFromHubSpot(ctx, email, cfg, portalID, abVariant, warnings), nil
 }
 
 // uploadHeroImage re-hosts a scraped hero/banner image in HubSpot's file manager, returning the
 // hosted CDN URL, or "" on any failure (BEST-EFFORT, same contract as the rest of this file: an
 // unre-hostable hero image degrades to no hero section rather than failing the dispatch — see
 // applyEmailContentWithHero, which treats an empty URL as "no hero").
-func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL string) string {
+//
+// The second result is an operator-facing warning, non-empty exactly when a hero was requested and
+// could not be hosted. It is built from heroFailureReason's fixed vocabulary and never from the
+// error text: that text can carry upstream response content, and this string is persisted and
+// returned by the API.
+func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL string) (hosted, warning string) {
 	if imageURL = strings.TrimSpace(imageURL); imageURL == "" {
-		return ""
+		return "", ""
 	}
 	hosted, err := client.UploadImage(ctx, imageURL)
 	if err != nil {
@@ -673,9 +687,43 @@ func uploadHeroImage(ctx context.Context, client *hubspot.Client, imageURL strin
 			// so the query string can carry a credential. The host and path are what make the
 			// line actionable; the query never is.
 			"source_url", redact.URLUserinfo(imageURL), "error", err)
-		return ""
+		return "", "The hero image could not be added to the email: " + heroFailureReason(err) +
+			" Check the draft's banner in the HubSpot editor: it may have none, or still carry the template's, so add or replace it there. Staging again reuses this draft, so it does not retry the upload."
 	}
-	return hosted
+	return hosted, ""
+}
+
+// heroFailureReason maps a hero re-host failure to a short, fixed sentence an operator can act on.
+// It matches on the stable text of this package's own errors and falls back to a generic line, so
+// an error carrying unexpected upstream text is never echoed into a persisted, API-visible string.
+//
+// The SSRF guard's refusal is classified by identity, FIRST: the download path wraps every
+// client.Do failure (guard refusals included) as "download image from ...: %w", and the guard's
+// own text names none of the substrings below, so a string match would always report a refused
+// private or metadata address as a failed download — inviting a retry that fails identically.
+func heroFailureReason(err error) string {
+	if errors.Is(err, eventurl.ErrEventURLForbidden) {
+		return "the image address was refused by the service's network safety check."
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "not one this service re-hosts"),
+		strings.Contains(msg, "did not return a decodable image"),
+		strings.Contains(msg, "this service re-hosts only"):
+		return "the event page serves it in a format email cannot use (HubSpot emails need JPEG, PNG or GIF)."
+	case strings.Contains(msg, "did not return an image"):
+		return "the event page did not return an image for that address."
+	case strings.Contains(msg, "download image"), strings.Contains(msg, "read downloaded image"):
+		return "the image could not be downloaded from the event page."
+	case strings.Contains(msg, "exceeds"):
+		return "the image is too large to re-host."
+	case strings.Contains(msg, "refused"), strings.Contains(msg, "not allowed"), strings.Contains(msg, "blocked"):
+		return "the image address was refused by the service's network safety check."
+	case strings.Contains(msg, "401"), strings.Contains(msg, "403"), strings.Contains(msg, "missing private-app token"):
+		return "HubSpot refused the upload, which usually means the connection lacks the files permission."
+	default:
+		return "HubSpot did not accept the upload."
+	}
 }
 
 // applyEmailContentWithHero writes generated copy onto a cloned draft: the subject via
@@ -979,7 +1027,7 @@ func emailPartial(ctx context.Context, name string) *model.Campaign {
 // hubSpotCreationPortalID. It rides on a wrapper rather than inside the marshalled
 // hubspot.Email because it is a property of the connection that made the call, not a field
 // HubSpot returns. It may be empty: the lookup is best-effort at the call site.
-func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string, abVariant *hubspot.Email) *model.Campaign {
+func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfig, portalID string, abVariant *hubspot.Email, warnings []string) *model.Campaign {
 	c := &model.Campaign{
 		PlatformCampaignID: e.ID,
 		CampaignName:       e.Name,
@@ -1012,7 +1060,10 @@ func campaignFromHubSpot(ctx context.Context, e *hubspot.Email, cfg hubspotConfi
 		PortalID      string         `json:"portalId,omitempty"`
 		HubspotURL    string         `json:"hubspotUrl,omitempty"`
 		ABTestVariant *hubspot.Email `json:"abTestVariant,omitempty"`
-	}{Email: e, PortalID: portalID, HubspotURL: e.AppURL, ABTestVariant: abVariant}); err != nil {
+		// Warnings are best-effort steps that did not apply (today: the hero image), so the
+		// operator learns of them from the job result instead of from the finished draft.
+		Warnings []string `json:"warnings,omitempty"`
+	}{Email: e, PortalID: portalID, HubspotURL: e.AppURL, ABTestVariant: abVariant, Warnings: warnings}); err != nil {
 		slog.WarnContext(ctx, "failed to marshal hubspot email result blob (Result left empty)",
 			"campaign_id", c.PlatformCampaignID, "error", err)
 	} else {
