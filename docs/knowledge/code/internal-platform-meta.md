@@ -439,7 +439,10 @@ levels** — the ad set's `daily_budget`/`lifetime_budget` and the parent campai
 percent-encoded). One request rather than two is the point: a campaign-level budget appearing
 between two separate calls would slip past the `CampaignBudgetOptimized()` guard that exists to
 catch it, and CBO is Meta's form of the shared-budget problem. A response echoing a different
-ad-set id is refused, as is a non-numeric id, before any call.
+ad-set id is refused, and so is one echoing **no** id (absent, `null` or `""`): it proves nothing
+about which ad set its fields describe, and an absent `daily_budget` or campaign budget would
+otherwise read as "not used" / "not CBO". This matches `GetAdSetBid` on the same object. A
+non-numeric id is refused before any call.
 
 `parseMinorUnits` keeps "no budget" and "a budget this client could not read" distinct: an empty
 value yields `nil` (not reported), while a present-but-unparseable one yields `nil` **and** sets

@@ -58,3 +58,18 @@ func AttachExistingAudienceLfxV2CampaignServiceAudienceBuilderPath(projectID str
 func RunAudienceQaLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
 	return fmt.Sprintf("/projects/%v/audience-builder/qa/run", projectID)
 }
+
+// InterpretCustomAudienceLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service interpret-custom-audience HTTP endpoint.
+func InterpretCustomAudienceLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/audience-builder/custom/interpret", projectID)
+}
+
+// PreviewCustomAudienceLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service preview-custom-audience HTTP endpoint.
+func PreviewCustomAudienceLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/audience-builder/custom/preview", projectID)
+}
+
+// CreateCustomAudienceLfxV2CampaignServiceAudienceBuilderPath returns the URL path to the lfx-v2-campaign-service-audience-builder service create-custom-audience HTTP endpoint.
+func CreateCustomAudienceLfxV2CampaignServiceAudienceBuilderPath(projectID string) string {
+	return fmt.Sprintf("/projects/%v/audience-builder/custom/create", projectID)
+}

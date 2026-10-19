@@ -52,13 +52,36 @@ type filter struct {
 	// `omitempty` so property filters, which do not set it, keep their existing wire shape.
 	Operator  string    `json:"operator,omitempty"`
 	Operation operation `json:"operation"`
+	// PageURL and EnableTracking apply only to PAGE_VIEW filters, which carry no
+	// `operation` at all — see MarshalJSON.
+	PageURL        string `json:"pageUrl,omitempty"`
+	EnableTracking *bool  `json:"enableTracking,omitempty"`
+}
+
+// MarshalJSON omits `operation` from a PAGE_VIEW filter. Every other filter type
+// keeps its existing wire shape byte for byte: `operation` is required on those, and
+// on a PAGE_VIEW filter it is a field HubSpot's schema does not define.
+func (f filter) MarshalJSON() ([]byte, error) {
+	type plain filter
+	if f.FilterType != "PAGE_VIEW" {
+		return json.Marshal(plain(f))
+	}
+	return json.Marshal(struct {
+		FilterType     string `json:"filterType"`
+		Operator       string `json:"operator"`
+		PageURL        string `json:"pageUrl"`
+		EnableTracking *bool  `json:"enableTracking,omitempty"`
+	}{f.FilterType, f.Operator, f.PageURL, f.EnableTracking})
 }
 
 type operation struct {
 	Operator                     string   `json:"operator"`
 	IncludeObjectsWithNoValueSet bool     `json:"includeObjectsWithNoValueSet"`
 	Values                       []string `json:"values,omitempty"`
-	OperationType                string   `json:"operationType,omitempty"`
+	// Value is the single typed value BOOL and NUMBER operations take instead of
+	// `values` (HubSpot refuses a bool property filtered as MULTISTRING).
+	Value         any    `json:"value,omitempty"`
+	OperationType string `json:"operationType,omitempty"`
 }
 
 // containsValue builds a CONTAINS property operation. MULTISTRING is HubSpot's operation type

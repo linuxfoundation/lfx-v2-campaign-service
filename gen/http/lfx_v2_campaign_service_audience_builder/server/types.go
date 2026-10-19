@@ -56,9 +56,41 @@ type RunAudienceQaRequestBody struct {
 	TargetsEu *bool `form:"targets_eu,omitempty" json:"targets_eu,omitempty" xml:"targets_eu,omitempty"`
 	// The send targets Canada, so a CASL opt-out suppression is expected
 	TargetsCa *bool `form:"targets_ca,omitempty" json:"targets_ca,omitempty" xml:"targets_ca,omitempty"`
+	// Suppression lists the send applies on top of this list; counted like the
+	// list's own exclusions
+	SendSuppressionListIds []string `form:"send_suppression_list_ids,omitempty" json:"send_suppression_list_ids,omitempty" xml:"send_suppression_list_ids,omitempty"`
 	// This edition's event name, so an included registration list for THIS event
 	// can be told from another event's
 	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
+}
+
+// InterpretCustomAudienceRequestBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP request body.
+type InterpretCustomAudienceRequestBody struct {
+	// The audience, described in plain words
+	Request *string `form:"request,omitempty" json:"request,omitempty" xml:"request,omitempty"`
+	// Answers to earlier questions
+	Answers []*AudienceCustomAnswerRequestBody `form:"answers,omitempty" json:"answers,omitempty" xml:"answers,omitempty"`
+	// An event page: makes this an event audience, planned from the page's name,
+	// brand, location and dates
+	EventURL *string `form:"event_url,omitempty" json:"event_url,omitempty" xml:"event_url,omitempty"`
+}
+
+// PreviewCustomAudienceRequestBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP request body.
+type PreviewCustomAudienceRequestBody struct {
+	// What to preview
+	Custom *AudienceCustomInputRequestBody `form:"custom,omitempty" json:"custom,omitempty" xml:"custom,omitempty"`
+}
+
+// CreateCustomAudienceRequestBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP request body.
+type CreateCustomAudienceRequestBody struct {
+	// What to create
+	Custom *AudienceCustomInputRequestBody `form:"custom,omitempty" json:"custom,omitempty" xml:"custom,omitempty"`
 }
 
 // GetAudienceBuilderCapabilitiesResponseBody is the type of the
@@ -83,6 +115,9 @@ type DiscoverAudienceListsResponseBody struct {
 	MissingSignals []string `form:"missing_signals" json:"missing_signals" xml:"missing_signals"`
 	// How many candidate lists were inspected before the bound was reached
 	Inspected *int64 `form:"inspected,omitempty" json:"inspected,omitempty" xml:"inspected,omitempty"`
+	// Lists found but not offered for inclusion: suppressions, masters, test and
+	// staff lists
+	Hidden *int `form:"hidden,omitempty" json:"hidden,omitempty" xml:"hidden,omitempty"`
 }
 
 // SearchAudienceListsResponseBody is the type of the
@@ -186,6 +221,64 @@ type RunAudienceQaResponseBody struct {
 	Findings []*AudienceQaFindingResponseBody `form:"findings,omitempty" json:"findings,omitempty" xml:"findings,omitempty"`
 	// Worst verdict across the checks
 	Overall *string `form:"overall,omitempty" json:"overall,omitempty" xml:"overall,omitempty"`
+}
+
+// InterpretCustomAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body.
+type InterpretCustomAudienceResponseBody struct {
+	// Draft criteria for the operator to review
+	Criteria *AudienceCustomCriteriaResponseBody `form:"criteria" json:"criteria" xml:"criteria"`
+	// The brand the model inferred
+	BrandShort *string `form:"brand_short,omitempty" json:"brand_short,omitempty" xml:"brand_short,omitempty"`
+	// The brand master list found for the gate, already filled into criteria
+	Gate *AudienceListSearchResultResponseBody `form:"gate,omitempty" json:"gate,omitempty" xml:"gate,omitempty"`
+	// An existing speakers list, already filled into criteria
+	SpeakersList *AudienceListSearchResultResponseBody `form:"speakers_list,omitempty" json:"speakers_list,omitempty" xml:"speakers_list,omitempty"`
+	// Questions that still block the draft
+	Questions []*AudienceCustomQuestionResponseBody `form:"questions" json:"questions" xml:"questions"`
+	// Caveats about the draft
+	Notes []string `form:"notes" json:"notes" xml:"notes"`
+	// Existing lists that may already be this audience, found by name search and
+	// ranked by the model; it never adds one
+	Similar []*AudienceCustomSimilarListResponseBody `form:"similar" json:"similar" xml:"similar"`
+	// The event an event audience was planned from; absent for a plain custom
+	// request
+	Event *AudienceEventIdentityResponseBody `form:"event,omitempty" json:"event,omitempty" xml:"event,omitempty"`
+}
+
+// PreviewCustomAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body.
+type PreviewCustomAudienceResponseBody struct {
+	// The name the list would be created under
+	Name string `form:"name" json:"name" xml:"name"`
+	// The criteria as they would be built
+	Criteria *AudienceCustomCriteriaResponseBody `form:"criteria" json:"criteria" xml:"criteria"`
+	// Filter branches after expanding roles
+	BranchCount int `form:"branch_count" json:"branch_count" xml:"branch_count"`
+	// The education event's properties that could hold a course topic, best first
+	EducationTopicCandidates []string `form:"education_topic_candidates,omitempty" json:"education_topic_candidates,omitempty" xml:"education_topic_candidates,omitempty"`
+	// The gate list, as read from the portal
+	Gate *AudienceListSearchResultResponseBody `form:"gate,omitempty" json:"gate,omitempty" xml:"gate,omitempty"`
+	// The gate list's size when every branch is gated; absent otherwise
+	UpperBound *int `form:"upper_bound,omitempty" json:"upper_bound,omitempty" xml:"upper_bound,omitempty"`
+	// Things that may make the list smaller than intended
+	Warnings []string `form:"warnings" json:"warnings" xml:"warnings"`
+}
+
+// CreateCustomAudienceResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body.
+type CreateCustomAudienceResponseBody struct {
+	// HubSpot list id
+	ListID string `form:"list_id" json:"list_id" xml:"list_id"`
+	// HubSpot list name
+	Name string `form:"name" json:"name" xml:"name"`
+	// Deep link to the list in the HubSpot UI
+	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
+	// Membership size, when HubSpot reported one
+	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 }
 
 // GetAudienceBuilderCapabilitiesBadRequestResponseBody is the type of the
@@ -969,6 +1062,255 @@ type RunAudienceQaUnauthorizedResponseBody struct {
 	Message string `form:"message" json:"message" xml:"message"`
 }
 
+// InterpretCustomAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body for the "BadRequest"
+// error.
+type InterpretCustomAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// InterpretCustomAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body for the "Conflict"
+// error.
+type InterpretCustomAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// InterpretCustomAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body for the
+// "ServiceUnavailable" error.
+type InterpretCustomAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// InterpretCustomAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body for the
+// "InternalServerError" error.
+type InterpretCustomAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// InterpretCustomAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body for the "NotFound"
+// error.
+type InterpretCustomAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// InterpretCustomAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body for the
+// "PayloadTooLarge" error.
+type InterpretCustomAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// InterpretCustomAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service
+// "interpret-custom-audience" endpoint HTTP response body for the
+// "Unauthorized" error.
+type InterpretCustomAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PreviewCustomAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type PreviewCustomAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PreviewCustomAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type PreviewCustomAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// PreviewCustomAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type PreviewCustomAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PreviewCustomAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type PreviewCustomAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PreviewCustomAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type PreviewCustomAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PreviewCustomAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type PreviewCustomAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// PreviewCustomAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "preview-custom-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type PreviewCustomAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCustomAudienceComposePartialResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "ComposePartial" error.
+type CreateCustomAudienceComposePartialResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// The suppression list that WAS created and must be reconciled
+	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
+	// The suppression list's deterministic name, set only when the suppression
+	// create itself is unconfirmed (HubSpot may have created it) -- search for
+	// this name in HubSpot before composing again
+	SuppressionName *string `form:"suppression_name,omitempty" json:"suppression_name,omitempty" xml:"suppression_name,omitempty"`
+	// The master list's deterministic name, set only when the master create itself
+	// is unconfirmed (HubSpot may have created it) -- search for this name in
+	// HubSpot before composing again
+	MasterName *string `form:"master_name,omitempty" json:"master_name,omitempty" xml:"master_name,omitempty"`
+	// The master list that WAS created, set only when recording it as the brief's
+	// audience failed
+	Master *AudienceComposedListResponseBody `form:"master,omitempty" json:"master,omitempty" xml:"master,omitempty"`
+}
+
+// CreateCustomAudienceInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "InternalServerError" error.
+type CreateCustomAudienceInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCustomAudienceBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "BadRequest" error.
+type CreateCustomAudienceBadRequestResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCustomAudienceConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "Conflict" error.
+type CreateCustomAudienceConflictResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// CreateCustomAudienceServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "ServiceUnavailable" error.
+type CreateCustomAudienceServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCustomAudienceNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "NotFound" error.
+type CreateCustomAudienceNotFoundResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCustomAudiencePayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "PayloadTooLarge" error.
+type CreateCustomAudiencePayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
+// CreateCustomAudienceUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-audience-builder" service "create-custom-audience"
+// endpoint HTTP response body for the "Unauthorized" error.
+type CreateCustomAudienceUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code string `form:"code" json:"code" xml:"code"`
+	// Error message
+	Message string `form:"message" json:"message" xml:"message"`
+}
+
 // AudienceEventIdentityResponseBody is used to define fields on response body
 // types.
 type AudienceEventIdentityResponseBody struct {
@@ -1052,6 +1394,10 @@ type AudienceLastSentEmailResponseBody struct {
 	// are then empty because they are UNKNOWN, not because the send targeted
 	// nothing.
 	ListsUnavailable *bool `form:"lists_unavailable,omitempty" json:"lists_unavailable,omitempty" xml:"lists_unavailable,omitempty"`
+	// The email's subject line
+	Subject *string `form:"subject,omitempty" json:"subject,omitempty" xml:"subject,omitempty"`
+	// Why this send is listed: event_name, subject, related_words or brand_only
+	MatchReason *string `form:"match_reason,omitempty" json:"match_reason,omitempty" xml:"match_reason,omitempty"`
 }
 
 // AudienceListBriefResponseBody is used to define fields on response body
@@ -1176,8 +1522,94 @@ type AudienceQaExclusionCheckResponseBody struct {
 	Verdict string `form:"verdict" json:"verdict" xml:"verdict"`
 	// Findings that produced the verdict
 	Findings []*AudienceQaFindingResponseBody `form:"findings" json:"findings" xml:"findings"`
-	// How many exclusion branches the filter carries
+	// How many exclusions apply: the list's own plus send-time suppressions
 	ExclusionCount int64 `form:"exclusion_count" json:"exclusion_count" xml:"exclusion_count"`
+	// How many of those are send-time suppression lists rather than filters on the
+	// list
+	SendTimeCount *int64 `form:"send_time_count,omitempty" json:"send_time_count,omitempty" xml:"send_time_count,omitempty"`
+}
+
+// AudienceCustomCriteriaResponseBody is used to define fields on response body
+// types.
+type AudienceCustomCriteriaResponseBody struct {
+	// Cities, matched on city and ip_city
+	Cities []string `form:"cities,omitempty" json:"cities,omitempty" xml:"cities,omitempty"`
+	// Countries; broadens location to country_dropdown and ip_country
+	Countries []string `form:"countries,omitempty" json:"countries,omitempty" xml:"countries,omitempty"`
+	// Include the contact-location branches (always gated by gate_list_id)
+	ContactLocation *bool `form:"contact_location,omitempty" json:"contact_location,omitempty" xml:"contact_location,omitempty"`
+	// Include contacts who registered for an event held in the location
+	EventRegistered *bool `form:"event_registered,omitempty" json:"event_registered,omitempty" xml:"event_registered,omitempty"`
+	// Include contacts who enrolled in education from the location
+	EducationEnrolled *bool `form:"education_enrolled,omitempty" json:"education_enrolled,omitempty" xml:"education_enrolled,omitempty"`
+	// Exact event names: contacts registered for any of them
+	RegisteredFor []string `form:"registered_for,omitempty" json:"registered_for,omitempty" xml:"registered_for,omitempty"`
+	// Also gate the event-history branches by gate_list_id
+	GateEventHistory *bool `form:"gate_event_history,omitempty" json:"gate_event_history,omitempty" xml:"gate_event_history,omitempty"`
+	// The brand master list gated branches must be in
+	GateListID *string `form:"gate_list_id,omitempty" json:"gate_list_id,omitempty" xml:"gate_list_id,omitempty"`
+	// Extra conditions ANDed into every branch
+	PropertyFilters []*AudienceCustomPropertyFilterResponseBody `form:"property_filters,omitempty" json:"property_filters,omitempty" xml:"property_filters,omitempty"`
+	// Restrict to event speakers
+	Speakers *AudienceCustomSpeakersResponseBody `form:"speakers,omitempty" json:"speakers,omitempty" xml:"speakers,omitempty"`
+	// Restrict to community ambassadors
+	Ambassadors *bool `form:"ambassadors,omitempty" json:"ambassadors,omitempty" xml:"ambassadors,omitempty"`
+	// Course/topic keywords narrowing education enrolment to the brand's own
+	// courses
+	EducationTopics []string `form:"education_topics,omitempty" json:"education_topics,omitempty" xml:"education_topics,omitempty"`
+	// The education event's course/topic property. On input, honoured only when it
+	// is one of the portal's candidates; otherwise the service picks the best one
+	EducationTopicProperty *string `form:"education_topic_property,omitempty" json:"education_topic_property,omitempty" xml:"education_topic_property,omitempty"`
+	// Contacts who viewed a page whose URL contains any of these
+	PageViewUrls []string `form:"page_view_urls,omitempty" json:"page_view_urls,omitempty" xml:"page_view_urls,omitempty"`
+	// The event(s) the audience is for; feeds the list name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// AudienceCustomPropertyFilterResponseBody is used to define fields on
+// response body types.
+type AudienceCustomPropertyFilterResponseBody struct {
+	// HubSpot internal contact property name; verified against the portal
+	Property string `form:"property" json:"property" xml:"property"`
+	// Comparison
+	Operator string `form:"operator" json:"operator" xml:"operator"`
+	// Values; ignored for is_known/is_unknown
+	Values []string `form:"values,omitempty" json:"values,omitempty" xml:"values,omitempty"`
+}
+
+// AudienceCustomSpeakersResponseBody is used to define fields on response body
+// types.
+type AudienceCustomSpeakersResponseBody struct {
+	// Which editions' speakers
+	Scope string `form:"scope" json:"scope" xml:"scope"`
+	// An existing speakers list; preferred over event_names when set
+	ListID *string `form:"list_id,omitempty" json:"list_id,omitempty" xml:"list_id,omitempty"`
+	// Exact event_name values, including co-located tracks
+	EventNames []string `form:"event_names,omitempty" json:"event_names,omitempty" xml:"event_names,omitempty"`
+}
+
+// AudienceCustomQuestionResponseBody is used to define fields on response body
+// types.
+type AudienceCustomQuestionResponseBody struct {
+	// Stable id to send back with the answer
+	ID string `form:"id" json:"id" xml:"id"`
+	// The question
+	Question string `form:"question" json:"question" xml:"question"`
+	// Why it blocks the draft
+	Why *string `form:"why,omitempty" json:"why,omitempty" xml:"why,omitempty"`
+	// Clickable options; free text is also accepted
+	Options []string `form:"options" json:"options" xml:"options"`
+}
+
+// AudienceCustomSimilarListResponseBody is used to define fields on response
+// body types.
+type AudienceCustomSimilarListResponseBody struct {
+	// The existing list
+	List *AudienceListSearchResultResponseBody `form:"list" json:"list" xml:"list"`
+	// The model's suggestion; absent when it could not assess the list
+	Recommendation *string `form:"recommendation,omitempty" json:"recommendation,omitempty" xml:"recommendation,omitempty"`
+	// Why
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
 }
 
 // AudienceComposeMasterInputRequestBody is used to define fields on request
@@ -1222,6 +1654,86 @@ type AudienceAttachExistingInputRequestBody struct {
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
 }
 
+// AudienceCustomAnswerRequestBody is used to define fields on request body
+// types.
+type AudienceCustomAnswerRequestBody struct {
+	// The question's id
+	QuestionID *string `form:"question_id,omitempty" json:"question_id,omitempty" xml:"question_id,omitempty"`
+	// The question text, echoed back
+	Question *string `form:"question,omitempty" json:"question,omitempty" xml:"question,omitempty"`
+	// The chosen option or the operator's own words
+	Answer *string `form:"answer,omitempty" json:"answer,omitempty" xml:"answer,omitempty"`
+}
+
+// AudienceCustomInputRequestBody is used to define fields on request body
+// types.
+type AudienceCustomInputRequestBody struct {
+	// The reviewed criteria
+	Criteria *AudienceCustomCriteriaRequestBody `form:"criteria,omitempty" json:"criteria,omitempty" xml:"criteria,omitempty"`
+	// Explicit list name; derived from the criteria when omitted. A taken name is
+	// versioned, never reused
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+}
+
+// AudienceCustomCriteriaRequestBody is used to define fields on request body
+// types.
+type AudienceCustomCriteriaRequestBody struct {
+	// Cities, matched on city and ip_city
+	Cities []string `form:"cities,omitempty" json:"cities,omitempty" xml:"cities,omitempty"`
+	// Countries; broadens location to country_dropdown and ip_country
+	Countries []string `form:"countries,omitempty" json:"countries,omitempty" xml:"countries,omitempty"`
+	// Include the contact-location branches (always gated by gate_list_id)
+	ContactLocation *bool `form:"contact_location,omitempty" json:"contact_location,omitempty" xml:"contact_location,omitempty"`
+	// Include contacts who registered for an event held in the location
+	EventRegistered *bool `form:"event_registered,omitempty" json:"event_registered,omitempty" xml:"event_registered,omitempty"`
+	// Include contacts who enrolled in education from the location
+	EducationEnrolled *bool `form:"education_enrolled,omitempty" json:"education_enrolled,omitempty" xml:"education_enrolled,omitempty"`
+	// Exact event names: contacts registered for any of them
+	RegisteredFor []string `form:"registered_for,omitempty" json:"registered_for,omitempty" xml:"registered_for,omitempty"`
+	// Also gate the event-history branches by gate_list_id
+	GateEventHistory *bool `form:"gate_event_history,omitempty" json:"gate_event_history,omitempty" xml:"gate_event_history,omitempty"`
+	// The brand master list gated branches must be in
+	GateListID *string `form:"gate_list_id,omitempty" json:"gate_list_id,omitempty" xml:"gate_list_id,omitempty"`
+	// Extra conditions ANDed into every branch
+	PropertyFilters []*AudienceCustomPropertyFilterRequestBody `form:"property_filters,omitempty" json:"property_filters,omitempty" xml:"property_filters,omitempty"`
+	// Restrict to event speakers
+	Speakers *AudienceCustomSpeakersRequestBody `form:"speakers,omitempty" json:"speakers,omitempty" xml:"speakers,omitempty"`
+	// Restrict to community ambassadors
+	Ambassadors *bool `form:"ambassadors,omitempty" json:"ambassadors,omitempty" xml:"ambassadors,omitempty"`
+	// Course/topic keywords narrowing education enrolment to the brand's own
+	// courses
+	EducationTopics []string `form:"education_topics,omitempty" json:"education_topics,omitempty" xml:"education_topics,omitempty"`
+	// The education event's course/topic property. On input, honoured only when it
+	// is one of the portal's candidates; otherwise the service picks the best one
+	EducationTopicProperty *string `form:"education_topic_property,omitempty" json:"education_topic_property,omitempty" xml:"education_topic_property,omitempty"`
+	// Contacts who viewed a page whose URL contains any of these
+	PageViewUrls []string `form:"page_view_urls,omitempty" json:"page_view_urls,omitempty" xml:"page_view_urls,omitempty"`
+	// The event(s) the audience is for; feeds the list name
+	Label *string `form:"label,omitempty" json:"label,omitempty" xml:"label,omitempty"`
+}
+
+// AudienceCustomPropertyFilterRequestBody is used to define fields on request
+// body types.
+type AudienceCustomPropertyFilterRequestBody struct {
+	// HubSpot internal contact property name; verified against the portal
+	Property *string `form:"property,omitempty" json:"property,omitempty" xml:"property,omitempty"`
+	// Comparison
+	Operator *string `form:"operator,omitempty" json:"operator,omitempty" xml:"operator,omitempty"`
+	// Values; ignored for is_known/is_unknown
+	Values []string `form:"values,omitempty" json:"values,omitempty" xml:"values,omitempty"`
+}
+
+// AudienceCustomSpeakersRequestBody is used to define fields on request body
+// types.
+type AudienceCustomSpeakersRequestBody struct {
+	// Which editions' speakers
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// An existing speakers list; preferred over event_names when set
+	ListID *string `form:"list_id,omitempty" json:"list_id,omitempty" xml:"list_id,omitempty"`
+	// Exact event_name values, including co-located tracks
+	EventNames []string `form:"event_names,omitempty" json:"event_names,omitempty" xml:"event_names,omitempty"`
+}
+
 // NewGetAudienceBuilderCapabilitiesResponseBody builds the HTTP response body
 // from the result of the "get-audience-builder-capabilities" endpoint of the
 // "lfx-v2-campaign-service-audience-builder" service.
@@ -1239,6 +1751,7 @@ func NewGetAudienceBuilderCapabilitiesResponseBody(res *lfxv2campaignserviceaudi
 func NewDiscoverAudienceListsResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceDiscoveryResult) *DiscoverAudienceListsResponseBody {
 	body := &DiscoverAudienceListsResponseBody{
 		Inspected: res.Inspected,
+		Hidden:    res.Hidden,
 	}
 	if res.Event != nil {
 		body.Event = marshalLfxv2campaignserviceaudiencebuilderAudienceEventIdentityToAudienceEventIdentityResponseBody(res.Event)
@@ -1447,6 +1960,105 @@ func NewRunAudienceQaResponseBody(res *lfxv2campaignserviceaudiencebuilder.Audie
 			}
 			body.Findings[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceQaFindingToAudienceQaFindingResponseBody(val)
 		}
+	}
+	return body
+}
+
+// NewInterpretCustomAudienceResponseBody builds the HTTP response body from
+// the result of the "interpret-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudienceResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceCustomInterpretResult) *InterpretCustomAudienceResponseBody {
+	body := &InterpretCustomAudienceResponseBody{
+		BrandShort: res.BrandShort,
+	}
+	if res.Criteria != nil {
+		body.Criteria = marshalLfxv2campaignserviceaudiencebuilderAudienceCustomCriteriaToAudienceCustomCriteriaResponseBody(res.Criteria)
+	}
+	if res.Gate != nil {
+		body.Gate = marshalLfxv2campaignserviceaudiencebuilderAudienceListSearchResultToAudienceListSearchResultResponseBody(res.Gate)
+	}
+	if res.SpeakersList != nil {
+		body.SpeakersList = marshalLfxv2campaignserviceaudiencebuilderAudienceListSearchResultToAudienceListSearchResultResponseBody(res.SpeakersList)
+	}
+	if res.Questions != nil {
+		body.Questions = make([]*AudienceCustomQuestionResponseBody, len(res.Questions))
+		for i, val := range res.Questions {
+			if val == nil {
+				body.Questions[i] = nil
+				continue
+			}
+			body.Questions[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceCustomQuestionToAudienceCustomQuestionResponseBody(val)
+		}
+	} else {
+		body.Questions = []*AudienceCustomQuestionResponseBody{}
+	}
+	if res.Notes != nil {
+		body.Notes = make([]string, len(res.Notes))
+		for i, val := range res.Notes {
+			body.Notes[i] = val
+		}
+	} else {
+		body.Notes = []string{}
+	}
+	if res.Similar != nil {
+		body.Similar = make([]*AudienceCustomSimilarListResponseBody, len(res.Similar))
+		for i, val := range res.Similar {
+			if val == nil {
+				body.Similar[i] = nil
+				continue
+			}
+			body.Similar[i] = marshalLfxv2campaignserviceaudiencebuilderAudienceCustomSimilarListToAudienceCustomSimilarListResponseBody(val)
+		}
+	} else {
+		body.Similar = []*AudienceCustomSimilarListResponseBody{}
+	}
+	if res.Event != nil {
+		body.Event = marshalLfxv2campaignserviceaudiencebuilderAudienceEventIdentityToAudienceEventIdentityResponseBody(res.Event)
+	}
+	return body
+}
+
+// NewPreviewCustomAudienceResponseBody builds the HTTP response body from the
+// result of the "preview-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudienceResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceCustomPreviewResult) *PreviewCustomAudienceResponseBody {
+	body := &PreviewCustomAudienceResponseBody{
+		Name:        res.Name,
+		BranchCount: res.BranchCount,
+		UpperBound:  res.UpperBound,
+	}
+	if res.Criteria != nil {
+		body.Criteria = marshalLfxv2campaignserviceaudiencebuilderAudienceCustomCriteriaToAudienceCustomCriteriaResponseBody(res.Criteria)
+	}
+	if res.EducationTopicCandidates != nil {
+		body.EducationTopicCandidates = make([]string, len(res.EducationTopicCandidates))
+		for i, val := range res.EducationTopicCandidates {
+			body.EducationTopicCandidates[i] = val
+		}
+	}
+	if res.Gate != nil {
+		body.Gate = marshalLfxv2campaignserviceaudiencebuilderAudienceListSearchResultToAudienceListSearchResultResponseBody(res.Gate)
+	}
+	if res.Warnings != nil {
+		body.Warnings = make([]string, len(res.Warnings))
+		for i, val := range res.Warnings {
+			body.Warnings[i] = val
+		}
+	} else {
+		body.Warnings = []string{}
+	}
+	return body
+}
+
+// NewCreateCustomAudienceResponseBody builds the HTTP response body from the
+// result of the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceComposedList) *CreateCustomAudienceResponseBody {
+	body := &CreateCustomAudienceResponseBody{
+		ListID:     res.ListID,
+		Name:       res.Name,
+		HubspotURL: res.HubspotURL,
+		Size:       res.Size,
 	}
 	return body
 }
@@ -2254,6 +2866,259 @@ func NewRunAudienceQaUnauthorizedResponseBody(res *lfxv2campaignserviceaudienceb
 	return body
 }
 
+// NewInterpretCustomAudienceBadRequestResponseBody builds the HTTP response
+// body from the result of the "interpret-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudienceBadRequestResponseBody(res *lfxv2campaignserviceaudiencebuilder.BadRequestError) *InterpretCustomAudienceBadRequestResponseBody {
+	body := &InterpretCustomAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewInterpretCustomAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "interpret-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudienceConflictResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConflictError) *InterpretCustomAudienceConflictResponseBody {
+	body := &InterpretCustomAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewInterpretCustomAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "interpret-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError) *InterpretCustomAudienceServiceUnavailableResponseBody {
+	body := &InterpretCustomAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewInterpretCustomAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "interpret-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiencebuilder.InternalServerError) *InterpretCustomAudienceInternalServerErrorResponseBody {
+	body := &InterpretCustomAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewInterpretCustomAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "interpret-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiencebuilder.NotFoundError) *InterpretCustomAudienceNotFoundResponseBody {
+	body := &InterpretCustomAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewInterpretCustomAudiencePayloadTooLargeResponseBody builds the HTTP
+// response body from the result of the "interpret-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError) *InterpretCustomAudiencePayloadTooLargeResponseBody {
+	body := &InterpretCustomAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewInterpretCustomAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "interpret-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewInterpretCustomAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *InterpretCustomAudienceUnauthorizedResponseBody {
+	body := &InterpretCustomAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPreviewCustomAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "preview-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudienceBadRequestResponseBody(res *lfxv2campaignserviceaudiencebuilder.BadRequestError) *PreviewCustomAudienceBadRequestResponseBody {
+	body := &PreviewCustomAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPreviewCustomAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "preview-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudienceConflictResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConflictError) *PreviewCustomAudienceConflictResponseBody {
+	body := &PreviewCustomAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewPreviewCustomAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "preview-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError) *PreviewCustomAudienceServiceUnavailableResponseBody {
+	body := &PreviewCustomAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPreviewCustomAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "preview-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiencebuilder.InternalServerError) *PreviewCustomAudienceInternalServerErrorResponseBody {
+	body := &PreviewCustomAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPreviewCustomAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "preview-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiencebuilder.NotFoundError) *PreviewCustomAudienceNotFoundResponseBody {
+	body := &PreviewCustomAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPreviewCustomAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "preview-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError) *PreviewCustomAudiencePayloadTooLargeResponseBody {
+	body := &PreviewCustomAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewPreviewCustomAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "preview-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewPreviewCustomAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *PreviewCustomAudienceUnauthorizedResponseBody {
+	body := &PreviewCustomAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCustomAudienceComposePartialResponseBody builds the HTTP response
+// body from the result of the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceComposePartialResponseBody(res *lfxv2campaignserviceaudiencebuilder.AudienceComposePartialError) *CreateCustomAudienceComposePartialResponseBody {
+	body := &CreateCustomAudienceComposePartialResponseBody{
+		Code:            res.Code,
+		Message:         res.Message,
+		SuppressionName: res.SuppressionName,
+		MasterName:      res.MasterName,
+	}
+	if res.Suppression != nil {
+		body.Suppression = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Suppression)
+	}
+	if res.Master != nil {
+		body.Master = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Master)
+	}
+	return body
+}
+
+// NewCreateCustomAudienceInternalServerErrorResponseBody builds the HTTP
+// response body from the result of the "create-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceInternalServerErrorResponseBody(res *lfxv2campaignserviceaudiencebuilder.InternalServerError) *CreateCustomAudienceInternalServerErrorResponseBody {
+	body := &CreateCustomAudienceInternalServerErrorResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCustomAudienceBadRequestResponseBody builds the HTTP response body
+// from the result of the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceBadRequestResponseBody(res *lfxv2campaignserviceaudiencebuilder.BadRequestError) *CreateCustomAudienceBadRequestResponseBody {
+	body := &CreateCustomAudienceBadRequestResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCustomAudienceConflictResponseBody builds the HTTP response body
+// from the result of the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceConflictResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConflictError) *CreateCustomAudienceConflictResponseBody {
+	body := &CreateCustomAudienceConflictResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+		Reason:  res.Reason,
+	}
+	return body
+}
+
+// NewCreateCustomAudienceServiceUnavailableResponseBody builds the HTTP
+// response body from the result of the "create-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceServiceUnavailableResponseBody(res *lfxv2campaignserviceaudiencebuilder.ConnServiceUnavailableError) *CreateCustomAudienceServiceUnavailableResponseBody {
+	body := &CreateCustomAudienceServiceUnavailableResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCustomAudienceNotFoundResponseBody builds the HTTP response body
+// from the result of the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceNotFoundResponseBody(res *lfxv2campaignserviceaudiencebuilder.NotFoundError) *CreateCustomAudienceNotFoundResponseBody {
+	body := &CreateCustomAudienceNotFoundResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCustomAudiencePayloadTooLargeResponseBody builds the HTTP response
+// body from the result of the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudiencePayloadTooLargeResponseBody(res *lfxv2campaignserviceaudiencebuilder.PayloadTooLargeError) *CreateCustomAudiencePayloadTooLargeResponseBody {
+	body := &CreateCustomAudiencePayloadTooLargeResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
+// NewCreateCustomAudienceUnauthorizedResponseBody builds the HTTP response
+// body from the result of the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+func NewCreateCustomAudienceUnauthorizedResponseBody(res *lfxv2campaignserviceaudiencebuilder.UnauthorizedError) *CreateCustomAudienceUnauthorizedResponseBody {
+	body := &CreateCustomAudienceUnauthorizedResponseBody{
+		Code:    res.Code,
+		Message: res.Message,
+	}
+	return body
+}
+
 // NewGetAudienceBuilderCapabilitiesPayload builds a
 // lfx-v2-campaign-service-audience-builder service
 // get-audience-builder-capabilities endpoint payload.
@@ -2378,6 +3243,60 @@ func NewRunAudienceQaPayload(body *RunAudienceQaRequestBody, projectID string, b
 		TargetsCa: body.TargetsCa,
 		EventName: body.EventName,
 	}
+	if body.SendSuppressionListIds != nil {
+		v.SendSuppressionListIds = make([]string, len(body.SendSuppressionListIds))
+		for i, val := range body.SendSuppressionListIds {
+			v.SendSuppressionListIds[i] = val
+		}
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewInterpretCustomAudiencePayload builds a
+// lfx-v2-campaign-service-audience-builder service interpret-custom-audience
+// endpoint payload.
+func NewInterpretCustomAudiencePayload(body *InterpretCustomAudienceRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload {
+	v := &lfxv2campaignserviceaudiencebuilder.InterpretCustomAudiencePayload{
+		Request:  *body.Request,
+		EventURL: body.EventURL,
+	}
+	if body.Answers != nil {
+		v.Answers = make([]*lfxv2campaignserviceaudiencebuilder.AudienceCustomAnswer, len(body.Answers))
+		for i, val := range body.Answers {
+			if val == nil {
+				v.Answers[i] = nil
+				continue
+			}
+			v.Answers[i] = unmarshalAudienceCustomAnswerRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomAnswer(val)
+		}
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewPreviewCustomAudiencePayload builds a
+// lfx-v2-campaign-service-audience-builder service preview-custom-audience
+// endpoint payload.
+func NewPreviewCustomAudiencePayload(body *PreviewCustomAudienceRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload {
+	v := &lfxv2campaignserviceaudiencebuilder.PreviewCustomAudiencePayload{}
+	v.Custom = unmarshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput(body.Custom)
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v
+}
+
+// NewCreateCustomAudiencePayload builds a
+// lfx-v2-campaign-service-audience-builder service create-custom-audience
+// endpoint payload.
+func NewCreateCustomAudiencePayload(body *CreateCustomAudienceRequestBody, projectID string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload {
+	v := &lfxv2campaignserviceaudiencebuilder.CreateCustomAudiencePayload{}
+	v.Custom = unmarshalAudienceCustomInputRequestBodyToLfxv2campaignserviceaudiencebuilderAudienceCustomInput(body.Custom)
 	v.ProjectID = projectID
 	v.BearerToken = bearerToken
 
@@ -2447,9 +3366,72 @@ func ValidateRunAudienceQaRequestBody(body *RunAudienceQaRequestBody) (err error
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.list_ref", *body.ListRef, utf8.RuneCountInString(*body.ListRef), 1, true))
 		}
 	}
+	if len(body.SendSuppressionListIds) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.send_suppression_list_ids", body.SendSuppressionListIds, len(body.SendSuppressionListIds), 200, false))
+	}
 	if body.EventName != nil {
 		if utf8.RuneCountInString(*body.EventName) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_name", *body.EventName, utf8.RuneCountInString(*body.EventName), 1, true))
+		}
+	}
+	return
+}
+
+// ValidateInterpretCustomAudienceRequestBody runs the validations defined on
+// InterpretCustomAudienceRequestBody
+func ValidateInterpretCustomAudienceRequestBody(body *InterpretCustomAudienceRequestBody) (err error) {
+	if body.Request == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("request", "body"))
+	}
+	if body.Request != nil {
+		if utf8.RuneCountInString(*body.Request) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.request", *body.Request, utf8.RuneCountInString(*body.Request), 1, true))
+		}
+		if utf8.RuneCountInString(*body.Request) > 2000 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.request", *body.Request, utf8.RuneCountInString(*body.Request), 2000, false))
+		}
+	}
+	if len(body.Answers) > 12 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.answers", body.Answers, len(body.Answers), 12, false))
+	}
+	for _, e := range body.Answers {
+		if e != nil {
+			if err2 := validateAudienceCustomAnswerRequestBody(e, "body.answers[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.EventURL != nil {
+		if utf8.RuneCountInString(*body.EventURL) > 2048 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_url", *body.EventURL, utf8.RuneCountInString(*body.EventURL), 2048, false))
+		}
+	}
+	return
+}
+
+// ValidatePreviewCustomAudienceRequestBody runs the validations defined on
+// PreviewCustomAudienceRequestBody
+func ValidatePreviewCustomAudienceRequestBody(body *PreviewCustomAudienceRequestBody) (err error) {
+	if body.Custom == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("custom", "body"))
+	}
+	if body.Custom != nil {
+		if err2 := validateAudienceCustomInputRequestBody(body.Custom, "body.custom"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCreateCustomAudienceRequestBody runs the validations defined on
+// CreateCustomAudienceRequestBody
+func ValidateCreateCustomAudienceRequestBody(body *CreateCustomAudienceRequestBody) (err error) {
+	if body.Custom == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("custom", "body"))
+	}
+	if body.Custom != nil {
+		if err2 := validateAudienceCustomInputRequestBody(body.Custom, "body.custom"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
@@ -2541,6 +3523,247 @@ func validateAudienceAttachExistingInputRequestBody(body *AudienceAttachExisting
 	}
 	if len(body.SuppressionListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))
+	}
+	return
+}
+
+// ValidateAudienceCustomAnswerRequestBody runs the validations defined on
+// audience-custom-answer
+func ValidateAudienceCustomAnswerRequestBody(body *AudienceCustomAnswerRequestBody) (err error) {
+	if body.Answer == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("answer", "body"))
+	}
+	if body.Answer != nil {
+		if utf8.RuneCountInString(*body.Answer) > 500 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.answer", *body.Answer, utf8.RuneCountInString(*body.Answer), 500, false))
+		}
+	}
+	return
+}
+
+// validateAudienceCustomAnswerRequestBody checks audience-custom-answer and
+// reports errors using the path supplied by its caller
+func validateAudienceCustomAnswerRequestBody(body *AudienceCustomAnswerRequestBody, path string) (err error) {
+	if body.Answer == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("answer", path))
+	}
+	if body.Answer != nil {
+		if utf8.RuneCountInString(*body.Answer) > 500 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".answer", *body.Answer, utf8.RuneCountInString(*body.Answer), 500, false))
+		}
+	}
+	return
+}
+
+// ValidateAudienceCustomInputRequestBody runs the validations defined on
+// audience-custom-input
+func ValidateAudienceCustomInputRequestBody(body *AudienceCustomInputRequestBody) (err error) {
+	if body.Criteria == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criteria", "body"))
+	}
+	if body.Criteria != nil {
+		if err2 := validateAudienceCustomCriteriaRequestBody(body.Criteria, "body.criteria"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Name != nil {
+		if utf8.RuneCountInString(*body.Name) > 250 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *body.Name, utf8.RuneCountInString(*body.Name), 250, false))
+		}
+	}
+	return
+}
+
+// validateAudienceCustomInputRequestBody checks audience-custom-input and
+// reports errors using the path supplied by its caller
+func validateAudienceCustomInputRequestBody(body *AudienceCustomInputRequestBody, path string) (err error) {
+	if body.Criteria == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criteria", path))
+	}
+	if body.Criteria != nil {
+		if err2 := validateAudienceCustomCriteriaRequestBody(body.Criteria, path+".criteria"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Name != nil {
+		if utf8.RuneCountInString(*body.Name) > 250 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", *body.Name, utf8.RuneCountInString(*body.Name), 250, false))
+		}
+	}
+	return
+}
+
+// ValidateAudienceCustomCriteriaRequestBody runs the validations defined on
+// audience-custom-criteria
+func ValidateAudienceCustomCriteriaRequestBody(body *AudienceCustomCriteriaRequestBody) (err error) {
+	if len(body.Cities) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.cities", body.Cities, len(body.Cities), 25, false))
+	}
+	if len(body.Countries) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.countries", body.Countries, len(body.Countries), 25, false))
+	}
+	if len(body.RegisteredFor) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.registered_for", body.RegisteredFor, len(body.RegisteredFor), 25, false))
+	}
+	if len(body.PropertyFilters) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.property_filters", body.PropertyFilters, len(body.PropertyFilters), 10, false))
+	}
+	for _, e := range body.PropertyFilters {
+		if e != nil {
+			if err2 := validateAudienceCustomPropertyFilterRequestBody(e, "body.property_filters[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Speakers != nil {
+		if err2 := validateAudienceCustomSpeakersRequestBody(body.Speakers, "body.speakers"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if len(body.EducationTopics) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.education_topics", body.EducationTopics, len(body.EducationTopics), 25, false))
+	}
+	if len(body.PageViewUrls) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.page_view_urls", body.PageViewUrls, len(body.PageViewUrls), 10, false))
+	}
+	if body.Label != nil {
+		if utf8.RuneCountInString(*body.Label) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.label", *body.Label, utf8.RuneCountInString(*body.Label), 200, false))
+		}
+	}
+	return
+}
+
+// validateAudienceCustomCriteriaRequestBody checks audience-custom-criteria
+// and reports errors using the path supplied by its caller
+func validateAudienceCustomCriteriaRequestBody(body *AudienceCustomCriteriaRequestBody, path string) (err error) {
+	if len(body.Cities) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".cities", body.Cities, len(body.Cities), 25, false))
+	}
+	if len(body.Countries) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".countries", body.Countries, len(body.Countries), 25, false))
+	}
+	if len(body.RegisteredFor) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".registered_for", body.RegisteredFor, len(body.RegisteredFor), 25, false))
+	}
+	if len(body.PropertyFilters) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".property_filters", body.PropertyFilters, len(body.PropertyFilters), 10, false))
+	}
+	for _, e := range body.PropertyFilters {
+		if e != nil {
+			if err2 := validateAudienceCustomPropertyFilterRequestBody(e, path+".property_filters[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Speakers != nil {
+		if err2 := validateAudienceCustomSpeakersRequestBody(body.Speakers, path+".speakers"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if len(body.EducationTopics) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".education_topics", body.EducationTopics, len(body.EducationTopics), 25, false))
+	}
+	if len(body.PageViewUrls) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".page_view_urls", body.PageViewUrls, len(body.PageViewUrls), 10, false))
+	}
+	if body.Label != nil {
+		if utf8.RuneCountInString(*body.Label) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".label", *body.Label, utf8.RuneCountInString(*body.Label), 200, false))
+		}
+	}
+	return
+}
+
+// ValidateAudienceCustomPropertyFilterRequestBody runs the validations defined
+// on audience-custom-property-filter
+func ValidateAudienceCustomPropertyFilterRequestBody(body *AudienceCustomPropertyFilterRequestBody) (err error) {
+	if body.Property == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("property", "body"))
+	}
+	if body.Operator == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("operator", "body"))
+	}
+	if body.Property != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.property", *body.Property, "^[A-Za-z0-9_]+$"))
+		if utf8.RuneCountInString(*body.Property) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.property", *body.Property, utf8.RuneCountInString(*body.Property), 1, true))
+		}
+		if utf8.RuneCountInString(*body.Property) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.property", *body.Property, utf8.RuneCountInString(*body.Property), 100, false))
+		}
+	}
+	if body.Operator != nil {
+		if !(*body.Operator == "is_equal_to" || *body.Operator == "contains" || *body.Operator == "is_any_of" || *body.Operator == "is_not_any_of" || *body.Operator == "is_known" || *body.Operator == "is_unknown") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.operator", *body.Operator, []any{"is_equal_to", "contains", "is_any_of", "is_not_any_of", "is_known", "is_unknown"}))
+		}
+	}
+	if len(body.Values) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.values", body.Values, len(body.Values), 25, false))
+	}
+	return
+}
+
+// validateAudienceCustomPropertyFilterRequestBody checks
+// audience-custom-property-filter and reports errors using the path supplied
+// by its caller
+func validateAudienceCustomPropertyFilterRequestBody(body *AudienceCustomPropertyFilterRequestBody, path string) (err error) {
+	if body.Property == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("property", path))
+	}
+	if body.Operator == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("operator", path))
+	}
+	if body.Property != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern(path+".property", *body.Property, "^[A-Za-z0-9_]+$"))
+		if utf8.RuneCountInString(*body.Property) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".property", *body.Property, utf8.RuneCountInString(*body.Property), 1, true))
+		}
+		if utf8.RuneCountInString(*body.Property) > 100 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".property", *body.Property, utf8.RuneCountInString(*body.Property), 100, false))
+		}
+	}
+	if body.Operator != nil {
+		if !(*body.Operator == "is_equal_to" || *body.Operator == "contains" || *body.Operator == "is_any_of" || *body.Operator == "is_not_any_of" || *body.Operator == "is_known" || *body.Operator == "is_unknown") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".operator", *body.Operator, []any{"is_equal_to", "contains", "is_any_of", "is_not_any_of", "is_known", "is_unknown"}))
+		}
+	}
+	if len(body.Values) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".values", body.Values, len(body.Values), 25, false))
+	}
+	return
+}
+
+// ValidateAudienceCustomSpeakersRequestBody runs the validations defined on
+// audience-custom-speakers
+func ValidateAudienceCustomSpeakersRequestBody(body *AudienceCustomSpeakersRequestBody) (err error) {
+	if body.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "body"))
+	}
+	if body.Scope != nil {
+		if !(*body.Scope == "current" || *body.Scope == "past" || *body.Scope == "current_past") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.scope", *body.Scope, []any{"current", "past", "current_past"}))
+		}
+	}
+	if len(body.EventNames) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.event_names", body.EventNames, len(body.EventNames), 25, false))
+	}
+	return
+}
+
+// validateAudienceCustomSpeakersRequestBody checks audience-custom-speakers
+// and reports errors using the path supplied by its caller
+func validateAudienceCustomSpeakersRequestBody(body *AudienceCustomSpeakersRequestBody, path string) (err error) {
+	if body.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", path))
+	}
+	if body.Scope != nil {
+		if !(*body.Scope == "current" || *body.Scope == "past" || *body.Scope == "current_past") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".scope", *body.Scope, []any{"current", "past", "current_past"}))
+		}
+	}
+	if len(body.EventNames) > 25 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".event_names", body.EventNames, len(body.EventNames), 25, false))
 	}
 	return
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/eventurl"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/service"
 )
@@ -1969,5 +1971,101 @@ func TestHubSpot_NAT64PrefixesReachTheHeroFetch(t *testing.T) {
 	// immediate; a dial is not. Do not remove this in favour of the widget check alone.
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Errorf("the address was dialled rather than refused (%s elapsed): the NAT64 prefix did not reach the guard", elapsed)
+	}
+}
+
+// TestHubSpot_AFailedHeroIsReportedNotSilent pins that a hero which cannot be re-hosted still
+// leaves the draft created (best-effort), but is now REPORTED: the persisted Result blob carries
+// an operator-readable warning. Before this, the only trace was a server log line, and an
+// operator saw a clean "draft created" and found the banner missing only after opening it.
+func TestHubSpot_AFailedHeroIsReportedNotSilent(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud,
+		hubspot.WithBaseURL(srv.URL),
+		hubspot.WithNAT64Prefixes("2a01:4f8:808:808::/96"),
+	)
+
+	// The address decodes to the metadata endpoint, so the guard refuses it immediately: a
+	// deterministic hero failure that needs no network.
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>b</p>","heroImageUrl":"http://[2a01:4f8:808:808::a9fe:a9fe]/hero.png"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("a failed hero must stay non-fatal: %v", err)
+	}
+
+	var blob struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(camp.Result, &blob); err != nil {
+		t.Fatalf("decode result blob: %v", err)
+	}
+	if len(blob.Warnings) != 1 || !strings.Contains(blob.Warnings[0], "hero image could not be added") {
+		t.Fatalf("Warnings = %v, want one hero warning", blob.Warnings)
+	}
+	// The address the guard refused must not be echoed into a persisted, API-visible string.
+	// Staging again reuses the stored campaign and its warnings, so the warning must send the
+	// operator to the HubSpot editor, never suggest a re-stage would retry the upload.
+	if !strings.Contains(blob.Warnings[0], "Check the draft's banner in the HubSpot editor") || strings.Contains(blob.Warnings[0], "or stage again") {
+		t.Errorf("the warning must point to the HubSpot editor, not a re-stage: %q", blob.Warnings[0])
+	}
+	// A failed upload does not prove the draft has no banner: the template's may remain.
+	if strings.Contains(blob.Warnings[0], "without a hero banner") {
+		t.Errorf("the warning must not assert the banner is absent: %q", blob.Warnings[0])
+	}
+	if strings.Contains(blob.Warnings[0], "169.254") || strings.Contains(blob.Warnings[0], "a9fe") {
+		t.Errorf("the warning echoes the refused address: %q", blob.Warnings[0])
+	}
+}
+
+// TestHubSpot_NoHeroMeansNoWarning pins the other direction: a campaign that never asked for a
+// hero must not report one missing.
+func TestHubSpot_NoHeroMeansNoWarning(t *testing.T) {
+	srv, _ := hubspotServer(t)
+	aud := fakeAudienceReader{auds: builtHubSpotAudience("26724", nil)}
+	d := NewHubSpotDispatcher(
+		fakeConnReader{conn: activeHubSpotConn(goodHubSpotCreds)}, identityEncryptor{}, aud,
+		hubspot.WithBaseURL(srv.URL),
+	)
+	cfg := json.RawMessage(`{"hubspotConfig":{"sourceEmailId":"555","bodyHtml":"<p>b</p>"}}`)
+	camp, err := d.Dispatch(context.Background(), testBrief(), model.ProviderHubSpot, cfg)
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if strings.Contains(string(camp.Result), "warnings") {
+		t.Errorf("a campaign with no hero reported a warning: %s", camp.Result)
+	}
+}
+
+// TestHeroFailureReason pins the fixed vocabulary: each failure this package produces maps to a
+// sentence an operator can act on, and unknown text falls back to a generic line instead of being
+// echoed into a persisted string.
+func TestHeroFailureReason(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{errors.New(`hubspot: image format "webp" is not one this service re-hosts`), "format email cannot use"},
+		{errors.New("hubspot: source URL did not return a decodable image: boom"), "format email cannot use"},
+		{errors.New(`hubspot: source URL did not return an image (content-type "text/html")`), "did not return an image"},
+		{errors.New("hubspot: download image from https://x.example/h.jpg: dial tcp: refused"), "could not be downloaded"},
+		{errors.New("hubspot: downloaded image exceeds 26214400 bytes"), "too large"},
+		// The SSRF guard's refusal, wrapped exactly as fetchImage wraps a client.Do failure
+		// (through the dialer's OpError): classified by identity, not as a failed download.
+		{fmt.Errorf("hubspot: download image from https://x.example/h.jpg: %w",
+			&net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("%w: 169.254.169.254", eventurl.ErrEventURLForbidden)}),
+			"network safety check"},
+		{errors.New("hubspot: missing private-app token"), "files permission"},
+		{errors.New("something unexpected with secret-token-abc"), "did not accept the upload"},
+	}
+	for _, tc := range cases {
+		got := heroFailureReason(tc.err)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("heroFailureReason(%q) = %q, want it to contain %q", tc.err, got, tc.want)
+		}
+		if strings.Contains(got, "secret-token-abc") {
+			t.Errorf("heroFailureReason echoed error text: %q", got)
+		}
 	}
 }

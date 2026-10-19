@@ -215,7 +215,7 @@ func TestCheckSuppression_CanadaAsksForConfirmationNotForAList(t *testing.T) {
 // exclusions means no unsubscribe, no opt-out and no non-marketable filter, which
 // is a send that should not go out whichever specific list is missing.
 func TestCheckExclusionCompleteness_ZeroExclusionsFails(t *testing.T) {
-	none := CheckExclusionCompleteness([]ListFilter{inList("111", "IN_LIST")})
+	none := CheckExclusionCompleteness([]ListFilter{inList("111", "IN_LIST")}, 0)
 	assert.Equal(t, VerdictFail, none.Verdict)
 	assert.Zero(t, none.ExclusionCount)
 	require.Len(t, none.Findings, 1)
@@ -225,7 +225,7 @@ func TestCheckExclusionCompleteness_ZeroExclusionsFails(t *testing.T) {
 		inList("111", "IN_LIST"),
 		inList("999", "NOT_IN_LIST"),
 		inList("998", "NOT_IN_LIST"),
-	})
+	}, 0)
 	assert.Equal(t, VerdictPass, some.Verdict)
 	assert.Equal(t, 2, some.ExclusionCount)
 	assert.Empty(t, some.Findings)
@@ -806,4 +806,108 @@ func TestCombineVerdicts_AnEmptyVerdictIsInertAndAnUnknownOneIsNot(t *testing.T)
 			}
 		})
 	}
+}
+
+// TestCheckExclusionCompleteness_CountsSendTimeSuppression covers the builder's
+// custom lists: no exclusion on the list, suppression applied at send time.
+func TestCheckExclusionCompleteness_CountsSendTimeSuppression(t *testing.T) {
+	got := CheckExclusionCompleteness(nil, 3)
+	assert.Equal(t, VerdictPass, got.Verdict)
+	assert.Equal(t, 3, got.ExclusionCount)
+	assert.Equal(t, 3, got.SendTimeCount)
+
+	none := CheckExclusionCompleteness(nil, 0)
+	assert.Equal(t, VerdictFail, none.Verdict, "nothing on the list and nothing at send time is still a FAIL")
+}
+
+// A list is required only when every path through the tree is inside it.
+func TestRequiredInListIDs(t *testing.T) {
+	in := func(id string) string {
+		return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}`
+	}
+	and := func(filters ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(filters, ",") + `]}`
+	}
+	or := func(branches ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(branches, ",") + `]}`
+	}
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"one branch", or(and(in("1"), in("2"))), []string{"1", "2"}},
+		{"a list in only one OR branch", or(and(in("1")), and(in("2"))), []string{}},
+		{"a list in every OR branch", or(and(in("1"), in("2")), and(in("1"))), []string{"1"}},
+		{"an exclusion is no membership", or(and(`{"filterType":"IN_LIST","operator":"NOT_IN_LIST","listId":9}`)), []string{}},
+		{"unreadable", `{`, nil},
+	}
+	for _, tc := range cases {
+		got := RequiredInListIDs(json.RawMessage(tc.raw))
+		if tc.want == nil {
+			assert.Nil(t, got, tc.name)
+			continue
+		}
+		assert.Equal(t, tc.want, got, tc.name)
+	}
+}
+
+// A list is covered only when membership of it alone puts a contact in the tree.
+func TestCoveredListIDs(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	assert.Equal(t, []string{"1", "2"}, CoveredListIDs(json.RawMessage(or(and(in("1")), and(in("2"))))), "a union covers each member")
+	assert.Equal(t, []string{}, CoveredListIDs(json.RawMessage(or(and(in("1"), in("2"))))), "an intersection covers neither")
+	assert.Equal(t, []string{"3"}, CoveredListIDs(json.RawMessage(or(and(in("3")), and(in("1"), in("2"))))))
+	assert.Nil(t, CoveredListIDs(json.RawMessage(`{`)))
+}
+
+func TestTreeCoveredBy(t *testing.T) {
+	in := func(id string) string { return `{"filterType":"IN_LIST","operator":"IN_LIST","listId":` + id + `}` }
+	and := func(f ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(f, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	tree := json.RawMessage(or(and(in("1"), in("9")), and(in("2"))))
+	assert.True(t, TreeCoveredBy(tree, []string{"1", "2"}), "every alternative needs a covered list")
+	assert.True(t, TreeCoveredBy(tree, []string{"9", "2"}), "one condition of an AND branch is enough")
+	assert.False(t, TreeCoveredBy(tree, []string{"1"}), "the second alternative remains")
+	assert.False(t, TreeCoveredBy(json.RawMessage(`{`), []string{"1"}))
+	assert.False(t, TreeCoveredBy(tree, nil))
+}
+
+// Conditions inside one registration branch all hold, so two event_name equalities
+// allow only the editions both name.
+func TestCoveredEditions_IntersectsConditionsInOneBranch(t *testing.T) {
+	name := func(values ...string) string {
+		return `{"filterType":"PROPERTY","property":"event_name","operation":{"operationType":"MULTISTRING","operator":"IS_ANY_OF","values":["` + strings.Join(values, `","`) + `"]}}`
+	}
+	branch := `{"filterBranchType":"OR","filters":[],"filterBranches":[{"filterBranchType":"AND","filters":[],"filterBranches":[` +
+		`{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-48984571","operator":"HAS_COMPLETED","filterBranches":[],"filters":[` +
+		name("KubeCon 2025", "KubeCon 2026") + `,` + name("KubeCon 2025") + `]}]}]}`
+	assert.Equal(t, []string{"KubeCon 2025"}, CoveredEditions(json.RawMessage(branch)), "only 2025 satisfies both conditions")
+	assert.Equal(t, []string{"KubeCon 2025"}, RegisteredEditions(json.RawMessage(branch)))
+}
+
+// Only a list every path excludes applies to the whole list.
+func TestExcludedOnEveryPathIDs(t *testing.T) {
+	f := func(op, id string) string {
+		return `{"filterType":"IN_LIST","operator":"` + op + `","listId":` + id + `}`
+	}
+	and := func(fs ...string) string {
+		return `{"filterBranchType":"AND","filterBranches":[],"filters":[` + strings.Join(fs, ",") + `]}`
+	}
+	or := func(b ...string) string {
+		return `{"filterBranchType":"OR","filters":[],"filterBranches":[` + strings.Join(b, ",") + `]}`
+	}
+	assert.Equal(t, []string{"9"}, ExcludedOnEveryPathIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9")), and(f("IN_LIST", "2"), f("NOT_IN_LIST", "9"))))))
+	assert.Equal(t, []string{}, ExcludedOnEveryPathIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9")), and(f("IN_LIST", "2"))))), "a branch-local exclusion is not global")
+	assert.Equal(t, []string{"1"}, RequiredInListIDs(json.RawMessage(or(and(f("IN_LIST", "1"), f("NOT_IN_LIST", "9"))))), "IN_LIST requirement unchanged")
 }

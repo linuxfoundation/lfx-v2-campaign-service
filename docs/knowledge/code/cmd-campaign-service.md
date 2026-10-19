@@ -134,7 +134,7 @@ anything else fails closed. Nested pattern/length/enum parts likewise name the f
 ## Mounting the audience-builder service (LFXV2-2770)
 
 `server.go` mounts the generated audience-builder endpoints alongside the rest. Its paths must
-stay in step with the chart: the HTTPRoute regex and the Heimdall RuleSet enumerate the nine
+stay in step with the chart: the HTTPRoute regex and the Heimdall RuleSet enumerate the thirteen
 leaves individually, and Heimdall is default-deny, so an endpoint mounted here but absent from
 either chart file is UNREACHABLE through the gateway rather than merely unauthorized — which
 presents to a caller as a 404 from the edge, not as a missing permission. See

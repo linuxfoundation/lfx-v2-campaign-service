@@ -4469,6 +4469,12 @@ type PlatformResultResponseBody struct {
 	// the email (HubSpot) channel, and only once the portal that created it is
 	// known.
 	HubspotURL *string `form:"hubspot_url,omitempty" json:"hubspot_url,omitempty" xml:"hubspot_url,omitempty"`
+	// Best-effort steps of a successful create that did not apply, in
+	// operator-readable sentences. For the email channel this reports a requested
+	// hero image that could not be added; the draft exists, and its banner needs
+	// checking in the HubSpot editor (it may have none, or still carry the
+	// template's).
+	Warnings []string `form:"warnings,omitempty" json:"warnings,omitempty" xml:"warnings,omitempty"`
 	// Present only when this dispatch's claim was lost before its result was
 	// recorded: the identifiers of what it created upstream (ids, names, urns,
 	// image hashes, X media keys — never state, platform text, URLs or other
@@ -14074,6 +14080,9 @@ func ValidatePlatformResultResponseBody(body *PlatformResultResponseBody) (err e
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", "body"))
 	}
+	if len(body.Warnings) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.warnings", body.Warnings, len(body.Warnings), 10, false))
+	}
 	for _, e := range body.Reconcile {
 		if e != nil {
 			if err2 := validateReconcileIdentifierResponseBody(e, "body.reconcile[*]"); err2 != nil {
@@ -14092,6 +14101,9 @@ func validatePlatformResultResponseBody(body *PlatformResultResponseBody, path s
 	}
 	if body.OK == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("ok", path))
+	}
+	if len(body.Warnings) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".warnings", body.Warnings, len(body.Warnings), 10, false))
 	}
 	for _, e := range body.Reconcile {
 		if e != nil {

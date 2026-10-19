@@ -112,7 +112,8 @@ func (d *MetaDispatcher) WriteBudget(ctx context.Context, projectID string, plat
 
 	// That `current` describes the ad set that was ASKED about is the premise every guard
 	// below rests on, and it is already enforced where it belongs: GetAdSetBudget refuses an
-	// answer whose echoed id is not the one requested, so a mismatch never reaches this line.
+	// answer whose echoed id is not the one requested — including one that echoes no id at
+	// all — so a mismatch never reaches this line.
 	// Stated here because the guards below are only sound given it.
 	//
 	// GUARD 0 — THE AD SET MUST BELONG TO THE CAMPAIGN THIS REQUEST NAMED.

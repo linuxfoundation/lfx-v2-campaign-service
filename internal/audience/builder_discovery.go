@@ -23,6 +23,14 @@ import (
 // Names that mark a list as an exclusion asset, which is never an inclusion signal.
 var suppressionNameHints = []string{"suppress", "exclusion", "unsubscribe", "do not email", "opt out", "opt-out", "optout", "bounce"}
 
+// hasSuppressionHint reports whether a list name marks a suppression or
+// exclusion list. The name is also read with its separators normalised, so
+// "Seoul - Opt_Out Contacts" or "Do_Not_Email" match the same as "Opt Out" and
+// "Do Not Email": a missed suppression gets offered as an inclusion.
+func hasSuppressionHint(name string) bool {
+	return containsAny(name, suppressionNameHints) || containsAny(normaliseSuppressionName(name), suppressionNameHints)
+}
+
 // Property names that carry an email-subscription type, whose VALUE decides the
 // opt-in bucket.
 var subscriptionPropertyHints = []string{"subscription", "opt_in", "optin", "newsletter"}
@@ -289,7 +297,7 @@ func ClassifyList(name string, filters []ListFilter, id EventIdentity) Classific
 	// 1. Suppression. Checked first because these lists routinely ALSO carry a
 	//    registration or page-view filter, and bucketing one as an inclusion
 	//    signal would put an opt-out audience into a send.
-	if containsAny(name, suppressionNameHints) {
+	if hasSuppressionHint(name) {
 		return Classification{Signal: SignalUncertain, Reason: "Suppression or exclusion list, not an inclusion signal"}
 	}
 
