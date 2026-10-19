@@ -159,6 +159,25 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 	if !strings.Contains(last, "Performance Max campaign created") || strings.Contains(last, "NO ASSET GROUP") {
 		t.Errorf("closing step = %q, want the asset-group-present wording", last)
 	}
+
+	// Final-URL expansion now goes out opted-out in the create payload, and the Steps say
+	// so. Asserting the exact const rather than a substring is the point: the two
+	// sentences this file can produce differ by whether an operator has to DO anything,
+	// and a substring match would pass on the hedged "turn it OFF if it is on" being
+	// printed for a campaign this request created with the opt-out — telling the operator
+	// to go fix something that is already correct.
+	var sawExpansionStep bool
+	for _, s := range res.Steps {
+		if s == expansionOptedOutStep {
+			sawExpansionStep = true
+		}
+		if s == expansionActionRequiredIfExists {
+			t.Errorf("a campaign THIS request created carries the hedged step for an earlier attempt's campaign: %v", res.Steps)
+		}
+	}
+	if !sawExpansionStep {
+		t.Errorf("Steps never records that final-URL expansion was opted out at create: %v", res.Steps)
+	}
 }
 
 // TestCreatePerformanceMaxCampaign_CampaignShape captures the campaigns:mutate
@@ -193,7 +212,31 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 	for _, want := range []string{
 		`"advertisingChannelType":"` + advertisingChannelPerformanceMax + `"`,
 		`"status":"PAUSED"`,
-		`"urlExpansionOptOut":true`,
+		// Asserted as the literal `false` rather than merely present: the account has
+		// Brand Guidelines on, and anything that made this field serialize away — an
+		// `omitempty` added later, say — would take the account's setting instead and
+		// put the create back on the REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED 400 that
+		// orphaned a budget on 2026-10-16.
+		`"brandGuidelinesEnabled":false`,
+		// The final-URL-expansion opt-out, asserted as the literal entry rather than as
+		// the field merely being present, for the same reason: an omitted or empty
+		// `assetAutomationSettings` leaves the outcome to Google's default instead of to
+		// this service, which is the bug.
+		//
+		// The entry is pinned as ONE braced object — both halves in serialization order —
+		// rather than as two independent `strings.Contains` calls over the whole body.
+		// The type names WHICH automation is being turned off and the status is what
+		// turns it off, so the PAIRING is the assertion: once this slice carries more
+		// than one entry (the struct's own doc anticipates Google adding types), a body
+		// holding `{FINAL_URL_EXPANSION…, OPTED_IN}` alongside `{TEXT_ASSET_AUTOMATION,
+		// OPTED_OUT}` satisfies two separate substrings while expansion is back ON. The
+		// braced form fails on that body, which is the point. The key is asserted
+		// alongside rather than spliced onto the front of the entry, so that adding a
+		// SECOND legitimate opt-out entry — at either end of the slice — does not fail a
+		// test about the first one.
+		`"assetAutomationSettings":[`,
+		`{"assetAutomationType":"` + assetAutomationFinalURLExpansion +
+			`","assetAutomationStatus":"` + assetAutomationOptedOut + `"}`,
 		`"maximizeConversions"`,
 		"geoTargetTypeSetting",
 	} {
@@ -201,8 +244,11 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 			t.Errorf("campaigns:mutate body is missing %q: %s", want, body)
 		}
 	}
-	// Search-only shapes that must never appear on this channel.
-	for _, forbidden := range []string{"networkSettings", "manualCpc"} {
+	// Shapes that must never appear on this channel: the first two are Search-only, and
+	// `urlExpansionOptOut` is a field v23 removed outright. Google rejects an unknown
+	// field AFTER the budget mutate has committed, so re-adding it does not fail safe —
+	// it orphans a paid budget, which is exactly what it did on 2026-10-16.
+	for _, forbidden := range []string{"networkSettings", "manualCpc", "urlExpansionOptOut"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("campaigns:mutate body carries %q, which Performance Max does not take: %s", forbidden, body)
 		}
@@ -273,6 +319,229 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 	}
 	if *res.AssetGroupAssetLinks != 0 {
 		t.Errorf("AssetGroupAssetLinks = %d, want 0 — no link was confirmed", *res.AssetGroupAssetLinks)
+	}
+}
+
+// TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion covers the arm that
+// fails one mutate EARLIER than any of the campaign arms. The budget name is this client's
+// idempotency key, so a re-dispatch of the same brief on this channel is rejected at
+// campaignBudgets:mutate and campaigns:mutate is never attempted. The attempt that created
+// that budget may well have got past Step 2, leaving a campaign billing — and THAT campaign
+// is not covered by the opt-out this request would have sent, because an earlier attempt
+// created it and may predate the service sending the setting at all (the two prod dispatches
+// of 2026-10-16 are exactly that). So this return carries the hedged ACTION REQUIRED
+// sentence rather than the informational one or nothing. It is also
+// the proof that campaigns:mutate stays untouched: the handler fails the test if it is hit.
+func TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion(t *testing.T) {
+	images := pmaxImages(t)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if body, ok := images[r.URL.Path]; ok {
+			_, _ = w.Write(body)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate") {
+			gaqlError(http.StatusBadRequest, "campaignBudgetError", "DUPLICATE_NAME")(w, r)
+			return
+		}
+		t.Errorf("nothing may be mutated once the budget name is taken: %s", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a duplicate budget name must be reported")
+	}
+	if res == nil {
+		t.Fatal("a duplicate name means a prior attempt got this far; the partial result must say so")
+	}
+	if res.CampaignBudgetID != "" {
+		t.Errorf("CampaignBudgetID = %q, want empty — this attempt created no budget", res.CampaignBudgetID)
+	}
+	var saw bool
+	for _, s := range res.Steps {
+		if s == expansionActionRequiredIfExists {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("the prior attempt may have left a billing campaign and these Steps never mention final-URL expansion: %v", res.Steps)
+	}
+}
+
+// TestCreatePerformanceMaxCampaign_ExpansionStepPerCampaignCreateArm covers EVERY return
+// between `campaigns:mutate` and the campaign-created step — the five arms that decide
+// which final-URL-expansion sentence, if any, the operator reads. Deliberately named for
+// the arms rather than for "warns": two of the five assert `expansionOptedOutStep`, which
+// this package's own doc calls a plain step and not an ACTION REQUIRED, and one asserts
+// neither sentence.
+//
+// What splits them is WHOSE campaign the arm is talking about:
+//
+//   - A 2xx whose results carry no usable resource name — empty results, or a resource
+//     name of the wrong kind — created the campaign in THIS request; only the name came
+//     back unusable. It went out with the opt-out, so the informational step is the
+//     truthful one, and since the result carries no CampaignID these Steps are the single
+//     thing saying a billable campaign exists.
+//   - DUPLICATE_CAMPAIGN_NAME and an AMBIGUOUS outcome (5xx/429, where the mutate may have
+//     committed before the answer was lost) are about a campaign SOME OTHER attempt
+//     created, possibly before this service sent the setting at all — so both get the
+//     hedged ACTION REQUIRED.
+//   - A definite non-ambiguous error — a 4xx that is not the duplicate — is the one arm
+//     that stays silent, because no campaign was created and there is nothing whose
+//     expansion setting could be wrong. `want: ""` asserts that silence: a sentence
+//     appearing here would send an operator to hunt for a campaign that does not exist.
+func TestCreatePerformanceMaxCampaign_ExpansionStepPerCampaignCreateArm(t *testing.T) {
+	cases := []struct {
+		name     string
+		campaign http.HandlerFunc
+		want     string // "" means NEITHER sentence may appear
+		// wantErr pins the case to the ARM it is about. Several arms hand back the
+		// same sentence, so without this a handler that drifted into a neighbouring
+		// arm would still satisfy `want` and the arm it claims to cover would go
+		// untested — which is the gap this table was widened to close.
+		wantErr string
+	}{
+		{
+			name:     "2xx with no resource name",
+			campaign: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"results":[]}`)) },
+			want:     expansionOptedOutStep,
+			wantErr:  "2xx with no/malformed resource name",
+		},
+		{
+			// The other half of "2xx with an unusable name": the body parses and
+			// carries an id segment, so firstResourceName is satisfied and it is
+			// validateCampaignResource that refuses it — a different arm, same
+			// sentence. The customer id matches testAccount so it is the KIND that
+			// is wrong, which is the case the guard exists for.
+			name: "2xx with a wrong-kind resource name",
+			campaign: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"results":[{"resourceName":"customers/1234567890/adGroups/222"}]}`))
+			},
+			want:    expansionOptedOutStep,
+			wantErr: "malformed campaign resource name",
+		},
+		{
+			name:     "duplicate campaign name",
+			campaign: gaqlError(http.StatusBadRequest, "campaignError", "DUPLICATE_CAMPAIGN_NAME"),
+			want:     expansionActionRequiredIfExists,
+			wantErr:  "already exists (DUPLICATE_CAMPAIGN_NAME",
+		},
+		{
+			// 5xx: the mutate may have committed and only the answer was lost, so
+			// createOutcomeAmbiguous treats it as a campaign that may exist.
+			name:     "ambiguous outcome",
+			campaign: gaqlError(http.StatusInternalServerError, "internalError", "INTERNAL_ERROR"),
+			want:     expansionActionRequiredIfExists,
+			wantErr:  "may exist — verify in Google Ads before retrying",
+		},
+		{
+			// A definite 4xx that is not the duplicate: no campaign exists, so the
+			// Steps must say nothing about expansion at all.
+			name:     "definite non-duplicate error",
+			campaign: gaqlError(http.StatusBadRequest, "campaignError", "CANNOT_TARGET_CONTENT_NETWORK"),
+			want:     "",
+			wantErr:  "campaign creation failed (budget",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			images := pmaxImages(t)
+			srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if body, ok := images[r.URL.Path]; ok {
+					_, _ = w.Write(body)
+					return
+				}
+				switch {
+				case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+					okBudget(w, r)
+				case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+					tc.campaign(w, r)
+				default:
+					t.Errorf("nothing may be mutated once the campaign create is unconfirmed: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			c := demandGenClient(t, srv)
+			in := demandGenInput()
+			in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+			res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatal("an unconfirmed campaign create must be reported")
+			}
+			if res == nil {
+				t.Fatal("the budget was created; the partial result must carry it")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want one naming %q — this case must land on that arm", err, tc.wantErr)
+			}
+			if res.CampaignID != "" {
+				t.Errorf("CampaignID = %q, want empty — no usable resource name came back", res.CampaignID)
+			}
+			// Both directions, because the two sentences differ by whether the operator
+			// has to go and change something: printing the wrong one either sends them
+			// to fix a campaign this request already opted out, or stays quiet about one
+			// that an earlier attempt may have left expanding. On the silent arm `want`
+			// is empty, so BOTH are forbidden and none is required.
+			var saw bool
+			for _, s := range res.Steps {
+				switch s {
+				case expansionOptedOutStep, expansionActionRequiredIfExists:
+					if s == tc.want {
+						saw = true
+						continue
+					}
+					t.Errorf("Steps carry the wrong final-URL-expansion sentence (want %q): %v", tc.want, res.Steps)
+				}
+			}
+			if tc.want != "" && !saw {
+				t.Errorf("a campaign may already be billing and its Steps never say %q: %v", tc.want, res.Steps)
+			}
+		})
+	}
+}
+
+// TestCreatePerformanceMaxCampaign_PartialFailureStillReportsExpansion pins the
+// step to the paths that need it MOST. Every return past the campaign create hands back a
+// campaign that already exists and is already billable, and internal/dispatch/googleads.go
+// retains and persists the claim on a non-nil result — so this operator reads these Steps,
+// finishes the asset-group work by hand in the Google Ads UI and launches from there, more
+// surely than the happy-path one does. What that operator needs to know here is that the
+// expansion opt-out DID go out with the create, so the campaign they are about to finish is
+// not quietly stripping the UTM attribution: without the step they would have no way to
+// tell, and the Google Ads UI is the only other place that answers it. Appended at the end
+// of the cascade the sentence reached only the success path; this test fails if it moves
+// back there.
+func TestCreatePerformanceMaxCampaign_PartialFailureStillReportsExpansion(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH, _ := okPMaxGroup()
+	linkH := gaqlError(http.StatusBadRequest, "assetGroupAssetError", "DUPLICATE_RESOURCE")
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a failed link mutate must be reported")
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Fatalf("a campaign was created; the partial result must carry it: %+v", res)
+	}
+	var sawExpansionStep bool
+	for _, s := range res.Steps {
+		if s == expansionOptedOutStep {
+			sawExpansionStep = true
+		}
+		if s == expansionActionRequiredIfExists {
+			t.Errorf("this request created the campaign and opted it out; the hedged step is for an earlier attempt's: %v", res.Steps)
+		}
+	}
+	if !sawExpansionStep {
+		t.Errorf("a billable campaign exists and its Steps never record that final-URL expansion was opted out at create: %v", res.Steps)
 	}
 }
 
