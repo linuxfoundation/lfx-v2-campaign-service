@@ -20,7 +20,7 @@ const (
 // campaignCreate, for the reason demandGenCampaignCreate states: the channels disagree
 // on required fields. Performance Max rejects `networkSettings` (it has no network to
 // choose — it serves on all of them by definition) and rejects `manualCpc`, and it is
-// the only one of the three that carries `brandGuidelinesEnabled`.
+// the only one of the five channel payloads that carries `brandGuidelinesEnabled`.
 type performanceMaxCampaignCreate struct {
 	Name                           string `json:"name"`
 	Status                         string `json:"status"`
@@ -44,8 +44,11 @@ type performanceMaxCampaignCreate struct {
 	//
 	// VERIFIED against the live API (2026-10-16), the way demandgen.go records its own
 	// validateOnly result. A prod dispatch on 2026-10-16 created the budget and then lost
-	// the campaign to HTTP 400, twice. Three validateOnly campaigns:mutate probes at v23
-	// on the real account, same payload each time bar one field:
+	// the campaign to HTTP 400, twice; the probes below ran the same day, against the real
+	// account, all of them validateOnly so nothing was created. Same payload each time bar
+	// one field. A, B and D are the probe scripts' own labels, kept so this comment and
+	// PMAX_ACTION_PLAN §2 name the same probes; these three are the ones the conclusion
+	// rests on.
 	//
 	//   A. the prod payload as sent          → 400 INVALID_ARGUMENT, Unknown name
 	//                                          "urlExpansionOptOut" at 'operations[0].create'
@@ -55,11 +58,21 @@ type performanceMaxCampaignCreate struct {
 	//
 	// So two blockers were stacked, and B is this field's. The account has Brand
 	// Guidelines on; a Performance Max campaign created under it must link a
-	// BUSINESS_NAME and a square LOGO as CampaignAssets, which needs media-asset
-	// plumbing this service does not have yet. Sending `false` creates the campaign
-	// without that enforcement; an operator turns Brand Guidelines back on in the Google
-	// Ads UI once the assets exist. Linking the assets here is the better answer and is
-	// what should replace this field when the media work lands.
+	// BUSINESS_NAME and a square LOGO as CAMPAIGN assets — Google's own error text says
+	// "linked as a CampaignAsset".
+	//
+	// The gap is NOT that this service cannot build those two assets: pmax_creative.go
+	// builds both, `assetFieldBusinessName` and `assetFieldLogo`, with the square logo's
+	// geometry bound already enforced. The gap is WHERE and WHEN. They are linked as
+	// ASSET-GROUP assets, through `assetGroupAssets:mutate`, and that happens at Step 5 —
+	// AFTER the Step 2 campaign create this payload is the body of. So satisfying Brand
+	// Guidelines needs a campaign-level `campaignAssets:mutate` link AND a reordering of
+	// the cascade so the assets exist before the campaign is created; adding the link
+	// step alone would still run too late. That is the work this field stands in for.
+	//
+	// Sending `false` creates the campaign without that enforcement; an operator turns
+	// Brand Guidelines back on in the Google Ads UI once the assets are linked. Doing the
+	// reordering here is the better answer and is what should replace this field.
 	//
 	// WHAT IS NOT HERE: this payload used to carry `urlExpansionOptOut: true`, to stop
 	// Performance Max crawling the site, generating its own landing pages, and spending
@@ -266,6 +279,12 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		res.Steps = steps
 	}
 
+	// UNCONDITIONAL, and deliberately a step rather than only a comment: v23 removed
+	// url_expansion_opt_out, so final-URL expansion is ON for every campaign this
+	// function creates and there is no longer any way to turn it off from the API. The
+	// person who has to turn it off is reading this result, not pmax.go. Appended before
+	// the closing step so the two Google Ads UI actions sit together.
+	steps = append(steps, "ACTION REQUIRED: turn OFF final-URL expansion for this campaign in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out")
 	steps = append(steps, performanceMaxClosingStep(len(res.GeoCriterionIDs) > 0, res.AssetGroupID != ""))
 	res.Steps = steps
 	return res, nil

@@ -1836,9 +1836,12 @@ mutate, so a bad image fails with `result == nil` and nothing created.
 `advertisingChannelType: PERFORMANCE_MAX`; `brandGuidelinesEnabled: false`, sent
 explicitly and never omitted, because the account has Brand Guidelines on and a
 Performance Max campaign created under it must link a BUSINESS_NAME and a square LOGO
-as CampaignAssets — media-asset plumbing this service does not have yet, so the create
-would 400 with `REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED` AFTER the budget mutate had
-already committed and been paid for; no `networkSettings`, which Performance Max does
+as CAMPAIGN assets, so the create would 400 with
+`REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED` AFTER the budget mutate had already committed
+and been paid for. The gap is not that the client cannot build those two assets —
+`pmax_creative.go` builds both — but that it links them as ASSET-GROUP assets at Step 5,
+after the Step 2 campaign create, so satisfying Brand Guidelines needs a campaign-level
+`campaignAssets:mutate` link AND a reordering of the cascade; no `networkSettings`, which Performance Max does
 not take; and `maximizeConversions` by default — `defaultBiddingStrategy` answers a
 different strategy per channel, and manual CPC and maximize-clicks are both REFUSED here
 because Performance Max does not offer them.

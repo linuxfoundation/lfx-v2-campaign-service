@@ -159,6 +159,21 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 	if !strings.Contains(last, "Performance Max campaign created") || strings.Contains(last, "NO ASSET GROUP") {
 		t.Errorf("closing step = %q, want the asset-group-present wording", last)
 	}
+
+	// The final-URL-expansion opt-out is the one post-create action v23 left with no
+	// API at all, and forgetting it silently spends the event's budget on URLs with no
+	// UTM attribution. It reaches the operator ONLY through Steps, so assert it is
+	// there: a refactor that drops it would otherwise be invisible until a campaign
+	// had already overspent.
+	var sawExpansionWarning bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "final-URL expansion") {
+			sawExpansionWarning = true
+		}
+	}
+	if !sawExpansionWarning {
+		t.Errorf("Steps never tells the operator to turn off final-URL expansion: %v", res.Steps)
+	}
 }
 
 // TestCreatePerformanceMaxCampaign_CampaignShape captures the campaigns:mutate
