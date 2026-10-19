@@ -175,6 +175,7 @@ func TestKeywordTargeting_ErrorMapping(t *testing.T) {
 		{domain.ErrKeywordTargetingUnsupported, "*lfxv2campaignservicebriefs.BadRequestError", "not supported or not enabled"},
 		{fmt.Errorf("x: %w", domain.ErrKeywordTargetingInvalid), "*lfxv2campaignservicebriefs.BadRequestError", "not valid"},
 		{domain.ErrKeywordTargetingChanged, "*lfxv2campaignservicebriefs.ConflictError", "changed since it was read"},
+		{fmt.Errorf("x: %w", domain.ErrKeywordTargetingWriteInProgress), "*lfxv2campaignservicebriefs.ConflictError", "still in progress — nothing was removed"},
 		{domain.ErrKeywordTargetingWouldEmpty, "*lfxv2campaignservicebriefs.ConflictError", "every keyword"},
 		{domain.ErrKeywordTargetingUnaddressable, "*lfxv2campaignservicebriefs.ConflictError", "cannot be addressed"},
 		{domain.ErrCampaignNotProvisioned, "*lfxv2campaignservicebriefs.ConflictError", "not fully provisioned"},
