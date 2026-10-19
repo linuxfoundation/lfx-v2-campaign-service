@@ -299,6 +299,52 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 	}
 }
 
+// TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion covers the arm that
+// fails one mutate EARLIER than any of the campaign arms. The budget name is this client's
+// idempotency key, so a re-dispatch of the same brief on this channel is rejected at
+// campaignBudgets:mutate and campaigns:mutate is never attempted. The attempt that created
+// that budget may well have got past Step 2 — leaving a campaign billing with final-URL
+// expansion on — so this return carries the hedged sentence rather than nothing. It is also
+// the proof that campaigns:mutate stays untouched: the handler fails the test if it is hit.
+func TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion(t *testing.T) {
+	images := pmaxImages(t)
+	srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if body, ok := images[r.URL.Path]; ok {
+			_, _ = w.Write(body)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate") {
+			gaqlError(http.StatusBadRequest, "campaignBudgetError", "DUPLICATE_NAME")(w, r)
+			return
+		}
+		t.Errorf("nothing may be mutated once the budget name is taken: %s", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a duplicate budget name must be reported")
+	}
+	if res == nil {
+		t.Fatal("a duplicate name means a prior attempt got this far; the partial result must say so")
+	}
+	if res.CampaignBudgetID != "" {
+		t.Errorf("CampaignBudgetID = %q, want empty — this attempt created no budget", res.CampaignBudgetID)
+	}
+	var saw bool
+	for _, s := range res.Steps {
+		if s == expansionActionRequiredIfExists {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("the prior attempt may have left a billing campaign and these Steps never mention final-URL expansion: %v", res.Steps)
+	}
+}
+
 // TestCreatePerformanceMaxCampaign_UnconfirmedCampaignStillWarnsAboutExpansion covers the
 // two returns that sit ABOVE the campaign-created step and still hand back a campaign.
 // A 2xx from campaigns:mutate whose results carry no usable resource name created the

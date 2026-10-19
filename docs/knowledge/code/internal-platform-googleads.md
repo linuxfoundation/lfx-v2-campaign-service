@@ -1857,8 +1857,11 @@ event's budget is spent on URLs carrying none of the UTM attribution the data pi
 parses back out. So the client states it as an `ACTION REQUIRED:` entry in the result's
 `Steps` on EVERY path that hands back a campaign that exists — including the two
 unconfirmed returns where `campaigns:mutate` answered 2xx but the resource name came back
-unusable, which carry no `CampaignID` at all, and, hedged, the duplicate-name and
-ambiguous arms that send the operator to the Google Ads UI to check. Geo is attached at
+unusable, which carry no `CampaignID` at all, and, hedged, the three arms that send the
+operator to the Google Ads UI to check: a duplicate campaign name, an ambiguous campaign
+create, and a duplicate BUDGET name — which fails one mutate earlier, before
+`campaigns:mutate` is attempted, and still means a prior attempt may have left a campaign
+billing. Geo is attached at
 CAMPAIGN level, as on Search, which is why proximity stays
 allowed on this channel while every other Search-only field is refused.
 

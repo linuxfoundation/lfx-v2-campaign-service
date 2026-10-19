@@ -22,11 +22,14 @@ const (
 	// campaign has to carry the same sentence — see where it is appended.
 	expansionActionRequired = "ACTION REQUIRED: turn OFF final-URL expansion for this campaign in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
 
-	// expansionActionRequiredIfExists is the same step hedged, for the two arms that
-	// cannot confirm the campaign: DUPLICATE_CAMPAIGN_NAME (a prior attempt created it,
-	// and that attempt may well have died before printing this step) and an ambiguous
-	// outcome. Both already send the operator to the Google Ads UI to check; if a
-	// campaign is there, expansion is on and nothing else will say so.
+	// expansionActionRequiredIfExists is the same step hedged, for the three arms that
+	// cannot confirm the campaign: a duplicate BUDGET name (the budget name is this
+	// client's idempotency key, so a re-dispatch fails there before campaigns:mutate is
+	// attempted, and the attempt that created that budget may have got past Step 2),
+	// DUPLICATE_CAMPAIGN_NAME (a prior attempt created it, and that attempt may well have
+	// died before printing this step) and an ambiguous outcome. All three already send the
+	// operator to the Google Ads UI to check; if a campaign is there, expansion is on and
+	// nothing else will say so.
 	expansionActionRequiredIfExists = "ACTION REQUIRED: if that campaign exists, turn OFF its final-URL expansion in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
 )
 
@@ -176,6 +179,14 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	if err != nil {
 		switch {
 		case isDuplicateBudgetNameErr(err):
+			// Hedged, one mutate earlier than the campaign arms below. The budget name is
+			// this client's idempotency key, so a re-dispatch of the same brief on this
+			// channel fails HERE, before campaigns:mutate is ever attempted — and if the
+			// attempt that created this budget got past Step 2, a campaign exists with
+			// expansion on and nothing else in this return would say so. The two arms
+			// below stay silent because there the budget itself is the open question and
+			// the campaign create provably was never reached.
+			steps = append(steps, expansionActionRequiredIfExists)
 			return namePartial(), fmt.Errorf("google-ads performance max budget %q already exists (DUPLICATE_NAME) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, err)
 		case createOutcomeAmbiguous(err):
 			return namePartial(), fmt.Errorf("google-ads performance max budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
