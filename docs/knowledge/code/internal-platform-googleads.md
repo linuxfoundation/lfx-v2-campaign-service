@@ -1854,7 +1854,12 @@ returns only the reporting view `final_url_expansion_asset_view`. Final-URL expa
 now on by default and can only be turned off in the Google Ads UI, per campaign, by
 hand: an operator step after every Performance Max create, and forgetting it means the
 event's budget is spent on URLs carrying none of the UTM attribution the data pipeline
-parses back out. Geo is attached at CAMPAIGN level, as on Search, which is why proximity stays
+parses back out. So the client states it as an `ACTION REQUIRED:` entry in the result's
+`Steps` on EVERY path that hands back a campaign that exists — including the two
+unconfirmed returns where `campaigns:mutate` answered 2xx but the resource name came back
+unusable, which carry no `CampaignID` at all, and, hedged, the duplicate-name and
+ambiguous arms that send the operator to the Google Ads UI to check. Geo is attached at
+CAMPAIGN level, as on Search, which is why proximity stays
 allowed on this channel while every other Search-only field is refused.
 
 **Asset groups are created PAUSED**, matching the campaign — the same intent every

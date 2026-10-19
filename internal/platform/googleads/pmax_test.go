@@ -299,6 +299,77 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 	}
 }
 
+// TestCreatePerformanceMaxCampaign_UnconfirmedCampaignStillWarnsAboutExpansion covers the
+// two returns that sit ABOVE the campaign-created step and still hand back a campaign.
+// A 2xx from campaigns:mutate whose results carry no usable resource name created the
+// campaign — only the name came back unusable — so it is billable with expansion on while
+// the result carries no CampaignID at all, leaving these Steps the single thing that says
+// so. DUPLICATE_CAMPAIGN_NAME is the weaker case and is worded hedged: the name is taken,
+// so a campaign by that name exists, created by an attempt that may itself have died
+// before it printed the step. Only a definite non-ambiguous error stays silent, because
+// then no campaign was created.
+func TestCreatePerformanceMaxCampaign_UnconfirmedCampaignStillWarnsAboutExpansion(t *testing.T) {
+	cases := []struct {
+		name     string
+		campaign http.HandlerFunc
+		want     string
+	}{
+		{
+			name:     "2xx with no resource name",
+			campaign: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"results":[]}`)) },
+			want:     expansionActionRequired,
+		},
+		{
+			name:     "duplicate campaign name",
+			campaign: gaqlError(http.StatusBadRequest, "campaignError", "DUPLICATE_CAMPAIGN_NAME"),
+			want:     expansionActionRequiredIfExists,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			images := pmaxImages(t)
+			srv := demandGenTLSServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if body, ok := images[r.URL.Path]; ok {
+					_, _ = w.Write(body)
+					return
+				}
+				switch {
+				case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
+					okBudget(w, r)
+				case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
+					tc.campaign(w, r)
+				default:
+					t.Errorf("nothing may be mutated once the campaign create is unconfirmed: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			c := demandGenClient(t, srv)
+			in := demandGenInput()
+			in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+			res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+			if err == nil {
+				t.Fatal("an unconfirmed campaign create must be reported")
+			}
+			if res == nil {
+				t.Fatal("the budget was created; the partial result must carry it")
+			}
+			if res.CampaignID != "" {
+				t.Errorf("CampaignID = %q, want empty — no usable resource name came back", res.CampaignID)
+			}
+			var saw bool
+			for _, s := range res.Steps {
+				if s == tc.want {
+					saw = true
+				}
+			}
+			if !saw {
+				t.Errorf("a campaign may already be billing and its Steps never mention final-URL expansion: %v", res.Steps)
+			}
+		})
+	}
+}
+
 // TestCreatePerformanceMaxCampaign_PartialFailureStillWarnsAboutExpansion pins the
 // warning to the paths that need it MOST. Every return past the campaign create hands
 // back a campaign that already exists and is already billable with final-URL expansion

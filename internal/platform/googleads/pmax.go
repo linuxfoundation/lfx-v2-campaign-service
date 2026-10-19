@@ -14,6 +14,20 @@ const (
 	// one campaign serving Search, Display, YouTube, Discover, Gmail and Maps from a
 	// single asset group, as opposed to SEARCH or DEMAND_GEN.
 	advertisingChannelPerformanceMax = "PERFORMANCE_MAX"
+
+	// expansionActionRequired is the operator step for a campaign KNOWN to exist. v23
+	// removed url_expansion_opt_out, so final-URL expansion is on from the moment the
+	// campaign exists and nothing in the API can turn it off; only a person in the
+	// Google Ads UI can. It is a const because every path that hands back a billable
+	// campaign has to carry the same sentence — see where it is appended.
+	expansionActionRequired = "ACTION REQUIRED: turn OFF final-URL expansion for this campaign in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
+
+	// expansionActionRequiredIfExists is the same step hedged, for the two arms that
+	// cannot confirm the campaign: DUPLICATE_CAMPAIGN_NAME (a prior attempt created it,
+	// and that attempt may well have died before printing this step) and an ambiguous
+	// outcome. Both already send the operator to the Google Ads UI to check; if a
+	// campaign is there, expansion is on and nothing else will say so.
+	expansionActionRequiredIfExists = "ACTION REQUIRED: if that campaign exists, turn OFF its final-URL expansion in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
 )
 
 // performanceMaxCampaignCreate is a THIRD payload shape rather than a widened
@@ -70,9 +84,12 @@ type performanceMaxCampaignCreate struct {
 	// the cascade so the assets exist before the campaign is created; adding the link
 	// step alone would still run too late. That is the work this field stands in for.
 	//
-	// Sending `false` creates the campaign without that enforcement; an operator turns
-	// Brand Guidelines back on in the Google Ads UI once the assets are linked. Doing the
-	// reordering here is the better answer and is what should replace this field.
+	// Sending `false` creates the campaign without that enforcement. Do NOT read that as
+	// "and it can be switched back on afterwards": Brand Guidelines is not an ordinary
+	// mutable campaign field, nothing here has verified what re-enabling it on an existing
+	// campaign costs, and this comment will outlive the workaround. Treat the setting as
+	// decided at create time. Doing the reordering here is the better answer and is what
+	// should replace this field.
 	//
 	// WHAT IS NOT HERE: this payload used to carry `urlExpansionOptOut: true`, to stop
 	// Performance Max crawling the site, generating its own landing pages, and spending
@@ -201,30 +218,42 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	if err != nil {
 		switch {
 		case isDuplicateCampaignNameErr(err):
+			// Hedged, not omitted: the name is taken, so a campaign by this name exists —
+			// created by an attempt that may itself have died before reaching the step below.
+			steps = append(steps, expansionActionRequiredIfExists)
 			return budgetPartial(), fmt.Errorf("google-ads performance max campaign %q already exists (DUPLICATE_CAMPAIGN_NAME; budget %s created) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
 		case createOutcomeAmbiguous(err):
+			steps = append(steps, expansionActionRequiredIfExists)
 			return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; campaign %q may exist — verify in Google Ads before retrying): %w", budgetID, campaignName, err)
 		default:
+			// The one arm that stays silent: a definite non-ambiguous error means no campaign
+			// was created, so there is nothing whose expansion setting could be wrong.
 			return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation failed (budget %s created): %w", budgetID, err)
 		}
 	}
+	// PAST THIS LINE THE CAMPAIGN EXISTS. `campaigns:mutate` answered 2xx, so the two
+	// failures below are a resource name this client cannot use — not a campaign that was
+	// never created. They hand back no CampaignID, which makes these Steps the only thing
+	// that tells the operator a billable campaign is out there with expansion on.
 	campaignResource, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
+		steps = append(steps, expansionActionRequired)
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — verify in Google Ads before retrying): %w", budgetID, err)
 	}
 	if verr := c.validateCampaignResource(campaignResource); verr != nil {
+		steps = append(steps, expansionActionRequired)
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, verr)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, PERFORMANCE_MAX, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(pf.startDateTime, pf.endDateTime)))
 	// HERE, immediately after the campaign is confirmed, and not down beside the closing
-	// step: v23 removed url_expansion_opt_out, so final-URL expansion is ON from the moment
-	// this campaign exists and there is no longer any way to turn it off from the API. Every
-	// return below this line hands back a campaign that is already billable, and
+	// step. Every return below this line hands back a campaign that is already billable, and
 	// internal/dispatch/googleads.go keeps and persists the claim on a non-nil result — so a
 	// partial failure puts an operator in front of exactly these Steps, finishing the geo or
 	// asset-group work by hand in the Google Ads UI and launching from there. Appended at the
-	// end, this warning reached only the operator least likely to need it.
-	steps = append(steps, "ACTION REQUIRED: turn OFF final-URL expansion for this campaign in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out")
+	// end, this warning reached only the operator least likely to need it. The returns ABOVE
+	// this line carry it too, for the same reason: a 2xx with an unusable resource name is
+	// still a campaign.
+	steps = append(steps, expansionActionRequired)
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
