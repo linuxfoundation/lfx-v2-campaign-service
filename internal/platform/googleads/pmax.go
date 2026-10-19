@@ -14,13 +14,70 @@ const (
 	// one campaign serving Search, Display, YouTube, Discover, Gmail and Maps from a
 	// single asset group, as opposed to SEARCH or DEMAND_GEN.
 	advertisingChannelPerformanceMax = "PERFORMANCE_MAX"
+
+	// assetAutomationFinalURLExpansion is the AssetAutomationType that carries final-URL
+	// expansion at v23, and assetAutomationOptedOut the status that turns it off. v23
+	// removed `url_expansion_opt_out` from the campaign and the asset group alike, but it
+	// did NOT remove the control: it moved into `campaign.asset_automation_settings`,
+	// which is settable at CREATE and supported on this channel.
+	//
+	// VERIFIED against the live API (2026-10-19), validateOnly so nothing was created:
+	// `googleAdsFields:search` for `%asset_automation%` returns
+	// `campaign.asset_automation_settings` (google.ads.googleads.v23.resources.
+	// Campaign.AssetAutomationSetting), and a `campaigns:mutate` of the probe-D payload
+	// plus the setting below validated 200. A deliberately bogus type on the same payload
+	// is rejected naming `AssetAutomationTypeEnum.AssetAutomationType`, so the value below
+	// is a real member of that enum and not a string Google ignored.
+	assetAutomationFinalURLExpansion = "FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION"
+	assetAutomationOptedOut          = "OPTED_OUT"
+
+	// expansionOptedOutStep records, for a campaign THIS request created, that the opt-out
+	// went out with the create. It is a plain step and not an ACTION REQUIRED: the setting
+	// is in the payload below, so there is nothing for an operator to do. It stays in
+	// `Steps` because the operator reading them is often looking at a partial failure and
+	// finishing the work by hand, and "expansion is already off" is the thing they would
+	// otherwise go and check.
+	expansionOptedOutStep = "Final-URL expansion: OPTED OUT at create (campaign.asset_automation_settings), so expanded URLs cannot strip the UTM attribution the data pipeline parses back out"
+
+	// expansionActionRequiredIfExists is for the three arms that cannot confirm the
+	// campaign: a duplicate BUDGET name (the budget name is this client's idempotency key,
+	// so a re-dispatch fails there before campaigns:mutate is attempted, and the attempt
+	// that created that budget may have got past Step 2), DUPLICATE_CAMPAIGN_NAME (a prior
+	// attempt created it, and that attempt may well have died before printing this step)
+	// and an ambiguous outcome.
+	//
+	// It survives the opt-out above, and the reason is the whole point of the hedge: the
+	// campaign these arms are talking about was created by SOME EARLIER ATTEMPT, which may
+	// predate this service ever sending the setting. All three already send the operator
+	// to the Google Ads UI to check; if what is there was created without the opt-out,
+	// expansion is on and nothing else will say so.
+	//
+	// The 2026-10-16 prod dispatches are NOT examples of that campaign, and this doc used
+	// to cite them as if they were. Both died at `campaigns:mutate` with HTTP 400 — probe
+	// A below is that same payload rejected outright as INVALID_ARGUMENT on the removed
+	// `urlExpansionOptOut` field — so neither left a campaign for an operator to find.
+	// What they left is an orphan BUDGET, which is the duplicate-budget arm's subject and
+	// a different thing. The attempt this hedge is about is a hypothetical older one, not
+	// a recorded one; keeping a real incident attached to it made the premise read as
+	// established when it is precautionary.
+	expansionActionRequiredIfExists = "ACTION REQUIRED: if that campaign exists, check its final-URL expansion in the Google Ads UI and turn it OFF if it is on — this service now opts out at create, but a campaign left by an earlier attempt may predate that, and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
 )
+
+// assetAutomationSetting is one entry of `campaign.asset_automation_settings`. Both
+// fields are sent unconditionally — no `omitempty` — for the reason
+// BrandGuidelinesEnabled states: an omitted field leaves the outcome to Google's own
+// default rather than to this service, and the default here is the behaviour the opt-out
+// exists to prevent.
+type assetAutomationSetting struct {
+	AssetAutomationType   string `json:"assetAutomationType"`
+	AssetAutomationStatus string `json:"assetAutomationStatus"`
+}
 
 // performanceMaxCampaignCreate is a THIRD payload shape rather than a widened
 // campaignCreate, for the reason demandGenCampaignCreate states: the channels disagree
 // on required fields. Performance Max rejects `networkSettings` (it has no network to
 // choose — it serves on all of them by definition) and rejects `manualCpc`, and it is
-// the only one of the three that carries `urlExpansionOptOut`.
+// the only one of the five channel payloads that carries `brandGuidelinesEnabled`.
 type performanceMaxCampaignCreate struct {
 	Name                           string `json:"name"`
 	Status                         string `json:"status"`
@@ -38,20 +95,74 @@ type performanceMaxCampaignCreate struct {
 	// actually carries, and without it a "US" target serves to anyone worldwide
 	// showing interest in the US. See the type's doc in campaign.go.
 	GeoTargetTypeSetting geoTargetTypeSetting `json:"geoTargetTypeSetting"`
-	// UrlExpansionOptOut is sent EXPLICITLY as true rather than omitted, and that is a
-	// deliberate choice rather than a default being restated.
+	// BrandGuidelinesEnabled is sent EXPLICITLY as false, and no `omitempty` guards it:
+	// the whole point is that `false` reaches Google, and an omitted field would take the
+	// account's own setting instead.
 	//
-	// Left opted IN — Google's own default — Performance Max generates its own landing
-	// pages by crawling the advertiser's whole site and sends traffic wherever its model
-	// prefers. Every campaign this service creates is for ONE event with ONE
-	// registration URL, composed with the UTM attribution the data pipeline parses back
-	// out; a campaign free to substitute its own final URL spends the event's budget on
-	// pages that carry none of that, and the spend then reconciles against nothing.
+	// VERIFIED against the live API (2026-10-16), the way demandgen.go records its own
+	// validateOnly result. A prod dispatch on 2026-10-16 created the budget and then lost
+	// the campaign to HTTP 400, twice; the probes below ran the same day, against the real
+	// account, all of them validateOnly so nothing was created. Same payload each time bar
+	// one field. A, B and D are the probe scripts' own labels, kept so this comment and
+	// the full table in docs/knowledge/log/2026-10-19-LFXV2-2665-pmax-v23-create.md name
+	// the same probes; these three are the ones the conclusion rests on, and the gap where
+	// C would be is that label never having been used, not a probe omitted here.
 	//
-	// An operator who wants the expansion can turn it off in the Google Ads UI. The
-	// reverse — discovering after the fact that attribution was silently bypassed — is
-	// not recoverable, which is what makes this the safe side of the default.
-	UrlExpansionOptOut bool `json:"urlExpansionOptOut"`
+	//   A. the prod payload as sent          → 400 INVALID_ARGUMENT, Unknown name
+	//                                          "urlExpansionOptOut" at 'operations[0].create'
+	//   B. A minus urlExpansionOptOut        → 400 REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED
+	//                                          + REQUIRED_LOGO_ASSET_NOT_LINKED
+	//   D. B plus brandGuidelinesEnabled:false → VALIDATED OK
+	//
+	// So two blockers were stacked, and B is this field's. The account has Brand
+	// Guidelines on; a Performance Max campaign created under it must link a
+	// BUSINESS_NAME and a square LOGO as CAMPAIGN assets — Google's own error text says
+	// "linked as a CampaignAsset".
+	//
+	// The gap is NOT that this service cannot build those two assets: pmax_creative.go
+	// builds both, `assetFieldBusinessName` and `assetFieldLogo`, with the square logo's
+	// geometry bound already enforced. The gap is WHERE and WHEN. They are linked as
+	// ASSET-GROUP assets, through `assetGroupAssets:mutate`, and that happens at Step 5 —
+	// AFTER the Step 2 campaign create this payload is the body of. So satisfying Brand
+	// Guidelines needs a campaign-level `campaignAssets:mutate` link AND a reordering of
+	// the cascade so the assets exist before the campaign is created; adding the link
+	// step alone would still run too late. That is the work this field stands in for.
+	//
+	// Sending `false` creates the campaign without that enforcement. Do NOT read that as
+	// "and it can be switched back on afterwards": Brand Guidelines is not an ordinary
+	// mutable campaign field, nothing here has verified what re-enabling it on an existing
+	// campaign costs, and this comment will outlive the workaround. Treat the setting as
+	// decided at create time. Doing the reordering here is the better answer and is what
+	// should replace this field.
+	//
+	BrandGuidelinesEnabled bool `json:"brandGuidelinesEnabled"`
+	// AssetAutomationSettings carries the final-URL-expansion opt-out, which is what this
+	// payload used to spell `urlExpansionOptOut: true` — stopping Performance Max from
+	// crawling the site, generating its own landing pages, and spending the event's budget
+	// on URLs carrying none of the UTM attribution the data pipeline parses back out.
+	//
+	// Probe A is that FIELD being gone at v23, removed outright on the campaign and the
+	// asset group alike (`googleAdsFields:search` for `%url_expansion%` returns only the
+	// reporting view `final_url_expansion_asset_view`). The CONTROL was not removed with
+	// it — it moved to `campaign.asset_automation_settings`, verified live and settable at
+	// create; see the consts at the top of this file for the two probes that establish it.
+	//
+	// So this is not a like-for-like rename and must not be read as one: the entry below
+	// opts out of ONE asset-automation type, and Google may add others that this payload
+	// then leaves at their default.
+	//
+	// Dropping `omitempty` here is for CONSISTENCY with the scalar above, not for the same
+	// reason, and an earlier revision of this comment claimed otherwise. On
+	// `BrandGuidelinesEnabled` the tag genuinely decides an outcome: `omitempty` would
+	// elide `false` and hand the account's setting the decision. On a repeated field it
+	// decides nothing — `encoding/json` writes a nil slice as `null` and an empty one as
+	// `[]`, and proto3 JSON reads both exactly as an unset repeated field, which is also
+	// what omitting the key does. All three spellings mean "no opt-out". The thing that
+	// actually guarantees the opt-out ships is the one-element slice literal at the
+	// `campaigns:mutate` call below, and it is pinned by
+	// TestCreatePerformanceMaxCampaign_CampaignShape — so that test, not this tag, is what
+	// a future edit has to get past.
+	AssetAutomationSettings []assetAutomationSetting `json:"assetAutomationSettings"`
 	// StartDateTime/EndDateTime are the same campaign-level v23 fields both other
 	// payloads carry, resolved by the same shared preflight. See demandgen.go for why
 	// carrying them is a correctness requirement and not a nicety: applyCampaignConfig
@@ -127,6 +238,36 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	if err != nil {
 		switch {
 		case isDuplicateBudgetNameErr(err):
+			// Hedged, one mutate earlier than the campaign arms below, and hedged on a
+			// NARROW premise — narrow enough to be worth stating, because the obvious
+			// reading of it is wrong twice over.
+			//
+			// The budget name is this client's idempotency key, so a re-dispatch of the
+			// same brief on this channel fails HERE, before campaigns:mutate is attempted.
+			// The tempting conclusion — "so the attempt that created this budget may have
+			// got past Step 2, leaving a campaign" — does not follow: this budget is
+			// created non-shared (`shared := false` above), and a non-shared budget's name
+			// SYNCHRONIZES to the campaign name once a campaign attaches to it
+			// (campaign.go's `campaignNamePartial` contract, which `internal/dispatch/
+			// googleads.go` reconciles by id for exactly this reason). An attempt that got
+			// past Step 2 therefore FREED `budgetName`, and this arm would not have been
+			// reached at all. Reaching it means an UNATTACHED budget — the orphan shape,
+			// which is what the two 2026-10-16 prod dispatches actually left.
+			//
+			// Nor would the campaign be "a campaign with expansion on": this file now opts
+			// out at create (the `AssetAutomationSettings` literal in Step 2), so anything
+			// the CURRENT code leaves behind has expansion OFF.
+			//
+			// What survives both corrections, and is the only reason the step is still
+			// appended: the sync is Google's behaviour as this package documents it, not
+			// something this service verified, and nothing here has established what
+			// happens to a non-shared budget's name if its campaign is later removed. A
+			// campaign predating this file's opt-out could also still be sitting under a
+			// re-created budget of the original name. Both are narrow, neither is disproved,
+			// and the cost of the hedge is one UI check the operator is already being sent
+			// to make. The two arms below stay silent because there the budget itself is
+			// the open question and the campaign create provably was never reached.
+			steps = append(steps, expansionActionRequiredIfExists)
 			return namePartial(), fmt.Errorf("google-ads performance max budget %q already exists (DUPLICATE_NAME) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, err)
 		case createOutcomeAmbiguous(err):
 			return namePartial(), fmt.Errorf("google-ads performance max budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
@@ -158,9 +299,13 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
-		UrlExpansionOptOut:             true,
-		StartDateTime:                  pf.startDateTime,
-		EndDateTime:                    pf.endDateTime,
+		BrandGuidelinesEnabled:         false,
+		AssetAutomationSettings: []assetAutomationSetting{{
+			AssetAutomationType:   assetAutomationFinalURLExpansion,
+			AssetAutomationStatus: assetAutomationOptedOut,
+		}},
+		StartDateTime: pf.startDateTime,
+		EndDateTime:   pf.endDateTime,
 		// Resolved by the SHARED preflight, which on this channel admits only the four
 		// conversion-based strategies — Performance Max has no manual bidding at all.
 		biddingFields: pf.bidding.fields(),
@@ -169,21 +314,42 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	if err != nil {
 		switch {
 		case isDuplicateCampaignNameErr(err):
+			// Hedged, not omitted: the name is taken, so a campaign by this name exists —
+			// created by an attempt that may itself have died before reaching the step below.
+			steps = append(steps, expansionActionRequiredIfExists)
 			return budgetPartial(), fmt.Errorf("google-ads performance max campaign %q already exists (DUPLICATE_CAMPAIGN_NAME; budget %s created) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
 		case createOutcomeAmbiguous(err):
+			steps = append(steps, expansionActionRequiredIfExists)
 			return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; campaign %q may exist — verify in Google Ads before retrying): %w", budgetID, campaignName, err)
 		default:
+			// The one arm that stays silent: a definite non-ambiguous error means no campaign
+			// was created, so there is nothing whose expansion setting could be wrong.
 			return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation failed (budget %s created): %w", budgetID, err)
 		}
 	}
+	// PAST THIS LINE THE CAMPAIGN EXISTS. `campaigns:mutate` answered 2xx, so the two
+	// failures below are a resource name this client cannot use — not a campaign that was
+	// never created. They hand back no CampaignID, which makes these Steps the only thing
+	// that tells the operator a billable campaign is out there at all.
 	campaignResource, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
+		steps = append(steps, expansionOptedOutStep)
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — verify in Google Ads before retrying): %w", budgetID, err)
 	}
 	if verr := c.validateCampaignResource(campaignResource); verr != nil {
+		steps = append(steps, expansionOptedOutStep)
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, verr)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, PERFORMANCE_MAX, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(pf.startDateTime, pf.endDateTime)))
+	// HERE, immediately after the campaign is confirmed, and not down beside the closing
+	// step. Every return below this line hands back a campaign that is already billable, and
+	// internal/dispatch/googleads.go keeps and persists the claim on a non-nil result — so a
+	// partial failure puts an operator in front of exactly these Steps, finishing the geo or
+	// asset-group work by hand in the Google Ads UI and launching from there. Appended at the
+	// end, this step would reach only the operator least likely to need it. The returns ABOVE
+	// this line carry it too, for the same reason: a 2xx with an unusable resource name is
+	// still a campaign, and it is still one this request opted out at create.
+	steps = append(steps, expansionOptedOutStep)
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
