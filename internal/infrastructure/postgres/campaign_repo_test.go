@@ -153,6 +153,16 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 	}
 }
 
+// TestMaxSlotVersion_CountsSoftDeletedRows pins the one read that must NOT filter deleted rows.
+// A deleted campaign still holds its upstream name, so a new_version numbered from live rows
+// alone would compose that name again and get the deleted campaign back by name lookup.
+func TestMaxSlotVersion_CountsSoftDeletedRows(t *testing.T) {
+	q := normalizeWS(maxSlotVersionQuery)
+	require.NotContains(t, q, livePredicate,
+		"MaxSlotVersion must count soft-deleted rows, or a new_version can reuse a deleted campaign's slot version and name")
+	require.Contains(t, q, "project_id=$3", "MaxSlotVersion must stay scoped by project like GetCampaignByPlatform")
+}
+
 // TestListProjectPlatformCampaignIDs_IsScopedInSQL pins the authorization boundary for the
 // Google Ads keyword and audience endpoints.
 //

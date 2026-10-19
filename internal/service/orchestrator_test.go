@@ -188,6 +188,9 @@ type fakeCampaignRepo struct {
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
+	// deletedSlotVersions maps a slotKey to the highest slot version a soft-deleted row on that
+	// slot held. Those rows are invisible to every read except MaxSlotVersion, as in Postgres.
+	deletedSlotVersions map[string]int
 	// adoptBriefVersion, when non-zero, is the brief version AdoptCampaign's locked re-read
 	// would find. A mismatch against the caller's expectedVersion is ErrStaleApproval.
 	adoptBriefVersion int64
@@ -384,6 +387,24 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // the same row. Writing only the qualified form would break them for a reason unrelated to
 // what they assert. Writes are still keyed correctly — a demand-gen row never lands on the
 // bare key, so it cannot be mistaken for a Search row.
+// MaxSlotVersion mirrors the real query: every version the slot has used, live (existing,
+// upserted) or soft-deleted (deletedSlotVersions), or 0 for an unused slot.
+func (r *fakeCampaignRepo) MaxSlotVersion(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := slotKey(briefID, platform, variant)
+	n := r.deletedSlotVersions[key]
+	if c, ok := r.existing[key]; ok && c.SlotVersion > n {
+		n = c.SlotVersion
+	}
+	for _, c := range r.upserted {
+		if c != nil && slotKey(c.BriefID, c.Platform, c.Variant) == key && c.SlotVersion > n {
+			n = c.SlotVersion
+		}
+	}
+	return n, nil
+}
+
 func (r *fakeCampaignRepo) storeRow(c *model.Campaign) {
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}

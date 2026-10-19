@@ -831,6 +831,9 @@ func (r *campaignEditRepo) ListCampaignsForBrief(context.Context, string, string
 func (r *campaignEditRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (r *campaignEditRepo) MaxSlotVersion(context.Context, string, string, model.Provider, string) (int, error) {
+	return 0, nil
+}
 func (r *campaignEditRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, nil, nil
 }

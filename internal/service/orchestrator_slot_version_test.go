@@ -87,6 +87,30 @@ func TestOrchestrator_NewVersionCreatesASecondCampaignOnACompletedSlot(t *testin
 	}
 }
 
+// Create 1 → create 2 → delete 2 → new_version must make slot 3, not slot 2 again. Deleting
+// only unbinds the local row; the upstream campaign keeps the "-2" name, so a second slot 2
+// would compose that name and a name-unique dispatcher would hand the deleted campaign back.
+func TestOrchestrator_NewVersionSkipsADeletedCampaignsSlotVersion(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := completedSlot1()
+	camps.deletedSlotVersions = map[string]int{slotKey("b1", model.ProviderGoogleAds, model.VariantDefault): 2}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", j.Status, j.Result)
+	}
+	if got := disp.seen(); len(got) != 1 || got[0] != 3 {
+		t.Fatalf("dispatcher saw slot versions %v, want [3]: slot 2 belonged to a deleted campaign "+
+			"whose upstream name a second slot 2 would reuse", got)
+	}
+	if len(camps.upserted) != 1 || camps.upserted[0].SlotVersion != 3 {
+		t.Fatalf("persisted %+v, want one row at slot version 3", camps.upserted)
+	}
+}
+
 // Without new_version a repeat create is still a retry. This is the behaviour every existing
 // caller relies on, and the reason new_version is opt-in rather than inferred.
 func TestOrchestrator_WithoutNewVersionARepeatCreateStillReuses(t *testing.T) {

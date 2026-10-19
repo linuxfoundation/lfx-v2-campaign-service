@@ -1769,7 +1769,17 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// latest campaign complete makes one more. Two CONCURRENT ones compute the same
 		// next version and the claim lets exactly one through (the other is skipped or
 		// reuses the winner), which is what covers a double-submitted form.
-		slotVersion = existing.SlotVersion + 1
+		//
+		// Numbered past every version the slot has EVER used, not just the live latest: a
+		// deleted campaign keeps its upstream name, so reusing its version would compose that
+		// name again and a name-based lookup would return the deleted campaign as this one.
+		used, merr := o.campaigns.MaxSlotVersion(ctx, brief.ProjectID, brief.ID, p, variant)
+		if merr != nil {
+			slog.ErrorContext(ctx, "slot version lookup failed", "platform", p, "job_id", jobID, "error", merr)
+			res.Error = "could not check for an existing campaign"
+			return res
+		}
+		slotVersion = max(existing.SlotVersion, used) + 1
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A

@@ -480,6 +480,12 @@ const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
 	ORDER BY slot_version DESC
 	LIMIT 1`
 
+// maxSlotVersionQuery deliberately does NOT exclude deleted rows, unlike every read above: it
+// answers "which slot versions have ever been used", and a deleted campaign's version is used —
+// its upstream campaign still carries the name that version composed. See MaxSlotVersion.
+const maxSlotVersionQuery = `SELECT COALESCE(MAX(slot_version), 0) FROM campaigns
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4`
+
 // getCampaignBySlotQuery reads ONE slot version's live row. It is what the claim reads back:
 // the row that won (ours, or the one we conflicted with) is the one at that slot version,
 // which is not necessarily the latest. At most one live row matches
@@ -725,6 +731,16 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 		return nil, fmt.Errorf("get campaign by platform: %w", err)
 	}
 	return c, nil
+}
+
+// MaxSlotVersion returns the highest slot version ever used on a slot, deleted rows included,
+// or 0 when the slot has none. Scoped by project_id like GetCampaignByPlatform.
+func (r *CampaignRepo) MaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (int, error) {
+	var n int
+	if err := r.db.QueryRow(ctx, maxSlotVersionQuery, briefID, string(platform), projectID, model.NormalizeVariant(variant)).Scan(&n); err != nil {
+		return 0, fmt.Errorf("max slot version: %w", err)
+	}
+	return n, nil
 }
 
 // getCampaignBySlot returns the live campaign at one slot version, or ErrNotFound.
