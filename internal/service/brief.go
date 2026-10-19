@@ -2196,11 +2196,19 @@ func deliveryTypeOrPaid(v *string) model.DeliveryType {
 // surface maps to paid, matching every other "unsaid means paid" rule in this file; it is
 // unreachable in practice, since a brief's delivery type is constrained by both the design enum
 // and the column's CHECK.
+//
+// Survey rides the EMAIL channel. A survey or report promotion is an email send staged as a
+// HubSpot draft, so the surface differs from `email` in where its facts come from and which stages
+// it offers, not in where it is delivered. Left out of this switch it fell into the paid default
+// and `CreateCampaigns` refused the only channel it can use -- "platform hubspot is a email
+// channel, but this brief was authored for survey" -- after every earlier step had succeeded.
 func deliveryChannelKind(d model.DeliveryType) model.ChannelKind {
-	if d == model.DeliveryEmail {
+	switch d {
+	case model.DeliveryEmail, model.DeliverySurvey:
 		return model.ChannelEmail
+	default:
+		return model.ChannelPaidAds
 	}
-	return model.ChannelPaidAds
 }
 
 // briefIdentityPairProblem reports why a delivery_type/stage COMBINATION cannot exist, or nil.
