@@ -30,9 +30,11 @@ import (
 //     promise a matching mode Reddit does not offer — no duplicates, and a revision present.
 //  2. The campaign must be provisioned with a recorded ad group.
 //  3. PROVENANCE FAILS CLOSED; then the account must match the connection.
-//  4. The ad group is read and must report THIS campaign; its excluded keywords must be legible.
-//  5. COMPARE-AND-SET: the targeting's fingerprint must equal the caller's revision (409).
-//  6. Keywords the ad group already excludes (exact text) are ALREADY_PRESENT and not sent; the
+//  4. The ad group's write lock must be taken within its bounded wait, else
+//     ErrKeywordTargetingWriteInProgress (409); held through the confirming re-read, the removal's.
+//  5. The ad group is read and must report THIS campaign; its excluded keywords must be legible.
+//  6. COMPARE-AND-SET: the targeting's fingerprint must equal the caller's revision (409).
+//  7. Keywords the ad group already excludes (exact text) are ALREADY_PRESENT and not sent; the
 //     rest must fit Reddit's 2,000 array elements, null elements kept from the read included
 //     (ErrNegativeKeywordLimit, 409).
 //
@@ -41,7 +43,7 @@ import (
 // The new keywords share the PATCH's outcome — APPLIED, FAILED (REJECTED by Reddit, or NOT_SENT)
 // or UNCONFIRMED — and ALREADY_PRESENT ones keep theirs. The call errors only when no item has a
 // definite outcome: every item rode on the write and its outcome is UNCONFIRMED.
-func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) ([]model.NegativeKeywordOutcome, error) {
+func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID string, platform model.Provider, campaign *model.Campaign, keywords []model.NegativeKeyword, revision string) (retOut []model.NegativeKeywordOutcome, retErr error) {
 	const op = "add reddit negative keywords"
 	if !redditKeywordTargetingWritesEnabled() {
 		return nil, fmt.Errorf("reddit negative keywords are disabled (%s is not \"true\") until the whole-targeting write is exercised against a live ad account: %w",
@@ -71,6 +73,23 @@ func (d *RedditDispatcher) AddNegativeKeywords(ctx context.Context, projectID st
 	if err := verifyRedditAccountMatch(op, campaign, client); err != nil {
 		return nil, err
 	}
+	// SERIALIZED from here to the confirming re-read: another LFX write on this ad group — on any
+	// replica — would otherwise pass the same revision check before this PATCH lands, and one of
+	// the two whole-object writes would put back targeting the other had changed.
+	hold, err := d.lockRedditTargeting(ctx, op, created, adGroupID)
+	if err != nil {
+		return nil, err
+	}
+	// Released by OUTCOME (releaseRedditTargeting): at once when settled, after a cooldown when
+	// the PATCH was sent and is UNCONFIRMED — which settle can report PER ITEM with a nil error,
+	// when some keywords were ALREADY_PRESENT, so the outcomes are checked as well as the error.
+	defer func() {
+		outcomes := make([]string, 0, len(retOut))
+		for _, o := range retOut {
+			outcomes = append(outcomes, o.Outcome)
+		}
+		d.releaseRedditTargeting(hold, redditWriteUnsettled(retErr, outcomes...))
+	}()
 	current, err := readOwnedRedditTargeting(ctx, op, client, res, campaign, adGroupID)
 	if err != nil {
 		return nil, err

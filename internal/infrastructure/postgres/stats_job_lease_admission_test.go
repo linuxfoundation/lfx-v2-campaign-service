@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,7 +140,7 @@ func TestLiveStatsJobLease_CollidingKeysShareOneLock(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS `+fn+`(boolean)`) })
 
-	suffix := time.Now().Format("150405.000000000")
+	suffix := liveLeaseSuffix()
 	a, b := "xcollide-a-"+suffix, "xcollide-b-"+suffix
 	lease := NewStatsJobLease(&Pool{Pool: pool})
 	t.Cleanup(func() { lease.Close(context.Background()) })
@@ -215,16 +216,52 @@ func TestStatsJobLease_HeldKeyIsNotAdmittedAfterTheRequestOrLeaseEnds(t *testing
 // The same on the new-lock path: a request that ends while a successful lock query runs is
 // refused, and the lock it took stays tracked (not orphaned) so a later live request owns it
 // without another lock call.
+//
+// The request is cancelled only once the lock statement is observed IN FLIGHT: the statement
+// first waits on a gate lock the test holds, the test sees that wait in pg_locks, cancels, and
+// then opens the gate. A cancel on a timer instead races the session connect that precedes the
+// lock query — under load the connect can outlast the timer, and the request then ends before
+// any lock is taken, which is a different (and correct) refusal than the one this test asserts.
+// The gated statement still runs under the lease's statsJobLeasePingTimeout (2s), so the steps
+// from the gate wait being seen to the gate opening (one poll tick, cancel, one rollback) must
+// fit in it; they take milliseconds.
 func TestLiveStatsJobLease_NewLockIsNotAdmittedAfterTheRequestEnds(t *testing.T) {
 	pool := liveLeasePool(t)
-	acc := "xadmit-" + time.Now().Format("150405.000000000")
+	acc := "xadmit-" + liveLeaseSuffix()
 	lease := NewStatsJobLease(&Pool{Pool: pool})
 	t.Cleanup(func() { lease.Close(context.Background()) })
-	lease.lockSQL = "SELECT pg_try_advisory_lock($1, $2) FROM pg_sleep(0.3)" // a slow, successful lock
+
+	// The gate: a two-int advisory lock outside the lease's key space, held by a test transaction.
+	// The lock statement takes it as a transaction lock first, so it blocks until the test rolls
+	// back and releases it at its own end; only then does it run the real try-lock.
+	const gateClass int32 = 0x58474154 // "XGAT"
+	gateKey := statsJobLeaseKey(acc)
+	gate, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin the gate transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = gate.Rollback(context.Background()) })
+	if _, err := gate.Exec(context.Background(), `SELECT pg_advisory_xact_lock($1, $2)`, gateClass, gateKey); err != nil {
+		t.Fatalf("take the gate: %v", err)
+	}
+	lease.lockSQL = fmt.Sprintf(`WITH gate AS MATERIALIZED (SELECT pg_advisory_xact_lock(%d, %d))
+		SELECT pg_try_advisory_lock($1, $2) FROM gate`, gateClass, gateKey) // a gated, successful lock
 
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(100*time.Millisecond, cancel)
-	err := lease.Own(ctx, acc)
+	defer cancel()
+	owned := make(chan error, 1)
+	go func() { owned <- lease.Own(ctx, acc) }()
+	waitForGateWaiter(t, pool, gateClass, gateKey, owned)
+	cancel() // the request ends while the lock statement is in flight
+	if err := gate.Rollback(context.Background()); err != nil {
+		t.Fatalf("open the gate: %v", err)
+	}
+
+	select {
+	case err = <-owned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Own did not return within 10s of the gate opening")
+	}
 	if !errors.Is(err, domain.ErrStatsJobLeaseUnavailable) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want Unavailable wrapping context.Canceled", err)
 	}
@@ -234,6 +271,36 @@ func TestLiveStatsJobLease_NewLockIsNotAdmittedAfterTheRequestEnds(t *testing.T)
 	lease.lockSQL = "SELECT NULL::boolean" // any further lock call would now fail to scan
 	if err := lease.Own(context.Background(), acc); err != nil {
 		t.Errorf("Own on a live request: %v, want owned with no lock call", err)
+	}
+}
+
+// waitForGateWaiter waits until some backend is blocked on the gate lock (class, key), failing
+// after 10s, or at once if Own returns first — it then never reached the lock statement.
+func waitForGateWaiter(t *testing.T, pool *pgxpool.Pool, class, key int32, owned <-chan error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var waiting bool
+		err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks
+			WHERE locktype = 'advisory' AND objsubid = 2 AND NOT granted
+			  AND classid::bigint = ($1::int4::bigint & 4294967295)
+			  AND objid::bigint = ($2::int4::bigint & 4294967295))`, class, key).Scan(&waiting)
+		if err != nil {
+			t.Fatalf("read pg_locks for the gate waiter: %v", err)
+		}
+		if waiting {
+			return
+		}
+		select {
+		case err := <-owned:
+			t.Fatalf("Own returned before its lock statement reached the gate: %v", err)
+		case <-ctx.Done():
+			t.Fatal("the lock statement never blocked on the gate within 10s")
+		case <-tick.C:
+		}
 	}
 }
 

@@ -1729,7 +1729,8 @@ func (r *CampaignRepo) releaseCampaignLock(ctx context.Context, token domain.Cam
 	return nil
 }
 
-// cooldownWG tracks in-flight ReleaseCampaignLockAfterCooldown goroutines so
+// cooldownWG tracks in-flight cooldown releases (releaseAfterSharedCooldown: the campaign claim's
+// ReleaseCampaignLockAfterCooldown and the Reddit keyword-targeting lock's ReleaseAfterCooldown) so
 // StopCooldownsForShutdown can wait for them to finish releasing their held connection.
 // cooldownShutdown is closed exactly once, by StopCooldownsForShutdown, to make every pending
 // cooldown release immediately instead of waiting out the rest of its cooldown.
@@ -1820,6 +1821,16 @@ func shutdownReleaseBound() time.Duration {
 // time.Sleep here would otherwise make Container.Close overrun its shutdown budget waiting for
 // this one connection.
 func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(token domain.CampaignLockToken, cooldown time.Duration) {
+	releaseAfterSharedCooldown(cooldown, func(bound time.Duration) {
+		_ = r.releaseCampaignLock(context.Background(), token, bound)
+	})
+}
+
+// releaseAfterSharedCooldown runs release after cooldown elapses, or immediately once
+// StopCooldownsForShutdown is called — whichever comes first — tracked by the same shutdown
+// machinery for every caller (the campaign claim's UNCONFIRMED cooldown, and the Reddit
+// keyword-targeting lock's). release receives the bound its unlock round-trip must fit in.
+func releaseAfterSharedCooldown(cooldown time.Duration, release func(bound time.Duration)) {
 	cooldownMu.Lock()
 	if cooldownStopped {
 		cooldownMu.Unlock()
@@ -1832,10 +1843,11 @@ func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(token domain.CampaignLoc
 		// a connection checked out well past the point pgxpool.Close is blocking on it.
 		// Before shutdown the bound falls back to lockReleaseTimeout, so this is never
 		// tighter than the ordinary path.
-		_ = r.releaseCampaignLock(context.Background(), token, shutdownReleaseBound())
+		release(shutdownReleaseBound())
 		return
 	}
 	cooldownWG.Add(1)
+	shutdown := cooldownShutdown
 	cooldownMu.Unlock()
 	go func() {
 		defer cooldownWG.Done()
@@ -1848,14 +1860,14 @@ func (r *CampaignRepo) ReleaseCampaignLockAfterCooldown(token domain.CampaignLoc
 			// 5s bound there would overrun Close's budget exactly as the other branch
 			// would. Before shutdown the bound falls back to lockReleaseTimeout, so the
 			// normal cooldown release is unchanged.
-			_ = r.releaseCampaignLock(context.Background(), token, shutdownReleaseBound())
-		case <-cooldownShutdown:
+			release(shutdownReleaseBound())
+		case <-shutdown:
 			// Woken by shutdown: StopCooldownsForShutdown only waits so long for this
 			// goroutine, so the unlock must be bounded by that same budget rather than by
 			// lockReleaseTimeout. Otherwise Close returns after its wait elapses while this
 			// connection stays checked out for up to lockReleaseTimeout, and pool.Close
 			// blocks on it — pushing shutdown past ContainerCloseTimeout by the difference.
-			_ = r.releaseCampaignLock(context.Background(), token, shutdownReleaseBound())
+			release(shutdownReleaseBound())
 		}
 	}()
 }

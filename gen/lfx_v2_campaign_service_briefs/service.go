@@ -442,12 +442,13 @@ type Service interface {
 	// when refused before anything is written: unprovisioned, a different ad
 	// account, an unrecorded ad account (re-dispatch), an unusable connection, an
 	// ad group / line item this service did not record or the platform no longer
-	// reports under this campaign, a stale Reddit revision, or a Reddit ad group
-	// whose excluded keywords would exceed Reddit's 2,000. **503** only when the
-	// platform answered nothing per keyword. The MESSAGE separates a DEFINITE
-	// failure (nothing was added — retry) from an UNCONFIRMED one (a 5xx, a
-	// timeout, a rate limit, an unreadable answer — verify the campaign's negative
-	// keywords before retrying).
+	// reports under this campaign, a stale Reddit revision, another LFX change to
+	// the same Reddit ad group's targeting still in progress after a short wait
+	// (retry after reading it again), or a Reddit ad group whose excluded keywords
+	// would exceed Reddit's 2,000. **503** only when the platform answered nothing
+	// per keyword. The MESSAGE separates a DEFINITE failure (nothing was added —
+	// retry) from an UNCONFIRMED one (a 5xx, a timeout, a rate limit, an
+	// unreadable answer — verify the campaign's negative keywords before retrying).
 	AddNegativeKeywords(context.Context, *AddNegativeKeywordsPayload) (res *NegativeKeywords, err error)
 	// Read the keyword TARGETING of a Reddit or X campaign (LFXV2-2665): the
 	// positive keywords on the ONE ad group (Reddit) or line item (X) this service
@@ -485,9 +486,15 @@ type Service interface {
 	// whole — so the service re-reads the targeting, refuses (409) unless its
 	// fingerprint still equals the `revision` the caller sends (from
 	// get-keyword-targeting), and writes back exactly what it read with the named
-	// keywords taken out, then reads it again to confirm. All items share one
-	// outcome. Reddit writes are OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED
-	// is "true" (answered 400 like an unsupported platform), because the write
+	// keywords taken out, then reads it again to confirm, holding a per-ad-group
+	// lock shared by every replica from that re-read through the confirmation, so
+	// two LFX writes to one ad group never interleave (Reddit offers no
+	// conditional write, so an edit made outside LFX in that span is not
+	// excluded). After an UNCONFIRMED write the lock is kept a further 15 seconds,
+	// since Reddit may still apply it; that narrows, but cannot close, the window
+	// in which a late write overwrites the next one. All items share one outcome.
+	// Reddit writes are OFF until REDDIT_KEYWORD_TARGETING_WRITES_ENABLED is
+	// "true" (answered 400 like an unsupported platform), because the write
 	// replaces the whole targeting object and has not yet been exercised against a
 	// live ad account. X: items name `criterion_id`; each is one DELETE of that
 	// targeting criterion, in request order, with its own outcome; `revision` must
@@ -500,10 +507,11 @@ type Service interface {
 	// batch (empty or over 20, an item naming the wrong field for the platform,
 	// the same keyword twice, a keyword not in the current targeting, a missing
 	// Reddit revision) or an unsupported platform. **409** as for the read, plus a
-	// changed Reddit targeting and the every-keyword refusal. **503** only when no
-	// item was answered. Its MESSAGE separates a DEFINITE failure (nothing was
-	// removed — retry) from an UNCONFIRMED one (read the targeting again before
-	// retrying).
+	// changed Reddit targeting, another LFX change to the same Reddit ad group's
+	// targeting still in progress after a short wait (retry after reading it
+	// again), and the every-keyword refusal. **503** only when no item was
+	// answered. Its MESSAGE separates a DEFINITE failure (nothing was removed —
+	// retry) from an UNCONFIRMED one (read the targeting again before retrying).
 	RemoveKeywordTargeting(context.Context, *RemoveKeywordTargetingPayload) (res *KeywordTargetingRemovals, err error)
 	// Read the AD SETS of a Meta campaign live (LFXV2-2665): each ad set's name,
 	// configured and effective status, bid strategy and own budget, with its
