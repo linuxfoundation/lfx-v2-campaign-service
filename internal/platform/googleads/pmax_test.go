@@ -160,19 +160,23 @@ func TestCreatePerformanceMaxCampaign_HappyPath(t *testing.T) {
 		t.Errorf("closing step = %q, want the asset-group-present wording", last)
 	}
 
-	// The final-URL-expansion opt-out is the one post-create action v23 left with no
-	// API at all, and forgetting it silently spends the event's budget on URLs with no
-	// UTM attribution. It reaches the operator ONLY through Steps, so assert it is
-	// there: a refactor that drops it would otherwise be invisible until a campaign
-	// had already overspent.
-	var sawExpansionWarning bool
+	// Final-URL expansion now goes out opted-out in the create payload, and the Steps say
+	// so. Asserting the exact const rather than a substring is the point: the two
+	// sentences this file can produce differ by whether an operator has to DO anything,
+	// and a substring match would pass on the hedged "turn it OFF if it is on" being
+	// printed for a campaign this request created with the opt-out — telling the operator
+	// to go fix something that is already correct.
+	var sawExpansionStep bool
 	for _, s := range res.Steps {
-		if strings.Contains(s, "final-URL expansion") {
-			sawExpansionWarning = true
+		if s == expansionOptedOutStep {
+			sawExpansionStep = true
+		}
+		if s == expansionActionRequiredIfExists {
+			t.Errorf("a campaign THIS request created carries the hedged step for an earlier attempt's campaign: %v", res.Steps)
 		}
 	}
-	if !sawExpansionWarning {
-		t.Errorf("Steps never tells the operator to turn off final-URL expansion: %v", res.Steps)
+	if !sawExpansionStep {
+		t.Errorf("Steps never records that final-URL expansion was opted out at create: %v", res.Steps)
 	}
 }
 
@@ -214,6 +218,15 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 		// put the create back on the REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED 400 that
 		// orphaned a budget on 2026-10-16.
 		`"brandGuidelinesEnabled":false`,
+		// The final-URL-expansion opt-out, asserted as the literal entry rather than as
+		// the field merely being present, for the same reason: an omitted or empty
+		// `assetAutomationSettings` leaves the outcome to Google's default instead of to
+		// this service, which is the bug. Both halves are pinned because the type names WHICH automation is
+		// being turned off and the status is what turns it off — either one drifting on
+		// its own would still serialize a plausible-looking field that opts out of
+		// nothing.
+		`"assetAutomationType":"` + assetAutomationFinalURLExpansion + `"`,
+		`"assetAutomationStatus":"` + assetAutomationOptedOut + `"`,
 		`"maximizeConversions"`,
 		"geoTargetTypeSetting",
 	} {
@@ -303,8 +316,11 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 // fails one mutate EARLIER than any of the campaign arms. The budget name is this client's
 // idempotency key, so a re-dispatch of the same brief on this channel is rejected at
 // campaignBudgets:mutate and campaigns:mutate is never attempted. The attempt that created
-// that budget may well have got past Step 2 — leaving a campaign billing with final-URL
-// expansion on — so this return carries the hedged sentence rather than nothing. It is also
+// that budget may well have got past Step 2, leaving a campaign billing — and THAT campaign
+// is not covered by the opt-out this request would have sent, because an earlier attempt
+// created it and may predate the service sending the setting at all (the two prod dispatches
+// of 2026-10-16 are exactly that). So this return carries the hedged ACTION REQUIRED
+// sentence rather than the informational one or nothing. It is also
 // the proof that campaigns:mutate stays untouched: the handler fails the test if it is hit.
 func TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion(t *testing.T) {
 	images := pmaxImages(t)
@@ -347,13 +363,15 @@ func TestCreatePerformanceMaxCampaign_DuplicateBudgetWarnsAboutExpansion(t *test
 
 // TestCreatePerformanceMaxCampaign_UnconfirmedCampaignStillWarnsAboutExpansion covers the
 // two returns that sit ABOVE the campaign-created step and still hand back a campaign.
-// A 2xx from campaigns:mutate whose results carry no usable resource name created the
-// campaign — only the name came back unusable — so it is billable with expansion on while
-// the result carries no CampaignID at all, leaving these Steps the single thing that says
-// so. DUPLICATE_CAMPAIGN_NAME is the weaker case and is worded hedged: the name is taken,
-// so a campaign by that name exists, created by an attempt that may itself have died
-// before it printed the step. Only a definite non-ambiguous error stays silent, because
-// then no campaign was created.
+// The two differ in WHOSE campaign they are talking about, and that is what picks the
+// sentence. A 2xx from campaigns:mutate whose results carry no usable resource name created
+// the campaign in THIS request — only the name came back unusable — so it went out with the
+// opt-out and the informational step is the truthful one, while the result carries no
+// CampaignID at all, leaving these Steps the single thing that says a billable campaign
+// exists. DUPLICATE_CAMPAIGN_NAME is the other case: the name is taken, so a campaign by
+// that name exists, but an EARLIER attempt created it, possibly before this service sent
+// the setting at all — that one gets the hedged ACTION REQUIRED. Only a definite
+// non-ambiguous error stays silent, because then no campaign was created.
 func TestCreatePerformanceMaxCampaign_UnconfirmedCampaignStillWarnsAboutExpansion(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -363,7 +381,7 @@ func TestCreatePerformanceMaxCampaign_UnconfirmedCampaignStillWarnsAboutExpansio
 		{
 			name:     "2xx with no resource name",
 			campaign: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"results":[]}`)) },
-			want:     expansionActionRequired,
+			want:     expansionOptedOutStep,
 		},
 		{
 			name:     "duplicate campaign name",
@@ -403,27 +421,41 @@ func TestCreatePerformanceMaxCampaign_UnconfirmedCampaignStillWarnsAboutExpansio
 			if res.CampaignID != "" {
 				t.Errorf("CampaignID = %q, want empty — no usable resource name came back", res.CampaignID)
 			}
+			// Both directions, because the two sentences differ by whether the operator
+			// has to go and change something: printing the wrong one either sends them
+			// to fix a campaign this request already opted out, or stays quiet about one
+			// that an earlier attempt may have left expanding.
+			other := expansionActionRequiredIfExists
+			if tc.want == other {
+				other = expansionOptedOutStep
+			}
 			var saw bool
 			for _, s := range res.Steps {
 				if s == tc.want {
 					saw = true
 				}
+				if s == other {
+					t.Errorf("Steps carry the final-URL-expansion sentence for the other case: %v", res.Steps)
+				}
 			}
 			if !saw {
-				t.Errorf("a campaign may already be billing and its Steps never mention final-URL expansion: %v", res.Steps)
+				t.Errorf("a campaign may already be billing and its Steps never say %q: %v", tc.want, res.Steps)
 			}
 		})
 	}
 }
 
 // TestCreatePerformanceMaxCampaign_PartialFailureStillWarnsAboutExpansion pins the
-// warning to the paths that need it MOST. Every return past the campaign create hands
-// back a campaign that already exists and is already billable with final-URL expansion
-// on, and internal/dispatch/googleads.go retains and persists the claim on a non-nil
-// result — so this operator reads these Steps, finishes the asset-group work by hand in
-// the Google Ads UI and launches from there, more surely than the happy-path one does.
-// Appended at the end of the cascade the warning reached only the success path; this test
-// fails if it moves back there.
+// step to the paths that need it MOST. Every return past the campaign create hands back a
+// campaign that already exists and is already billable, and internal/dispatch/googleads.go
+// retains and persists the claim on a non-nil result — so this operator reads these Steps,
+// finishes the asset-group work by hand in the Google Ads UI and launches from there, more
+// surely than the happy-path one does. What that operator needs to know here is that the
+// expansion opt-out DID go out with the create, so the campaign they are about to finish is
+// not quietly stripping the UTM attribution: without the step they would have no way to
+// tell, and the Google Ads UI is the only other place that answers it. Appended at the end
+// of the cascade the sentence reached only the success path; this test fails if it moves
+// back there.
 func TestCreatePerformanceMaxCampaign_PartialFailureStillWarnsAboutExpansion(t *testing.T) {
 	assetH, _ := okPMaxAssets()
 	groupH, _ := okPMaxGroup()
@@ -440,14 +472,17 @@ func TestCreatePerformanceMaxCampaign_PartialFailureStillWarnsAboutExpansion(t *
 	if res == nil || res.CampaignID == "" {
 		t.Fatalf("a campaign was created; the partial result must carry it: %+v", res)
 	}
-	var sawExpansionWarning bool
+	var sawExpansionStep bool
 	for _, s := range res.Steps {
-		if strings.Contains(s, "final-URL expansion") {
-			sawExpansionWarning = true
+		if s == expansionOptedOutStep {
+			sawExpansionStep = true
+		}
+		if s == expansionActionRequiredIfExists {
+			t.Errorf("this request created the campaign and opted it out; the hedged step is for an earlier attempt's: %v", res.Steps)
 		}
 	}
-	if !sawExpansionWarning {
-		t.Errorf("a billable campaign exists and its Steps never tell the operator to turn off final-URL expansion: %v", res.Steps)
+	if !sawExpansionStep {
+		t.Errorf("a billable campaign exists and its Steps never record that final-URL expansion was opted out at create: %v", res.Steps)
 	}
 }
 

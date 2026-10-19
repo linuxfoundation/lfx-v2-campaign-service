@@ -15,23 +15,55 @@ const (
 	// single asset group, as opposed to SEARCH or DEMAND_GEN.
 	advertisingChannelPerformanceMax = "PERFORMANCE_MAX"
 
-	// expansionActionRequired is the operator step for a campaign KNOWN to exist. v23
-	// removed url_expansion_opt_out, so final-URL expansion is on from the moment the
-	// campaign exists and nothing in the API can turn it off; only a person in the
-	// Google Ads UI can. It is a const because every path that hands back a billable
-	// campaign has to carry the same sentence — see where it is appended.
-	expansionActionRequired = "ACTION REQUIRED: turn OFF final-URL expansion for this campaign in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
+	// assetAutomationFinalURLExpansion is the AssetAutomationType that carries final-URL
+	// expansion at v23, and assetAutomationOptedOut the status that turns it off. v23
+	// removed `url_expansion_opt_out` from the campaign and the asset group alike, but it
+	// did NOT remove the control: it moved into `campaign.asset_automation_settings`,
+	// which is settable at CREATE and supported on this channel.
+	//
+	// VERIFIED against the live API (2026-10-19), validateOnly so nothing was created:
+	// `googleAdsFields:search` for `%asset_automation%` returns
+	// `campaign.asset_automation_settings` (google.ads.googleads.v23.resources.
+	// Campaign.AssetAutomationSetting), and a `campaigns:mutate` of the probe-D payload
+	// plus the setting below validated 200. A deliberately bogus type on the same payload
+	// is rejected naming `AssetAutomationTypeEnum.AssetAutomationType`, so the value below
+	// is a real member of that enum and not a string Google ignored.
+	assetAutomationFinalURLExpansion = "FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION"
+	assetAutomationOptedOut          = "OPTED_OUT"
 
-	// expansionActionRequiredIfExists is the same step hedged, for the three arms that
-	// cannot confirm the campaign: a duplicate BUDGET name (the budget name is this
-	// client's idempotency key, so a re-dispatch fails there before campaigns:mutate is
-	// attempted, and the attempt that created that budget may have got past Step 2),
-	// DUPLICATE_CAMPAIGN_NAME (a prior attempt created it, and that attempt may well have
-	// died before printing this step) and an ambiguous outcome. All three already send the
-	// operator to the Google Ads UI to check; if a campaign is there, expansion is on and
-	// nothing else will say so.
-	expansionActionRequiredIfExists = "ACTION REQUIRED: if that campaign exists, turn OFF its final-URL expansion in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
+	// expansionOptedOutStep records, for a campaign THIS request created, that the opt-out
+	// went out with the create. It is a plain step and not an ACTION REQUIRED: the setting
+	// is in the payload below, so there is nothing for an operator to do. It stays in
+	// `Steps` because the operator reading them is often looking at a partial failure and
+	// finishing the work by hand, and "expansion is already off" is the thing they would
+	// otherwise go and check.
+	expansionOptedOutStep = "Final-URL expansion: OPTED OUT at create (campaign.asset_automation_settings), so expanded URLs cannot strip the UTM attribution the data pipeline parses back out"
+
+	// expansionActionRequiredIfExists is for the three arms that cannot confirm the
+	// campaign: a duplicate BUDGET name (the budget name is this client's idempotency key,
+	// so a re-dispatch fails there before campaigns:mutate is attempted, and the attempt
+	// that created that budget may have got past Step 2), DUPLICATE_CAMPAIGN_NAME (a prior
+	// attempt created it, and that attempt may well have died before printing this step)
+	// and an ambiguous outcome.
+	//
+	// It survives the opt-out above, and the reason is the whole point of the hedge: the
+	// campaign these arms are talking about was created by SOME EARLIER ATTEMPT, which may
+	// predate this service ever sending the setting — the two prod dispatches of
+	// 2026-10-16 are exactly that, and either could be the campaign the operator finds.
+	// All three already send them to the Google Ads UI to check; if what is there was
+	// created without the opt-out, expansion is on and nothing else will say so.
+	expansionActionRequiredIfExists = "ACTION REQUIRED: if that campaign exists, check its final-URL expansion in the Google Ads UI and turn it OFF if it is on — this service now opts out at create, but a campaign left by an earlier attempt may predate that, and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
 )
+
+// assetAutomationSetting is one entry of `campaign.asset_automation_settings`. Both
+// fields are sent unconditionally — no `omitempty` — for the reason
+// BrandGuidelinesEnabled states: an omitted field leaves the outcome to Google's own
+// default rather than to this service, and the default here is the behaviour the opt-out
+// exists to prevent.
+type assetAutomationSetting struct {
+	AssetAutomationType   string `json:"assetAutomationType"`
+	AssetAutomationStatus string `json:"assetAutomationStatus"`
+}
 
 // performanceMaxCampaignCreate is a THIRD payload shape rather than a widened
 // campaignCreate, for the reason demandGenCampaignCreate states: the channels disagree
@@ -94,16 +126,24 @@ type performanceMaxCampaignCreate struct {
 	// decided at create time. Doing the reordering here is the better answer and is what
 	// should replace this field.
 	//
-	// WHAT IS NOT HERE: this payload used to carry `urlExpansionOptOut: true`, to stop
-	// Performance Max crawling the site, generating its own landing pages, and spending
-	// the event's budget on URLs carrying none of the UTM attribution the data pipeline
-	// parses back out. Probe A is the field being GONE at v23 — removed outright, on the
-	// campaign and on the asset group alike (`googleAdsFields:search` for `%url_expansion%`
-	// returns only the reporting view `final_url_expansion_asset_view`). The risk did not
-	// go with it: final-URL expansion is now on by default and can only be turned off in
-	// the Google Ads UI, per campaign, by hand. That is an operator step after every
-	// Performance Max create, and forgetting it is silent.
 	BrandGuidelinesEnabled bool `json:"brandGuidelinesEnabled"`
+	// AssetAutomationSettings carries the final-URL-expansion opt-out, which is what this
+	// payload used to spell `urlExpansionOptOut: true` — stopping Performance Max from
+	// crawling the site, generating its own landing pages, and spending the event's budget
+	// on URLs carrying none of the UTM attribution the data pipeline parses back out.
+	//
+	// Probe A is that FIELD being gone at v23, removed outright on the campaign and the
+	// asset group alike (`googleAdsFields:search` for `%url_expansion%` returns only the
+	// reporting view `final_url_expansion_asset_view`). The CONTROL was not removed with
+	// it — it moved to `campaign.asset_automation_settings`, verified live and settable at
+	// create; see the consts at the top of this file for the two probes that establish it.
+	//
+	// So this is not a like-for-like rename and must not be read as one: the entry below
+	// opts out of ONE asset-automation type, and Google may add others that this payload
+	// then leaves at their default. It is sent as a slice literal with one element rather
+	// than a nil-able pointer, and without `omitempty`, so an empty slice can never be the
+	// thing that silently restores the default.
+	AssetAutomationSettings []assetAutomationSetting `json:"assetAutomationSettings"`
 	// StartDateTime/EndDateTime are the same campaign-level v23 fields both other
 	// payloads carry, resolved by the same shared preflight. See demandgen.go for why
 	// carrying them is a correctness requirement and not a nicety: applyCampaignConfig
@@ -219,8 +259,12 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
 		BrandGuidelinesEnabled:         false,
-		StartDateTime:                  pf.startDateTime,
-		EndDateTime:                    pf.endDateTime,
+		AssetAutomationSettings: []assetAutomationSetting{{
+			AssetAutomationType:   assetAutomationFinalURLExpansion,
+			AssetAutomationStatus: assetAutomationOptedOut,
+		}},
+		StartDateTime: pf.startDateTime,
+		EndDateTime:   pf.endDateTime,
 		// Resolved by the SHARED preflight, which on this channel admits only the four
 		// conversion-based strategies — Performance Max has no manual bidding at all.
 		biddingFields: pf.bidding.fields(),
@@ -245,14 +289,14 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	// PAST THIS LINE THE CAMPAIGN EXISTS. `campaigns:mutate` answered 2xx, so the two
 	// failures below are a resource name this client cannot use — not a campaign that was
 	// never created. They hand back no CampaignID, which makes these Steps the only thing
-	// that tells the operator a billable campaign is out there with expansion on.
+	// that tells the operator a billable campaign is out there at all.
 	campaignResource, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
-		steps = append(steps, expansionActionRequired)
+		steps = append(steps, expansionOptedOutStep)
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — verify in Google Ads before retrying): %w", budgetID, err)
 	}
 	if verr := c.validateCampaignResource(campaignResource); verr != nil {
-		steps = append(steps, expansionActionRequired)
+		steps = append(steps, expansionOptedOutStep)
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, verr)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, PERFORMANCE_MAX, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(pf.startDateTime, pf.endDateTime)))
@@ -261,10 +305,10 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	// internal/dispatch/googleads.go keeps and persists the claim on a non-nil result — so a
 	// partial failure puts an operator in front of exactly these Steps, finishing the geo or
 	// asset-group work by hand in the Google Ads UI and launching from there. Appended at the
-	// end, this warning reached only the operator least likely to need it. The returns ABOVE
+	// end, this step would reach only the operator least likely to need it. The returns ABOVE
 	// this line carry it too, for the same reason: a 2xx with an unusable resource name is
-	// still a campaign.
-	steps = append(steps, expansionActionRequired)
+	// still a campaign, and it is still one this request opted out at create.
+	steps = append(steps, expansionOptedOutStep)
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
