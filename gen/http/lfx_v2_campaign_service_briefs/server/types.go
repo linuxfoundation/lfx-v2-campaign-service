@@ -9141,8 +9141,8 @@ func ValidateBriefInputRequestBody(body *BriefInputRequestBody) (err error) {
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
 		}
 	}
 	return
@@ -9173,8 +9173,8 @@ func validateBriefInputRequestBody(body *BriefInputRequestBody, path string) (er
 		}
 	}
 	if body.Stage != nil {
-		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Report Promo") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
+		if !(*body.Stage == "" || *body.Stage == "CFP Launch" || *body.Stage == "Schedule Announcement" || *body.Stage == "Registration Push" || *body.Stage == "Discount Offer" || *body.Stage == "Final Countdown" || *body.Stage == "Post-Event" || *body.Stage == "Survey Promo" || *body.Stage == "Survey Reminder" || *body.Stage == "Survey Closing" || *body.Stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".stage", *body.Stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
 		}
 	}
 	return

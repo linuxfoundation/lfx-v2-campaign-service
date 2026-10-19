@@ -1496,6 +1496,8 @@ paths:
                         - Final Countdown
                         - Post-Event
                         - Survey Promo
+                        - Survey Reminder
+                        - Survey Closing
                         - Report Promo
                   example: Registration Push
                 - name: project_id
@@ -5883,11 +5885,11 @@ paths:
             parameters:
                 - name: stage
                   in: query
-                  description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                  description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                   allowEmptyValue: true
                   schema:
                     type: string
-                    description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
+                    description: 'Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.'
                     example: Post-Event
                   example: Post-Event
                 - name: variant
@@ -17901,6 +17903,8 @@ components:
                         - Final Countdown
                         - Post-Event
                         - Survey Promo
+                        - Survey Reminder
+                        - Survey Closing
                         - Report Promo
                 status:
                     type: string
@@ -18003,6 +18007,8 @@ components:
                         - Final Countdown
                         - Post-Event
                         - Survey Promo
+                        - Survey Reminder
+                        - Survey Closing
                         - Report Promo
                 targeting:
                     description: Targeting recommendation

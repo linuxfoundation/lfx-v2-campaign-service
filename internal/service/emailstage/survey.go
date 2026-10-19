@@ -20,7 +20,17 @@ import "strings"
 // is the spec the research team signed off on rather than a paraphrase this package invented.
 const (
 	SurveyPromo = "Survey Promo"
-	ReportPromo = "Report Promo"
+	// SurveyReminder and SurveyClosing are the survey's SERIES, the counterpart of the event
+	// surface's six sends: the same instrument promoted again while it is still in field, and once
+	// more as it closes. Separate stages rather than one re-sent brief because a brief is keyed on
+	// its stage -- two sends under one stage would occupy one identity slot and the second would
+	// displace the first, taking its audience and its draft link with it.
+	//
+	// Report promotion has no counterpart here on purpose: a published report does not close, so a
+	// closing send would have to name a deadline the source cannot state.
+	SurveyReminder = "Survey Reminder"
+	SurveyClosing  = "Survey Closing"
+	ReportPromo    = "Report Promo"
 )
 
 // DefaultSurveyStage is what an absent or unrecognised stage resolves to on the survey surface.
@@ -47,22 +57,14 @@ sentence entirely rather than writing a plausible one. This outranks every struc
 instruction below: a required section whose supporting fact is absent from the source is
 dropped, not guessed.`
 
-// SurveyTemplates is the survey surface's stage specs, keyed exactly as the stage is stored.
-var SurveyTemplates = map[string]Template{
-	SurveyPromo: {
-		StageName:      SurveyPromo,
-		Purpose:        "Win survey responses from readers who fit the target demographic",
-		Timing:         "While the survey is in field",
-		Tone:           "Direct, second person, plain vocabulary, respectful of the reader's time",
-		UrgencyLevel:   4,
-		SubjectPattern: "[DEMOGRAPHIC] -- we need your perspective",
-		SubjectExamples: []string{
-			"Do you work in open source security?",
-			"Share your perspective: the 2026 state of [TOPIC]",
-			"The [SURVEY_NAME] survey is still open",
-		},
-		PreviewPattern: "One-line inbox preview naming who the survey is for",
-		ContentPrompt: `Generate a SURVEY PARTICIPATION PROMO email.
+// The survey series' three sends differ ONLY in how they open. Everything below the opening --
+// who is fielding it, the goals, the topics, the impact sentence, the incentive, the CTA and the
+// disclosure -- is one specification, so it is written once here and shared, rather than pasted
+// into three templates that would drift apart at the first edit.
+//
+// Split into a head and a tail with the opening between them because the opening is the only
+// stage-specific part: `surveyParticipationPrompt` assembles the three.
+const surveyParticipationHead = `Generate a SURVEY PARTICIPATION PROMO email.
 
 PRIMARY OBJECTIVE: the reader clicks through and takes the survey. EVERY section supports this.
 
@@ -75,9 +77,9 @@ sentence explaining how the recipient's participation will impact the open sourc
 any relevant sectors you can glean from the survey topic."
 
 REQUIRED INFORMATION HIERARCHY:
-1. OPENING: ask the reader whether they fit the survey's target demographic. Lead with the
-   question -- it is what qualifies the reader to keep reading.
+`
 
+const surveyParticipationTail = `
 2. WHO IS FIELDING IT: name LF Research and any sponsors the source document names. Name no
    sponsor the source does not.
 
@@ -102,12 +104,108 @@ REQUIRED INFORMATION HIERARCHY:
    analysed into a published report and the dataset made publicly available; and that questions
    go to research@linuxfoundation.org. Write it compactly; it does not count toward the 100-word
    body limit.
-` + surveyBodyRule,
-		CTAStrategy: []string{
-			"One primary button, 'Take the Survey', on the supplied URL",
-			"Repeat the ask at most twice across the whole email",
-			"No secondary call to action competing with the survey",
+`
+
+// The three openings, ported from the prototype's sequence instructions
+// (survey_promo/prompts.py, SEQUENCE_INSTRUCTIONS): "invite: neutral opening", "reminder: same
+// offer framed as still open", "deadline: urgency ... If the source text does not state a
+// deadline, do not invent one".
+const (
+	surveyPromoOpening = `1. OPENING: ask the reader whether they fit the survey's target demographic. Lead with the
+   question -- it is what qualifies the reader to keep reading.
+`
+
+	surveyReminderOpening = `1. OPENING: this is the SECOND send to the same readers, so open by framing the survey as still
+   open rather than introducing it as news -- "the survey is still open", "there is still time to
+   share your perspective". Keep the demographic question only if it can be folded into that
+   framing; do not re-introduce the survey as though the reader has not heard of it.
+
+   Do NOT say or imply that the reader has not yet responded. The send list is not filtered on
+   who has answered, so that claim is wrong for everyone who already has.
+`
+
+	surveyClosingOpening = `1. OPENING: this is the LAST send, so open on the closing. Name the closing date ONLY if the
+   source document states one, and then state it exactly as the source does. If the source gives
+   no date, use urgency without one -- "closing soon", "the last chance to take part" -- and
+   never a date you inferred, rounded or calculated.
+
+   A date that appears in the source for something else (a coupon's expiry, a report's publication
+   window) is NOT the survey's closing date. Use only a date the source ties to the survey closing.
+`
+)
+
+// surveyParticipationPrompt assembles one survey send's spec from the shared body and its own
+// opening, so the three stages cannot drift apart below the opening line.
+func surveyParticipationPrompt(opening string) string {
+	return surveyParticipationHead + opening + surveyParticipationTail + surveyBodyRule
+}
+
+// surveyCTAStrategy is the call-to-action discipline every survey send shares. One variable
+// rather than three identical literals, for the reason the prompt spec is one: the rule is about
+// the SURFACE, so a send that disagreed with it would be a defect rather than a variation.
+var surveyCTAStrategy = []string{
+	"One primary button, 'Take the Survey', on the supplied URL",
+	"Repeat the ask at most twice across the whole email",
+	"No secondary call to action competing with the survey",
+}
+
+// SurveyTemplates is the survey surface's stage specs, keyed exactly as the stage is stored.
+var SurveyTemplates = map[string]Template{
+	SurveyPromo: {
+		StageName:      SurveyPromo,
+		Purpose:        "Win survey responses from readers who fit the target demographic",
+		Timing:         "While the survey is in field",
+		Tone:           "Direct, second person, plain vocabulary, respectful of the reader's time",
+		UrgencyLevel:   4,
+		SubjectPattern: "[DEMOGRAPHIC] -- we need your perspective",
+		SubjectExamples: []string{
+			"Do you work in open source security?",
+			"Share your perspective: the 2026 state of [TOPIC]",
+			"The [SURVEY_NAME] survey is still open",
 		},
+		PreviewPattern:      "One-line inbox preview naming who the survey is for",
+		ContentPrompt:       surveyParticipationPrompt(surveyPromoOpening),
+		CTAStrategy:         surveyCTAStrategy,
+		FooterNote:          "Closes with the research team's privacy, visibility and questions disclosure.",
+		PrimaryCTA:          "Take the Survey",
+		LinksToRegistration: false,
+	},
+
+	SurveyReminder: {
+		StageName:      SurveyReminder,
+		Purpose:        "Win responses from readers who have not acted on the first send",
+		Timing:         "Mid-field, between the opening send and the close",
+		Tone:           "Direct, second person, plain vocabulary, respectful of the reader's time",
+		UrgencyLevel:   5,
+		SubjectPattern: "The [SURVEY_NAME] survey is still open",
+		SubjectExamples: []string{
+			"Still open: the 2026 [TOPIC] survey",
+			"Your voice matters: we are still seeking input on [TOPIC]",
+			"A few minutes to shape [TOPIC] research",
+		},
+		PreviewPattern:      "One-line inbox preview framing the survey as still open",
+		ContentPrompt:       surveyParticipationPrompt(surveyReminderOpening),
+		CTAStrategy:         surveyCTAStrategy,
+		FooterNote:          "Closes with the research team's privacy, visibility and questions disclosure.",
+		PrimaryCTA:          "Take the Survey",
+		LinksToRegistration: false,
+	},
+
+	SurveyClosing: {
+		StageName:      SurveyClosing,
+		Purpose:        "Win the last responses before the survey closes",
+		Timing:         "The final days the survey is in field",
+		Tone:           "Direct and urgent, second person, plain vocabulary, never alarmist",
+		UrgencyLevel:   8,
+		SubjectPattern: "Last chance: [SURVEY_NAME] closes [DATE_IF_SOURCE_GIVES_ONE]",
+		SubjectExamples: []string{
+			"Last chance to help shape the 2026 [TOPIC] story",
+			"The [SURVEY_NAME] survey closes this week",
+			"Closing soon: share your [TOPIC] perspective",
+		},
+		PreviewPattern:      "One-line inbox preview carrying the closing, with a date only if the source states one",
+		ContentPrompt:       surveyParticipationPrompt(surveyClosingOpening),
+		CTAStrategy:         surveyCTAStrategy,
 		FooterNote:          "Closes with the research team's privacy, visibility and questions disclosure.",
 		PrimaryCTA:          "Take the Survey",
 		LinksToRegistration: false,
@@ -188,7 +286,7 @@ func ResolveSurvey(stage string) Template {
 // picker all read this list, so adding a stage here without a migration writes a row the column
 // refuses.
 func SurveyNames() []string {
-	return []string{SurveyPromo, ReportPromo}
+	return []string{SurveyPromo, SurveyReminder, SurveyClosing, ReportPromo}
 }
 
 // IsSurveyStage reports whether stage belongs to the survey surface.

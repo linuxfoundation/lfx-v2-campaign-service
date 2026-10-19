@@ -1323,9 +1323,10 @@ type GenerateEmailCopyPayload struct {
 	BriefID string
 	// Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement,
 	// Registration Push, Discount Offer, Final Countdown, Post-Event. Survey
-	// stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an
-	// unrecognised value resolves to Registration Push rather than failing, so a
-	// misspelling yields registration copy under a 200 rather than an error.
+	// stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo.
+	// Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration
+	// Push rather than failing, so a misspelling yields registration copy under a
+	// 200 rather than an error.
 	Stage *string
 	// Requests a differently-styled draft of the same stage's copy. Currently one
 	// value is recognised: 'urgency-fomo', which asks for an urgency/FOMO-forward

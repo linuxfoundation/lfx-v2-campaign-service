@@ -70,7 +70,7 @@ var BriefData = Type("brief-data", func() {
 	// generation should never be blocked by a misspelling. Storage is the opposite -- a
 	// misspelling there is unrecoverable, so it must fail at the edge.
 	Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
-		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo")
+		Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
 		Example("Registration Push")
 	})
 	Attribute("url", String, "Event/course page URL")
@@ -1572,7 +1572,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 				Example("email")
 			})
 			Attribute("stage", String, "Stage within a send series. Empty for paid, which has no series. An email brief's stage names one send in the event's series; a survey brief's names the asset it promotes.", func() {
-				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo")
+				Enum("", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo")
 				Default("")
 				Example("Registration Push")
 			})
@@ -1999,7 +1999,7 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			// told it succeeded. `emailstage.Resolve` is where that fallback lives, and the
 			// response does not report which stage was actually used — a caller that needs to
 			// know must compare what it sent against `Names()`.
-			Attribute("stage", String, "Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
+			Attribute("stage", String, "Stage the email belongs to. Event stages: CFP Launch, Schedule Announcement, Registration Push, Discount Offer, Final Countdown, Post-Event. Survey stages: Survey Promo, Survey Reminder, Survey Closing, Report Promo. Matching is CASE-SENSITIVE; an unrecognised value resolves to Registration Push rather than failing, so a misspelling yields registration copy under a 200 rather than an error.", func() {
 				Example("Post-Event")
 			})
 			// OPTIONAL, same free-text/lenient-fallback shape as stage: absent or unrecognised

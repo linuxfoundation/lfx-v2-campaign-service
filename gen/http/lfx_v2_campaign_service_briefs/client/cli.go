@@ -108,8 +108,8 @@ func BuildFindBriefPayload(lfxV2CampaignServiceBriefsFindBriefProjectID *string,
 	var stage string
 	{
 		stage = lfxV2CampaignServiceBriefsFindBriefStage
-		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event" || stage == "Survey Promo" || stage == "Report Promo") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Report Promo"}))
+		if !(stage == "" || stage == "CFP Launch" || stage == "Schedule Announcement" || stage == "Registration Push" || stage == "Discount Offer" || stage == "Final Countdown" || stage == "Post-Event" || stage == "Survey Promo" || stage == "Survey Reminder" || stage == "Survey Closing" || stage == "Report Promo") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("stage", stage, []any{"", "CFP Launch", "Schedule Announcement", "Registration Push", "Discount Offer", "Final Countdown", "Post-Event", "Survey Promo", "Survey Reminder", "Survey Closing", "Report Promo"}))
 		}
 		if err != nil {
 			return nil, err

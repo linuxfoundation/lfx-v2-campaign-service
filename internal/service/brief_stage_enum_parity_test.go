@@ -43,8 +43,8 @@ func TestPublishedStageEnumMatchesEmailStageNames(t *testing.T) {
 	want := append([]string{""}, emailstage.Names()...)
 	want = append(want, emailstage.SurveyNames()...)
 
-	if len(want) != 9 {
-		t.Fatalf("expected 6 email stages plus 2 survey stages plus the empty paid stage, got "+
+	if len(want) != 11 {
+		t.Fatalf("expected 6 email stages plus 4 survey stages plus the empty paid stage, got "+
 			"%d (%v): this test's premise moved and the design enum needs a deliberate review, "+
 			"not a mechanical update", len(want), want)
 	}
