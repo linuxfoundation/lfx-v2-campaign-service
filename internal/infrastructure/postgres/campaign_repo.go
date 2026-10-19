@@ -480,11 +480,18 @@ const getCampaignByPlatformQuery = `SELECT ` + campaignCols + ` FROM campaigns
 	ORDER BY slot_version DESC
 	LIMIT 1`
 
-// maxSlotVersionQuery deliberately does NOT exclude deleted rows, unlike every read above: it
-// answers "which slot versions have ever been used", and a deleted campaign's version is used —
-// its upstream campaign still carries the name that version composed. See MaxSlotVersion.
-const maxSlotVersionQuery = `SELECT COALESCE(MAX(slot_version), 0) FROM campaigns
-	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4`
+// getCampaignByPlatformWithMaxSlotVersionQuery is getCampaignByPlatformQuery plus, as a scalar
+// subquery in the SAME statement (one snapshot), the highest slot_version ever used on the slot.
+// The subquery deliberately does NOT exclude deleted rows: a deleted campaign's version is used,
+// since its upstream campaign still carries the name that version composed. See
+// GetCampaignByPlatformWithMaxSlotVersion.
+const getCampaignByPlatformWithMaxSlotVersionQuery = `SELECT ` + campaignCols + `,
+	(SELECT COALESCE(MAX(h.slot_version), 0) FROM campaigns h
+	  WHERE h.brief_id=$1 AND h.platform=$2 AND h.project_id=$3 AND h.variant=$4) AS max_slot_version
+	FROM campaigns
+	WHERE brief_id=$1 AND platform=$2 AND project_id=$3 AND variant=$4 AND status <> 'deleted'
+	ORDER BY slot_version DESC
+	LIMIT 1`
 
 // getCampaignBySlotQuery reads ONE slot version's live row. It is what the claim reads back:
 // the row that won (ours, or the one we conflicted with) is the one at that slot version,
@@ -733,14 +740,32 @@ func (r *CampaignRepo) GetCampaignByPlatform(ctx context.Context, projectID, bri
 	return c, nil
 }
 
-// MaxSlotVersion returns the highest slot version ever used on a slot, deleted rows included,
-// or 0 when the slot has none. Scoped by project_id like GetCampaignByPlatform.
-func (r *CampaignRepo) MaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (int, error) {
-	var n int
-	if err := r.db.QueryRow(ctx, maxSlotVersionQuery, briefID, string(platform), projectID, model.NormalizeVariant(variant)).Scan(&n); err != nil {
-		return 0, fmt.Errorf("max slot version: %w", err)
+// GetCampaignByPlatformWithMaxSlotVersion returns the slot's latest live campaign and the
+// highest slot version it has ever used, deleted rows included, from one statement. ErrNotFound
+// when the slot has no live campaign (the maximum is then not needed: there is nothing to build
+// a new version on).
+func (r *CampaignRepo) GetCampaignByPlatformWithMaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, int, error) {
+	var maxUsed int
+	row := r.db.QueryRow(ctx, getCampaignByPlatformWithMaxSlotVersionQuery, briefID, string(platform), projectID, model.NormalizeVariant(variant))
+	c, err := scanCampaign(trailingScanRow{row: row, extra: []any{&maxUsed}})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, 0, domain.ErrNotFound
+		}
+		return nil, 0, fmt.Errorf("get campaign by platform with max slot version: %w", err)
 	}
-	return n, nil
+	return c, maxUsed, nil
+}
+
+// trailingScanRow lets scanCampaign read a row that carries extra columns after campaignCols:
+// it appends extra's destinations to the ones scanCampaign passes.
+type trailingScanRow struct {
+	row   pgx.Row
+	extra []any
+}
+
+func (t trailingScanRow) Scan(dest ...any) error {
+	return t.row.Scan(append(dest, t.extra...)...)
 }
 
 // getCampaignBySlot returns the live campaign at one slot version, or ErrNotFound.

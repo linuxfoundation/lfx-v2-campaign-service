@@ -1757,7 +1757,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// The lookup returns the slot's LATEST live campaign, and slotVersion is which campaign
 	// on the slot this dispatch claims: the latest one for a retry, the one after it for a
 	// deliberate new version, and the first when the slot is empty.
-	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	//
+	// A new-version request also needs the highest slot version ever used, and reads it in the
+	// same statement as the latest (see GetCampaignByPlatformWithMaxSlotVersion for why one).
+	var (
+		existing *model.Campaign
+		maxUsed  int
+		lerr     error
+	)
+	if opts.NewVersion {
+		existing, maxUsed, lerr = o.campaigns.GetCampaignByPlatformWithMaxSlotVersion(ctx, brief.ProjectID, brief.ID, p, variant)
+	} else {
+		existing, lerr = o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	}
 	slotVersion := model.FirstSlotVersion
 	switch {
 	case lerr == nil && isReusableCampaign(existing) && opts.NewVersion:
@@ -1773,13 +1785,7 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// Numbered past every version the slot has EVER used, not just the live latest: a
 		// deleted campaign keeps its upstream name, so reusing its version would compose that
 		// name again and a name-based lookup would return the deleted campaign as this one.
-		used, merr := o.campaigns.MaxSlotVersion(ctx, brief.ProjectID, brief.ID, p, variant)
-		if merr != nil {
-			slog.ErrorContext(ctx, "slot version lookup failed", "platform", p, "job_id", jobID, "error", merr)
-			res.Error = "could not check for an existing campaign"
-			return res
-		}
-		slotVersion = max(existing.SlotVersion, used) + 1
+		slotVersion = max(existing.SlotVersion, maxUsed) + 1
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A

@@ -123,13 +123,16 @@ type CampaignReader interface {
 	// unique slot. Empty is normalized to model.VariantDefault, which is what every
 	// provider that does not sub-divide uses.
 	GetCampaignByPlatform(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, error)
-	// MaxSlotVersion returns the highest SlotVersion any row on a (brief, platform, variant)
-	// slot has ever held, soft-deleted rows INCLUDED, or 0 when the slot has none. A
-	// new_version request numbers its campaign from this, not from GetCampaignByPlatform's
-	// live latest: deleting a campaign only unbinds it locally, so its upstream campaign keeps
-	// the name its slot version composed (model.SlotNameSuffix), and reusing that version would
-	// let a name-based lookup hand the deleted campaign back as the new one.
-	MaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (int, error)
+	// GetCampaignByPlatformWithMaxSlotVersion is GetCampaignByPlatform plus the highest
+	// SlotVersion any row on the slot has ever held, soft-deleted rows INCLUDED, read in ONE
+	// statement so both come from the same snapshot. A new_version request numbers its campaign
+	// past that maximum: deleting a campaign only unbinds it locally, so its upstream campaign
+	// keeps the name its slot version composed (model.SlotNameSuffix), and reusing that version
+	// would let a name-based lookup hand the deleted campaign back as the new one. One snapshot,
+	// because two reads let a concurrent request's claim land between them: both requests would
+	// see the same completed latest, but the second would count the first's pending claim in
+	// its maximum and pick a DIFFERENT next version, so the claim could no longer dedupe them.
+	GetCampaignByPlatformWithMaxSlotVersion(ctx context.Context, projectID, briefID string, platform model.Provider, variant string) (*model.Campaign, int, error)
 	// ListCampaignsForBrief returns every live campaign under a brief, ordered so a
 	// consumer's rows are stable across reads. Soft-deleted rows are excluded, matching
 	// GetCampaign — a deleted campaign is invisible to reads.

@@ -191,6 +191,9 @@ type fakeCampaignRepo struct {
 	// deletedSlotVersions maps a slotKey to the highest slot version a soft-deleted row on that
 	// slot held. Those rows are invisible to every read except MaxSlotVersion, as in Postgres.
 	deletedSlotVersions map[string]int
+	// afterSlotRead, when set, runs right after GetCampaignByPlatformWithMaxSlotVersion has
+	// read, to land a concurrent request's claim between that read and this one's claim.
+	afterSlotRead func()
 	// adoptBriefVersion, when non-zero, is the brief version AdoptCampaign's locked re-read
 	// would find. A mismatch against the caller's expectedVersion is ErrStaleApproval.
 	adoptBriefVersion int64
@@ -355,6 +358,10 @@ func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, projectID, b
 func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.latestLiveLocked(briefID, platform, variant)
+}
+
+func (r *fakeCampaignRepo) latestLiveLocked(briefID string, platform model.Provider, variant string) (*model.Campaign, error) {
 	if r.byPlatformErr != nil {
 		return nil, r.byPlatformErr
 	}
@@ -387,22 +394,36 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // the same row. Writing only the qualified form would break them for a reason unrelated to
 // what they assert. Writes are still keyed correctly — a demand-gen row never lands on the
 // bare key, so it cannot be mistaken for a Search row.
-// MaxSlotVersion mirrors the real query: every version the slot has used, live (existing,
-// upserted) or soft-deleted (deletedSlotVersions), or 0 for an unused slot.
-func (r *fakeCampaignRepo) MaxSlotVersion(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (int, error) {
+// GetCampaignByPlatformWithMaxSlotVersion mirrors the real single statement: the latest live
+// row and every version the slot has used — live (existing, upserted) or soft-deleted
+// (deletedSlotVersions) — read under ONE lock, as Postgres reads them from one snapshot.
+// afterSlotRead then runs, standing in for a concurrent request whose claim lands right after.
+func (r *fakeCampaignRepo) GetCampaignByPlatformWithMaxSlotVersion(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (*model.Campaign, int, error) {
+	c, n, err := r.slotRead(briefID, platform, variant)
+	if r.afterSlotRead != nil {
+		r.afterSlotRead()
+	}
+	return c, n, err
+}
+
+func (r *fakeCampaignRepo) slotRead(briefID string, platform model.Provider, variant string) (*model.Campaign, int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	c, err := r.latestLiveLocked(briefID, platform, variant)
+	if err != nil {
+		return nil, 0, err
+	}
 	key := slotKey(briefID, platform, variant)
 	n := r.deletedSlotVersions[key]
-	if c, ok := r.existing[key]; ok && c.SlotVersion > n {
-		n = c.SlotVersion
+	if v := model.NormalizeSlotVersion(c.SlotVersion); v > n {
+		n = v
 	}
-	for _, c := range r.upserted {
-		if c != nil && slotKey(c.BriefID, c.Platform, c.Variant) == key && c.SlotVersion > n {
-			n = c.SlotVersion
+	for _, u := range r.upserted {
+		if u != nil && slotKey(u.BriefID, u.Platform, u.Variant) == key && u.SlotVersion > n {
+			n = u.SlotVersion
 		}
 	}
-	return n, nil
+	return c, n, nil
 }
 
 func (r *fakeCampaignRepo) storeRow(c *model.Campaign) {

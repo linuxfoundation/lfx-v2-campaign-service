@@ -111,6 +111,33 @@ func TestOrchestrator_NewVersionSkipsADeletedCampaignsSlotVersion(t *testing.T) 
 	}
 }
 
+// A double-submitted new_version: request A has read the completed slot 1 and claimed slot 2,
+// and request B's read sees slot 1 completed too. B must aim at the SAME slot 2, so the claim
+// dedupes them. Reading the latest and the maximum separately let A's claim land between B's
+// two reads: B saw slot 1 as latest but counted A's pending slot 2 in its maximum, chose slot 3,
+// and both requests created a paid campaign.
+func TestOrchestrator_ConcurrentNewVersionsTargetTheSameSlot(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := completedSlot1()
+	camps.afterSlotRead = func() {
+		camps.afterSlotRead = nil
+		// Request A's claim, landing right after this request's read.
+		camps.upserted = append(camps.upserted, &model.Campaign{
+			ID: "row-a", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			Variant: model.VariantDefault, SlotVersion: 2, Status: "pending",
+		})
+	}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if got := camps.claimSlotVersions; len(got) != 1 || got[0] != 2 {
+		t.Fatalf("claimed slot versions %v, want [2]: a concurrent new_version must target the version "+
+			"the other request is claiming, so the claim lets only one through", got)
+	}
+}
+
 // Without new_version a repeat create is still a retry. This is the behaviour every existing
 // caller relies on, and the reason new_version is opt-in rather than inferred.
 func TestOrchestrator_WithoutNewVersionARepeatCreateStillReuses(t *testing.T) {

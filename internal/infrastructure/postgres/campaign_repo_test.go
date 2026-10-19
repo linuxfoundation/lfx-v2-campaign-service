@@ -156,11 +156,16 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 // TestMaxSlotVersion_CountsSoftDeletedRows pins the one read that must NOT filter deleted rows.
 // A deleted campaign still holds its upstream name, so a new_version numbered from live rows
 // alone would compose that name again and get the deleted campaign back by name lookup.
+//
+// And both values must come from ONE statement: read separately, a concurrent new_version's
+// claim can land between them and the two requests pick different next versions.
 func TestMaxSlotVersion_CountsSoftDeletedRows(t *testing.T) {
-	q := normalizeWS(maxSlotVersionQuery)
-	require.NotContains(t, q, livePredicate,
-		"MaxSlotVersion must count soft-deleted rows, or a new_version can reuse a deleted campaign's slot version and name")
-	require.Contains(t, q, "project_id=$3", "MaxSlotVersion must stay scoped by project like GetCampaignByPlatform")
+	q := normalizeWS(getCampaignByPlatformWithMaxSlotVersionQuery)
+	sub := q[strings.Index(q, "(SELECT"):strings.Index(q, "AS max_slot_version")]
+	require.NotContains(t, sub, livePredicate,
+		"the max subquery must count soft-deleted rows, or a new_version can reuse a deleted campaign's slot version and name")
+	require.Contains(t, sub, "h.project_id=$3", "the max subquery must stay scoped by project like GetCampaignByPlatform")
+	require.Contains(t, q[strings.Index(q, "AS max_slot_version"):], livePredicate, "the campaign it returns must still be the latest LIVE one")
 }
 
 // TestListProjectPlatformCampaignIDs_IsScopedInSQL pins the authorization boundary for the
