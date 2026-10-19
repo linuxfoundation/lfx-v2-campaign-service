@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -204,6 +205,16 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 	if serr != nil {
 		return nil, serr
 	}
+	// The page named no brand: take the one this event's own lists are filed under.
+	// Resolved BEFORE classification, which reads the brand: a brand-scoped list
+	// (an education child filed under the brand) is only recognised with it.
+	if strings.TrimSpace(identity.BrandShort) == "" {
+		names := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			names = append(names, c.Name)
+		}
+		identity.BrandShort = audience.DominantBrand(names, identity.Name)
+	}
 
 	// Newest quarter first, so the inspection budget is spent on the lists most
 	// likely to be the current edition's rather than on whatever the search returned
@@ -244,7 +255,15 @@ func (x *AudienceExplorer) Discover(ctx context.Context, projectID, eventURL str
 		// silently drop the list from the outcome -- classify the list itself instead
 		// of falling through to the loop's `continue`, which would leave it neither
 		// classified nor reported.
-		if childIDs := audience.RollupChildIDs(filters); audience.IsRollup(filters) && len(childIDs) > 0 {
+		// A rollup named as a suppression, test or staff list is never expanded: its
+		// children are what it suppresses (or tests), and offering one would include the
+		// very contacts the parent exists to keep out. It is classified, and hidden, as
+		// itself. A master rollup is still expanded; its children are real signals.
+		parentHidden := false
+		if reason, hidden := audience.DiscoveryHidden(list.Name, false); hidden && reason != "master" {
+			parentHidden = true
+		}
+		if childIDs := audience.RollupChildIDs(filters); !parentHidden && audience.IsRollup(filters) && len(childIDs) > 0 {
 			for _, childID := range childIDs {
 				// Same reason as the outer loop: two rollups can name the same child, and
 				// the second costs no read but would still spend a budget slot.
@@ -292,6 +311,12 @@ func (x *AudienceExplorer) classifyInto(
 	seen[list.ListID] = struct{}{}
 
 	classification := audience.ClassifyList(list.Name, filters, identity)
+	// Never offered for inclusion: a suppression would put an opt-out audience into the
+	// send, and masters, test and staff lists each belong elsewhere or nowhere.
+	if _, hide := audience.DiscoveryHidden(list.Name, classification.Signal == audience.SignalUncertain); hide {
+		out.Hidden++
+		return
+	}
 	// `uncertain` is recorded as a visible row but NOT as a signal found. Counting it
 	// would suppress the missing-signal section for a portal where nothing was
 	// actually identified — the one case where that section matters most.
@@ -881,6 +906,8 @@ func (x *AudienceExplorer) LastSent(ctx context.Context, projectID, eventName, b
 		row := audience.LastSentEmail{
 			EmailID:          r.row.email.ID,
 			EmailName:        r.row.email.Name,
+			Subject:          r.row.email.Subject,
+			MatchReason:      audience.LastSentMatchReason(r.row.email.Name, r.row.email.Subject, terms),
 			HubSpotURL:       sendDetailsURL(client, r.row.email),
 			IncludedLists:    []audience.ListBrief{},
 			SuppressionLists: []audience.ListBrief{},
@@ -1714,7 +1741,13 @@ func (x *AudienceExplorer) createList(ctx context.Context, projectID, name strin
 //
 // It creates and changes nothing, and its verdict is evidence for a human decision
 // rather than a gate — see internal/audience/builder_qa.go.
-func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool) (outcome *audience.QaOutcome, err error) {
+//
+// sendSuppressionIDs are suppression lists the send will apply on top of the list
+// (HubSpot's send-time exclusions). They are read like the list's own exclusions —
+// by name, one hop into a combined suppression — and count toward the suppression
+// and completeness checks. One that cannot be read counts for nothing, so a
+// mistyped id can never turn a FAIL into a PASS.
+func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (outcome *audience.QaOutcome, err error) {
 	client, fromSystem, err := x.builder.client(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -1781,13 +1814,187 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 		}
 	}
 
-	exclusionNames := x.exclusionNames(ctx, client, cache, filters, nameByID)
+	excludedIDs := audience.ReferencedListIDs(filters, "NOT_IN_LIST")
+	alreadyExcluded := make(map[string]bool, len(excludedIDs))
+	for _, id := range excludedIDs {
+		alreadyExcluded[id] = true
+	}
+	// The audited list, or a list EVERY branch of it requires membership of, sent as a
+	// "suppression" would exclude the audience itself; it is no suppression and must not
+	// count toward check 3. A list only some branches include ("A OR B") is a real
+	// exclusion at send time: B minus A remains.
+	notSuppression := map[string]bool{strings.TrimSpace(listID): true}
+	if list != nil {
+		for _, id := range audience.RequiredInListIDs(list.FilterBranch) {
+			notSuppression[id] = true
+		}
+	}
+	// Every send-time id is VERIFIED first (readable, a contact list, not the audience
+	// itself), independently of whether the list's own filters already exclude it: that
+	// dedup is for check 3's count only, and a flattened NOT_IN_LIST can be local to one
+	// branch. sentAway is what the send provably does not reach, for check 4: each
+	// verified suppression, plus every list its own filter tree fully covers (one hop:
+	// ComposeMaster's combined suppression is "R OR OptOut").
+	sendTimeIDs := make([]string, 0, len(sendSuppressionIDs))
+	sentAway := map[string]bool{}
+	// editionsAway are registration editions a verified suppression's own tree excludes
+	// whole (an inline "registered for KubeCon 2026" predicate), for check 4.
+	editionsAway := map[string]bool{}
+	for _, id := range audience.UniqueIDs(sendSuppressionIDs) {
+		if notSuppression[id] {
+			continue
+		}
+		l, _, rerr := x.listWithFilters(ctx, client, cache, id)
+		if rerr != nil {
+			continue
+		}
+		// A company or deal list cannot exclude a contact, so it is no suppression
+		// (AttachExisting refuses one on the same test).
+		if l != nil && l.ObjectTypeID != "" && l.ObjectTypeID != "0-1" {
+			continue
+		}
+		// A wrapper that fully covers the audience itself (the audited list, or a list
+		// every branch requires) excludes every contact: it is no suppression either.
+		var covered []string
+		if l != nil {
+			covered = audience.CoveredListIDs(l.FilterBranch)
+		}
+		if slices.ContainsFunc(covered, func(c string) bool { return notSuppression[c] }) {
+			continue
+		}
+		// Nor is one whose covered lists together cover every path through the audience
+		// ("1 OR 2" suppressed by a "1 OR 2" wrapper leaves nobody to send to).
+		if list != nil && audience.TreeCoveredBy(list.FilterBranch, covered) {
+			continue
+		}
+		sentAway[id] = true
+		for _, c := range covered {
+			sentAway[c] = true
+		}
+		if l != nil {
+			for _, e := range audience.CoveredEditions(l.FilterBranch) {
+				editionsAway[strings.ToLower(strings.TrimSpace(e))] = true
+			}
+		}
+		if alreadyExcluded[id] {
+			continue
+		}
+		if _, done := nameByID[id]; !done {
+			nameByID[id] = x.listName(ctx, client, cache, id)
+		}
+		sendTimeIDs = append(sendTimeIDs, id)
+	}
+	// Each suppression alone may leave recipients while all of them together leave
+	// none ("A OR B" suppressed by separate A and B). Then the set is no suppression,
+	// as a single wrapper covering the audience is not: its credit is withheld.
+	if list != nil && len(sentAway) > 0 {
+		union := make([]string, 0, len(sentAway))
+		for id := range sentAway {
+			union = append(union, id)
+		}
+		// An audience made only of exact registrations is empty, too, when the verified
+		// suppressions' inline predicates exclude every one of its editions.
+		editions, exclusive := audience.RegistrationEvidence(list.FilterBranch)
+		allEditionsAway := exclusive && len(editions) > 0
+		for _, e := range editions {
+			if !editionsAway[strings.ToLower(strings.TrimSpace(e))] {
+				allEditionsAway = false
+			}
+		}
+		if audience.TreeCoveredBy(list.FilterBranch, union) || allEditionsAway {
+			sendTimeIDs = sendTimeIDs[:0]
+			sentAway = map[string]bool{}
+			editionsAway = map[string]bool{}
+		}
+	}
+	exclusionNames := x.exclusionNames(ctx, client, cache, append(excludedIDs, sendTimeIDs...), nameByID)
 
 	// The names this list INCLUDES, for check 4. One hop is not needed here, unlike the
 	// exclusions: ComposeMaster wraps exclusions in a single Combined-Suppression list whose
 	// own name says nothing, whereas inclusions are referenced directly.
+	//
+	// The audited list's OWN name counts too. A list used directly as the send — this
+	// edition's registrants picked with "use an existing list" — includes no other list,
+	// so judging only its references passed the very list check 4 exists to catch
+	// (seen live on AgntCon Japan's registrants list).
 	inclusionNames := make([]string, 0, 4)
+	// When the list's own registration predicates name the editions it selects, they are
+	// the evidence, not its display name: "26Q4 - KubeCon 2026 - Event Registration" built
+	// for registered_for ["KubeCon 2025"] holds only 2025's registrants. The name is the
+	// fallback for a static or otherwise opaque list.
+	// A list the audited list excludes on EVERY path is no recipient either, exactly as a
+	// send-time suppression is: a composed master's combined suppression clears the
+	// registrants it covers (as a list or inline), so they are not current-registrant
+	// evidence. A branch-local NOT_IN_LIST excludes only from that branch and is ignored.
+	for _, id := range audience.ExcludedOnEveryPathIDs(list.FilterBranch) {
+		sentAway[id] = true
+		if ex, _, xerr := x.listWithFilters(ctx, client, cache, id); xerr == nil && ex != nil {
+			for _, c := range audience.CoveredListIDs(ex.FilterBranch) {
+				sentAway[c] = true
+			}
+			for _, e := range audience.CoveredEditions(ex.FilterBranch) {
+				editionsAway[strings.ToLower(strings.TrimSpace(e))] = true
+			}
+		}
+	}
+
+	// Every edition a registration branch explicitly includes is evidence, less any a
+	// verified suppression excludes whole; the display name is evidence too unless those
+	// branches are the list's whole membership.
+	// emptied are lists whose whole membership is excluded: in sentAway, or made only of
+	// registrations whose every edition is away. Used below to tell an audience its
+	// exclusions leave nobody, which check 4 must not report as a pass.
+	emptied := map[string]bool{}
+	for id := range sentAway {
+		emptied[id] = true
+	}
+	// localAway are the editions an included list excludes on every one of its own
+	// paths. That exclusion clears the list's own registration branches, but not the
+	// master's other branches, so it is credited to that list alone.
+	localAway := func(raw json.RawMessage) map[string]bool {
+		away := map[string]bool{}
+		for _, id := range audience.ExcludedOnEveryPathIDs(raw) {
+			if ex, _, xerr := x.listWithFilters(ctx, client, cache, id); xerr == nil && ex != nil {
+				for _, e := range audience.CoveredEditions(ex.FilterBranch) {
+					away[strings.ToLower(strings.TrimSpace(e))] = true
+				}
+			}
+		}
+		return away
+	}
+	addEvidence := func(raw json.RawMessage, name string, local map[string]bool) (allAway bool) {
+		editions, exclusive := audience.RegistrationEvidence(raw)
+		allAway = exclusive && len(editions) > 0
+		for _, e := range editions {
+			if key := strings.ToLower(strings.TrimSpace(e)); !editionsAway[key] && !local[key] {
+				allAway = false
+				inclusionNames = append(inclusionNames, e+" Registrants")
+			}
+		}
+		if !exclusive {
+			if name = strings.TrimSpace(name); name != "" {
+				inclusionNames = append(inclusionNames, name)
+			}
+		}
+		return allAway
+	}
+	auditedAllAway := addEvidence(list.FilterBranch, list.Name, nil)
+	// A list the send itself suppresses (sentAway, verified above) is not sent to: this
+	// edition's registrants included as "A OR B" and excluded at send time leave only B.
+	// A flattened NOT_IN_LIST reference may be local to one branch, so it is no proof
+	// the list is excluded from the whole audience and is not used here.
 	for _, id := range audience.ReferencedListIDs(filters, "IN_LIST") {
+		if sentAway[id] {
+			continue
+		}
+		// A referenced list is judged the same way: its registration branches' editions
+		// (less any suppressed whole), and its name unless they are its whole membership.
+		if ref, _, rerr := x.listWithFilters(ctx, client, cache, id); rerr == nil && ref != nil {
+			if addEvidence(ref.FilterBranch, nameByID[id], localAway(ref.FilterBranch)) {
+				emptied[id] = true
+			}
+			continue
+		}
 		if name := nameByID[id]; name != "" {
 			inclusionNames = append(inclusionNames, name)
 		}
@@ -1795,8 +2002,27 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 
 	signalMapping := audience.CheckSignalMapping(filters, nameByID)
 	suppression := audience.CheckSuppression(exclusionNames, targetsEU, targetsCA)
-	completeness := audience.CheckExclusionCompleteness(filters)
+	completeness := audience.CheckExclusionCompleteness(filters, len(sendTimeIDs))
 	currentRegistrants := audience.CheckCurrentRegistrants(eventName, inclusionNames)
+	// When the list's own exclusions (and the send's) leave nobody, removing this
+	// edition's registrants is not a pass: the send would reach no one. Reported so the
+	// operator sees it before sending, as the send-time credit guard does for check 3.
+	if strings.TrimSpace(eventName) != "" {
+		ids := make([]string, 0, len(emptied))
+		for id := range emptied {
+			ids = append(ids, id)
+		}
+		if auditedAllAway || audience.TreeCoveredBy(list.FilterBranch, ids) {
+			currentRegistrants = audience.Check{
+				Verdict: audience.VerdictNeedsVerify,
+				Findings: []audience.Finding{{
+					Severity: audience.SeverityHigh,
+					Message:  "This list's exclusions remove every contact it includes, so the send would reach no one.",
+					Fix:      "Check the list's inclusions and exclusions: remove the exclusion that covers the whole audience, or include contacts it does not cover.",
+				}},
+			}
+		}
+	}
 
 	findings := make([]audience.Finding, 0, 7)
 	findings = append(findings, signalMapping.Findings...)
@@ -1831,19 +2057,22 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 // Exactly one hop. Suppression lists reference each other, and an unbounded walk
 // across a portal's exclusion graph would spend the request's deadline reading lists
 // whose bearing on this audience is already indirect.
-func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, filters []audience.ListFilter, nameByID map[string]string) []string {
+func (x *AudienceExplorer) exclusionNames(ctx context.Context, client *hubspot.Client, cache map[string]*hubspot.List, excludedIDs []string, nameByID map[string]string) []string {
 	out := make([]string, 0, 8)
-	for _, id := range audience.ReferencedListIDs(filters, "NOT_IN_LIST") {
+	for _, id := range excludedIDs {
 		if name := nameByID[id]; name != "" {
 			out = append(out, name)
 		}
-		_, childFilters, err := x.listWithFilters(ctx, client, cache, id)
-		if err != nil {
+		wrapper, _, err := x.listWithFilters(ctx, client, cache, id)
+		if err != nil || wrapper == nil {
 			// An unreadable exclusion is reported by its own name only. Failing the
 			// whole audit would withhold the two checks that did complete.
 			continue
 		}
-		for _, childID := range audience.ReferencedListIDs(childFilters, "IN_LIST") {
+		// Only the children the wrapper FULLY covers are credited: an "A OR B" wrapper
+		// excludes everyone in A and in B, but "GDPR AND Opt-Outs" excludes only the
+		// contacts in both, so neither protection is applied by it.
+		for _, childID := range audience.CoveredListIDs(wrapper.FilterBranch) {
 			if name, done := nameByID[childID]; done {
 				if name != "" {
 					out = append(out, name)

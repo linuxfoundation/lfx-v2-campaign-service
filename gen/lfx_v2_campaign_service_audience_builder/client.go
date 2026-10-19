@@ -25,11 +25,14 @@ type Client struct {
 	ComposeAudienceMasterEndpoint          goa.Endpoint
 	AttachExistingAudienceEndpoint         goa.Endpoint
 	RunAudienceQaEndpoint                  goa.Endpoint
+	InterpretCustomAudienceEndpoint        goa.Endpoint
+	PreviewCustomAudienceEndpoint          goa.Endpoint
+	CreateCustomAudienceEndpoint           goa.Endpoint
 }
 
 // NewClient initializes a "lfx-v2-campaign-service-audience-builder" service
 // client given the endpoints.
-func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudienceLists, getAudienceSuppressionLists, getAudienceLastSent, getExistingAudienceMasterLists, previewAudienceCount, composeAudienceMaster, attachExistingAudience, runAudienceQa goa.Endpoint) *Client {
+func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudienceLists, getAudienceSuppressionLists, getAudienceLastSent, getExistingAudienceMasterLists, previewAudienceCount, composeAudienceMaster, attachExistingAudience, runAudienceQa, interpretCustomAudience, previewCustomAudience, createCustomAudience goa.Endpoint) *Client {
 	return &Client{
 		GetAudienceBuilderCapabilitiesEndpoint: getAudienceBuilderCapabilities,
 		DiscoverAudienceListsEndpoint:          discoverAudienceLists,
@@ -41,6 +44,9 @@ func NewClient(getAudienceBuilderCapabilities, discoverAudienceLists, searchAudi
 		ComposeAudienceMasterEndpoint:          composeAudienceMaster,
 		AttachExistingAudienceEndpoint:         attachExistingAudience,
 		RunAudienceQaEndpoint:                  runAudienceQa,
+		InterpretCustomAudienceEndpoint:        interpretCustomAudience,
+		PreviewCustomAudienceEndpoint:          previewCustomAudience,
+		CreateCustomAudienceEndpoint:           createCustomAudience,
 	}
 }
 
@@ -244,4 +250,65 @@ func (c *Client) RunAudienceQa(ctx context.Context, p *RunAudienceQaPayload) (re
 		return
 	}
 	return ires.(*AudienceQaResult), nil
+}
+
+// InterpretCustomAudience calls the "interpret-custom-audience" endpoint of
+// the "lfx-v2-campaign-service-audience-builder" service.
+// InterpretCustomAudience may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) InterpretCustomAudience(ctx context.Context, p *InterpretCustomAudiencePayload) (res *AudienceCustomInterpretResult, err error) {
+	var ires any
+	ires, err = c.InterpretCustomAudienceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AudienceCustomInterpretResult), nil
+}
+
+// PreviewCustomAudience calls the "preview-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+// PreviewCustomAudience may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) PreviewCustomAudience(ctx context.Context, p *PreviewCustomAudiencePayload) (res *AudienceCustomPreviewResult, err error) {
+	var ires any
+	ires, err = c.PreviewCustomAudienceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AudienceCustomPreviewResult), nil
+}
+
+// CreateCustomAudience calls the "create-custom-audience" endpoint of the
+// "lfx-v2-campaign-service-audience-builder" service.
+// CreateCustomAudience may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - "ComposePartial" (type *AudienceComposePartialError): The create is unconfirmed; do not retry
+//   - error: internal error
+func (c *Client) CreateCustomAudience(ctx context.Context, p *CreateCustomAudiencePayload) (res *AudienceComposedList, err error) {
+	var ires any
+	ires, err = c.CreateCustomAudienceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AudienceComposedList), nil
 }

@@ -61,6 +61,9 @@ type DiscoveredList struct {
 // DiscoveryMaxInspections candidates, and a silent cap looks exactly like a portal
 // that holds nothing more.
 type DiscoveryOutcome struct {
+	// Hidden counts lists discovery found but did not offer for inclusion
+	// (suppressions, masters, test and staff lists — see DiscoveryHidden).
+	Hidden         int
 	Event          EventIdentity
 	Lists          []DiscoveredList
 	MissingSignals []Signal
@@ -114,8 +117,11 @@ type ListBrief struct {
 // LastSentEmail is a prior send and the lists it used — the best available precedent
 // for what this event's audience should be.
 type LastSentEmail struct {
-	EmailID          string
-	EmailName        string
+	EmailID   string
+	EmailName string
+	// Subject and MatchReason explain why the send is listed (see LastSentMatchReason).
+	Subject          string
+	MatchReason      string
 	SentAt           string
 	HubSpotURL       string
 	IncludedLists    []ListBrief

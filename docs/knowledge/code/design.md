@@ -160,7 +160,7 @@ campaign name.
 
 ## The audience-builder service (LFXV2-2770)
 
-`audience_builder.go` declares a service of its own — nine methods under
+`audience_builder.go` declares a service of its own — thirteen methods under
 `/projects/{project_id}/audience-builder/…`, every one carrying `bearerToken()` and the
 project-id attribute, all behind `JWTAuth`. It is a separate Goa service rather than more methods
 on the brief surface because nothing here is subordinate to a brief: an operator explores an

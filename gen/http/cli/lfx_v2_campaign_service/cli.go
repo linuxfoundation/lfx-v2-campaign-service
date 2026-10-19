@@ -29,7 +29,7 @@ import (
 func UsageCommands() []string {
 	return []string{
 		"lfx-v2-campaign-service-audiences (create-audience|get-audience|list-audiences|update-audience|build-audience)",
-		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa)",
+		"lfx-v2-campaign-service-audience-builder (get-audience-builder-capabilities|discover-audience-lists|search-audience-lists|get-audience-suppression-lists|get-audience-last-sent|get-existing-audience-master-lists|preview-audience-count|compose-audience-master|attach-existing-audience|run-audience-qa|interpret-custom-audience|preview-custom-audience|create-custom-audience)",
 		"lfx-v2-campaign-service-briefs (create-brief|find-brief|get-brief|update-brief|approve-brief|delete-brief|fetch-event-url|upload-creative-asset|create-campaigns|adopt-campaign|get-campaign|get-campaign-metrics|get-campaign-settings|get-brief-metrics|generate-email-copy|update-campaign|toggle-campaign-status|update-campaign-budget|update-campaign-bid|apply-keyword-actions|add-negative-keywords|get-keyword-targeting|remove-keyword-targeting|list-meta-ad-sets|list-meta-ads|toggle-meta-ad-set-status|delete-campaign|get-job|start-email-wizard-plan|plan-email-wizard|generate-wizard-content|update-wizard-sections|clone-wizard-email|set-wizard-send-list|chat-wizard-turn|get-wizard-session)",
 		"lfx-v2-campaign-service-svc (readyz|livez)",
 		"lfx-v2-campaign-service-connections (create-google-ads|get-google-ads|update-google-ads|delete-google-ads|test-google-ads|set-credential-google-ads|create-linkedin-ads|get-linkedin-ads|update-linkedin-ads|delete-linkedin-ads|test-linkedin-ads|set-credential-linkedin-ads|create-meta-ads|get-meta-ads|update-meta-ads|delete-meta-ads|test-meta-ads|set-credential-meta-ads|create-reddit-ads|get-reddit-ads|update-reddit-ads|delete-reddit-ads|test-reddit-ads|set-credential-reddit-ads|create-twitter-ads|get-twitter-ads|update-twitter-ads|delete-twitter-ads|test-twitter-ads|set-credential-twitter-ads|create-microsoft-ads|get-microsoft-ads|update-microsoft-ads|delete-microsoft-ads|test-microsoft-ads|set-credential-microsoft-ads|create-hubspot|get-hubspot|update-hubspot|delete-hubspot|test-hubspot|set-credential-hubspot|list-google-ads-accounts|get-google-ads-keywords|get-google-ads-audience|get-meta-ads-audience|get-twitter-ads-audience|get-linkedin-ads-audience|get-microsoft-ads-keywords|get-microsoft-ads-audience|get-reddit-ads-audience|get-reddit-ads-keywords|resolve-google-ads-campaign|resolve-microsoft-ads-campaign|resolve-meta-ads-campaign|resolve-reddit-ads-campaign|resolve-twitter-ads-campaign|resolve-linkedin-ads-campaign|list-meta-ads-accounts|list-linkedin-ads-accounts|list-microsoft-ads-accounts|list-twitter-ads-accounts|list-reddit-ads-accounts|list-hubspot-emails|search-hubspot-campaigns|create-hubspot-campaign|monitor-google-ads-account|monitor-linkedin-ads-account|monitor-meta-ads-account|monitor-reddit-ads-account|monitor-microsoft-ads-account|monitor-twitter-ads-account|monitor-hubspot-account)",
@@ -162,6 +162,21 @@ func ParseEndpoint(
 		lfxV2CampaignServiceAudienceBuilderRunAudienceQaBodyFlag        = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderRunAudienceQaProjectIDFlag   = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderRunAudienceQaBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceFlags           = flag.NewFlagSet("interpret-custom-audience", flag.ExitOnError)
+		lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBodyFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceFlags           = flag.NewFlagSet("preview-custom-audience", flag.ExitOnError)
+		lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBodyFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerTokenFlag = new(cliStringFlag)
+
+		lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceFlags           = flag.NewFlagSet("create-custom-audience", flag.ExitOnError)
+		lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBodyFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectIDFlag   = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerTokenFlag = new(cliStringFlag)
 
 		lfxV2CampaignServiceBriefsFlags = flag.NewFlagSet("lfx-v2-campaign-service-briefs", flag.ContinueOnError)
 
@@ -819,6 +834,15 @@ func ParseEndpoint(
 	lfxV2CampaignServiceAudienceBuilderRunAudienceQaFlags.Var(lfxV2CampaignServiceAudienceBuilderRunAudienceQaBodyFlag, "body", "")
 	lfxV2CampaignServiceAudienceBuilderRunAudienceQaFlags.Var(lfxV2CampaignServiceAudienceBuilderRunAudienceQaProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceAudienceBuilderRunAudienceQaFlags.Var(lfxV2CampaignServiceAudienceBuilderRunAudienceQaBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBodyFlag, "body", "")
+	lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBodyFlag, "body", "")
+	lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerTokenFlag, "bearer-token", "")
+	lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBodyFlag, "body", "")
+	lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
+	lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceFlags.Var(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceBriefsCreateBriefFlags.Var(lfxV2CampaignServiceBriefsCreateBriefBodyFlag, "body", "")
 	lfxV2CampaignServiceBriefsCreateBriefFlags.Var(lfxV2CampaignServiceBriefsCreateBriefProjectIDFlag, "project-id", "Canonical LFX project slug (NOT a UUID) that scopes the resource")
 	lfxV2CampaignServiceBriefsCreateBriefFlags.Var(lfxV2CampaignServiceBriefsCreateBriefBearerTokenFlag, "bearer-token", "")
@@ -1208,6 +1232,9 @@ func ParseEndpoint(
 	lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterFlags.Usage = lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage
 	lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceFlags.Usage = lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceUsage
 	lfxV2CampaignServiceAudienceBuilderRunAudienceQaFlags.Usage = lfxV2CampaignServiceAudienceBuilderRunAudienceQaUsage
+	lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceFlags.Usage = lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceUsage
+	lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceFlags.Usage = lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceUsage
+	lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceFlags.Usage = lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceUsage
 
 	lfxV2CampaignServiceBriefsFlags.Usage = lfxV2CampaignServiceBriefsUsage
 	lfxV2CampaignServiceBriefsCreateBriefFlags.Usage = lfxV2CampaignServiceBriefsCreateBriefUsage
@@ -1421,6 +1448,15 @@ func ParseEndpoint(
 
 			case "run-audience-qa":
 				epf = lfxV2CampaignServiceAudienceBuilderRunAudienceQaFlags
+
+			case "interpret-custom-audience":
+				epf = lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceFlags
+
+			case "preview-custom-audience":
+				epf = lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceFlags
+
+			case "create-custom-audience":
+				epf = lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceFlags
 
 			}
 
@@ -1848,6 +1884,15 @@ func ParseEndpoint(
 			case "run-audience-qa":
 				endpoint = c.RunAudienceQa()
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildRunAudienceQaPayload(lfxV2CampaignServiceAudienceBuilderRunAudienceQaBodyFlag.value, lfxV2CampaignServiceAudienceBuilderRunAudienceQaProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderRunAudienceQaBearerTokenFlag.value)
+			case "interpret-custom-audience":
+				endpoint = c.InterpretCustomAudience()
+				data, err = lfxv2campaignserviceaudiencebuilderc.BuildInterpretCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBodyFlag.value, lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceBearerTokenFlag.value)
+			case "preview-custom-audience":
+				endpoint = c.PreviewCustomAudience()
+				data, err = lfxv2campaignserviceaudiencebuilderc.BuildPreviewCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBodyFlag.value, lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceBearerTokenFlag.value)
+			case "create-custom-audience":
+				endpoint = c.CreateCustomAudience()
+				data, err = lfxv2campaignserviceaudiencebuilderc.BuildCreateCustomAudiencePayload(lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBodyFlag.value, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceBearerTokenFlag.value)
 			}
 		case "lfx-v2-campaign-service-briefs":
 			c := lfxv2campaignservicebriefsc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -2359,6 +2404,9 @@ func lfxV2CampaignServiceAudienceBuilderUsage() {
 	fmt.Fprintln(os.Stderr, `    compose-audience-master: Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.`)
 	fmt.Fprintln(os.Stderr, `    attach-existing-audience: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.`)
 	fmt.Fprintln(os.Stderr, `    run-audience-qa: Audit a composed master list's filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition's own registrants are included. Creates nothing.`)
+	fmt.Fprintln(os.Stderr, `    interpret-custom-audience: Interpret a free-text audience request into draft criteria and blocking questions. Uses a model; creates nothing.`)
+	fmt.Fprintln(os.Stderr, `    preview-custom-audience: Validate custom criteria against the portal and return the list that would be created. Creates nothing.`)
+	fmt.Fprintln(os.Stderr, `    create-custom-audience: Create one custom contact list in the project's HubSpot portal from reviewed criteria. NOT idempotent.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s lfx-v2-campaign-service-audience-builder COMMAND --help\n", os.Args[0])
@@ -2586,7 +2634,73 @@ func lfxV2CampaignServiceAudienceBuilderRunAudienceQaUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder run-audience-qa --body '{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder run-audience-qa --body '{\n      \"event_name\": \"ki\",\n      \"list_ref\": \"e\",\n      \"send_suppression_list_ids\": [\n         \"Nihil incidunt omnis.\",\n         \"Et dolor placeat vel.\",\n         \"Qui non eos veritatis.\"\n      ],\n      \"targets_ca\": true,\n      \"targets_eu\": true\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceAudienceBuilderInterpretCustomAudienceUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-audience-builder interpret-custom-audience", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Interpret a free-text audience request into draft criteria and blocking questions. Uses a model; creates nothing.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder interpret-custom-audience --body '{\n      \"answers\": [\n         {\n            \"answer\": \"yuv\",\n            \"question\": \"Dolorum corrupti enim eos.\",\n            \"question_id\": \"Saepe quis eum.\"\n         },\n         {\n            \"answer\": \"yuv\",\n            \"question\": \"Dolorum corrupti enim eos.\",\n            \"question_id\": \"Saepe quis eum.\"\n         },\n         {\n            \"answer\": \"yuv\",\n            \"question\": \"Dolorum corrupti enim eos.\",\n            \"question_id\": \"Saepe quis eum.\"\n         }\n      ],\n      \"event_url\": \"ww5\",\n      \"request\": \"b\"\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceAudienceBuilderPreviewCustomAudienceUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-audience-builder preview-custom-audience", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Validate custom criteria against the portal and return the list that would be created. Creates nothing.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder preview-custom-audience --body '{\n      \"custom\": {\n         \"criteria\": {\n            \"cities\": [\n               \"Seoul\"\n            ],\n            \"contact_location\": true,\n            \"countries\": [\n               \"South Korea\"\n            ],\n            \"gate_list_id\": \"26716\",\n            \"label\": \"OSS Korea\"\n         }\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+}
+
+func lfxV2CampaignServiceAudienceBuilderCreateCustomAudienceUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] lfx-v2-campaign-service-audience-builder create-custom-audience", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -bearer-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Create one custom contact list in the project's HubSpot portal from reviewed criteria. NOT idempotent.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
+	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder create-custom-audience --body '{\n      \"custom\": {\n         \"criteria\": {\n            \"cities\": [\n               \"Seoul\"\n            ],\n            \"contact_location\": true,\n            \"countries\": [\n               \"South Korea\"\n            ],\n            \"gate_list_id\": \"26716\",\n            \"label\": \"OSS Korea\"\n         }\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 // lfxV2CampaignServiceBriefsUsage displays the usage of the

@@ -262,3 +262,12 @@ func TestMatchesStandardSuppression_NormalisesSeparatorsQuartersAndSuffix(t *tes
 		assert.False(t, MatchesStandardSuppression(name, term), "%q must not satisfy %q", name, term)
 	}
 }
+
+func TestLastSentMatchReason(t *testing.T) {
+	terms := NewLastSentTerms("AGNTCon + MCPCon Japan", "CNCF")
+	assert.Equal(t, LastSentReasonName, LastSentMatchReason("Complimentary Ticket to AGNTCon + MCPCon Japan", "", terms))
+	assert.Equal(t, LastSentReasonSubject, LastSentMatchReason("26Q3 - CNCF - Newsletter Pytorch emailer", "Join us at AGNTCon Japan", terms),
+		"a newsletter that promoted the event is listed for its subject, and says so")
+	assert.Equal(t, LastSentReasonBrand, LastSentMatchReason("CNCF Monthly Newsletter", "Roundup", terms))
+	assert.Empty(t, LastSentMatchReason("Unrelated", "Nothing", terms))
+}

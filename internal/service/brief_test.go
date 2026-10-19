@@ -1176,6 +1176,41 @@ func TestBriefService_GetJob_HubspotURL(t *testing.T) {
 	}
 }
 
+// TestBriefService_GetJob_Warnings guards the last hop of the warnings seam: a stored
+// per-platform result's warnings decode into PlatformResult.Warnings, and a platform that stored
+// none leaves it nil. Built from the real platformResult so a rename of its warnings tag breaks
+// this test instead of leaving it green.
+func TestBriefService_GetJob_Warnings(t *testing.T) {
+	const warning = "The hero image could not be added to the email: the image could not be downloaded from the event page."
+	resultJSON, err := json.Marshal([]platformResult{
+		{Platform: "hubspot", OK: true, CampaignID: "999", Warnings: []string{warning}},
+		{Platform: "google-ads", OK: true, CampaignID: "pc-1"},
+	})
+	if err != nil {
+		t.Fatalf("marshal platformResult fixture: %v", err)
+	}
+	s := getJobTestService(&model.CampaignJob{
+		ID: "j1", BriefID: "b1", Status: model.JobSucceeded,
+		Result: resultJSON,
+	})
+	resp, err := s.GetJob(context.Background(), &briefs.GetJobPayload{ProjectID: "cncf", JobID: "j1"})
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	for _, r := range resp.Result {
+		switch r.Platform {
+		case "hubspot":
+			if len(r.Warnings) != 1 || r.Warnings[0] != warning {
+				t.Errorf("hubspot Warnings = %v, want [%q]", r.Warnings, warning)
+			}
+		case "google-ads":
+			if r.Warnings != nil {
+				t.Errorf("google-ads Warnings = %v, want nil", r.Warnings)
+			}
+		}
+	}
+}
+
 // TestBriefService_GetJob_SkippedSurfacesNonFailure verifies a skipped platform
 // (ok=false, skipped=true) on a succeeded job is surfaced with an explicit
 // non-failure message rather than an unexplained ok=false that reads as a failure.

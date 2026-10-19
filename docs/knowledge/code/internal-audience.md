@@ -360,6 +360,17 @@ The plan is validated first, so a brief that cannot be planned leaves no row beh
 
 ## Also here: the exploratory half (LFXV2-2770)
 
+Every suppression-hint check reads the name with its separators normalised too
+(`hasSuppressionHint`, used by `DiscoveryHidden`, `ClassifyList`, `MatchesBrandMaster` and
+`MatchesEventSuppression`), so `Opt_Out` is an opt-out. `DiscoveryHidden` classifies test and
+staff before master, so a test or staff master rollup ("… Master [test]") is hidden rather than
+expanded as a master. `TestOrStaffList` applies the same test and staff hints to every
+automatic pick (`MatchesBrandMaster`, `MatchesBrandOptOut`, `MatchesEventSuppression`), so a
+test or staff list is never filled in as a gate or a suppression. `DominantBrand` votes a long-form brand ("The Linux Foundation") as its
+short name from `brandAliases`, and only lists sharing a distinctive event word vote; when every
+word of the event name is generic ("Open Source Summit Japan 2026"), a voter's list name must
+contain the whole event name, so another event's lists sharing generic words cannot win.
+
 The files above are the **record** half — `plan.go` and `filters.go` materialise the audience a
 BRIEF commits to, and their failures fail the brief. The `builder_*.go` files are the
 **exploratory** half: what an operator assembles and inspects before any brief commits to
@@ -455,3 +466,119 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   must be shown rather than a failure to retry blindly.
 
 See [internal/audience](../../../internal/audience).
+
+## Custom audiences: the model proposes, this package builds (LFXV2-2770)
+
+`builder_custom.go` and `builder_custom_interpret.go` are the "build from scratch" path, ported
+from the legacy audience builder's Custom Audience tab. There, a model read a free-text request
+AND wrote the HubSpot filter JSON AND called the create. Here the model does only the first:
+
+- **`CustomInterpretSystemPrompt` / `ParseCustomDraft`** turn the request (plus answers to
+  earlier questions) into a DRAFT `CustomCriteria` and the questions that still block it. The
+  reply is decoded with unknown fields REFUSED — a model inventing `gate_list_id` must not have it
+  silently ignored — while one unusable filter row is dropped with a note rather than costing the
+  whole draft. The model never supplies list ids (the gate and any speakers list are resolved
+  against the portal) or property types (read from the portal's definitions). Operator text is
+  quoted inside `BEGIN/END` blocks with the markers neutralised, exactly as the event-page prompt is.
+- **`CustomListFilter`** is the only thing that builds the filter, and it is pure and table-tested.
+  The shape is the reference list's (`26Q3 - Seoul - Mailable Contacts - …`): an OR root of AND
+  branches — `city`/`ip_city` (+ `country_dropdown`/`ip_country` when broadened), each gated by
+  the brand master list; and event-history branches qualified INSIDE the `UNIFIED_EVENTS` node on
+  the event's own `event_city`/`user_city` (+ country), gated only when `GateEventHistory` is set.
+  `RegisteredFor` adds a branch for the named editions' registrants (an event draft with a location —
+  cities or countries plus `contact_location`, `event_registered` or `education_enrolled` —
+  defaults to the warehouse's past editions), gated like the other event history when `GateEventHistory` is set.
+  An audience of roles or properties alone has one base branch, which carries the gate under
+  `GateEventHistory` too. `AllBranchesGated` reads these base branches rather than restating the
+  rules, so preview's upper bound cannot drift from what is built.
+- **Restrictions reach EVERY branch.** Extra property filters are ANDed into each branch; the
+  speaker restriction is an `IN_LIST` on an existing speakers list or, absent one, each branch is
+  copied once per speaker signal the portal's registration event defines
+  (`registration_type CONTAINS Speaker`, `is_event_speaker_bool`, `is_event_speaker`), each with
+  the operation type its portal property requires (HubSpot has no `CONTAINS_TOKEN`), because
+  HubSpot will not take an OR nested inside a branch; ambassadors copy each branch once per programme property. A restriction on only some
+  branches is an OR'd way around it. Copies clone their slices so appending to one cannot alias
+  another. The expansion is capped at `customBranchLimit` (60).
+- **No suppression on a custom list.** It is an inclusion building block: suppressions apply once,
+  at the composed master or at send time, and baking them in would apply them again wherever the
+  block is reused (the legacy rule "single-signal lists never carry their own suppression").
+- **Fail closed.** `ValidateCustomCriteria` refuses an ungated contact-location branch (a city
+  filter alone selects everyone who ever typed that city, mailable or not), a speaker restriction
+  with neither a list nor event names (every speaker of every event), an unknown operator, and a
+  value operator with no values. Every refusal wraps `ErrInvalidRequest` with operator-facing text.
+- **Naming.** `CustomListName` follows the reference pattern
+  (`<YYQN> - <Location> - Mailable Contacts - <Label>`, `<Event> Speakers - <Scope>`,
+  `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never
+  reused: a matching name does not prove a matching audience. Every derived or versioned name is
+  cut (on a rune boundary) to `CustomNameMaxLen`, the input's 250-rune limit, so the name preview
+  returns is one create accepts back.
+- **Speakers-list auto-pick fails closed.** `SpeakerListFits` decides whether an existing list
+  may stand in for a speaker restriction; a filled `ListID` REPLACES the scope and event-name
+  filters, so it accepts a list only when its name provably fits: a speakers list discovery would
+  offer, naming every requested edition (NO editions means no fit — nothing can be checked), and
+  of the requested scope. A scope suffix (` - Current`, ` - Past`, ` - Current + Past`) must equal
+  the requested scope; `current_past` — the parser's default — is met ONLY by that explicit
+  suffix, since an unsuffixed name says nothing about which editions it covers; `current`/`past`
+  refuse a name that mentions the other scope. Anything else is left for the operator.
+- **Countries are canonicalized on entry.** `CanonicalCountries` maps each value through
+  `DisplayName` (and collapses aliases of one country) where criteria enter the service —
+  `ParseCustomDraft` and the service's `customCriteria` — exactly as the brief path's `BuildPlan`
+  does, so "USA" filters on "United States" instead of a literal that matches nobody.
+- **Draft arrays stay inside the contract.** `ParseCustomDraft` caps value arrays at 25,
+  `property_filters` at 10 (`customMaxFilters`) and `page_view_urls` at `CustomMaxPageViewURLs`
+  (10), each matching its `MaxLength`, and drops, with a note, a suggested property filter whose
+  name is outside the contract's `^[A-Za-z0-9_]+$` or longer than 100 characters. A comparison
+  value is kept whole up to 2000 characters (`customValueMaxLen`) or dropped with a draft note,
+  never cut to a prefix, since a shorter value matches more contacts. Producers of
+  `registered_for` honour `CustomMaxRegisteredFor` (25), so an unedited draft passes preview. The
+  `internal/apivalidation` drift test decodes a body at and one past each cap through the
+  generated validator, so a Go cap drifting from its `MaxLength` fails there.
+- **Gate resolution.** `BrandMasterProbes`/`MatchesBrandMaster` find the brand's STANDING master
+  list (`… - Master-list`), never a per-event `… - Master`, which is one event's audience and the
+  wrong gate for a location list. A short brand matches only as a whole token.
+
+Both legacy pieces the first cut left out are now ported: the Education brand-fit topic filter
+(`EducationTopics` / `EducationTopicProperty`) and the REUSE/UPDATE/UNRELATED negotiation
+(`CustomReuseSystemPrompt` / `ParseCustomReuse`) — see below.
+
+**Added 2026-10-10.** Three more criteria close the legacy "Create list" gap for every missing
+signal:
+- `EducationTopics` narrow education enrolment to the brand's own courses with a CONTAINS filter
+  inside every education `UNIFIED_EVENTS` node; with no location they are the education signal on
+  their own. The property they filter on (`EducationTopicProperty`) is picked from the portal's
+  education event definition by `CourseTopicCandidates` (course > topic > subject > program >
+  curriculum, by name or label), over STRING properties only, since the topic filter is always a
+  string CONTAINS. A caller's value is kept only when it is one of the portal's
+  `CourseTopicCandidates`, otherwise the best candidate replaces it; the model's choice is never
+  used. Topics with no such
+  property are refused rather than silently dropped, because dropping them widens the list to
+  every enrolment.
+- `PageViewURLs` add one ungated `PAGE_VIEW` branch per URL (`HAS_PAGEVIEW_CONTAINS`, `pageUrl`).
+  `filter.MarshalJSON` omits `operation` for that filter type only; every other filter's wire
+  shape is unchanged. A fragment shorter than 8 characters is refused, since it matches every
+  page that mentions it. A URL is kept whole up to 2000 characters (`customURLMaxLen`) or dropped
+  with a draft note, never shortened, since a prefix matches other pages too. The PAGE_VIEW shape was confirmed by a live create (list 31588).
+- **Reuse before create.** `CustomReuseProbes` searches by location/label, `ReusableCandidate`
+  drops masters, suppressions and test lists, and the model ranks the survivors
+  (`CustomReuseSystemPrompt` / `ParseCustomReuse`: reuse / update / unrelated). It ranks only
+  what the search found — an id it returns that was not a candidate is dropped. The ranking
+  prompt carries the operator's answers and the settled restrictions (speakers, ambassadors,
+  property filters), which narrow the request. A property filter is described by its property and
+  operator only: its values can be a real contact's email or phone, and the prompt goes to an
+  external model. `GuardReuse` then holds any "reuse" of a list whose name does not show those
+  restrictions to "update": a speakers list must be the one already selected, or one
+  `SpeakerListFits` accepts for the requested scope and editions, and a property filter never
+  shows in a name, so with one no list is "reuse". Its "is this the same event" check uses only
+  DISTINCTIVE label words: the audience's own cities and countries and generic event words
+  ("summit", "tokyo") are dropped, so another event's list in the same city is never kept. A
+  label with no distinctive word left ("Open Source Summit Japan") must instead appear whole, year
+  aside, in the list's name, and only a label of two or more event words can match this way: a
+  one-word label ("Seoul") never matches by name, since as a bare substring it would match another
+  event's list in the same city. Course topics are not a restriction: every education audience carries them as its brand
+  fit, so counting them would make reuse unreachable (2026-10-15).
+
+**QA and send-time suppression (2026-10-12).** `CheckExclusionCompleteness(filters, sendTime)`
+counts suppression lists the send applies as well as the list's own `NOT_IN_LIST` filters. Custom
+lists (and lists attached without a composed master) carry no suppression by design, so before
+this every one of them failed QA despite going out suppressed.
+

@@ -1928,6 +1928,12 @@ type PlatformResult struct {
 	// the email (HubSpot) channel, and only once the portal that created it is
 	// known.
 	HubspotURL *string
+	// Best-effort steps of a successful create that did not apply, in
+	// operator-readable sentences. For the email channel this reports a requested
+	// hero image that could not be added; the draft exists, and its banner needs
+	// checking in the HubSpot editor (it may have none, or still carry the
+	// template's).
+	Warnings []string
 	// Present only when this dispatch's claim was lost before its result was
 	// recorded: the identifiers of what it created upstream (ids, names, urns,
 	// image hashes, X media keys — never state, platform text, URLs or other
