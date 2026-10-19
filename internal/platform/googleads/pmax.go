@@ -216,6 +216,15 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		return budgetPartial(), fmt.Errorf("google-ads performance max campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, verr)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, PERFORMANCE_MAX, %s, %s)", campaignID, pf.bidding.describe(), flightWindowStep(pf.startDateTime, pf.endDateTime)))
+	// HERE, immediately after the campaign is confirmed, and not down beside the closing
+	// step: v23 removed url_expansion_opt_out, so final-URL expansion is ON from the moment
+	// this campaign exists and there is no longer any way to turn it off from the API. Every
+	// return below this line hands back a campaign that is already billable, and
+	// internal/dispatch/googleads.go keeps and persists the claim on a non-nil result — so a
+	// partial failure puts an operator in front of exactly these Steps, finishing the geo or
+	// asset-group work by hand in the Google Ads UI and launching from there. Appended at the
+	// end, this warning reached only the operator least likely to need it.
+	steps = append(steps, "ACTION REQUIRED: turn OFF final-URL expansion for this campaign in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out")
 
 	res := budgetPartial()
 	res.CampaignID = campaignID
@@ -279,12 +288,6 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		res.Steps = steps
 	}
 
-	// UNCONDITIONAL, and deliberately a step rather than only a comment: v23 removed
-	// url_expansion_opt_out, so final-URL expansion is ON for every campaign this
-	// function creates and there is no longer any way to turn it off from the API. The
-	// person who has to turn it off is reading this result, not pmax.go. Appended before
-	// the closing step so the two Google Ads UI actions sit together.
-	steps = append(steps, "ACTION REQUIRED: turn OFF final-URL expansion for this campaign in the Google Ads UI — Google Ads API v23 removed url_expansion_opt_out, so expansion is ON by default and expanded URLs carry none of the UTM attribution the data pipeline parses back out")
 	steps = append(steps, performanceMaxClosingStep(len(res.GeoCriterionIDs) > 0, res.AssetGroupID != ""))
 	res.Steps = steps
 	return res, nil

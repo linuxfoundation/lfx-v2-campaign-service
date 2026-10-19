@@ -299,6 +299,41 @@ func TestCreatePerformanceMaxCampaign_LinkFailureStillReportsWhatExists(t *testi
 	}
 }
 
+// TestCreatePerformanceMaxCampaign_PartialFailureStillWarnsAboutExpansion pins the
+// warning to the paths that need it MOST. Every return past the campaign create hands
+// back a campaign that already exists and is already billable with final-URL expansion
+// on, and internal/dispatch/googleads.go retains and persists the claim on a non-nil
+// result — so this operator reads these Steps, finishes the asset-group work by hand in
+// the Google Ads UI and launches from there, more surely than the happy-path one does.
+// Appended at the end of the cascade the warning reached only the success path; this test
+// fails if it moves back there.
+func TestCreatePerformanceMaxCampaign_PartialFailureStillWarnsAboutExpansion(t *testing.T) {
+	assetH, _ := okPMaxAssets()
+	groupH, _ := okPMaxGroup()
+	linkH := gaqlError(http.StatusBadRequest, "assetGroupAssetError", "DUPLICATE_RESOURCE")
+	srv := demandGenTLSServer(t, pmaxCascade(t, pmaxImages(t), assetH, groupH, linkH))
+	c := demandGenClient(t, srv)
+	in := demandGenInput()
+	in.PerformanceMaxCreative = pmaxCreativeAt(srv.URL)
+
+	res, err := c.CreatePerformanceMaxCampaign(context.Background(), in)
+	if err == nil {
+		t.Fatal("a failed link mutate must be reported")
+	}
+	if res == nil || res.CampaignID == "" {
+		t.Fatalf("a campaign was created; the partial result must carry it: %+v", res)
+	}
+	var sawExpansionWarning bool
+	for _, s := range res.Steps {
+		if strings.Contains(s, "final-URL expansion") {
+			sawExpansionWarning = true
+		}
+	}
+	if !sawExpansionWarning {
+		t.Errorf("a billable campaign exists and its Steps never tell the operator to turn off final-URL expansion: %v", res.Steps)
+	}
+}
+
 // TestCreatePerformanceMaxCampaign_ShortLinkResponseRecordsZero covers the AMBIGUOUS
 // half of the link outcome: a 2xx that describes fewer links than were sent. Some links
 // may well exist, but this client cannot say which, and "cannot say" must record zero
