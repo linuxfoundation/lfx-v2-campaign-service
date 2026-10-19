@@ -193,7 +193,12 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 	for _, want := range []string{
 		`"advertisingChannelType":"` + advertisingChannelPerformanceMax + `"`,
 		`"status":"PAUSED"`,
-		`"urlExpansionOptOut":true`,
+		// Asserted as the literal `false` rather than merely present: the account has
+		// Brand Guidelines on, and anything that made this field serialize away — an
+		// `omitempty` added later, say — would take the account's setting instead and
+		// put the create back on the REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED 400 that
+		// orphaned a budget on 2026-10-16.
+		`"brandGuidelinesEnabled":false`,
 		`"maximizeConversions"`,
 		"geoTargetTypeSetting",
 	} {
@@ -201,8 +206,11 @@ func TestCreatePerformanceMaxCampaign_CampaignShape(t *testing.T) {
 			t.Errorf("campaigns:mutate body is missing %q: %s", want, body)
 		}
 	}
-	// Search-only shapes that must never appear on this channel.
-	for _, forbidden := range []string{"networkSettings", "manualCpc"} {
+	// Shapes that must never appear on this channel: the first two are Search-only, and
+	// `urlExpansionOptOut` is a field v23 removed outright. Google rejects an unknown
+	// field AFTER the budget mutate has committed, so re-adding it does not fail safe —
+	// it orphans a paid budget, which is exactly what it did on 2026-10-16.
+	for _, forbidden := range []string{"networkSettings", "manualCpc", "urlExpansionOptOut"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("campaigns:mutate body carries %q, which Performance Max does not take: %s", forbidden, body)
 		}

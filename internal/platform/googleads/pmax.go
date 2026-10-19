@@ -20,7 +20,7 @@ const (
 // campaignCreate, for the reason demandGenCampaignCreate states: the channels disagree
 // on required fields. Performance Max rejects `networkSettings` (it has no network to
 // choose — it serves on all of them by definition) and rejects `manualCpc`, and it is
-// the only one of the three that carries `urlExpansionOptOut`.
+// the only one of the three that carries `brandGuidelinesEnabled`.
 type performanceMaxCampaignCreate struct {
 	Name                           string `json:"name"`
 	Status                         string `json:"status"`
@@ -38,20 +38,39 @@ type performanceMaxCampaignCreate struct {
 	// actually carries, and without it a "US" target serves to anyone worldwide
 	// showing interest in the US. See the type's doc in campaign.go.
 	GeoTargetTypeSetting geoTargetTypeSetting `json:"geoTargetTypeSetting"`
-	// UrlExpansionOptOut is sent EXPLICITLY as true rather than omitted, and that is a
-	// deliberate choice rather than a default being restated.
+	// BrandGuidelinesEnabled is sent EXPLICITLY as false, and no `omitempty` guards it:
+	// the whole point is that `false` reaches Google, and an omitted field would take the
+	// account's own setting instead.
 	//
-	// Left opted IN — Google's own default — Performance Max generates its own landing
-	// pages by crawling the advertiser's whole site and sends traffic wherever its model
-	// prefers. Every campaign this service creates is for ONE event with ONE
-	// registration URL, composed with the UTM attribution the data pipeline parses back
-	// out; a campaign free to substitute its own final URL spends the event's budget on
-	// pages that carry none of that, and the spend then reconciles against nothing.
+	// VERIFIED against the live API (2026-10-16), the way demandgen.go records its own
+	// validateOnly result. A prod dispatch on 2026-10-16 created the budget and then lost
+	// the campaign to HTTP 400, twice. Three validateOnly campaigns:mutate probes at v23
+	// on the real account, same payload each time bar one field:
 	//
-	// An operator who wants the expansion can turn it off in the Google Ads UI. The
-	// reverse — discovering after the fact that attribution was silently bypassed — is
-	// not recoverable, which is what makes this the safe side of the default.
-	UrlExpansionOptOut bool `json:"urlExpansionOptOut"`
+	//   A. the prod payload as sent          → 400 INVALID_ARGUMENT, Unknown name
+	//                                          "urlExpansionOptOut" at 'operations[0].create'
+	//   B. A minus urlExpansionOptOut        → 400 REQUIRED_BUSINESS_NAME_ASSET_NOT_LINKED
+	//                                          + REQUIRED_LOGO_ASSET_NOT_LINKED
+	//   D. B plus brandGuidelinesEnabled:false → VALIDATED OK
+	//
+	// So two blockers were stacked, and B is this field's. The account has Brand
+	// Guidelines on; a Performance Max campaign created under it must link a
+	// BUSINESS_NAME and a square LOGO as CampaignAssets, which needs media-asset
+	// plumbing this service does not have yet. Sending `false` creates the campaign
+	// without that enforcement; an operator turns Brand Guidelines back on in the Google
+	// Ads UI once the assets exist. Linking the assets here is the better answer and is
+	// what should replace this field when the media work lands.
+	//
+	// WHAT IS NOT HERE: this payload used to carry `urlExpansionOptOut: true`, to stop
+	// Performance Max crawling the site, generating its own landing pages, and spending
+	// the event's budget on URLs carrying none of the UTM attribution the data pipeline
+	// parses back out. Probe A is the field being GONE at v23 — removed outright, on the
+	// campaign and on the asset group alike (`googleAdsFields:search` for `%url_expansion%`
+	// returns only the reporting view `final_url_expansion_asset_view`). The risk did not
+	// go with it: final-URL expansion is now on by default and can only be turned off in
+	// the Google Ads UI, per campaign, by hand. That is an operator step after every
+	// Performance Max create, and forgetting it is silent.
+	BrandGuidelinesEnabled bool `json:"brandGuidelinesEnabled"`
 	// StartDateTime/EndDateTime are the same campaign-level v23 fields both other
 	// payloads carry, resolved by the same shared preflight. See demandgen.go for why
 	// carrying them is a correctness requirement and not a nicety: applyCampaignConfig
@@ -158,7 +177,7 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		CampaignBudget:                 budgetResource,
 		ContainsEuPoliticalAdvertising: euPoliticalAdvertisingNo,
 		GeoTargetTypeSetting:           geoTargetTypeSetting{PositiveGeoTargetType: geoTargetPresence},
-		UrlExpansionOptOut:             true,
+		BrandGuidelinesEnabled:         false,
 		StartDateTime:                  pf.startDateTime,
 		EndDateTime:                    pf.endDateTime,
 		// Resolved by the SHARED preflight, which on this channel admits only the four
