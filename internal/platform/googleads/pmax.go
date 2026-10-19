@@ -48,10 +48,18 @@ const (
 	//
 	// It survives the opt-out above, and the reason is the whole point of the hedge: the
 	// campaign these arms are talking about was created by SOME EARLIER ATTEMPT, which may
-	// predate this service ever sending the setting — the two prod dispatches of
-	// 2026-10-16 are exactly that, and either could be the campaign the operator finds.
-	// All three already send them to the Google Ads UI to check; if what is there was
-	// created without the opt-out, expansion is on and nothing else will say so.
+	// predate this service ever sending the setting. All three already send the operator
+	// to the Google Ads UI to check; if what is there was created without the opt-out,
+	// expansion is on and nothing else will say so.
+	//
+	// The 2026-10-16 prod dispatches are NOT examples of that campaign, and this doc used
+	// to cite them as if they were. Both died at `campaigns:mutate` with HTTP 400 — probe
+	// A below is that same payload rejected outright as INVALID_ARGUMENT on the removed
+	// `urlExpansionOptOut` field — so neither left a campaign for an operator to find.
+	// What they left is an orphan BUDGET, which is the duplicate-budget arm's subject and
+	// a different thing. The attempt this hedge is about is a hypothetical older one, not
+	// a recorded one; keeping a real incident attached to it made the premise read as
+	// established when it is precautionary.
 	expansionActionRequiredIfExists = "ACTION REQUIRED: if that campaign exists, check its final-URL expansion in the Google Ads UI and turn it OFF if it is on — this service now opts out at create, but a campaign left by an earlier attempt may predate that, and expanded URLs carry none of the UTM attribution the data pipeline parses back out"
 )
 
@@ -96,8 +104,9 @@ type performanceMaxCampaignCreate struct {
 	// the campaign to HTTP 400, twice; the probes below ran the same day, against the real
 	// account, all of them validateOnly so nothing was created. Same payload each time bar
 	// one field. A, B and D are the probe scripts' own labels, kept so this comment and
-	// PMAX_ACTION_PLAN §2 name the same probes; these three are the ones the conclusion
-	// rests on.
+	// the full table in docs/knowledge/log/2026-10-19-LFXV2-2665-pmax-v23-create.md name
+	// the same probes; these three are the ones the conclusion rests on, and the gap where
+	// C would be is that label never having been used, not a probe omitted here.
 	//
 	//   A. the prod payload as sent          → 400 INVALID_ARGUMENT, Unknown name
 	//                                          "urlExpansionOptOut" at 'operations[0].create'
@@ -140,9 +149,19 @@ type performanceMaxCampaignCreate struct {
 	//
 	// So this is not a like-for-like rename and must not be read as one: the entry below
 	// opts out of ONE asset-automation type, and Google may add others that this payload
-	// then leaves at their default. It is sent as a slice literal with one element rather
-	// than a nil-able pointer, and without `omitempty`, so an empty slice can never be the
-	// thing that silently restores the default.
+	// then leaves at their default.
+	//
+	// Dropping `omitempty` here is for CONSISTENCY with the scalar above, not for the same
+	// reason, and an earlier revision of this comment claimed otherwise. On
+	// `BrandGuidelinesEnabled` the tag genuinely decides an outcome: `omitempty` would
+	// elide `false` and hand the account's setting the decision. On a repeated field it
+	// decides nothing — `encoding/json` writes a nil slice as `null` and an empty one as
+	// `[]`, and proto3 JSON reads both exactly as an unset repeated field, which is also
+	// what omitting the key does. All three spellings mean "no opt-out". The thing that
+	// actually guarantees the opt-out ships is the one-element slice literal at the
+	// `campaigns:mutate` call below, and it is pinned by
+	// TestCreatePerformanceMaxCampaign_CampaignShape — so that test, not this tag, is what
+	// a future edit has to get past.
 	AssetAutomationSettings []assetAutomationSetting `json:"assetAutomationSettings"`
 	// StartDateTime/EndDateTime are the same campaign-level v23 fields both other
 	// payloads carry, resolved by the same shared preflight. See demandgen.go for why
@@ -219,13 +238,35 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 	if err != nil {
 		switch {
 		case isDuplicateBudgetNameErr(err):
-			// Hedged, one mutate earlier than the campaign arms below. The budget name is
-			// this client's idempotency key, so a re-dispatch of the same brief on this
-			// channel fails HERE, before campaigns:mutate is ever attempted — and if the
-			// attempt that created this budget got past Step 2, a campaign exists with
-			// expansion on and nothing else in this return would say so. The two arms
-			// below stay silent because there the budget itself is the open question and
-			// the campaign create provably was never reached.
+			// Hedged, one mutate earlier than the campaign arms below, and hedged on a
+			// NARROW premise — narrow enough to be worth stating, because the obvious
+			// reading of it is wrong twice over.
+			//
+			// The budget name is this client's idempotency key, so a re-dispatch of the
+			// same brief on this channel fails HERE, before campaigns:mutate is attempted.
+			// The tempting conclusion — "so the attempt that created this budget may have
+			// got past Step 2, leaving a campaign" — does not follow: this budget is
+			// created non-shared (`shared := false` above), and a non-shared budget's name
+			// SYNCHRONIZES to the campaign name once a campaign attaches to it
+			// (campaign.go's `campaignNamePartial` contract, which `internal/dispatch/
+			// googleads.go` reconciles by id for exactly this reason). An attempt that got
+			// past Step 2 therefore FREED `budgetName`, and this arm would not have been
+			// reached at all. Reaching it means an UNATTACHED budget — the orphan shape,
+			// which is what the two 2026-10-16 prod dispatches actually left.
+			//
+			// Nor would the campaign be "a campaign with expansion on": this file now opts
+			// out at create (the `AssetAutomationSettings` literal in Step 2), so anything
+			// the CURRENT code leaves behind has expansion OFF.
+			//
+			// What survives both corrections, and is the only reason the step is still
+			// appended: the sync is Google's behaviour as this package documents it, not
+			// something this service verified, and nothing here has established what
+			// happens to a non-shared budget's name if its campaign is later removed. A
+			// campaign predating this file's opt-out could also still be sitting under a
+			// re-created budget of the original name. Both are narrow, neither is disproved,
+			// and the cost of the hedge is one UI check the operator is already being sent
+			// to make. The two arms below stay silent because there the budget itself is
+			// the open question and the campaign create provably was never reached.
 			steps = append(steps, expansionActionRequiredIfExists)
 			return namePartial(), fmt.Errorf("google-ads performance max budget %q already exists (DUPLICATE_NAME) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, err)
 		case createOutcomeAmbiguous(err):

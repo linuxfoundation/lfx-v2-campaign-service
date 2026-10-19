@@ -1832,7 +1832,7 @@ in the PURE preflight; the image bytes are fetched by `fetchSlotImages` through 
 hardened credential-free transport Demand Gen uses, still BEFORE the first budget
 mutate, so a bad image fails with `result == nil` and nothing created.
 
-**The campaign shell differs from Search's in four ways that all matter.**
+**The campaign shell differs from Search's in five ways that all matter.**
 `advertisingChannelType: PERFORMANCE_MAX`; `brandGuidelinesEnabled: false`, sent
 explicitly and never omitted, because the account has Brand Guidelines on and a
 Performance Max campaign created under it must link a BUSINESS_NAME and a square LOGO
@@ -1841,10 +1841,14 @@ as CAMPAIGN assets, so the create would 400 with
 and been paid for. The gap is not that the client cannot build those two assets —
 `pmax_creative.go` builds both — but that it links them as ASSET-GROUP assets at Step 5,
 after the Step 2 campaign create, so satisfying Brand Guidelines needs a campaign-level
-`campaignAssets:mutate` link AND a reordering of the cascade; no `networkSettings`, which Performance Max does
-not take; and `maximizeConversions` by default — `defaultBiddingStrategy` answers a
-different strategy per channel, and manual CPC and maximize-clicks are both REFUSED here
-because Performance Max does not offer them.
+`campaignAssets:mutate` link AND a reordering of the cascade; `assetAutomationSettings`,
+which only this channel carries and which the next paragraph covers on its own because
+the field it replaced is gone from v23 entirely; no `networkSettings`, which Performance
+Max does not take; and `maximizeConversions` by default — `defaultBiddingStrategy`
+answers a different strategy per channel, and manual CPC and maximize-clicks are both
+REFUSED here because Performance Max does not offer them. Geo is attached at CAMPAIGN
+level, as on Search, which is why proximity stays allowed on this channel while every
+other Search-only field is refused.
 
 **`urlExpansionOptOut` is GONE; the control it carried moved.** This shell used to send
 `urlExpansionOptOut: true` so the campaign served the final URL it was given rather than
@@ -1854,10 +1858,14 @@ returns only the reporting view `final_url_expansion_asset_view`. It did not rem
 control: that lives in `campaign.asset_automation_settings`, which is settable at CREATE
 and supported on this channel, verified against the live API on 2026-10-19 with a
 `validateOnly` mutate. So the shell sends `assetAutomationSettings` with one entry,
-`FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION` / `OPTED_OUT`, as a slice literal with no
-`omitempty` — an omitted or empty value would leave the outcome to Google's default
-instead of to this service, which is the bug `urlExpansionOptOut: true` existed to
-prevent. This is not a like-for-like rename: the entry opts out of ONE
+`FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION` / `OPTED_OUT`. What guarantees the opt-out
+ships is that one-element slice LITERAL, pinned by
+`TestCreatePerformanceMaxCampaign_CampaignShape` — not the absence of `omitempty` on the
+field, which on a repeated field decides nothing: a nil slice (`null`), an empty slice
+(`[]`) and an omitted key are all read identically by proto3 JSON, and all three mean "no
+opt-out", which is the bug `urlExpansionOptOut: true` existed to prevent. The tag is
+dropped for consistency with `brandGuidelinesEnabled`, where it genuinely does decide an
+outcome. This is not a like-for-like rename: the entry opts out of ONE
 asset-automation type, and Google may add others this payload then leaves at their
 default.
 
@@ -1871,9 +1879,7 @@ the operator to the Google Ads UI to check — a duplicate campaign name, an amb
 campaign create, and a duplicate BUDGET name, which fails one mutate earlier, before
 `campaigns:mutate` is attempted — keep a hedged `ACTION REQUIRED:`, because the campaign
 they describe was created by an earlier attempt that may predate this service ever sending
-the setting. Geo is attached at
-CAMPAIGN level, as on Search, which is why proximity stays
-allowed on this channel while every other Search-only field is refused.
+the setting.
 
 **Asset groups are created PAUSED**, matching the campaign — the same intent every
 other create in this client has: nothing serves until a human enables it.
