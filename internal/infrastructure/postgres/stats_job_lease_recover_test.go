@@ -6,8 +6,10 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,6 +63,17 @@ func liveLeasePool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
+// liveLeaseSeq makes liveLeaseSuffix unique within one test process.
+var liveLeaseSeq atomic.Int64
+
+// liveLeaseSuffix names a live test's accounts uniquely across processes sharing one database:
+// a wall-clock string alone repeats when parallel test processes start an iteration in the same
+// clock tick (microsecond resolution on macOS), and the second process then finds the first
+// one's lock held.
+func liveLeaseSuffix() string {
+	return fmt.Sprintf("%d-%d-%d", os.Getpid(), time.Now().UnixNano(), liveLeaseSeq.Add(1))
+}
+
 func lockHolderPID(ctx context.Context, t *testing.T, pool *pgxpool.Pool, accountID string) int32 {
 	t.Helper()
 	var pid int32
@@ -89,7 +102,7 @@ func TestLiveStatsJobLease_FailedLockForOneAccountKeepsTheOthers(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS `+fn+`(boolean)`) })
 
-	suffix := time.Now().Format("150405.000000000")
+	suffix := liveLeaseSuffix()
 	a, b := "xrecover-a-"+suffix, "xrecover-b-"+suffix
 	lease := NewStatsJobLease(&Pool{Pool: pool})
 	t.Cleanup(func() { lease.Close(context.Background()) })
