@@ -39,8 +39,27 @@ import (
 // CONCURRENCY. Reddit documents no ETag or conditional write for an ad group, so a
 // read-modify-write cannot be made atomic upstream. The caller's half is Revision: a fingerprint
 // of the whole targeting object, which the dispatcher compares against a fresh read before
-// writing and refuses on any difference. The window between that read and the PATCH remains and
-// is stated, not hidden; the re-read afterwards is what reports a lost race as UNCONFIRMED.
+// writing and refuses on any difference.
+//
+// LFX against LFX is closed in campaign-service, not here: the dispatcher holds a per-ad-group
+// write lock (a Postgres advisory lock, shared by every replica — see
+// dispatch.RedditDispatcher.lockRedditTargeting) from that fresh read through the PATCH and the
+// re-read, so two LFX writes on one ad group (a removal and a negative add, say) cannot both pass
+// the revision check before either PATCH lands. The second waits, then re-reads and sees the
+// first's revision; if the wait runs out it is refused with nothing sent. When the first write's
+// PATCH was SENT but its outcome is UNCONFIRMED (timed out, cancelled, a re-read that could not
+// confirm it), the lock is kept for a further cooldown (domain.KeywordTargetingUnconfirmedCooldown,
+// 15s) before the next LFX write may read: Reddit may still be applying that PATCH, and a write
+// admitted at once would read the targeting as it is now, pass its check, and then be overwritten
+// by the late PATCH from its stale snapshot. A finite cooldown narrows that window but cannot
+// close it — nothing says when, or whether, Reddit finishes a request this service stopped
+// waiting for — so a PATCH landing after the cooldown can still overwrite a later LFX write.
+//
+// What remains is an edit made OUTSIDE this service (Reddit Ads Manager, another API client)
+// between the fresh read and the PATCH: the PATCH writes the targeting back as read and silently
+// undoes it, and the re-read cannot tell — it sees exactly what was written. An outside edit that
+// lands between the PATCH and the re-read is caught, and reported as UNCONFIRMED. That window is
+// stated, not hidden; only a conditional write upstream would close it.
 // ---------------------------------------------------------------------------
 
 // ErrTargetingUnreadable marks an ad group whose targeting could not be read as an object with a

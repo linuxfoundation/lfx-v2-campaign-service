@@ -262,6 +262,7 @@ func TestAddNegativeKeywords_RedditAndXErrorMapping(t *testing.T) {
 	}{
 		{"writes disabled", model.ProviderRedditAds, domain.ErrNegativeKeywordsUnsupported, &briefs.BadRequestError{}, "not enabled"},
 		{"stale revision", model.ProviderRedditAds, domain.ErrKeywordTargetingChanged, &briefs.ConflictError{}, "changed since it was read"},
+		{"write in progress", model.ProviderRedditAds, fmt.Errorf("x: %w", domain.ErrKeywordTargetingWriteInProgress), &briefs.ConflictError{}, "still in progress — nothing was added"},
 		{"over the limit", model.ProviderRedditAds, domain.ErrNegativeKeywordLimit, &briefs.ConflictError{}, "limit"},
 		{"unaddressable", model.ProviderTwitterAds, domain.ErrKeywordTargetingUnaddressable, &briefs.ConflictError{}, "cannot be addressed"},
 		{"provenance", model.ProviderTwitterAds, errors.Join(domain.ErrCampaignProvenanceUnknown, domain.ErrCampaignAccountMismatch), &briefs.ConflictError{}, "re-dispatched"},

@@ -20,8 +20,9 @@ import (
 // It follows ApplyKeywordActions rather than the toggle or budget write, for the reason that
 // handler documents: it PERSISTS NOTHING. The negatives live upstream and are mirrored in no
 // table, so the row is read to authorize and to reach the platform ids and is never written —
-// no version to bump, no If-Match to require, no ETag to return, no write lock to hold across
-// the platform call, and no index event to publish.
+// no version to bump, no If-Match to require, no ETag to return, no campaign write lock to hold
+// across the platform call, and no index event to publish. (Reddit's whole-targeting write does
+// take a per-ad-group lock, inside its dispatcher; that serializes the platform write, not the row.)
 func (s *BriefService) AddNegativeKeywords(ctx context.Context, p *briefs.AddNegativeKeywordsPayload) (*briefs.NegativeKeywords, error) {
 	_, campaignRepo, _, orch, err := s.ready()
 	if err != nil {
@@ -139,6 +140,8 @@ func (s *BriefService) classifyNegativeKeywordError(ctx context.Context, p *brie
 		}
 	case errors.Is(aerr, domain.ErrKeywordTargetingChanged):
 		return &briefs.ConflictError{Code: "409", Message: "the ad group's targeting changed since it was read — nothing was added; read the keyword targeting again and resend with its revision"}
+	case errors.Is(aerr, domain.ErrKeywordTargetingWriteInProgress):
+		return &briefs.ConflictError{Code: "409", Message: "another change to this ad group's keyword targeting is still in progress — nothing was added; read the keyword targeting again and resend with its revision"}
 	case errors.Is(aerr, domain.ErrNegativeKeywordLimit):
 		slog.WarnContext(ctx, "negative keywords refused: the platform's limit would be exceeded; nothing was added",
 			append(logFields, "error", safeErrSummary(aerr))...)

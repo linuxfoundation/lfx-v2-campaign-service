@@ -4278,7 +4278,31 @@ this campaign's before returning or changing anything; the removal fails closed 
 refuses a removal that would leave no keyword (`ErrKeywordTargetingWouldEmpty`), and reuses
 `unconfirmedKeywordLeverError` for ambiguous outcomes. Reddit's removal is gated by
 `REDDIT_KEYWORD_TARGETING_WRITES_ENABLED`, compares the caller's `revision` with a fresh read
-(`ErrKeywordTargetingChanged`), writes the whole targeting back, and re-reads to confirm. X's
+(`ErrKeywordTargetingChanged`), writes the whole targeting back, and re-reads to confirm — all
+under the ad group's write lock (`lockRedditTargeting`, `reddit_targeting_lock.go`), which the
+negative-keyword add takes too. The lock is a `domain.KeywordTargetingWriteLock` scoped
+`reddit/{account}/ad_groups/{ad group}`: the container binds the Postgres advisory lock
+(`postgres.KeywordTargetingWriteLock`, via `SetKeywordTargetingWriteLock` on both wiring paths) so
+replicas serialize; without it the dispatcher falls back to an in-process lock
+(`localTargetingLock`, one replica only). It is taken before the fresh read and released after the
+re-read, so a second LFX write on the ad group waits and then reads the first's result; one that
+cannot get it within `domain.KeywordTargetingLockWait` (10 s) is
+`domain.ErrKeywordTargetingWriteInProgress` (409), nothing sent, and any other lock failure is
+tagged `domain.ErrKeywordTargetingLockUnavailable` (503, nothing sent). `lockRedditTargeting`
+reports the time it waited through `domain.RecordLockWait`, so the orchestrator keeps it out of
+Reddit's upstream latency. The hold is released BY OUTCOME (`releaseRedditTargeting`,
+`redditWriteUnsettled`): at once when settled, after `targetingCooldown`
+(`domain.KeywordTargetingUnconfirmedCooldown`, 15 s; `ReleaseAfterCooldown`) when the PATCH was
+sent and the error or any per-item outcome is UNCONFIRMED, so a late-landing write cannot
+overwrite the next LFX write the moment it is admitted (a mitigation, not a guarantee). Both
+methods have named results so the deferred release can read them.
+Tests: `reddit_targeting_lock_test.go` (same ad group serializes and the waiter then refuses as
+changed; refusal on timeout sends nothing; different ad groups do not block; scope and span; a
+refusal is classed as a lock refusal; the lock wait is reported; delayed-commit tests for both
+orderings — a late negative add vs a waiting removal, with a mixed ALREADY_PRESENT/UNCONFIRMED
+answer, and a late removal vs a waiting add — where the waiter is held for the cooldown and then
+refuses as changed; a cooldown longer than the waiter's wait refuses it as in progress; and a
+table pinning that every settled outcome releases at once). X's
 deletes one criterion at a time with per-item outcomes, re-listing the targeting before each DELETE so a concurrent removal cannot combine with it to empty the line item (`WOULD_EMPTY`). See
 [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
@@ -4317,7 +4341,8 @@ calls `microsoft.ValidateNegativeKeywords`, the same rules with Exact/Phrase.
 
 Every refusal in that table happens before the write, so it changes nothing. Guard order:
 - *Reddit:* the gate; the batch; `revision` present; the recorded ad group; provenance; the
-  account; the ownership read; `revision` equal to that read's; `excluded_keywords` legible; the
+  account; the ad group's write lock (`ErrKeywordTargetingWriteInProgress` after its bounded
+  wait, held through the re-read — the removal's); the ownership read; `revision` equal to that read's; `excluded_keywords` legible; the
   already-present set; the 2,000-element cap; a fingerprint of every other targeting member
   (`FingerprintExceptExcluded`, unreadable → `ErrKeywordTargetingUnaddressable`), kept for the
   post-write comparison.

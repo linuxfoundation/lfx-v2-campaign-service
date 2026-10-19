@@ -2141,3 +2141,59 @@ ONE-connection business pool, three accounts' leases sit on one session and an o
 `TestStatsJobLease_CloseHonoursTheCallerDeadline`, `TestStatsJobLease_EndedRequestSkipsThePing`,
 `TestStatsJobLease_CloseReturnsWhileAnOwnIsStuck`, `TestStatsJobLease_CloseCancelsAnInFlightOwn`
 and `TestLiveStatsJobLease_CollidingKeysShareOneLock`.
+
+## `KeywordTargetingWriteLock` — one LFX whole-targeting write per ad group (LFXV2-2665)
+
+`keyword_targeting_lock.go` implements `domain.KeywordTargetingWriteLock` for Reddit's
+whole-object keyword-targeting writes (the removal and the negative-keyword add): a SESSION
+advisory lock `pg_try_advisory_lock(keywordTargetingLockClass, fnv32a(scope))`, class `RKTW` —
+the two-int form, so it shares no key space with `ClaimCampaignVersion`'s one-bigint locks or the
+binding lock, and its class keeps it apart from the X stats-job lease (`XSTJ`). The scope is
+`reddit/{account}/ad_groups/{ad group}`; colliding scopes share one lock, which only
+over-serializes. No migration. It is the `ClaimCampaignVersion` mechanism (a pooled connection
+holds the lock for the guarded span; unlock on a detached bounded context; a connection whose
+try-lock errored, or whose unlock failed or answered false, is DESTROYED, never returned to the
+pool with a lock on it) with a bounded WAIT instead of an immediate refusal: `Lock` polls the
+try-lock every 100 ms for up to `domain.KeywordTargetingLockWait` (10 s — the one constant the
+dispatcher's in-process fallback uses too), returning the connection to the pool between attempts,
+so waiting costs no held connection. Every attempt — the pool checkout included — runs on a
+context cut off at the wait's deadline, so a SATURATED pool cannot stretch the wait to the
+caller's 45 s mutation timeout: an attempt cut off by that deadline (not by the caller's own
+context) counts as the wait running out. Still held at the deadline (one last attempt is made AT
+it), or no connection to ask with by then, is `domain.ErrKeywordTargetingWriteInProgress` (409); a
+pool or query failure, or the request ending mid-wait, is a plain error that the dispatcher tags
+`domain.ErrKeywordTargetingLockUnavailable` (503) — either way the caller sends nothing. A
+try-lock whose query failed, even one only cut short by the deadline, destroys its connection,
+since Postgres may have granted the lock. `Lock` returns a `domain.KeywordTargetingLockHold`:
+`Release` unlocks now; `ReleaseAfterCooldown` (used after an UNCONFIRMED write) keeps the lock,
+on a context detached from the request, until the cooldown ends or `StopCooldownsForShutdown`
+runs — through `releaseAfterSharedCooldown`, the runner `ReleaseCampaignLockAfterCooldown` now
+also uses, so `Container.Close`'s existing cooldown stop covers both and the unlock fits Close's
+remaining budget (`shutdownReleaseBound`). Exactly one release takes effect; a `Release` after
+`ReleaseAfterCooldown` ends the cooldown early. The runner captures `cooldownShutdown` under
+`cooldownMu` when it parks, instead of reading the variable later.
+**Pool cost — the holder occupies one pooled connection for the length of its Reddit calls**
+(up to three requests, inside the 45 s mutation timeout), because the session that took the lock
+must stay checked out until the re-read — plus, after an UNCONFIRMED write, the 15 s cooldown:
+the same cost as a toggle's `ClaimCampaignVersion` (whose own UNCONFIRMED cooldown is 30 s).
+Writes to different ad groups take one slot each; with `pool_max_conns=1` one write holds the
+pool's only connection and every other request waits for it (a second write is refused at its
+deadline). It is bounded by "one request, one ad group, behind a default-off flag", not
+structurally. **A dedicated session, as `StatsJobLease` uses, was not chosen:** one shared session
+would serialize every lock, poll and unlock of all in-flight writes through one `pgx.Conn` and
+drop every holder's lock at once when lost; a session per write adds a connect (and TLS
+handshake) to each write and an unbounded number of connections outside `pool_max_conns`. Both
+trade a bounded, visible pool cost for an unbounded or shared one. Like the campaign claim, the lock lives as long as its
+session: a contention guard, not durable ownership. `KeywordTargetingLockKeys` exposes the keys as
+they appear in `pg_locks`; `NewKeywordTargetingWriteLockWithWait` shortens the wait for tests, and
+`lockSQL` is a field only so an in-package test can make the try-lock fail after the grant.
+Live tests: `dbtest/keyword_targeting_lock_live_test.go` (two instances serialize one scope — the
+second refused only after its wait, granted once the first releases, another scope never waits,
+nothing left in `pg_locks`; a cancelled wait is the context's error, not "in progress"; on a
+one-connection pool a second write is refused as in progress at about its wait, not at its 30 s
+caller deadline) and, in-package, `TestLiveKeywordTargetingWriteLock_FailedTryLockDestroysTheConnection`
+(a failure injected after the grant leaves no lock held and no connection checked out) and
+`TestLiveKeywordTargetingWriteLock_CooldownHoldAndShutdown` (a cooling hold survives the
+request's cancellation and refuses a second writer, ends at its cooldown or at an explicit
+`Release`, and `StopCooldownsForShutdown` releases it at once and returns the connection; a hold
+cooled after shutdown began releases immediately).

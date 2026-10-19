@@ -703,7 +703,11 @@ replaces the WHOLE targeting from a pre-read snapshot, so a retry after a commit
 first attempt could overwrite an operator's later change to another dimension and still pass the
 final comparison against that stale snapshot. A 429 is therefore UNCONFIRMED at once; otherwise
 the classification is `UpdateAdGroupBid`'s (transport, 3xx, 5xx UNCONFIRMED; any other 4xx
-definite), plus an UNCONFIRMED echo naming another keyword list. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
+definite), plus an UNCONFIRMED echo naming another keyword list. The file's CONCURRENCY note
+states what is and is not covered: two LFX writes on one ad group are serialized by the
+dispatcher's per-ad-group lock (held from the fresh read through the re-read); an edit made
+outside LFX between the read and the PATCH is still overwritten without the re-read noticing,
+because Reddit offers no conditional write. See [Keyword Targeting on Reddit and X](../architecture/keyword-targeting-reddit-x.md).
 
 ## Ad-group excluded keywords (`excluded_keywords.go`, LFXV2-2665)
 
