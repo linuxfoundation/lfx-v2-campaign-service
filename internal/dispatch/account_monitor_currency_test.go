@@ -35,6 +35,11 @@ func TestReadAccountMonitor_CarriesCurrency(t *testing.T) {
 				_, _ = io.WriteString(w, `{"data":[{"campaign_id":"1","impressions":"10","clicks":"1","spend":"2","account_currency":"EUR"}],"paging":{}}`)
 				return
 			}
+			if r.URL.Path == "/act_777" {
+				// The budget conversion's own account-currency read (GET /act_…?fields=currency).
+				_, _ = io.WriteString(w, `{"currency":"EUR","id":"act_777"}`)
+				return
+			}
 			_, _ = io.WriteString(w, `{"data":[{"id":"1","name":"c","status":"ACTIVE","daily_budget":"1000"}],"paging":{}}`)
 		}))
 		t.Cleanup(srv.Close)

@@ -484,7 +484,7 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
 	t.Run("no event name: check 4 does not run and the roll-up is untouched", func(t *testing.T) {
-		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "", false, false)
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "", false, false, nil)
 		require.NoError(t, err)
 
 		assert.Empty(t, outcome.Checks.CurrentRegistrants.Verdict,
@@ -497,7 +497,7 @@ func TestRunQA_CheckFourRunsOnlyWhenTheEventIsNamed(t *testing.T) {
 	})
 
 	t.Run("event named: check 4 catches the included registration list", func(t *testing.T) {
-		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", false, false)
+		outcome, err := x.RunQA(context.Background(), "proj-1", "111", "AGNTCon + MCPCon North America 2026", false, false, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, audience.VerdictFail, outcome.Checks.CurrentRegistrants.Verdict,
@@ -653,7 +653,7 @@ func TestRunQA_ByName_FetchesRealFiltersRatherThanCachedSearchHit(t *testing.T) 
 	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
 	x := NewAudienceExplorer(builder, nil, nil, nil)
 
-	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", false, false)
+	outcome, err := x.RunQA(context.Background(), "proj-1", "KubeCon NA 2026 - master", "", false, false, nil)
 	require.NoError(t, err)
 	require.False(t, outcome.NeedsDisambiguation)
 
@@ -2054,4 +2054,103 @@ func TestAttachExisting_VerifiesEveryListAndCreatesNothing(t *testing.T) {
 
 	_, err = x.AttachExisting(context.Background(), "proj-1", []string{" ", ""}, nil)
 	assert.ErrorIs(t, err, audience.ErrNoInclusionLists)
+}
+
+// The fallback brand is resolved before classification reads it: an education list
+// scoped only by the brand (reached as a rollup child, so its name need not carry the
+// event's words) is this event's education signal once the event's own lists agree on
+// the brand, and education is not reported missing.
+func TestDiscover_TheFallbackBrandScopesAnEducationChild(t *testing.T) {
+	hits := `{"listId":"7101","name":"26Q3 - AAIF - Synthetic Summit 2026 - Registrants","objectTypeId":"0-1"},` +
+		`{"listId":"7102","name":"26Q3 - AAIF - Synthetic Summit 2026 - Speakers","objectTypeId":"0-1"},` +
+		`{"listId":"7103","name":"26Q3 - Synthetic Summit - Inclusions","objectTypeId":"0-1"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == hubSpotTokenInfoPath:
+			_, _ = io.WriteString(w, `{"hubId":8112310}`)
+		case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+			_, _ = io.WriteString(w, `{"lists":[`+hits+`],"hasMore":false,"offset":0}`)
+		case r.URL.Path == "/crm/v3/lists/7103":
+			_, _ = io.WriteString(w, `{"list":{"listId":"7103","name":"26Q3 - Synthetic Summit - Inclusions","objectTypeId":"0-1",`+
+				`"filterBranch":{"filterBranchType":"OR","filterBranches":[{"filterBranchType":"AND",`+
+				`"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":8100}]}]}}}`)
+		case r.URL.Path == "/crm/v3/lists/8100":
+			_, _ = io.WriteString(w, `{"list":{"listId":"8100","name":"LFX Education - AAIF Learners","objectTypeId":"0-1",`+
+				`"filterBranch":{"filterBranchType":"OR","filterBranches":[{"filterBranchType":"AND","filters":[],`+
+				`"filterBranches":[{"filterBranchType":"UNIFIED_EVENTS","eventTypeId":"6-58204655","operator":"HAS_COMPLETED","filters":[],"filterBranches":[]}]}]}}}`)
+		case strings.HasPrefix(r.URL.Path, "/crm/v3/lists/") && r.Method == http.MethodGet:
+			id := strings.TrimPrefix(r.URL.Path, "/crm/v3/lists/")
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"list":{"listId":"%s","name":"26Q3 - AAIF - Synthetic Summit 2026 - Registrants","objectTypeId":"0-1","size":7}}`, id))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+	builder := NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL))
+	x := NewAudienceExplorer(builder, &stubFetcher{body: []byte("x")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026"}}, nil)
+
+	out, err := x.Discover(context.Background(), "proj-1", "https://events.example.org/synthetic-summit")
+	require.NoError(t, err)
+	assert.Equal(t, "AAIF", out.Event.BrandShort)
+	var education audience.Signal
+	for _, l := range out.Lists {
+		if l.ListID == "8100" {
+			education = l.Signal
+		}
+	}
+	assert.Equal(t, audience.SignalEducationEnrollment, education, "the brand-scoped education child is classified with the inferred brand")
+	assert.NotContains(t, out.MissingSignals, audience.SignalEducationEnrollment)
+}
+
+// A rollup named as a suppression list is not expanded: its child is what it keeps
+// out, so offering the child would include those contacts. The parent is hidden; a
+// master rollup's children are still offered.
+func TestDiscover_ASuppressionRollupIsNotExpanded(t *testing.T) {
+	for name, tc := range map[string]struct {
+		parent  string
+		offered bool
+	}{
+		"suppression rollup": {parent: "26Q3 - Synthetic Summit 2026 - Opt-Outs", offered: false},
+		"ordinary rollup":    {parent: "26Q3 - Synthetic Summit 2026 - Inclusions", offered: true},
+		"master rollup":      {parent: "26Q3 - Synthetic Summit 2026 - Master", offered: true},
+		"test master rollup": {parent: "26Q3 - Synthetic Summit 2026 - Master [test]", offered: false},
+		"staff master":       {parent: "26Q3 - Synthetic Summit 2026 - Staff Master", offered: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hits := `{"listId":"7201","name":"` + tc.parent + `","objectTypeId":"0-1"}`
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == hubSpotTokenInfoPath:
+					_, _ = io.WriteString(w, `{"hubId":8112310}`)
+				case r.URL.Path == "/crm/v3/lists/search" && r.Method == http.MethodPost:
+					_, _ = io.WriteString(w, `{"lists":[`+hits+`],"hasMore":false,"offset":0}`)
+				case r.URL.Path == "/crm/v3/lists/7201":
+					_, _ = io.WriteString(w, `{"list":{"listId":"7201","name":"`+tc.parent+`","objectTypeId":"0-1",`+
+						`"filterBranch":{"filterBranchType":"OR","filterBranches":[{"filterBranchType":"AND",`+
+						`"filters":[{"filterType":"IN_LIST","operator":"IN_LIST","listId":8200}]}]}}}`)
+				case r.URL.Path == "/crm/v3/lists/8200":
+					_, _ = io.WriteString(w, `{"list":{"listId":"8200","name":"26Q3 - Synthetic Summit 2026 - Seoul Contacts","objectTypeId":"0-1","size":40}}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			repo := &scopedConnReader{rows: map[string]*model.Connection{"proj-1": activeHubSpotConn(goodHubSpotCreds)}}
+			x := NewAudienceExplorer(NewAudienceBuilder(repo, identityEncryptor{}, nil, hubspot.WithBaseURL(srv.URL)),
+				&stubFetcher{body: []byte("x")}, stubParser{details: eventurl.EventDetails{Name: "Synthetic Summit 2026"}}, nil)
+
+			out, err := x.Discover(context.Background(), "proj-1", "https://events.example.org/synthetic-summit")
+			require.NoError(t, err)
+			offered := false
+			for _, l := range out.Lists {
+				if l.ListID == "8200" {
+					offered = true
+				}
+			}
+			assert.Equal(t, tc.offered, offered)
+		})
+	}
 }

@@ -276,7 +276,9 @@ func NewClient(creds Credentials, account AccountConfig, opts ...Option) *Client
 // apiError is a non-2xx HubSpot response. Error() renders only method/path/status
 // — the response body is NOT echoed (a HubSpot error envelope can quote request
 // material), matching the reddit/googleads discipline. No response-body snapshot is
-// retained at all: nothing in this package classifies on the body, and an exported Body
+// retained, with ONE exception: for a 400 HubSpot categorises as VALIDATION_ERROR, the
+// unexported validation field keeps its bounded message (see below). Apart from that
+// category check nothing in this package classifies on the body, and an exported Body
 // field could leak upstream material through reflection/JSON serialization of the error
 // even though Error() omits it. (Google Ads keeps a bounded snapshot because it parses
 // error CODES from it; this client does not.)
@@ -289,6 +291,46 @@ type apiError struct {
 	// non-idempotent op must treat an ambiguous apiError as UNCONFIRMED (verify,
 	// don't blind-retry) — distinct from a definite 4xx, which cleanly did nothing.
 	Ambiguous bool
+	// validation is HubSpot's own explanation of a VALIDATION_ERROR 400 — and only
+	// that: one line, bounded, never any other body. Unexported and absent from
+	// Error(), so it cannot leak through logging or serialization of the error; it is
+	// read only through ValidationMessage, by a caller that chooses to show it.
+	//
+	// It exists because a refused list definition is otherwise undiagnosable: the
+	// first live custom-list create failed with nothing but "-> 400".
+	validation string
+}
+
+// validationMessageMax bounds the retained explanation.
+const validationMessageMax = 300
+
+// ValidationMessage is HubSpot's explanation of a VALIDATION_ERROR rejection, or "".
+func ValidationMessage(err error) string {
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return ""
+	}
+	return ae.validation
+}
+
+// validationMessageFrom extracts the explanation from a 400 body, only when HubSpot
+// classifies it as a validation error. Anything else yields "".
+func validationMessageFrom(status int, body []byte) string {
+	if status != http.StatusBadRequest || len(body) == 0 {
+		return ""
+	}
+	var env struct {
+		Category string `json:"category"`
+		Message  string `json:"message"`
+	}
+	if json.Unmarshal(body, &env) != nil || env.Category != "VALIDATION_ERROR" {
+		return ""
+	}
+	msg := strings.Join(strings.Fields(env.Message), " ")
+	if r := []rune(msg); len(r) > validationMessageMax {
+		msg = string(r[:validationMessageMax]) // on a rune boundary, never mid-character
+	}
+	return msg
 }
 
 // IsAPIError reports whether err is one of this client's HTTP-status errors.
@@ -659,10 +701,18 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, i
 			}
 
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				var validation string
+				if resp.StatusCode == http.StatusBadRequest {
+					// Read (bounded) only to classify a validation error; the body itself is
+					// never retained — see apiError.validation.
+					errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+					validation = validationMessageFrom(resp.StatusCode, errBody)
+				}
 				drainAndClose(resp)
 				return nil, 0, true, &apiError{
 					StatusCode: resp.StatusCode, Method: method, Path: path,
-					Ambiguous: !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+					Ambiguous:  !idempotent && isAmbiguousMutatingStatus(resp.StatusCode),
+					validation: validation,
 				}
 			}
 

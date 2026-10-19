@@ -41,7 +41,7 @@ type qaExplorer struct {
 	outcome      *audience.QaOutcome
 }
 
-func (q *qaExplorer) RunQA(_ context.Context, _, _, eventName string, _, _ bool) (*audience.QaOutcome, error) {
+func (q *qaExplorer) RunQA(_ context.Context, _, _, eventName string, _, _ bool, _ []string) (*audience.QaOutcome, error) {
 	q.gotEventName = eventName
 	return q.outcome, nil
 }

@@ -25,7 +25,10 @@ func TestBidToMinorUnits(t *testing.T) {
 		refused bool
 	}{
 		{2.35, 100, 235, false},
-		{0.005, 100, 1, false}, // half a cent rounds away from zero to the one-cent floor
+		{0.005, 100, 0, true},  // half a cent is below the one-cent floor: refused, no longer rounded up (#235)
+		{1.4, 1, 0, true},      // a fraction of a yen is refused, not written as ¥1 (#235)
+		{2.355, 100, 0, true},  // a fraction of a cent is refused (#235)
+		{0.29, 100, 29, false}, // 0.29*100 is 28.999999999999996 as a float; the decimal check accepts it
 		{0.004, 100, 0, true},
 		{120, 1, 120, false},
 		{0.4, 1, 0, true},
@@ -35,6 +38,19 @@ func TestBidToMinorUnits(t *testing.T) {
 		{-1, 100, 0, true},
 		{math.NaN(), 100, 0, true},
 		{math.Inf(1), 100, 0, true},
+		// The product overflows int64 although the amount is within metaMaxBid: refused, never
+		// converted to an implementation-defined (negative) minor-unit bid (PR #316 review).
+		{1_000_000, 10_000_000_000_000, 0, true},
+		// The ceiling is 15 digits of minor units, what a decoded float64 carries exactly (PR #316
+		// review); anything past it — MaxInt64 included — is refused.
+		{1, 999_999_999_999_999, 999_999_999_999_999, false},
+		{1, 1_000_000_000_000_000, 0, true},
+		{1, math.MaxInt64, 0, true},
+		// A large offset within the ceiling encodes the exact product.
+		{9_007.19, 100_000_000_000, 900_719_000_000_000, false},
+		// 90071.99*1e11 (9007199000000000 minor units) is past the 15-digit ceiling.
+		{90_071.99, 100_000_000_000, 0, true},
+		{999_999.99, 100, 99_999_999, false},
 	} {
 		got, err := bidToMinorUnits(tc.amount, tc.offset)
 		if tc.refused {

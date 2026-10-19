@@ -70,13 +70,14 @@ the providers in them carry the same sub-paths.
 **The `audience-builder` family is enumerated leaf by leaf**, not admitted with a free
 `(/.*)?` tail (LFXV2-2770). It is a SIBLING of `briefs`, so it inherits nothing from the
 `briefs(/.*)?` branch and needs its own alternation branch here plus its own RuleSet
-entries. Nine leaves are spelled out — `capabilities`, `discover`, `lists/search`,
+entries. Thirteen leaves are spelled out — `capabilities`, `discover`, `lists/search`,
 `suppression-lists`, `last-sent`, `existing-master-lists`, `preview-count`,
-`compose-master`, `qa/run` — for two reasons. `compose-master` creates real contact lists
-in a production HubSpot portal and is not idempotent, so routing a path the service does
+`compose-master`, `attach-existing`, `qa/run`, `custom/interpret`, `custom/preview`,
+`custom/create` — for two reasons. `compose-master` and `custom/create` create real contact lists
+in a production HubSpot portal and are not idempotent, so routing a path the service does
 not serve is worse here than for a read-only family: the base path serves nothing, and
-`POST /signal-list` is specified in the plan but deliberately unimplemented. And two of
-the leaves are two segments deep (`lists/search`, `qa/run`), so a single-segment
+`POST /signal-list` is specified in the plan but deliberately unimplemented. And five of
+the leaves are two segments deep (`lists/search`, `qa/run` and the three `custom/*`), so a single-segment
 placeholder would not have covered the family anyway. Adding an endpoint to this service
 therefore means editing this regex, `ruleset.yaml`, and `parity_test.go` in the same
 commit.

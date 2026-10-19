@@ -6829,6 +6829,12 @@ func marshalLfxv2campaignservicebriefsPlatformResultToPlatformResultResponseBody
 		HubspotURL:         v.HubspotURL,
 		ReconcileTruncated: v.ReconcileTruncated,
 	}
+	if v.Warnings != nil {
+		res.Warnings = make([]string, len(v.Warnings))
+		for i, val := range v.Warnings {
+			res.Warnings[i] = val
+		}
+	}
 	if v.Reconcile != nil {
 		res.Reconcile = make([]*ReconcileIdentifierResponseBody, len(v.Reconcile))
 		for i, val := range v.Reconcile {

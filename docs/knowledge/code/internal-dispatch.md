@@ -1050,7 +1050,9 @@ read only under a daily `BudgetType`), `budget_type`, `campaign_name` compared;
 (Microsoft campaigns have none and the create path records none). Meta: campaign + the
 recorded ad set (budget, flight and bid strategy live on the ad set) + the account currency
 when there is an amount; minor units are compared through the account's own offset with the
-recorded side encoded as `round(amount × offset)`, exactly what `budgetToMinorUnits` sent; a
+recorded side encoded exactly as `budgetToMinorUnits` sends it (`meta.MinorUnitsExact`, exact
+decimal arithmetic), falling back to `round(amount × offset)` only for a fractional pre-#235 row,
+which is what that era's encoder sent; a
 CBO campaign's ad-set budget is `unknown`, not substituted with the shared campaign budget.
 Reddit: one campaign read (the create path puts goal, flight and bid strategy on the campaign,
 so no ad group is read); the budget is read only when `is_campaign_budget_optimization` is
@@ -2964,12 +2966,30 @@ unchanged into `hubspot.RebuildEmailContentInput.HeroImageAlt` — see
 falls back to a generic "Event banner" when blank).
 
 `campaignFromHubSpot` builds the value persisted as the campaign's `Result` blob from a struct
-that embeds `*hubspot.Email` alongside explicit `PortalID`, `HubspotURL` and `ABTestVariant`
-fields. `HubspotURL: e.AppURL` restates `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded
+that embeds `*hubspot.Email` alongside explicit `PortalID`, `HubspotURL`, `ABTestVariant` and
+`Warnings` fields (`Warnings` is the hero-image warning list described below, under the key
+`warnings`). `HubspotURL: e.AppURL` restates `hubspot.Email.AppURL` — tagged `json:"-"` on the embedded
 type, so it would not otherwise serialize — under the real JSON key `hubspotUrl`. That is the only
 reason the value survives into the persisted blob: `internal/service`'s
 `hubspotURLFromResult` reads that same key back out to populate the polled job result's
 `hubspot_url` field (see [internal/service](internal-service.md)).
+
+### HubSpot hero failures are reported, not silent
+
+`uploadHeroImage` re-hosts the scraped hero in the portal file manager and stays best-effort: a failure leaves
+the draft without a hero section instead of failing the dispatch. It now also returns an operator-facing
+warning, built from `heroFailureReason`'s fixed vocabulary (format email cannot use, not an image, download
+failed, too large, refused by the network guard, missing files permission, otherwise generic) and never from
+the error text, which can carry upstream content. The network-guard refusal is classified by identity, FIRST
+(`errors.Is(err, eventurl.ErrEventURLForbidden)`): the download path wraps every `client.Do` failure as
+"download image from …: %w", and the guard's own text names none of the matched substrings, so a string match
+reported a refused private or metadata address as a failed download, inviting a retry that fails identically. `Dispatch` stores the warnings in the campaign's Result blob
+(`warnings`), the orchestrator reads them back with `hubspotWarningsFromResult` next to `hubspotURLFromResult`
+at all three of `dispatchPlatform`'s call sites (fast-path reuse, claim-conflict reuse, fresh dispatch — each
+pinned by its own `TestOrchestrator_*CarriesHubspotURL` test), and `GetJob` returns them as
+`PlatformResult.warnings`. A campaign that asked for no hero reports none. The warning sends the operator
+to the HubSpot editor: staging again reuses the stored campaign and its warnings, so it does not retry
+the upload. The warning asks the operator to check the draft's banner rather than asserting it is absent: a failed upload can leave the template's banner in place.
 
 ## The system account is a connection row, not a second mechanism
 
@@ -4527,12 +4547,18 @@ endpoint can say, because an operator reads an empty panel as "this event has ne
 
 `RunQA` reads a list's own filter branch plus the NAMES of the lists it references — including
 names only the legacy v1 endpoint can still resolve — and hands both to the pure rules in
-`builder_qa.go`. A name it cannot read is a suppression it cannot credit, which is why the legacy
+`builder_qa.go`. The optional `send_suppression_list_ids` (up to 200) name the suppression lists
+the send applies on top of the list — custom and directly attached lists carry none of their own.
+Each is read; an unreadable id, a non-contact list, the audited list itself, a list EVERY branch of it
+requires membership of (`audience.RequiredInListIDs` walks the filter tree; for "A OR B",
+suppressing A still leaves B minus A, so A counts), or one it already excludes is skipped; the rest feed `CheckSuppression` and
+`CheckExclusionCompleteness(filters, len(sendTimeIDs))`, so `exclusion_count` includes them and
+`send_time_count` reports their share. A name it cannot read is a suppression it cannot credit, which is why the legacy
 lookup is not optional decoration. A single request-scoped `map[string]*hubspot.List` cache
 (seeded from the `SearchLists` hits already in hand, then filled in as `listWithFilters` and
 `listName` resolve ids) is threaded through the whole call so a list referenced from more than one
 place — the searched-for candidate itself, or a list excluded by more than one other list — is
-fetched from HubSpot once per `RunQA` call, not once per reference.
+fetched from HubSpot once per `RunQA` call, not once per reference. Check 4 (`current_registrants`) leaves out what the send provably does not reach: every verified send-time suppression (verified independently of check 3's dedup, so one a branch already excludes still counts) and every list such a suppression's own tree fully covers, one hop deep (`audience.CoveredListIDs`: a list alone as one OR alternative; an intersection covers nothing). The suppression checks read a wrapper the same way: only the children it fully covers are credited, so "GDPR AND Opt-Outs" applies neither protection. A send-time wrapper that fully covers the audience itself (the audited list, or a list every branch requires) is no suppression, like the audited list sent directly. So is one whose covered lists together cover every path through the audience (`audience.TreeCoveredBy`: "1 OR 2" suppressed by a "1 OR 2" wrapper); one covering a single alternative still counts. The same check runs on the union of every verified suppression: separate A and B suppressions for an "A OR B" audience together leave nobody, so their credit is withheld. Check 4 reads registration evidence from each list's tree (`audience.RegistrationEvidence`): every exact completed-registration branch's editions count wherever the branch sits, less any a verified suppression's own tree excludes whole (`audience.CoveredEditions`), and the list's name counts too unless those branches are its whole membership. A registration-only audience whose every edition is suppressed inline is empty, and the suppressions' credit is withheld. A list the audited list itself excludes on every path (`audience.ExcludedOnEveryPathIDs`, as a composed master excludes its combined suppression) clears check 4's evidence the same way; a branch-local exclusion does not. An included list's own every-path exclusions clear the editions they cover from that list's evidence alone, never from the master's other branches. When the list's own and the send's exclusions together leave nobody, check 4 reports NEEDS VERIFY ("the send would reach no one") rather than a pass.
 
 ## Account-monitor currency (LFXV2-2665)
 
@@ -4579,6 +4605,60 @@ keyed portal+id: an id is unique only within its portal, so a foreign-portal or 
 with the same number must neither suppress an attributable row nor escape the unattributable
 count. `ErrNoSentEmailInWindow` is counted
 (`EmailsNotSentInWindow`); ANY other error fails the whole read with no partial result.
+
+## Custom audiences (`audience_custom.go`, LFXV2-2770)
+
+`InterpretCustom`, `PreviewCustom` and `CreateCustom` on `AudienceExplorer`. Interpret calls the
+optional `completer` (`ErrCustomInterpretUnavailable` when none is configured — the criteria form
+still works without it) and then resolves what the model cannot know: the brand master gate via
+`bestMatch` over `BrandMasterProbes`, and an existing `<Label> Speakers` list. Both are filled into
+the draft as suggestions the operator can change.
+
+Preview and Create share `previewCustom`: every contact property the criteria read is fetched with
+`GetContactProperty` (all missing names are reported together as `UnknownPropertiesError`), each
+property filter's operation type is set from the portal's definition (an enumeration filtered as
+MULTISTRING is accepted by HubSpot and matches nobody), the gate and speakers lists are read back
+as contact lists, and the name is versioned against existing lists. **Create rebuilds from the
+criteria rather than trusting a previewed filter**, so a preview the client edited afterwards is
+never what gets created. Create is NOT idempotent: an unconfirmed create returns a
+`ComposePartialError` carrying the name, mapped to the same do-not-retry response as compose.
+Preview's `UpperBound` is the gate list's size only when every branch is gated.
+
+`similarLists` (2026-10-10) runs during interpretation: up to 8 candidates from deterministic name
+probes, ranked by a second model call that also sees the operator's answers and the draft's
+restrictions. Best effort — a failed search or ranking returns the
+candidates unranked, never fails the draft. `previewCustom` resolves the education topic property
+with `EventTypeProperties` BEFORE validation, over string properties only (a number or
+enumeration property would preview and then match nobody): a caller's value is kept only when it is one of the
+portal's `CourseTopicCandidates`, otherwise the best candidate replaces it; the model's choice is
+never used.
+
+For an event audience the warehouse's past editions are `registered_for`'s DEFAULT, not an
+override (2026-10-15): editions the request or the answers named (the model copies them into
+`registered_for`) are used instead, kept by `knownEditions` only as exact names of this event or one
+of its editions (in the warehouse's spelling, any other name dropped with a note), and a draft whose
+model set `include_past_editions: false`, or whose every named edition was unknown, gets none. So
+an operator who asked for one edition, or ruled out past registrants, is never sent the whole
+family. The check runs even when the warehouse returned no past editions (unconfigured, failed, or a
+first edition): only this edition's own name is known then, and any other is dropped with a note
+saying it could not be verified. This edition's name is year-qualified (`WithEventYear`) for the
+prompt and the check, as registrations are stored, while the response's `event` reports the name as
+the page declares it, as `discover` does. The past editions are a REGIONAL audience's default only: one with cities or countries AND a
+location branch (`contact_location`, `event_registered` or `education_enrolled`); anything else
+gets none. Otherwise a registration branch would AND a role with a past registration (dropping
+first-time speakers) or add registrants beside a topic-only education audience. The system prompt
+says the same, so a model drafting an audience without a location copies the editions it wants
+from the EVENT block, and `knownEditions` checks them.
+
+Interpretation keeps every draft inside the contract preview enforces: an event audience's
+`registered_for` takes its editions capped at `CustomMaxRegisteredFor` (25) by
+`capPastEditions` — newest year first, since the warehouse returns them alphabetically and up to
+its own 500-row cap — with a draft note naming how many were left out, and `ParseCustomDraft` caps
+`page_view_urls` at 10. The speakers list is auto-picked only through `audience.SpeakerListFits`,
+which fails closed (no editions, or a `current_past` list without the explicit suffix, never fits).
+`previewCustom` canonicalizes countries (`audience.CanonicalCountries`) and, when
+`country_dropdown` is an enumeration, warns about each country that is not one of its options,
+since the enumeration branch can never match it.
 
 ## Reddit audience read (`reddit_audience.go`, LFXV2-2665)
 

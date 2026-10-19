@@ -707,11 +707,11 @@ type AccountMonitor struct {
 	// Never set on Google Ads. On LinkedIn Ads spend is read in the account's own
 	// currency (costInLocalCurrency), the currency its budgets are in; absent when
 	// the campaigns' budgets disagree about the currency, in which case those
-	// campaigns' pacing is unknown. On Meta, absent for a currency whose minor
-	// unit is not 1/100 (e.g. JPY), whose budgets this service does not yet
-	// convert correctly. On Microsoft Ads, absent for a code in Microsoft's value
-	// set that is withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is
-	// ambiguous.
+	// campaigns' pacing is unknown. On Meta, absent for a currency whose
+	// minor-unit scale this service does not know (its budgets are left
+	// unconverted), or when the insights rows' currency is not the ad account's.
+	// On Microsoft Ads, absent for a code in Microsoft's value set that is
+	// withdrawn or not ISO 4217 (e.g. RUR, YUN), whose scale is ambiguous.
 	Currency *string
 }
 
