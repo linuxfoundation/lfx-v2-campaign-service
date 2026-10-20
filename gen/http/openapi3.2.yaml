@@ -19615,6 +19615,11 @@ components:
                     description: Clicks over the window on an ad platform; clicks to date on the email channel
                     example: 212
                     format: int64
+                conversion_value:
+                    type: number
+                    description: Summed monetary value of the conversions above, over the window, in WHOLE units of the ad account's currency — NOT micros, deliberately unlike cost_micros, because the platforms report it as a decimal amount and scaling it would invent precision. The currency is the ad account's and is NOT carried in this response, so a figure rendered with a currency symbol is asserting something this contract does not say. Reported by Google Ads only at present; ABSENT on every other channel, and absent means "not measured here", never a measured 0. Use `roas` rather than dividing this by cost_micros — the units differ, and the zero-cost case has one right answer, given below.
+                    example: 4820.5
+                    format: double
                 conversions:
                     type: number
                     description: 'Conversions attributed to this campaign over the window. FRACTIONAL: Google Ads and Microsoft both type their conversion metric as a double and credit partial conversions under data-driven, position-based and offline attribution, so a campaign can genuinely hold 0.4 of a conversion — do not round it to a whole number, and in particular do not treat a value below 1 as zero. ABSENT means "not measured" — the platform cannot report it, or (LinkedIn, Microsoft) the read was incomplete. The first case covers channels that do not report a campaign-level conversion count at all (Meta, X, Reddit and the email channel never do). The second covers the two conversion-capable channels whose read can come back partial: LinkedIn whenever ANY returned analytics element omits externalWebsiteConversions, and Microsoft whenever the ConversionsQualified column is missing from the report or ANY row''s conversion cell is blank (that column is only populated for accounts wired for Universal Event Tracking). On either, summing only the elements or rows that did carry a value would publish a partial count as a complete one and report a campaign''s conversions as lower than they are, so the whole total is withdrawn instead. Absence therefore does NOT by itself identify a platform that cannot report conversions, and it is NOT the same as a measured 0: a consumer must not render it as zero or fold it into a conversion total.'
@@ -19641,6 +19646,11 @@ components:
                     type: string
                     description: The id the CHANNEL returned when the campaign was created. On an ad platform that is its campaign id; on the email channel it is the HubSpot marketing-email id of the cloned draft, which is what the metrics read queries by.
                     example: "104670127234"
+                roas:
+                    type: number
+                    description: 'Return on ad spend: conversion_value divided by cost over the same window and in the same currency, so it is DIMENSIONLESS and is the only figure here comparable across accounts in different currencies. Derived upstream so every consumer gets the same answer. ABSENT whenever that division would not be a measurement — no conversion value, no spend in the window, or a reported cost below zero. A campaign that earned value without spending has an UNDEFINED return on ad spend, not an infinite one and not a zero one; rendering absent as 0 would state the opposite of what happened.'
+                    example: 2.41
+                    format: double
                 window:
                     type: string
                     description: 'The reporting window that was REQUESTED. On the ad platforms it is also the period the counters cover. On the email channel it is not: it selects which emails are in scope by their send date, and the counters are then that email''s totals to date — see the email object.'

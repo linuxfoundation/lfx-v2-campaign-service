@@ -423,3 +423,196 @@ func TestGetCampaignMetrics_MalformedConversionsIsAnError(t *testing.T) {
 		}
 	}
 }
+
+// metrics.conversions_value must be REQUESTED for the same reason the count must be: an
+// unselected field comes back absent, and every campaign would read as having earned
+// nothing. Pins the GAQL SELECT rather than the response handling.
+func TestGetCampaignMetrics_RequestsConversionsValue(t *testing.T) {
+	var mu sync.Mutex
+	var gotBody string
+	c := twoServer(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody = string(b)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversions":3,"conversionsValue":60}}]}`)
+	})
+	if _, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days); err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	mu.Lock()
+	body := gotBody
+	mu.Unlock()
+	if !strings.Contains(body, "metrics.conversions_value") {
+		t.Errorf("GAQL query does not select metrics.conversions_value, so no campaign can "+
+			"ever report a return on ad spend; query body = %s", body)
+	}
+}
+
+// conversions_value is a DOUBLE and arrives as a bare JSON number, like the count and
+// unlike the string-encoded int64 metrics. ROAS is derived here from it and cost_micros,
+// which is the whole reason the two units may differ without any consumer noticing.
+func TestGetCampaignMetrics_ConversionValueDecodedAndRoasDerived(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// 25000000 micros is 25 currency units; 60 of value against it is a ROAS of 2.4.
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversions":3,"conversionsValue":60}}]}`)
+	})
+	m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if m.ConversionValue == nil {
+		t.Fatal("ConversionValue is nil for a response that carried conversionsValue:60")
+	}
+	if *m.ConversionValue != 60 {
+		t.Errorf("ConversionValue = %v, want 60 (currency units, NOT micros)", *m.ConversionValue)
+	}
+	if m.Roas == nil {
+		t.Fatal("Roas is nil for a window with both a conversion value and spend")
+	}
+	if *m.Roas != 2.4 {
+		t.Errorf("Roas = %v, want 2.4 (60 value / 25 spend)", *m.Roas)
+	}
+}
+
+// Selected-but-omitted is proto3 JSON's encoding of a zero, so it is a MEASURED zero
+// value — the same treatment the conversion count gets. Roas still withholds here, because
+// this fixture also spent nothing.
+func TestGetCampaignMetrics_AbsentConversionValueIsMeasuredZero(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40"}}]}`)
+	})
+	m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if m.ConversionValue == nil {
+		t.Fatal("ConversionValue is nil for a selected-but-omitted field: proto3 JSON omits " +
+			"a zero, so this is a measured 0 and not an absence of measurement")
+	}
+	if *m.ConversionValue != 0 {
+		t.Errorf("ConversionValue = %v, want 0", *m.ConversionValue)
+	}
+}
+
+// The cases where ROAS must be WITHHELD rather than reported. Each one has an obvious
+// wrong answer that reads as a real result: 0 says the campaign earned nothing, and a
+// negative ratio says it lost money, when the truth in every row below is that the
+// division is not a measurement.
+func TestGetCampaignMetrics_RoasWithheldWhenNotAMeasurement(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		metrics string
+	}{
+		{
+			// Value without spend. The ratio is a division by zero, and a campaign that
+			// earned value for free has an UNDEFINED return, not an infinite or a zero one.
+			name:    "zero cost with value",
+			metrics: `"impressions":"1000","clicks":"40","costMicros":"0","conversionsValue":60`,
+		},
+		{
+			// Google omits zero-valued metrics entirely, so this is the shape the case above
+			// actually arrives in off a live account.
+			name:    "omitted cost with value",
+			metrics: `"impressions":"1000","clicks":"40","conversionsValue":60`,
+		},
+		{
+			// strconv.ParseInt accepts a leading minus, so a corrupt cost reaches the
+			// division intact and would produce a negative ROAS that renders as a result.
+			name:    "negative cost",
+			metrics: `"impressions":"1000","clicks":"40","costMicros":"-25000000","conversionsValue":60`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{`+tc.metrics+`}}]}`)
+			})
+			m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+			if err != nil {
+				t.Fatalf("GetCampaignMetrics: %v", err)
+			}
+			if m.Roas != nil {
+				t.Errorf("Roas = %v, want nil: this row carries no measurable return on ad spend", *m.Roas)
+			}
+		})
+	}
+}
+
+// A no-activity window was ANSWERED, so the value is a measured zero on the same invariant
+// the count holds. Roas stays nil: nothing was spent, so there is no return to report.
+func TestGetCampaignMetrics_NoActivityWindowHasMeasuredValueAndNoRoas(t *testing.T) {
+	c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"results":[]}`)
+	})
+	m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+	if err != nil {
+		t.Fatalf("GetCampaignMetrics: %v", err)
+	}
+	if m.ConversionValue == nil || *m.ConversionValue != 0 {
+		t.Errorf("ConversionValue = %v, want a non-nil 0: the query ran and the answer was none", m.ConversionValue)
+	}
+	if m.Roas != nil {
+		t.Errorf("Roas = %v, want nil for a window with no spend", *m.Roas)
+	}
+	// The two zeroes must not be the same float64: aliasing them would let a write through
+	// one pointer silently move the other.
+	if m.Conversions != nil && m.ConversionValue != nil && m.Conversions == m.ConversionValue {
+		t.Error("Conversions and ConversionValue share one float64; they must be independent")
+	}
+}
+
+// A negative or non-finite conversion value is upstream corruption, not a small amount,
+// and is refused rather than folded into a reported figure — the same guard the count gets.
+func TestGetCampaignMetrics_MalformedConversionValueIsAnError(t *testing.T) {
+	for _, raw := range []string{"-1", "1e400"} {
+		c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","costMicros":"25000000","conversionsValue":`+raw+`}}]}`)
+		})
+		if _, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days); err == nil {
+			t.Errorf("conversionsValue:%s was accepted; a malformed amount became a measurement", raw)
+		}
+	}
+}
+
+// The sibling of TestGetCampaignMetrics_FractionalConversionsArePreserved, for the same
+// reason and with more at stake: metrics.conversions_value is a DOUBLE in WHOLE units of
+// the account's currency, so its fractional part is CENTS. Rounding here would not just
+// misreport a value, it would feed a rounded numerator into the ROAS division and move a
+// figure consumers compare across accounts.
+func TestGetCampaignMetrics_FractionalConversionValueIsPreserved(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want float64
+	}{
+		{"cents below one unit are not rounded to zero", "0.99", 0.99},
+		{"cents are kept on a whole-unit amount", "120.05", 120.05},
+		{"an exact half unit is not rounded", "2.5", 2.5},
+		{"an exact zero stays zero", "0", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := twoServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"results":[{"campaign":{"id":"555"},"metrics":{"impressions":"1000","clicks":"40","conversions":1,"conversionsValue":`+tc.raw+`}}]}`)
+			})
+			m, err := c.GetCampaignMetrics(context.Background(), "555", WindowLast30Days)
+			if err != nil {
+				t.Fatalf("GetCampaignMetrics: %v", err)
+			}
+			if m.ConversionValue == nil {
+				t.Fatalf("ConversionValue is nil for conversionsValue:%s", tc.raw)
+			}
+			if *m.ConversionValue != tc.want {
+				t.Errorf("conversionsValue:%s became %v, want %v: rounding drops cents and "+
+					"shifts the ROAS derived from this numerator",
+					tc.raw, *m.ConversionValue, tc.want)
+			}
+		})
+	}
+}
