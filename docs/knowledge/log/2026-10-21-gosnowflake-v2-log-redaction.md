@@ -23,7 +23,8 @@ the advisory describes.
 
 The code change is three symbols in one file — `sf.Config`, `sf.AuthTypeJwt`,
 `sf.DSN`, all aliases onto `internal/config` in v2 with unchanged shapes — plus the
-import path. No test references the driver. What a green build does **not** prove is
+import path. Before this change no test referenced the driver at all; the two added
+here are the first, and both import it directly. What a green build does **not** prove is
 the `sql.Open("snowflake", dsn)` driver name: it is a string, it would compile against
 either major version, and a changed name would fail only at runtime on the first
 query. v2 still registers `"snowflake"` in its `init`, and that seam now has a test:
@@ -33,6 +34,46 @@ test in the package injects a fake opener, so the real driver name was exercised
 nowhere, and the import path can change under a string that cannot. The test was
 checked against a deliberately wrong name before being kept, which also showed the
 registry holds exactly `[snowflake]` — one registration, not two.
+
+What the green build and the matching API hid is the one defect this change shipped and
+a reviewer caught: **v2 turned OCSP certificate-revocation checking off by default**.
+v1's transport skipped OCSP only when `DisableOCSPChecks` or `InsecureMode` was set, so
+this service — setting neither — was checking revocation; and v1 did not even need the
+field to be set, because `fillMissingConfigParameters` (`dsn.go:714`) promoted the unset
+value to `OCSPFailOpenTrue` itself. v2's transport gates the same code on
+`OCSPEnabled(cfg)`, which is false for `OCSPFailOpenNotSet` — the zero value. A field
+this package had never needed to set now decided the answer, and the answer flipped.
+Nothing failed. The fix is one line, `OCSPFailOpen: sf.OCSPFailOpenTrue` — the very
+value v1 filled in — with
+`TestDSNEnablesOCSPRevocationChecking` asserting it over the built DSN (what `sql.Open`
+re-parses), not the config literal. It cannot conflict with v2's CRL mode, which refuses
+to run alongside OCSP only when `CertRevocationCheckMode != CertRevocationCheckDisabled`
+— and `Disabled` is that field's zero value.
+
+OCSP is the ONLY default that moved, and that is measured rather than assumed: v2's
+`FillMissingConfigParameters` was diffed against v1's `fillMissingConfigParameters`
+assignment by assignment, and it still fills every one of them — the six timeouts,
+`MaxRetryCount`, `Application`, `ValidateDefaultParameters`, `IncludeRetryReason`,
+`ProxyProtocol` — dropping exactly one, the `OCSPFailOpen` promotion. So no second
+field of `sf.Config` needs setting for parity.
+
+Filled defaults are only half the question, though — OCSP broke at a **gate**, not at a
+default, so the gates were diffed too. Every config-driven conditional in v2's
+`transport.go` was lined up against v1's: the proxy and `Transporter` branches, the CRL
+branch, the OCSP branch, and `validateRevocationConfig`. Two are new in v2 and neither
+applies here — a `*http.Transport` type assertion on `Transporter`, and a
+`GetTLSConfig(TLSConfigName)` lookup that sits inside the *OCSP-disabled* path, which
+this service no longer takes. `validateRevocationConfig` flipped polarity but means the
+same thing for these values. And the enabled path is the same symbol on both sides,
+`createOCSPTransport`, so the fix puts the connection back on v1's branch rather than on
+a new one.
+
+The lesson is about the sweep, not the driver. The pre-push checks confirmed the API
+compiled, the CVE floors held and the driver name still resolved — all of which are
+questions about *shape*. A major version is precisely where **defaults** move, and a
+changed default is invisible to every one of those checks. On a major-version bump,
+diff the behavioural gates the old version ran by default against the new one's, field
+by field, before trusting a green build.
 
 Two things were checked that a version bump makes easy to miss. `golang-migrate`
 still pulls `gosnowflake@v1.6.19` into the module **graph** for a Snowflake migration
