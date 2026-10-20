@@ -149,8 +149,12 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   `RollingUpdate` — which surges the new pod BEFORE terminating the old one — would put the
   migrated schema under the old code. The chart therefore pins `strategy.type: Recreate`, so
   the old pod is gone before the new one migrates. Pinned by
-  `TestDeploymentUsesRecreateStrategy`; `replicaCount` is 1, so nothing is lost by dropping
-  the surge.
+  `TestDeploymentUsesRecreateStrategy`. `Recreate` carries that guarantee at ANY replica count —
+  the controller scales the old ReplicaSet to zero and waits for termination before scaling up
+  the new one — so this does not rest on a single replica, and deployments do set more
+  (production sets three). What the surge costs at three replicas is stated in
+  [Deployment](../kubernetes/deployment.md): the rollout is a full restart, and the
+  `podDisruptionBudget` does not soften it.
 
   **Consequence for every `ON CONFLICT (brief_id, platform)`**: PostgreSQL infers the
   arbiter index by matching the conflict target AND its predicate, so once the full
