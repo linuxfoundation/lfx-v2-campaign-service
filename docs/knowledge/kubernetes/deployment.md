@@ -151,7 +151,19 @@ deployable.** The Deployment sets `strategy.type: Recreate` (not the RollingUpda
 default) because this service runs its own schema migrations at boot and a
 backward-incompatible one — `000014` dropping `UNIQUE (brief_id, platform)` — must not go
 live while the previous pod still serves writes; RollingUpdate surges the new pod before
-terminating the old, Recreate orders it the other way. The catch is the cutover: flipping
+terminating the old, Recreate orders it the other way.
+
+That ordering holds at ANY replica count — the controller scales the old ReplicaSet to zero
+and waits for every pod to terminate before scaling up the new one — so the guarantee does not
+rest on running a single replica. What DOES scale with replica count is the cost: at the three
+replicas deployments run, every rollout takes the service to zero pods for the migration
+window, a full restart rather than a brief gap on the only pod. The `podDisruptionBudget`
+(`minAvailable: 2` in production) does not soften this: the Deployment controller DELETES those
+pods rather than evicting them, and a PDB constrains only evictions. `/readyz` gates traffic
+until migrations finish, so the window is a hard outage, not a period of errors. Moving
+migrations to a PreSync Job is what retires this and lets RollingUpdate return.
+
+The catch is the cutover: flipping
 an EXISTING Deployment from RollingUpdate to Recreate is rejected by the API server with
 `spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy type is
 'Recreate'`. The old object carries a `strategy.rollingUpdate` block the API server

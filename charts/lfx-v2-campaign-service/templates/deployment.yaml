@@ -87,6 +87,25 @@
     {{- $xStats = or (and $entry.valueFrom true) (eq (toString $entry.value) "true") }}
   {{- end }}
 {{- end }}
+{{- /*
+  NOTE — this guard is now reachable in production, which it was not when it was written. Until
+  the Reddit guard below it was retired, the chart refused ANY render above one replica, so this
+  one could never be the thing that fired. Deployments set three replicas
+  (lfx-v2-argocd values/global/lfx-v2-campaign-service.yaml), so from here on, turning
+  TWITTER_METRICS_ENABLED on in a deployed environment makes `helm template` fail and ArgoCD
+  unable to generate the manifest AT ALL — blocking every unrelated deploy of this service, which
+  is the incident the Reddit guard caused. No environment sets the flag today, so this is latent,
+  not live.
+
+  It is kept for now because it is flag-scoped and opt-in rather than unconditional, so the blast
+  radius is "whoever turns the flag on", not "everyone, always". But the argument that retired the
+  Reddit guard likely applies here too: the runtime lease (postgres.StatsJobLease) already confines
+  the background stats jobs to one pod, which leaves this guard covering only the user-facing X
+  monitor — and if nothing polls that either, this should become a non-fatal signal (a NOTES.txt
+  warning or a CI-side `helm template` assertion) rather than a render failure. That needs the same
+  poller audit the Reddit paths got before it is acted on; it has not been done. Do not reinstate
+  an unconditional guard here in the meantime.
+*/}}
 {{- if $xStats }}
   {{- $replicas := int (default 1 .Values.replicaCount) }}
   {{- $autoscaleMax := 1 }}
@@ -149,7 +168,10 @@ metadata:
     # omits is removed and SSA field-ownership is bypassed. Concretely spec.replicas: the chart
     # pins it and the Application sets ignoreDifferences:/spec/replicas (RespectIgnoreDifferences),
     # so an ordinary sync leaves an out-of-band scale or HPA value alone but a full replace
-    # overwrites it back to replicaCount -- low risk today (no HPA, replicaCount 1).
+    # overwrites it back to replicaCount -- which, since deployments set their own (production
+    # sets three), is the value their own values file carries, not the chart default. No
+    # environment enables autoscaling today, so no HPA value is at stake; what IS at stake is an
+    # out-of-band `kubectl scale` during an incident, which the next sync silently reverts.
     #
     # Replace=true makes ArgoCD apply this Deployment with `kubectl replace` instead of a
     # strategic-merge / server-side-apply patch. Required because `strategy.type` below is
@@ -193,9 +215,17 @@ spec:
   # claimed"). Deferring the drop therefore ships a delete endpoint whose whole purpose --
   # freeing the slot -- does not work, and fails silently rather than loudly.
   #
-  # The cost is a brief gap in availability instead of an overlap. That is the right trade
-  # here: replicaCount is 1, so RollingUpdate provides no real availability benefit anyway,
-  # and /readyz already gates traffic until migrations finish.
+  # The cost is a gap in availability instead of an overlap, and at the three replicas
+  # deployments actually run that gap is a FULL restart: Recreate scales the old ReplicaSet to
+  # zero and waits for every pod to terminate before starting any new one. Note the
+  # podDisruptionBudget (minAvailable: 2 in production) does NOT soften this -- the Deployment
+  # controller deletes those pods directly rather than evicting them, so the PDB never applies.
+  #
+  # That is still the right trade while migrations run at pod boot: as stated above, an overlap
+  # would leave the previous release's bare ON CONFLICT (brief_id, platform) running against a
+  # schema that no longer has the matching constraint, failing every dispatch claim. /readyz
+  # gates traffic until migrations finish. Moving migrations to a PreSync Job is what retires
+  # this and lets RollingUpdate come back.
   strategy:
     type: Recreate
   selector:

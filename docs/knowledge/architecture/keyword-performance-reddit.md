@@ -43,9 +43,14 @@ From Reddit's published Ads API v3 OpenAPI document (read as described in
   (`requestWithThrottleRetryCounted`): after the token refresh and the request build, immediately
   before the send, so an attempt that is never sent (cancelled context, failed refresh) spends
   none, and a pre-send dial failure (DNS, connection refused) hands its slot back. No slot before
-  the deadline: the read fails whole (503). The ledger is per process, so the chart refuses more
-  than one replica outright (`templates/deployment.yaml`, unconditionally, because the ungated
-  account monitor spends the same budget).
+  the deadline: the read fails whole (503). The ledger is per process, and the ungated account
+  monitor spends the same budget, so N replicas each carry a separate 45 against an ad account's
+  60. That is a CEILING reachable by concurrent user traffic, not a sustained rate — every path
+  that spends the budget is driven by an inbound request and nothing polls them — and the chart
+  does NOT refuse multiple replicas over it; production runs three. See
+  [Deployment](../kubernetes/deployment.md) for why an earlier render-time guard was wrong and
+  must not return, and `internal/platform/reddit/report_budget.go` for the shared-ledger fix that
+  lifts the ceiling itself.
 - **Strict provenance**, as the audience read (the same `redditScopeForAccount`): a campaign that
   records no creating account is refused (409, re-dispatch), one created under another account is
   refused (409, reconcile), and a scope with BOTH is `ErrCampaignProvenanceMixed` joined with both

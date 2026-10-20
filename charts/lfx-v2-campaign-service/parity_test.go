@@ -23,6 +23,7 @@
 package charts_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1227,9 +1228,12 @@ func TestDeploymentRefusesXStatsJobsOnMultipleReplicas(t *testing.T) {
 // deployment that has long run three replicas — so it held up every unrelated change to this
 // service, which is far worse than the 429 it was averting.
 //
-// These cases therefore assert that multi-replica and autoscaling renders SUCCEED. Reinstating a
-// Reddit replica guard would fail here, which is the point: the real fix is a shared ledger (a
-// Postgres token bucket keyed by ad account), not a refusal to deploy. Note the two shortcuts
+// These cases therefore assert that multi-replica and autoscaling renders SUCCEED, and — where
+// the case sets an explicit replicaCount — that the render actually CARRIES it. Asserting only
+// that helm exits 0 would not keep the guard retired: a reinstated guard keyed above this
+// table's replica counts, or one that quietly clamps spec.replicas to 1 instead of failing,
+// would both pass. The real fix is a shared ledger (a Postgres token bucket keyed by ad
+// account), not a refusal to deploy. Note the two shortcuts
 // that look like fixes and are not — a lease as the X stats jobs use makes non-owner pods refuse,
 // which is intolerable on a user-facing monitor endpoint, and dividing the 45 by the replica
 // count leaves less than the 24 one audience read already needs.
@@ -1241,17 +1245,20 @@ func TestDeploymentAllowsMultipleReplicasForReddit(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		set  []string
+		// wantReplicas is the spec.replicas the render must carry, or 0 to assert only that
+		// the render succeeds (the autoscaling cases, where replicaCount is left at default).
+		wantReplicas int
 	}{
-		{"default (flag off, one replica)", nil},
-		{"flag on, one replica", []string{on}},
+		{"default (flag off, one replica)", nil, 1},
+		{"flag on, one replica", []string{on}, 1},
 		// The production shape that the retired guard refused to render.
-		{"flag off, three replicas", []string{"replicaCount=3"}},
-		{"flag off explicitly, three replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=false", "replicaCount=3"}},
-		{"flag on, two replicas", []string{on, "replicaCount=2"}},
-		{"flag from a secret, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=null", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}},
-		{"flag off, autoscaling to four", []string{"autoscaling.enabled=true", "autoscaling.maxReplicas=4"}},
-		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}},
-		{"flag off, autoscaling with the default max", []string{"autoscaling.enabled=true"}},
+		{"flag off, three replicas", []string{"replicaCount=3"}, 3},
+		{"flag off explicitly, three replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=false", "replicaCount=3"}, 3},
+		{"flag on, two replicas", []string{on, "replicaCount=2"}, 2},
+		{"flag from a secret, two replicas", []string{"app.environment.REDDIT_METRICS_ENABLED.value=null", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.name=s", "app.environment.REDDIT_METRICS_ENABLED.valueFrom.secretKeyRef.key=k", "replicaCount=2"}, 2},
+		{"flag off, autoscaling to four", []string{"autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, 0},
+		{"flag on, autoscaling to four", []string{on, "autoscaling.enabled=true", "autoscaling.maxReplicas=4"}, 0},
+		{"flag off, autoscaling with the default max", []string{"autoscaling.enabled=true"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"template", chartDir, "--show-only", "templates/deployment.yaml"}
@@ -1261,6 +1268,12 @@ func TestDeploymentAllowsMultipleReplicasForReddit(t *testing.T) {
 			out, err := exec.Command("helm", args...).CombinedOutput()
 			if err != nil {
 				t.Fatalf("refused %v, but no Reddit replica guard may exist: %v\n%s", tc.set, err, out)
+			}
+			if tc.wantReplicas == 0 {
+				return
+			}
+			if want := fmt.Sprintf("replicas: %d", tc.wantReplicas); !strings.Contains(string(out), want) {
+				t.Errorf("rendered %v without %q -- a guard that clamps replicas is still a guard:\n%s", tc.set, want, out)
 			}
 		})
 	}
