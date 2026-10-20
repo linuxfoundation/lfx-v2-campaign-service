@@ -466,3 +466,26 @@ func TestIdent_RejectsInjection(t *testing.T) {
 
 // Ensure the driver value type is what database/sql expects (compile-time guard).
 var _ driver.QueryerContext = (*fakeConn)(nil)
+
+// TestDefaultOpenerDriverNameIsRegistered pins the one link in NewClient that the
+// compiler cannot check: the literal "snowflake" in the default opener's
+// sql.Open (client.go). Every other test injects a fake opener, so the real
+// driver name is exercised nowhere else — a wrong name builds cleanly and fails
+// only at the first query, in production, against a live warehouse.
+//
+// This is not a test of the vendor's init. It is a test of the AGREEMENT between
+// the module this package imports and the string this package opens with, which
+// is exactly what a major-version move (v1 -> /v2, GHSA-qqj6-54q6-cxv6) puts at
+// risk: the import path changes, the string does not, and nothing connects them.
+func TestDefaultOpenerDriverNameIsRegistered(t *testing.T) {
+	const want = "snowflake"
+
+	for _, name := range sql.Drivers() {
+		if name == want {
+			return
+		}
+	}
+	t.Fatalf("driver %q is not registered by the imported gosnowflake module; "+
+		"sql.Open(%q, ...) in NewClient's default opener would fail at the first "+
+		"query. Registered drivers: %v", want, want, sql.Drivers())
+}

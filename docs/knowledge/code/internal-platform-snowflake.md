@@ -77,10 +77,35 @@ secret).
 
 ## Dependency
 
-This package adds `github.com/snowflakedb/gosnowflake` — the only official Go
+This package adds `github.com/snowflakedb/gosnowflake/v2` — the only official Go
 Snowflake driver. No shared Go Snowflake service exists in the platform (the LFX One
 UI backend has a TypeScript Snowflake service, not reusable from Go), so the broker
 owns its own connection, consistent with every other platform port owning its client.
+
+**The `/v2` suffix is load-bearing, not cosmetic.** GHSA-qqj6-54q6-cxv6 — the driver
+writing auth tokens, query-result encryption keys, pre-signed storage URLs and SAML
+assertions into its own diagnostic logs — is fixed only on the v2 module path, at
+`v2.2.0`. Go treats a major version as a separate module, so the v1 path will never
+show a patched release: `v1.19.1` is its last, and Dependabot reports
+`first_patched_version: null` against it even though a published fix exists. Reading
+that null as "no fix available" is the trap; the remedy is the path change, not a
+dismissal. Do not move back to the unsuffixed path to quiet a build error.
+
+Two things make the swap small. The surface this package touches is three symbols —
+`sf.Config`, `sf.AuthTypeJwt`, `sf.DSN` — and in v2 all three are aliases onto
+`internal/config`, unchanged in shape; and v2 still registers under the driver name
+`snowflake`, so the `sql.Open("snowflake", dsn)` string needs no edit. That string is
+the one thing a compiler cannot check here: it would build either way and fail at the
+first query, in production. `TestDefaultOpenerDriverNameIsRegistered` pins it by
+asserting `"snowflake"` is in `sql.Drivers()` — every other test in this package
+injects a fake opener, so the real name is exercised nowhere else.
+
+`golang-migrate` keeps `gosnowflake@v1.6.19` in the module *graph* for a Snowflake
+migration driver this service does not use. It contributes no package to the binary
+and appears in neither `go.mod` nor `go.sum`, so it is not a second copy of the
+vulnerable code and cannot double-register the driver name (which would panic at
+`init`). Check that with `go list -deps ./cmd/...`, not `go list -m all` — the latter
+prints the graph, which includes modules nothing imports.
 
 The driver's Arrow dependency brings in Apache Thrift. `go.mod` pins Thrift to
 `v0.24.0` to fix the infinite-loop vulnerability GHSA-8wv5-x4w7-5gww.
