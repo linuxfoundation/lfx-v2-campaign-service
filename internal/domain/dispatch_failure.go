@@ -202,6 +202,68 @@ func UpstreamStatus(err error) (int, bool) {
 	return 0, false
 }
 
+// UpstreamCreateOutcomeCarrier is implemented by an error from a create that failed AFTER the
+// first upstream request of the operation was sent. It answers one question — what did the
+// failed create leave in the ad account? — as a short, fixed-vocabulary token.
+//
+// It is the POST-request counterpart of PreflightRefusal, and deliberately a separate type:
+// PreflightRefusal's contract is that it wraps only a refusal raised BEFORE the first upstream
+// request, so reusing it here would make "nothing was created" claims about requests that were
+// in fact sent.
+//
+// The token is a SERVICE-AUTHORED CONSTANT, never upstream text and never a caller-supplied
+// value, so #208's rule that a dispatch-failure message is never built from the error's text
+// still holds. A reader must switch on it and emit its own fixed sentence per case — never
+// format the token into a message — so an unrecognised token can only fall through to the
+// reader's existing wording, never put words in the operator's mouth.
+type UpstreamCreateOutcomeCarrier interface {
+	UpstreamCreateOutcome() string
+}
+
+// The create-outcome vocabulary. Platform-neutral on purpose: every platform this service
+// dispatches to builds a campaign as a budget-then-campaign-then-setup cascade, so a second
+// platform adopting the carrier reuses these rather than inventing a parallel set that
+// DispatchFailureMessage would have to learn separately.
+//
+// Each token answers "what is in the ad account now?", not "which code path failed" — two arms
+// that leave the same state share a token, and one arm that can leave two different states does
+// not get to pick.
+const (
+	// CreateOutcomeBudgetNameTaken: nothing new was created. A budget of the name this
+	// service composes already exists from an earlier attempt and is holding the
+	// idempotency key, so the retry cannot get past the budget step until it is dealt with.
+	CreateOutcomeBudgetNameTaken = "budget_name_taken"
+	// CreateOutcomeBudgetCreatedCampaignRefused: the budget was created and the platform
+	// then definitely refused the campaign. The budget is an orphan — it exists, carries no
+	// campaign, and accrues no spend.
+	CreateOutcomeBudgetCreatedCampaignRefused = "budget_created_campaign_refused"
+	// CreateOutcomeBudgetCreatedCampaignUnconfirmed: the budget was created; whether the
+	// campaign was is genuinely unknown (a 5xx, a 429, a mid-flight timeout).
+	CreateOutcomeBudgetCreatedCampaignUnconfirmed = "budget_created_campaign_unconfirmed"
+	// CreateOutcomeCampaignNameTaken: the budget was created and a campaign of the composed
+	// name already exists from an earlier attempt.
+	CreateOutcomeCampaignNameTaken = "campaign_name_taken"
+	// CreateOutcomeCampaignCreatedSetupIncomplete: the campaign itself exists; the cascade
+	// failed in a later step (ad group, ad, targeting), so it is live-but-unfinished.
+	CreateOutcomeCampaignCreatedSetupIncomplete = "campaign_created_setup_incomplete"
+	// CreateOutcomeUnconfirmed: the first create may or may not have committed and nothing
+	// downstream was reached. The least that can be said, and the pre-existing wording.
+	CreateOutcomeUnconfirmed = "create_unconfirmed"
+)
+
+// UpstreamCreateOutcome returns the outcome token of the first UpstreamCreateOutcomeCarrier in
+// err's chain. An empty token reports false, so a carrier that could not classify the failure
+// is indistinguishable from no carrier at all and leaves the reader on its default wording.
+func UpstreamCreateOutcome(err error) (string, bool) {
+	var c UpstreamCreateOutcomeCarrier
+	if errors.As(err, &c) {
+		if o := c.UpstreamCreateOutcome(); o != "" {
+			return o, true
+		}
+	}
+	return "", false
+}
+
 // TokenRefreshFailure is implemented by a platform client's OAuth token-exchange error: the
 // access token this request needed could not be minted from the stored credential. The
 // request it was for was therefore never sent.

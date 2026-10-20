@@ -2925,7 +2925,9 @@ longer always the fixed `platform campaign creation failed`: `DispatchFailureMes
 [internal/service](internal-service.md), "Dispatch failure reasons in the job result") echoes a
 `domain.PreflightRefusal` verbatim and gives each other class a fixed sentence, but it still never
 renders a dispatcher error's own text, on purpose (the upstream text can carry connection and
-account ids). Google Ads errors are not marked yet and stay generic. A dispatch-time refusal would
+account ids). Google Ads errors are still not marked as pre-flight refusals, but they no longer
+stay generic on the retained path: the adapter tags them with a create-outcome token and the
+client now carries its HTTP status (see "Operator-safe pre-flight refusals" above). A dispatch-time refusal would
 also arrive only after the caller had been told `202`, so the check runs on the synchronous create
 path instead, where it answers before anything is queued.
 
@@ -4805,9 +4807,32 @@ and scope faults beat an inactive connection, 401 → expired, 5xx unclassified 
   caller vouches for the whole chain. `Error()` is unchanged and `Unwrap` keeps
   `errors.Is`/`As` working (for example `BudgetAmountReason`). It deliberately has **no**
   `NoUpstreamCreate`, so marking a message never changes a claim verdict.
-- `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every non-Google client's HTTP
-  error type (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot). It exposes the
-  status and nothing else.
+- `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every client's HTTP error type
+  (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot, and — since the
+  dispatch-failure classification fix — google-ads `*apiError`). It exposes the status and
+  nothing else: google-ads keeps `Method`, `Path` and `Body` unexported outside its package
+  because the body can reflect request material. Google-ads was the one client missing it, so
+  every google-ads dispatch failure reached `DispatchFailureMessage` carrying no status at all
+  and the status arm was unreachable for it — a definite 400 refusal and an ambiguous 503
+  rendered as the same status-less sentence while `StatusCode` sat on the struct unread.
+- `domain.UpstreamCreateOutcomeCarrier`: `UpstreamCreateOutcome() string`, the POST-request
+  counterpart of `PreflightRefusal` (a separate type on purpose — `PreflightRefusal` promises
+  the refusal came before the first upstream request). It answers one question, as a
+  service-authored token from a fixed six-word vocabulary: what did the failed create leave in
+  the ad account? `internal/dispatch/create_outcome.go`'s `withCreateOutcome` attaches it —
+  `Error()` is the wrapped text unchanged and `Unwrap` keeps the chain, so it ADDS a question
+  and replaces nothing, and every `errors.Is`/`As` a caller already makes (the `*apiError` and
+  its status, a `context.Canceled`) still resolves. The google-ads adapter tags at the ONE wrap
+  every channel's partial failure passes through (`googleads.go`), never at the create paths'
+  ~50 partial-returning arms: `googleads.CreateOutcome(result, err)` reads the state off the
+  partial's ids, because all five create entrypoints build partials to the same escalating
+  contract — pre-budget carries names only, post-budget adds `CampaignBudgetID`, post-campaign
+  adds `CampaignID` — so the ids a partial carries ARE the account state. One call therefore
+  covers all five channels and cannot drift arm by arm. It classifies the duplicate-name
+  refusals first (`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`, both definite 4xx),
+  then falls back to the ids, splitting the budget-created case on `createOutcomeAmbiguous` —
+  a 5xx, 429, 3xx or transport failure may still have committed the campaign, a definite 4xx
+  refused it.
 - `domain.TokenRefreshFailure`: `MarkTokenRefreshFailure` wraps the token-exchange result in
   the reddit, microsoft and linkedin refresh leaders.
 

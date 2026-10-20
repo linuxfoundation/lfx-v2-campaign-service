@@ -2353,9 +2353,28 @@ calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoti
 
 - `preCreate` is the orchestrator's own claim verdict (`dispatchErrIsPreCreate(derr) &&
   campaign == nil`), computed once and shared by the claim and the message, so the two cannot
-  disagree. A retained failure (something may exist) is always reported as **could not be
-  confirmed**, with the upstream HTTP status when the chain carries one — never a refusal or a
-  connection class, even if the chain has one.
+  disagree. A retained failure (something may exist) is never reported as a refusal or a
+  connection class, even if the chain has one. Its default is **could not be confirmed**, with
+  the upstream HTTP status when the chain carries one — but since the create-outcome carrier
+  (below) a retained google-ads failure that the dispatcher CLASSIFIED says which state the
+  account is in instead, because "something may have been created" is simply wrong for most of
+  them: a budget-name collision created nothing at all, and a budget created then a campaign
+  definitely refused is a known state, not an unknown one.
+- `domain.UpstreamCreateOutcome(derr)` (`domain/dispatch_failure.go`) reads a
+  `UpstreamCreateOutcomeCarrier` — the POST-request counterpart of `PreflightRefusal`, a
+  separate type because `PreflightRefusal`'s contract is that it wraps only a refusal raised
+  BEFORE the first upstream request, so reusing it would make "nothing was created" claims
+  about requests that were sent. Its six tokens are service-authored constants
+  (`budget_name_taken`, `campaign_name_taken`, `budget_created_campaign_refused`,
+  `budget_created_campaign_unconfirmed`, `campaign_created_setup_incomplete`,
+  `create_unconfirmed`), and this function **switches** on the token to pick one of five fixed
+  sentences — it never formats the token into a message, so #208's rule holds whatever the
+  carrier holds, and an unrecognised token can only fall through to the status/unconfirmed
+  wording. `create_unconfirmed` deliberately has no sentence of its own: it means exactly what
+  that fallback already says. Only `internal/dispatch`'s google-ads adapter tags today
+  (`withCreateOutcome`, classified by `googleads.CreateOutcome`); every other provider reaches
+  the unchanged wording, pinned by
+  `TestDispatchFailureMessage_UnclassifiedOutcomeIsUnchanged`.
 - On the pre-create path the arms follow `classifyDiscoveryError`'s order: service defect → LF
   system connection missing → no connection (`ErrConnectionAbsent`) → decrypt fault → LF
   system / own connection unusable (with the `unusableConnectionReason` token) → a
@@ -2372,5 +2391,9 @@ calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoti
 The message is the only change. Claim release/retention, the retained row's status and the
 job's aggregate status are decided before it runs. `TestOrchestrator_PreCreateFailureLogsAClassifiedReason`
 now asserts that the job result carries `(reason: account_not_selected)` and not the error text.
-Google Ads reaches the generic classes only (connection, unconfirmed, fallback); its client
-errors are not marked yet.
+Google Ads reaches the generic classes on the PRE-CREATE path (connection, unconfirmed,
+fallback); its client errors still carry no `PreflightRefusal`. On the retained path it is now
+the one provider that says more than "could not be confirmed": its `*apiError` implements
+`domain.UpstreamStatusCarrier` (see [internal/dispatch](internal-dispatch.md)), so the status
+sentence is reachable for it at all, and the dispatcher tags the failure with a create-outcome
+token that selects one of the five fixed sentences above.

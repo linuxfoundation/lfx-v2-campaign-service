@@ -393,6 +393,16 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("google-ads %s %s -> %d", e.Method, e.Path, e.StatusCode)
 }
 
+// UpstreamStatus implements domain.UpstreamStatusCarrier, as the twitter, microsoft, hubspot,
+// meta, reddit and linkedin clients' HTTP error types already do. Without it a Google Ads
+// dispatch failure reached service.DispatchFailureMessage carrying no status at all, so every
+// outcome — a definite 400 refusal, an ambiguous 503 — rendered as the same status-less
+// sentence even though StatusCode was sitting on this struct the whole time.
+//
+// The STATUS ONLY. Method, Path and Body stay unexported to callers outside this package for
+// the reason the type comment gives: the body can reflect request material.
+func (e *apiError) UpstreamStatus() int { return e.StatusCode }
+
 // transportError wraps a round-trip failure that happened AFTER the request was
 // plausibly sent (mid-flight timeout, EOF, reset), OR a failure to read/decode a
 // 2xx response: the server may or may not have processed the request, so the
