@@ -4810,8 +4810,10 @@ and scope faults beat an inactive connection, 401 → expired, 5xx unclassified 
 - `domain.UpstreamStatusCarrier`: `UpstreamStatus() int` on every client's HTTP error type
   (reddit, linkedin, meta `APIError`, twitter, microsoft, hubspot, and — since the
   dispatch-failure classification fix — google-ads `*apiError`). It exposes the status and
-  nothing else: google-ads keeps `Method`, `Path` and `Body` unexported outside its package
-  because the body can reflect request material. Google-ads was the one client missing it, so
+  nothing else: `*apiError` is an unexported TYPE, so no caller outside the package can name it
+  in an `errors.As` to reach `Method`, `Path` or `Body` (those are still exported struct fields,
+  so reflective or JSON logging of the error would serialise the body — the carrier widens
+  nothing, it just does not help). Google-ads was the one client missing it, so
   every google-ads dispatch failure reached `DispatchFailureMessage` carrying no status at all
   and the status arm was unreachable for it — a definite 400 refusal and an ambiguous 503
   rendered as the same status-less sentence while `StatusCode` sat on the struct unread.
@@ -4828,11 +4830,16 @@ and scope faults beat an inactive connection, 401 → expired, 5xx unclassified 
   partial's ids, because all five create entrypoints build partials to the same escalating
   contract — pre-budget carries names only, post-budget adds `CampaignBudgetID`, post-campaign
   adds `CampaignID` — so the ids a partial carries ARE the account state. One call therefore
-  covers all five channels and cannot drift arm by arm. It classifies the duplicate-name
-  refusals first (`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`, both definite 4xx),
-  then falls back to the ids, splitting the budget-created case on `createOutcomeAmbiguous` —
-  a 5xx, 429, 3xx or transport failure may still have committed the campaign, a definite 4xx
-  refused it.
+  covers all five channels and cannot drift arm by arm. Each duplicate-name refusal
+  (`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`, both definite 4xx) is checked only
+  against the id state of its own step, because `parseErrorCodes` keeps the bare enum value and
+  drops the error family — so a `DUPLICATE_NAME` raised by a LATER mutate in the cascade must
+  not be read as "the budget name was taken, nothing was created". Otherwise the ids decide, and
+  the budget-created case claims a REFUSAL only on positive evidence of one — a definite 4xx
+  `*apiError` in the chain. Everything else there is reported as unconfirmed, because ten arms
+  across the five channels hand back that partial with a plain `fmt.Errorf`: the post-2xx
+  resource-name parse and validation failures, past which the campaign DOES exist, and the
+  `ctx.Err()` arms, where no campaign request was sent at all.
 - `domain.TokenRefreshFailure`: `MarkTokenRefreshFailure` wraps the token-exchange result in
   the reddit, microsoft and linkedin refresh leaders.
 

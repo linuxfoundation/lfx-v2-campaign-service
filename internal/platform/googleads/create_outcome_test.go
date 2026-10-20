@@ -4,6 +4,7 @@
 package googleads
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +48,27 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 
 		{"campaign created, cascade incomplete", campaignPartial, definite4xx, domain.CreateOutcomeCampaignCreatedSetupIncomplete, true},
 		{"no ids at all is unconfirmed", namePartial, ambiguous5xx, domain.CreateOutcomeUnconfirmed, true},
+
+		// The ten arms across the five channels that hand back a budget partial with a plain
+		// fmt.Errorf — no apiError and no transportError anywhere in the chain. Absence of
+		// ambiguity is NOT evidence of a refusal, and in the first case below the campaign
+		// provably DOES exist: the create paths only reach it after campaigns:mutate answered
+		// 2xx. Reporting "refused" here would tell the operator to delete the budget of a live
+		// billable campaign and retry into a second one.
+		{"2xx whose resource name would not parse is unconfirmed, not refused", budgetPartial,
+			fmt.Errorf("google-ads campaign creation UNCONFIRMED (budget 111 created): %w", errors.New("no resource name in mutate response")),
+			domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
+		{"context cancelled before the campaign mutate is unconfirmed, not refused", budgetPartial,
+			fmt.Errorf("google-ads creation aborted after budget 111 created: %w", context.Canceled),
+			domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
+
+		// DUPLICATE_NAME is not exclusive to CampaignBudgetError: parseErrorCodes keeps the
+		// bare enum value and drops the error family, and PMax's assetGroups:mutate runs after
+		// the campaign exists. The ids outrank the code everywhere past the budget step.
+		{"duplicate name past the budget step does not claim nothing was created", campaignPartial, budgetDup,
+			domain.CreateOutcomeCampaignCreatedSetupIncomplete, true},
+		{"duplicate campaign name with no budget id claims no budget", namePartial, campaignDup,
+			domain.CreateOutcomeUnconfirmed, true},
 	}
 
 	for _, tc := range cases {

@@ -18,8 +18,12 @@ at the budget step and the operator would be told, again, that something may hav
    `*apiError` was the one that did not, even though `StatusCode` sat on the struct. The status
    arm of `DispatchFailureMessage` was unreachable for google-ads whatever the platform answered,
    so a definite 400 refusal and an ambiguous 503 rendered identically. Fixed by adding
-   `UpstreamStatus() int` to `*apiError` — the status only; `Method`, `Path` and `Body` stay
-   unexported outside the package because the body can reflect request material (#208).
+   `UpstreamStatus() int` to `*apiError` — the status only. `*apiError` is an unexported TYPE,
+   so nothing outside the package can name it in an `errors.As` to reach `Method`, `Path` or
+   `Body`; those stay exported struct fields, so the carrier widens no leak but closes none
+   either. What keeps the body away from the operator is unchanged: `Error()` never prints it,
+   and `DispatchFailureMessage` returns fixed sentences rather than reporting from the error
+   (#208).
 
 2. **Five outcomes collapsed into one sentence.** Every retained google-ads failure — budget name
    already taken (nothing created at all), budget created then campaign definitely refused,
@@ -46,11 +50,29 @@ create paths' ~50 partial-returning arms. That works because all five create ent
 their partials to the same escalating contract: a pre-budget partial carries names only, a
 post-budget partial adds `CampaignBudgetID`, a post-campaign partial adds `CampaignID`. The ids a
 partial carries ARE the account state, so reading them covers all five channels at once and cannot
-drift one arm at a time. The duplicate-name refusals are classified first
-(`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`, both definite 4xx); otherwise the ids
-decide, with the budget-created case split by `createOutcomeAmbiguous` — a 5xx, 429, 3xx on a
-mutating method or a transport failure may still have committed the campaign, a definite 4xx
-refused it.
+drift one arm at a time.
+
+Two things the local review round corrected here, both of which made the service state something
+FALSE where the sentence it replaced had been merely weak — the failure mode this whole change
+exists to avoid, reproduced inside the fix for it.
+
+First, each duplicate-name refusal (`isDuplicateBudgetNameErr` / `isDuplicateCampaignNameErr`) is
+now gated by the id state of its own step. `parseErrorCodes` keeps the bare enum VALUE and
+discards the error family, so a `DUPLICATE_NAME` raised by any later mutate in the cascade — PMax
+reaches `assetGroups:mutate` well after the campaign exists — matched the budget arm and told the
+operator that nothing had been created while a billable campaign was live. The ids are the better
+evidence everywhere except at the budget step itself, which is the one place they cannot separate
+a duplicate-name refusal from an unconfirmed budget create.
+
+Second, the budget-created case claims a REFUSAL only on positive evidence of one: a definite 4xx
+`*apiError` in the chain. It previously claimed refusal whenever `createOutcomeAmbiguous` was
+false — but that predicate answers false for any error that is neither `*apiError` nor
+`*transportError`, and ten arms across the five channels return a budget partial with a plain
+`fmt.Errorf`: the post-2xx resource-name parse and validate failures, past which `campaigns:mutate`
+answered 2xx and the campaign DOES exist, and the `ctx.Err()` arms, where no campaign request was
+ever sent. The operator was told to delete the budget and retry — the one instruction that
+duplicates a paid campaign. Everything without that positive evidence is now reported as
+unconfirmed, which is what those arms' own error text had said all along.
 
 `internal/dispatch`'s `withCreateOutcome` attaches the token. `Error()` is the wrapped text
 unchanged and `Unwrap` keeps the chain, so it ADDS a question to the error and replaces nothing:

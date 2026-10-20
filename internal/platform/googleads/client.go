@@ -399,8 +399,12 @@ func (e *apiError) Error() string {
 // outcome — a definite 400 refusal, an ambiguous 503 — rendered as the same status-less
 // sentence even though StatusCode was sitting on this struct the whole time.
 //
-// The STATUS ONLY. Method, Path and Body stay unexported to callers outside this package for
-// the reason the type comment gives: the body can reflect request material.
+// The STATUS ONLY, and the carrier adds no second way in: *apiError is an unexported TYPE, so
+// no caller outside this package can name it in an errors.As to reach Method, Path or Body.
+// Those remain exported STRUCT FIELDS — reflection- or JSON-based logging of this error would
+// still serialise Body — so this method widens nothing, and keeping the body out of what the
+// service REPORTS stays where it already was: Error(), and the fixed sentences in
+// service.DispatchFailureMessage (#208).
 func (e *apiError) UpstreamStatus() int { return e.StatusCode }
 
 // transportError wraps a round-trip failure that happened AFTER the request was

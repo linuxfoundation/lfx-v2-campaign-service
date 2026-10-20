@@ -4,6 +4,8 @@
 package googleads
 
 import (
+	"errors"
+
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 )
 
@@ -26,34 +28,49 @@ import (
 // create succeeded) or a nil result (the create failed before anything was sent, which the
 // caller already reports as a pre-create failure, claim released).
 //
-// The duplicate-name checks run FIRST and in this order, because they are the two cases the
-// ids alone cannot distinguish: a DUPLICATE_NAME refusal of the budget leaves the SAME
-// id-less partial as an unconfirmed budget create, and means something quite different.
+// Each duplicate-name check is GATED BY THE ID STATE OF ITS OWN STEP, and that gate is
+// load-bearing rather than defensive. parseErrorCodes keeps the bare enum VALUE and discards the
+// error family, so hasErrorCode matches "DUPLICATE_NAME" raised by ANY mutate in the cascade,
+// not only the budget's — and Performance Max keeps mutating long after the campaign exists
+// (createPerformanceMaxAssetGroup, which calls assetGroups:mutate). Ungated, a duplicate name
+// from one of those later steps would be reported as "nothing new was created" while a billable
+// campaign was live. The ids are the
+// better evidence everywhere except at the budget step itself, which is the one place they
+// cannot distinguish a DUPLICATE_NAME refusal from an unconfirmed budget create — both leave the
+// same id-less partial and mean opposite things.
 func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 	if err == nil || result == nil {
 		return "", false
 	}
 
 	switch {
-	case isDuplicateBudgetNameErr(err):
-		// A definite 4xx (429 excluded) naming the budget-name code: this attempt created
-		// nothing, and the name is held by a budget an earlier attempt left behind.
+	case result.CampaignBudgetID == "" && isDuplicateBudgetNameErr(err):
+		// A definite 4xx (429 excluded) naming the budget-name code, and no budget id came
+		// back: this attempt created nothing, and the name is held by a budget an earlier
+		// attempt left behind.
 		return domain.CreateOutcomeBudgetNameTaken, true
-	case isDuplicateCampaignNameErr(err):
+	case result.CampaignID == "" && result.CampaignBudgetID != "" && isDuplicateCampaignNameErr(err):
+		// The budget id gate is what makes this token's sentence true: it promises the
+		// budget for THIS attempt was created, which only a returned budget id establishes.
 		return domain.CreateOutcomeCampaignNameTaken, true
 	case result.CampaignID != "":
 		// The campaign resource name came back, so the campaign exists whatever failed
 		// after it.
 		return domain.CreateOutcomeCampaignCreatedSetupIncomplete, true
 	case result.CampaignBudgetID != "":
-		// The budget's resource name came back and the campaign's did not. Whether a
-		// campaign exists anyway is exactly the ambiguity createOutcomeAmbiguous answers:
-		// a 5xx/429/3xx/transport failure may still have committed the campaign create,
-		// while a definite 4xx refused it.
-		if createOutcomeAmbiguous(err) {
-			return domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true
+		// The budget's resource name came back and the campaign's did not. Claiming the
+		// campaign was REFUSED needs positive evidence of a refusal, not merely the absence
+		// of ambiguity: ten arms across the five channels hand back this partial with a
+		// plain fmt.Errorf — a 2xx whose resource name would not parse or validate (past
+		// which the campaign DOES exist), and the ctx.Err() arms between the two mutates,
+		// where no campaign request was ever sent. Reading those as "refused" would tell the
+		// operator to delete a budget whose campaign is live and billable, which is a worse
+		// answer than the generic sentence this classifier replaced.
+		var ae *apiError
+		if errors.As(err, &ae) && isDefiniteClientError(ae) {
+			return domain.CreateOutcomeBudgetCreatedCampaignRefused, true
 		}
-		return domain.CreateOutcomeBudgetCreatedCampaignRefused, true
+		return domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true
 	}
 
 	// A partial with no ids at all: the budget create was sent and its outcome is unknown

@@ -56,6 +56,12 @@ func TestWithCreateOutcome_NoTagWhenNothingToSay(t *testing.T) {
 // TestWithCreateOutcome_SurvivesContextCancellation pins the ctx.Err() arms (every create path
 // has one between the budget and the campaign): those wrap a context error, and the tag must
 // not hide it from the cancellation checks DispatchFailureMessage and the orchestrator make.
+//
+// The token below is not chosen for the occasion — it is the one googleads.CreateOutcome
+// actually returns for this shape, which that package's
+// "context cancelled before the campaign mutate is unconfirmed, not refused" case pins. This
+// test owns the wrapper's transparency; that one owns the mapping. Hand-labelling a token the
+// classifier never assigns would make this read as coverage of a path it does not exercise.
 func TestWithCreateOutcome_SurvivesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
