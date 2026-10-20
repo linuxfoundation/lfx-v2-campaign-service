@@ -191,6 +191,9 @@ func (stubCampaignRepo) ResolvePlatformCampaign(context.Context, string, model.P
 func (stubCampaignRepo) GetCampaignByPlatform(context.Context, string, string, model.Provider, string) (*model.Campaign, error) {
 	return nil, domain.ErrNotFound
 }
+func (stubCampaignRepo) GetCampaignByPlatformWithMaxSlotVersion(context.Context, string, string, model.Provider, string) (*model.Campaign, int, error) {
+	return nil, 0, domain.ErrNotFound
+}
 func (stubCampaignRepo) ClaimCampaignDispatch(context.Context, string, string, model.Provider, string, int, string, *model.Actor) (bool, *model.Campaign, error) {
 	return true, &model.Campaign{Status: "pending"}, nil
 }

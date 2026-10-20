@@ -232,10 +232,10 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 
 // TestRequiredIndexes_CoversTheDispatchUniqueIndex pins the membership, not the message.
 //
-// uq_campaigns_brief_platform_variant_live is the sole arbiter of
-// (brief_id, platform, variant) uniqueness
-// once 000014 drops campaigns_brief_id_platform_key, and 000014's guard checks it exactly
-// once — while 000014 runs. An index lost any time afterwards left a schema that booted
+// uq_campaigns_brief_platform_variant_slot_version_live is the sole arbiter of
+// (brief_id, platform, variant, slot_version) uniqueness since 000047 dropped 000022's
+// three-column index (and 000014 / 000024 the constraint and index before that), and a
+// migration-time guard checks an index exactly once — while that migration runs. An index lost any time afterwards left a schema that booted
 // clean with concurrent claims free to double-create paid campaigns. Membership in
 // requiredIndexes is what makes every later boot re-check it, and the DEFINITION is
 // checked rather than the name because 000013 creates it with IF NOT EXISTS: any index
@@ -243,7 +243,7 @@ func TestMigrationIndexOwners_FindsEveryCreatedIndex(t *testing.T) {
 // healthy (TestMigration000014_GuardChecksIndexDefinition records the PostgreSQL 16.10 run
 // where a same-named NON-unique index passed the name-only form of 000014's own guard).
 func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
-	const dispatchUnique = "uq_campaigns_brief_platform_variant_live"
+	const dispatchUnique = "uq_campaigns_brief_platform_variant_slot_version_live"
 
 	var got *requiredIndex
 	for i, ri := range requiredIndexes {
@@ -252,23 +252,25 @@ func TestRequiredIndexes_CoversTheDispatchUniqueIndex(t *testing.T) {
 		}
 	}
 	require.NotNilf(t, got, "%s is not in requiredIndexes: nothing re-checks the only "+
-		"index enforcing dispatch uniqueness after 000014 drops the constraint", dispatchUnique)
+		"index enforcing dispatch uniqueness after 000047 drops the three-column one", dispatchUnique)
+	// And the index 000047 drops must be GONE from the list: requiredIndexes fails boot when a
+	// member is missing, so leaving it here would turn the contract migration into a
+	// service that cannot start.
+	for _, ri := range requiredIndexes {
+		assert.NotEqualf(t, "uq_campaigns_brief_platform_variant_live", ri.name,
+			"000047 drops %s, so requiring it would fail every boot after that migration", ri.name)
+	}
 
 	assert.Equal(t, "campaigns", got.table)
 	assert.True(t, got.unique, "a non-unique index of this name arbitrates nothing")
 	// (brief_id, platform, VARIANT) since 000022 — Google's Search and Demand Gen are
 	// separate campaigns under one brief, and keying on the pair alone made the second
-	// dispatch read the first's row and report a false success.
-	assert.Equal(t, []string{"brief_id", "platform", "variant"}, got.keys)
+	// dispatch read the first's row and report a false success — and SLOT_VERSION since
+	// 000037, so a deliberate second campaign on a slot is not mistaken for a retry.
+	assert.Equal(t, []string{"brief_id", "platform", "variant", "slot_version"}, got.keys)
 	// Character-identical to the deparsed form 000023's guard compares against. Two
 	// checks on one definition are only two checks while they agree on what it is.
 	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
-	// Optional from the lock release on (PR #260): this image is the rollback target for the
-	// release that drops the index, so it must boot without it — while still checking the
-	// definition of any index carrying the name.
-	assert.True(t, got.optional, "a required legacy index makes this image unbootable once "+
-		"the contract release drops it, so an image-only rollback boot-loops")
-	assert.True(t, RequiredIndexIsOptional(dispatchUnique))
 }
 
 // describeInvalid's annotation is derived from the migrations, not from requiredIndexes,
@@ -368,6 +370,23 @@ func TestRequiredIndexes_AreAllCreatedByAMigration(t *testing.T) {
 	}
 }
 
+// TestIndexRecovery_ADroppedIndexIsNotForcedBack pins the remedy for an INVALID copy of an index
+// a later migration drops. 000022 creates uq_campaigns_brief_platform_variant_live and 000047
+// drops it, so the copy a failed 000047 down leaves behind must be dropped with the version left
+// alone — never "force 21", which would replay 000022..000047 only to drop the index again.
+func TestIndexRecovery_ADroppedIndexIsNotForcedBack(t *testing.T) {
+	const legacy = "uq_campaigns_brief_platform_variant_live"
+	require.Equal(t, 22, migrationIndexOwners()[legacy])
+	require.Equal(t, 47, migrationIndexDrops()[legacy])
+	got := indexRecovery(legacy)
+	assert.Equal(t, "migration 000047 drops this; drop it, leave the schema version alone", got)
+	assert.NotContains(t, got, "force ")
+	// 000024 drops 000013's two-column index the same way.
+	assert.Contains(t, indexRecovery("uq_campaigns_brief_platform_live"), "migration 000024 drops this")
+	// A still-live index keeps its owner's force advice.
+	assert.Contains(t, indexRecovery("idx_campaigns_stuck_claims"), "migration 000008: force 7")
+}
+
 // TestMigrationIndexOwners_IgnoresAConditionalRebuild is the finding that a CREATE inside a
 // DO block cannot be a recovery target.
 //
@@ -424,8 +443,8 @@ func TestExecutableSQL(t *testing.T) {
 
 // TestRequiredIndexes_CoversTheSlotVersionUniqueIndex pins 000037's index into the boot check.
 // Since this release, claim, upsert and adopt all name it as their ON CONFLICT arbiter, so its
-// absence would fail every dispatch at runtime; and once the three-column index is dropped it
-// is the only thing keeping a retry from creating a duplicate paid campaign.
+// absence would fail every dispatch at runtime; and since 000047 dropped the three-column index
+// it is the only thing keeping a retry from creating a duplicate paid campaign.
 func TestRequiredIndexes_CoversTheSlotVersionUniqueIndex(t *testing.T) {
 	const slotUnique = "uq_campaigns_brief_platform_variant_slot_version_live"
 
@@ -443,8 +462,4 @@ func TestRequiredIndexes_CoversTheSlotVersionUniqueIndex(t *testing.T) {
 	// bumps, so an index on it would give one campaign a new slot identity per write.
 	assert.Equal(t, []string{"brief_id", "platform", "variant", "slot_version"}, got.keys)
 	assert.Equal(t, "(status <> 'deleted'::text)", got.predicate)
-	// REQUIRED, unlike its three-column predecessor: with the legacy index dropped it is the
-	// only thing keeping a retry from creating a duplicate paid campaign.
-	assert.False(t, got.optional, "%s must not be optional", slotUnique)
-	assert.False(t, RequiredIndexIsOptional(slotUnique))
 }

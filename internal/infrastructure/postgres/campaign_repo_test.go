@@ -31,9 +31,9 @@ const livePredicate = `status <> 'deleted'`
 // action keyword (DO). The capture is what the assertions inspect for the predicate.
 //
 // slot_version joined the target in 000037. All three statements name the four-column index
-// as their arbiter, because the follow-up release drops the three-column one and a statement
-// still naming it would then fail at runtime with "no unique or exclusion constraint matching
-// the ON CONFLICT specification" — the same failure this test exists for.
+// as their arbiter, because 000047 dropped the three-column one and a statement still naming
+// it would fail at runtime with "no unique or exclusion constraint matching the ON CONFLICT
+// specification" — the same failure this test exists for.
 var onConflictBriefPlatform = regexp.MustCompile(`(?is)ON\s+CONFLICT\s*\(\s*brief_id\s*,\s*platform\s*,\s*variant\s*,\s*slot_version\s*\)(.*?)\bDO\b`)
 
 // TestCampaignRepo_OnConflictCarriesLivePredicate pins the single most dangerous
@@ -151,6 +151,21 @@ func TestCampaignRepo_ReadsExcludeSoftDeleted(t *testing.T) {
 					"looking occupied.", livePredicate)
 		})
 	}
+}
+
+// TestMaxSlotVersion_CountsSoftDeletedRows pins the one read that must NOT filter deleted rows.
+// A deleted campaign still holds its upstream name, so a new_version numbered from live rows
+// alone would compose that name again and get the deleted campaign back by name lookup.
+//
+// And both values must come from ONE statement: read separately, a concurrent new_version's
+// claim can land between them and the two requests pick different next versions.
+func TestMaxSlotVersion_CountsSoftDeletedRows(t *testing.T) {
+	q := normalizeWS(getCampaignByPlatformWithMaxSlotVersionQuery)
+	sub := q[strings.Index(q, "(SELECT"):strings.Index(q, "AS max_slot_version")]
+	require.NotContains(t, sub, livePredicate,
+		"the max subquery must count soft-deleted rows, or a new_version can reuse a deleted campaign's slot version and name")
+	require.Contains(t, sub, "h.project_id=$3", "the max subquery must stay scoped by project like GetCampaignByPlatform")
+	require.Contains(t, q[strings.Index(q, "AS max_slot_version"):], livePredicate, "the campaign it returns must still be the latest LIVE one")
 }
 
 // TestListProjectPlatformCampaignIDs_IsScopedInSQL pins the authorization boundary for the

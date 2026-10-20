@@ -87,6 +87,57 @@ func TestOrchestrator_NewVersionCreatesASecondCampaignOnACompletedSlot(t *testin
 	}
 }
 
+// Create 1 → create 2 → delete 2 → new_version must make slot 3, not slot 2 again. Deleting
+// only unbinds the local row; the upstream campaign keeps the "-2" name, so a second slot 2
+// would compose that name and a name-unique dispatcher would hand the deleted campaign back.
+func TestOrchestrator_NewVersionSkipsADeletedCampaignsSlotVersion(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := completedSlot1()
+	camps.deletedSlotVersions = map[string]int{slotKey("b1", model.ProviderGoogleAds, model.VariantDefault): 2}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if j.Status != model.JobSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", j.Status, j.Result)
+	}
+	if got := disp.seen(); len(got) != 1 || got[0] != 3 {
+		t.Fatalf("dispatcher saw slot versions %v, want [3]: slot 2 belonged to a deleted campaign "+
+			"whose upstream name a second slot 2 would reuse", got)
+	}
+	if len(camps.upserted) != 1 || camps.upserted[0].SlotVersion != 3 {
+		t.Fatalf("persisted %+v, want one row at slot version 3", camps.upserted)
+	}
+}
+
+// A double-submitted new_version: request A has read the completed slot 1 and claimed slot 2,
+// and request B's read sees slot 1 completed too. B must aim at the SAME slot 2, so the claim
+// dedupes them. Reading the latest and the maximum separately let A's claim land between B's
+// two reads: B saw slot 1 as latest but counted A's pending slot 2 in its maximum, chose slot 3,
+// and both requests created a paid campaign.
+func TestOrchestrator_ConcurrentNewVersionsTargetTheSameSlot(t *testing.T) {
+	jobs := newFakeJobRepo()
+	camps := completedSlot1()
+	camps.afterSlotRead = func() {
+		camps.afterSlotRead = nil
+		// Request A's claim, landing right after this request's read.
+		camps.upserted = append(camps.upserted, &model.Campaign{
+			ID: "row-a", ProjectID: "cncf", BriefID: "b1", Platform: model.ProviderGoogleAds,
+			Variant: model.VariantDefault, SlotVersion: 2, Status: "pending",
+		})
+	}
+	disp := &slotRecordingDispatcher{}
+	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
+
+	startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
+
+	if got := camps.claimSlotVersions; len(got) != 1 || got[0] != 2 {
+		t.Fatalf("claimed slot versions %v, want [2]: a concurrent new_version must target the version "+
+			"the other request is claiming, so the claim lets only one through", got)
+	}
+}
+
 // Without new_version a repeat create is still a retry. This is the behaviour every existing
 // caller relies on, and the reason new_version is opt-in rather than inferred.
 func TestOrchestrator_WithoutNewVersionARepeatCreateStillReuses(t *testing.T) {
@@ -142,32 +193,6 @@ func TestOrchestrator_NewVersionDoesNotBuildOnAnUnfinishedCampaign(t *testing.T)
 	}
 	if !strings.Contains(string(j.Result), "reconciliation required") {
 		t.Errorf("result = %s, want the reconciliation-required failure a retry gets", j.Result)
-	}
-}
-
-// While 000022's one-campaign-per-slot index is still in place (the release that ships
-// 000037), the second campaign cannot be claimed. That must surface as an explicit refusal —
-// never as a reuse of the first campaign, which is the bug — and nothing may be dispatched.
-func TestOrchestrator_NewVersionIsRefusedDuringTheExpandPhase(t *testing.T) {
-	jobs := newFakeJobRepo()
-	camps := completedSlot1()
-	camps.legacySlotIndex = true
-	disp := &slotRecordingDispatcher{}
-	orch := NewOrchestrator(camps, jobs, map[model.Provider]PlatformDispatcher{model.ProviderGoogleAds: disp})
-
-	j := startAndWait(t, orch, jobs, StartOptions{NewVersion: true})
-
-	if j.Status != model.JobFailed {
-		t.Errorf("status = %s, want failed", j.Status)
-	}
-	if got := disp.seen(); len(got) != 0 {
-		t.Fatalf("dispatcher called with slot versions %v, want no call", got)
-	}
-	if !strings.Contains(string(j.Result), "not available yet") {
-		t.Errorf("result = %s, want the not-available-yet refusal", j.Result)
-	}
-	if strings.Contains(string(j.Result), "pc-first") {
-		t.Errorf("result = %s, must not report the first campaign as the second", j.Result)
 	}
 }
 

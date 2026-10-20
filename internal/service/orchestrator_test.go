@@ -188,6 +188,12 @@ type fakeCampaignRepo struct {
 	// existing maps briefID+"|"+platform to a pre-existing campaign, letting a
 	// test simulate a brief already dispatched to a platform (idempotency guard).
 	existing map[string]*model.Campaign
+	// deletedSlotVersions maps a slotKey to the highest slot version a soft-deleted row on that
+	// slot held. Those rows are invisible to every read except MaxSlotVersion, as in Postgres.
+	deletedSlotVersions map[string]int
+	// afterSlotRead, when set, runs right after GetCampaignByPlatformWithMaxSlotVersion has
+	// read, to land a concurrent request's claim between that read and this one's claim.
+	afterSlotRead func()
 	// adoptBriefVersion, when non-zero, is the brief version AdoptCampaign's locked re-read
 	// would find. A mismatch against the caller's expectedVersion is ErrStaleApproval.
 	adoptBriefVersion int64
@@ -205,10 +211,6 @@ type fakeCampaignRepo struct {
 	// slot version has been claimed on top of them. `existing` always holds the LATEST, which
 	// is what GetCampaignByPlatform returns, so the many single-campaign fixtures are unchanged.
 	superseded map[string]*model.Campaign
-	// legacySlotIndex simulates the expand phase of 000037, when 000022's three-column index
-	// still exists: a claim for a slot version above an existing live one fails with
-	// ErrSlotVersionUnavailable, exactly as the real INSERT's unique violation is classified.
-	legacySlotIndex bool
 	// claimSlotVersions records the slotVersion argument of every ClaimCampaignDispatch call.
 	claimSlotVersions []int
 	// claimActors records the `by` argument of every ClaimCampaignDispatch call, so a
@@ -356,6 +358,10 @@ func (r *fakeCampaignRepo) ListCampaignsForBrief(_ context.Context, projectID, b
 func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (*model.Campaign, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.latestLiveLocked(briefID, platform, variant)
+}
+
+func (r *fakeCampaignRepo) latestLiveLocked(briefID string, platform model.Provider, variant string) (*model.Campaign, error) {
 	if r.byPlatformErr != nil {
 		return nil, r.byPlatformErr
 	}
@@ -388,6 +394,38 @@ func (r *fakeCampaignRepo) GetCampaignByPlatform(_ context.Context, _ string, br
 // the same row. Writing only the qualified form would break them for a reason unrelated to
 // what they assert. Writes are still keyed correctly — a demand-gen row never lands on the
 // bare key, so it cannot be mistaken for a Search row.
+// GetCampaignByPlatformWithMaxSlotVersion mirrors the real single statement: the latest live
+// row and every version the slot has used — live (existing, upserted) or soft-deleted
+// (deletedSlotVersions) — read under ONE lock, as Postgres reads them from one snapshot.
+// afterSlotRead then runs, standing in for a concurrent request whose claim lands right after.
+func (r *fakeCampaignRepo) GetCampaignByPlatformWithMaxSlotVersion(_ context.Context, _ string, briefID string, platform model.Provider, variant string) (*model.Campaign, int, error) {
+	c, n, err := r.slotRead(briefID, platform, variant)
+	if r.afterSlotRead != nil {
+		r.afterSlotRead()
+	}
+	return c, n, err
+}
+
+func (r *fakeCampaignRepo) slotRead(briefID string, platform model.Provider, variant string) (*model.Campaign, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, err := r.latestLiveLocked(briefID, platform, variant)
+	if err != nil {
+		return nil, 0, err
+	}
+	key := slotKey(briefID, platform, variant)
+	n := r.deletedSlotVersions[key]
+	if v := model.NormalizeSlotVersion(c.SlotVersion); v > n {
+		n = v
+	}
+	for _, u := range r.upserted {
+		if u != nil && slotKey(u.BriefID, u.Platform, u.Variant) == key && u.SlotVersion > n {
+			n = u.SlotVersion
+		}
+	}
+	return c, n, nil
+}
+
 func (r *fakeCampaignRepo) storeRow(c *model.Campaign) {
 	if r.existing == nil {
 		r.existing = map[string]*model.Campaign{}
@@ -451,9 +489,6 @@ func (r *fakeCampaignRepo) ClaimCampaignDispatch(_ context.Context, projectID, b
 				return false, c, nil
 			}
 			return false, nil, fmt.Errorf("fake: claim of superseded slot version %d with no row", slotVersion)
-		case r.legacySlotIndex:
-			// The three-column index rejects a second live row on the slot.
-			return false, nil, fmt.Errorf("claim campaign dispatch: %w", domain.ErrSlotVersionUnavailable)
 		}
 		if r.superseded == nil {
 			r.superseded = map[string]*model.Campaign{}

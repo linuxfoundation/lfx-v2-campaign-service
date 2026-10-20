@@ -1757,7 +1757,19 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// The lookup returns the slot's LATEST live campaign, and slotVersion is which campaign
 	// on the slot this dispatch claims: the latest one for a retry, the one after it for a
 	// deliberate new version, and the first when the slot is empty.
-	existing, lerr := o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	//
+	// A new-version request also needs the highest slot version ever used, and reads it in the
+	// same statement as the latest (see GetCampaignByPlatformWithMaxSlotVersion for why one).
+	var (
+		existing *model.Campaign
+		maxUsed  int
+		lerr     error
+	)
+	if opts.NewVersion {
+		existing, maxUsed, lerr = o.campaigns.GetCampaignByPlatformWithMaxSlotVersion(ctx, brief.ProjectID, brief.ID, p, variant)
+	} else {
+		existing, lerr = o.campaigns.GetCampaignByPlatform(ctx, brief.ProjectID, brief.ID, p, variant)
+	}
 	slotVersion := model.FirstSlotVersion
 	switch {
 	case lerr == nil && isReusableCampaign(existing) && opts.NewVersion:
@@ -1769,7 +1781,11 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 		// latest campaign complete makes one more. Two CONCURRENT ones compute the same
 		// next version and the claim lets exactly one through (the other is skipped or
 		// reuses the winner), which is what covers a double-submitted form.
-		slotVersion = existing.SlotVersion + 1
+		//
+		// Numbered past every version the slot has EVER used, not just the live latest: a
+		// deleted campaign keeps its upstream name, so reusing its version would compose that
+		// name again and a name-based lookup would return the deleted campaign as this one.
+		slotVersion = max(existing.SlotVersion, maxUsed) + 1
 	case lerr == nil && isReusableCampaign(existing):
 		// A COMPLETED campaign (created / created_degraded — both terminal, since a
 		// re-dispatch can't repair a degraded sub-step). Reuse it idempotently. A
@@ -1816,17 +1832,6 @@ func (o *Orchestrator) dispatchPlatform(ctx context.Context, jobID string, brief
 	// lock — it waits only for local statements on the same slot, and nothing is held once
 	// it commits, so no connection is held across the platform call below.
 	claimed, existing, err := o.campaigns.ClaimCampaignDispatch(ctx, brief.ProjectID, brief.ID, p, variant, slotVersion, jobID, by)
-	if errors.Is(err, domain.ErrSlotVersionUnavailable) {
-		// Expected until the release after this one drops 000022's one-campaign-per-slot
-		// index, which still rejects the second campaign. That drop is staged one release
-		// after the per-slot lock ships, so an image-only rollback to the previous binary
-		// (which takes no slot lock) still finds the index in place. Nothing was written or
-		// created, so this is a plain refusal rather than a fault.
-		slog.WarnContext(ctx, "new campaign version refused: the schema still allows one live campaign per slot",
-			"platform", p, "job_id", jobID, "project_id", brief.ProjectID, "slot_version", slotVersion)
-		res.Error = "creating another campaign on this platform for the same brief is not available yet"
-		return res
-	}
 	if err != nil {
 		slog.ErrorContext(ctx, "claim dispatch failed", "platform", p, "job_id", jobID, "error", err)
 		res.Error = "could not claim campaign dispatch"
