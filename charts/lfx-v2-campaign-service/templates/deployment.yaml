@@ -96,33 +96,41 @@
   {{- end }}
 {{- end }}
 {{- /*
-  Guard: the Reddit reporting budget needs ONE replica — ALWAYS, not only with a flag on.
+  No replica guard for Reddit — deliberately, and this is not an oversight. An earlier revision of
+  this file refused to render at replicaCount > 1 on the reasoning below; that refusal was wrong
+  and is recorded here so it is not reintroduced.
 
-  Every request to Reddit's reports operation (POST /ad_accounts/{id}/reports) spends from one
-  quota, the `ads-reporting` policy: 60 requests per 60 s per ad account. The ledger that keeps
-  this service under it (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those for
-  the audience and keyword performance reads) is process-local, so N replicas could send up to N × 45 a minute against one
-  account.
+  The constraint it was protecting is real. Every request to Reddit's reports operation
+  (POST /ad_accounts/{id}/reports) spends from one quota, the `ads-reporting` policy: 60 requests
+  per 60 s per ad account. The ledger that keeps this service under it
+  (internal/platform/reddit/report_budget.go: 45 of the 60, 24 of those reserved for the audience
+  and keyword performance reads) is PROCESS-LOCAL, so N replicas each carry a separate 45 against
+  one shared account quota.
 
-  Not keyed on REDDIT_METRICS_ENABLED, because that flag does not cover all of the traffic: it
-  gates the campaign metrics read and the audience and keyword performance reads, but the Reddit ACCOUNT MONITOR
-  (connection-reddit-ads/account-monitor → RedditDispatcher.ListAccountCampaignMetrics →
-  reddit.Client.ListAccountCampaigns) is ungated, always routed, and reads the same reports
-  operation. So any replica can spend the budget whenever the monitor can serve — which is
-  always. (X differs: TWITTER_METRICS_ENABLED gates the X monitor too, and a runtime lease
-  confines its stats jobs to one pod, so the X guard above can stay flag-scoped.)
+  Why that is a ceiling and not a deploy blocker: every path that spends the ledger is reached
+  only by an inbound request. The Reddit account monitor
+  (connection-reddit-ads/account-monitor → ConnectionService.MonitorRedditAdsAccount →
+  RedditDispatcher.readAccountMonitor) is ungated by REDDIT_METRICS_ENABLED and therefore always
+  ROUTED — but nothing polls it: no ticker, cron or subscriber in internal/ or cmd/ invokes it or
+  the audience and keyword reads. N × 45 a minute is what concurrent user traffic could reach at
+  worst, not a rate the service sustains, and the failure mode when it is reached is a 429 on a
+  Monitoring-tab read, not lost or corrupted data. A render-time `fail` traded that for blocking
+  every unrelated deploy of this service, which is the larger harm.
 
-  This costs the default deploy nothing: the chart ships replicaCount: 1 and no HPA, and the
-  Recreate strategy's migration-ordering guarantee (TestDeploymentUsesRecreateStrategy) already
-  rests on one replica. There is no runtime lease behind it, so it cannot see an out-of-band scale
-  or an external HPA (ArgoCD ignores /spec/replicas); a shared ledger is what would lift it.
+  The two obvious fixes do not work, so do not reach for them:
+    - A lease like the X stats jobs' (postgres.StatsJobLease) makes a NON-OWNER POD REFUSE
+      (domain.ErrStatsJobLeaseNotHeld). That is fine for X's flag-gated background stats jobs; on
+      Reddit's always-routed, user-facing monitor endpoint it would fail most page loads outright.
+    - Dividing the budget by replica count breaks the audience read: one read is up to
+      MaxReportCampaigns (8) × 3 breakdowns = 24 reports, which is already the whole insight
+      sub-budget, so a divided 45 ÷ 3 = 15 could never serve it.
+
+  The fix that does work is a SHARED ledger — a token bucket keyed by ad account in Postgres,
+  replacing the process-local one in report_budget.go. Until that lands the ceiling stands as a
+  documented limit, not a render failure. (The X guard above stays: it is flag-scoped,
+  TWITTER_METRICS_ENABLED gates the X monitor too, and the runtime lease already confines those
+  jobs to one pod.)
 */}}
-{{- $redditReplicas := int (default 1 .Values.replicaCount) }}
-{{- $redditAutoscaleMax := 1 }}
-{{- with .Values.autoscaling }}{{- if .enabled }}{{- $redditAutoscaleMax = int (default 2 .maxReplicas) }}{{- end }}{{- end }}
-{{- if or (gt $redditReplicas 1) (gt $redditAutoscaleMax 1) }}
-  {{- fail "more than one replica (replicaCount > 1, or autoscaling with maxReplicas > 1) is refused: the Reddit reporting budget (45 of an ad account's 60 report requests a minute) is kept per process, and the always-on Reddit account monitor spends it whatever REDDIT_METRICS_ENABLED says, so each replica would multiply it against the account-wide quota. Run one replica until the ledger is shared." }}
-{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
