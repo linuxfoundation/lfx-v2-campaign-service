@@ -70,10 +70,15 @@ func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 		// campaign of the composed name exists, and the arm above is what rules out the one
 		// refusal that would make that false — DUPLICATE_CAMPAIGN_NAME, which means an earlier
 		// attempt's campaign is still there. That arm can only rule it out from codes it could
-		// read: doRequest builds an apiError with ErrorCodes nil when a non-2xx body is
-		// unreadable or over maxResponseBytes (client.go), and a duplicate-name refusal
-		// arriving that way would fall straight through to here. Requiring codes keeps the
-		// claim resting on what was read rather than on what could not be.
+		// read, and ErrorCodes is nil whenever parseErrorCodes (campaign.go) finds no
+		// GoogleAdsFailure detail at all: a body that was unreadable or over maxResponseBytes
+		// (client.go), and equally a perfectly readable envelope that simply carries no such
+		// detail — the ordinary shape of an expired-token 401, a permission 403 or a frontend
+		// INVALID_ARGUMENT. A duplicate-name refusal arriving any of those ways would fall
+		// straight through to here. Requiring codes keeps the claim resting on what was read
+		// rather than on what could not be, and the cost is deliberate: every codeless 4xx,
+		// common ones included, now weakens to "unconfirmed" and costs the operator one
+		// verification.
 		var ae *apiError
 		if errors.As(err, &ae) && isDefiniteClientError(ae) && len(ae.ErrorCodes) > 0 {
 			return domain.CreateOutcomeBudgetCreatedCampaignRefused, true

@@ -4,8 +4,10 @@
 budget-created arm of `googleads.CreateOutcome` claimed
 `budget_created_campaign_refused` on any definite 4xx `*apiError`, without requiring that the
 response's error codes had parsed. `doRequest` builds an `apiError` with `ErrorCodes` nil
-whenever a non-2xx body is unreadable or over `maxResponseBytes` (`client.go`), so a
-`DUPLICATE_CAMPAIGN_NAME` refusal arriving that way slips past
+whenever `parseErrorCodes` finds no `GoogleAdsFailure` detail — a body that was unreadable or over
+`maxResponseBytes` (`client.go`), and equally a readable envelope that carries no such detail, the
+ordinary shape of an expired-token 401, a permission 403 or a frontend `INVALID_ARGUMENT`. So a
+`DUPLICATE_CAMPAIGN_NAME` refusal arriving any of those ways slips past
 `isDuplicateCampaignNameErr` — the arm that exists to catch it — and lands on the sentence
 promising that *no campaign of the composed name exists* and the budget should be removed
 before retrying. An earlier attempt's campaign is standing at that moment, so the operator

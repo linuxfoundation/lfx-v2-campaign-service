@@ -4836,9 +4836,12 @@ and scope faults beat an inactive connection, 401 → expired, 5xx unclassified 
   drops the error family — so a `DUPLICATE_NAME` raised by a LATER mutate in the cascade must
   not be read as "the budget name was taken, nothing was created". Otherwise the ids decide, and
   the budget-created case claims a REFUSAL only on positive evidence of one — a definite 4xx
-  `*apiError` in the chain **whose error codes parsed**, since a codeless 4xx (an unreadable or
-  oversize body, `client.go`) could itself be the duplicate-campaign-name refusal that would
-  make "no campaign exists" false. Everything else there is reported as unconfirmed, because ten arms
+  `*apiError` in the chain **whose error codes parsed**, since a codeless 4xx could itself be the
+  duplicate-campaign-name refusal that would make "no campaign exists" false. `ErrorCodes` is nil
+  whenever `parseErrorCodes` finds no `GoogleAdsFailure` detail — an unreadable or oversize body
+  (`client.go`), and equally a readable envelope carrying no such detail, the ordinary shape of a
+  401, a 403 or a frontend `INVALID_ARGUMENT` — so the weakening is not confined to rare
+  truncated responses. Everything else there is reported as unconfirmed, because ten arms
   across the five channels hand back that partial with a plain `fmt.Errorf`: the post-2xx
   resource-name parse and validation failures, past which the campaign DOES exist, and the
   `ctx.Err()` arms, where no campaign request was sent at all.

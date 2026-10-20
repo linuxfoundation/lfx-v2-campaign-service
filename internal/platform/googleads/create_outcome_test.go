@@ -74,9 +74,11 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 			domain.CreateOutcomeUnconfirmed, true},
 
 		// A definite 4xx whose codes did not parse. doRequest builds exactly this apiError —
-		// status known, ErrorCodes nil — when a non-2xx body is unreadable or over
-		// maxResponseBytes (client.go). The duplicate-campaign-name arm above cannot fire on
-		// it, so an earlier attempt's campaign could be standing while this one reports
+		// status known, ErrorCodes nil — whenever parseErrorCodes finds no GoogleAdsFailure
+		// detail: an unreadable or over-maxResponseBytes body (client.go), and equally a
+		// readable envelope that carries no such detail, which is what a 401, a 403 or a
+		// frontend INVALID_ARGUMENT looks like. The duplicate-campaign-name arm above cannot
+		// fire on any of them, so an earlier attempt's campaign could be standing while this one reports
 		// "no campaign exists" and sends the operator to delete the budget. The claim needs
 		// codes it could read, not merely a status it could see.
 		{"definite 4xx whose codes did not parse is unconfirmed, not refused", budgetPartial, definite4xx,
@@ -158,12 +160,16 @@ func TestCreateOutcome_ReadsThroughTheWrappedChain(t *testing.T) {
 	}
 }
 
-// TestCreateOutcome_OversizeErrorBodyDegradesToATrueClaim pins the one production path that
-// reaches the classifier with NO error codes: doRequest builds an apiError without them when the
-// response exceeds maxResponseBytes (client.go), because there is no body to parse. The arm must
-// degrade to a weaker claim that is still true, never to a confident wrong one — here the budget
-// create was sent and its outcome is unknown, which is exactly what CreateOutcomeUnconfirmed
+// TestCreateOutcome_OversizeErrorBodyDegradesToATrueClaim pins the ID-LESS arm's handling of a
+// codeless apiError — doRequest builds one whenever parseErrorCodes finds no GoogleAdsFailure
+// detail, of which an over-maxResponseBytes response (client.go) is only the clearest case. The
+// arm must degrade to a weaker claim that is still true, never to a confident wrong one — here the
+// budget create was sent and its outcome is unknown, which is exactly what CreateOutcomeUnconfirmed
 // says.
+//
+// It pins THIS arm and no other. The budget arm's handling of the same shape is pinned by
+// TestCreateOutcome_ClassifiesEveryPartialShape's own codeless-4xx row, because one call site's
+// test does not pin another's — which is how the budget arm shipped unguarded in the first place.
 func TestCreateOutcome_OversizeErrorBodyDegradesToATrueClaim(t *testing.T) {
 	namePartial := &CampaignResult{CampaignName: "c", CampaignBudgetName: "b"}
 	noCodes := &apiError{StatusCode: 400, Method: http.MethodPost, Body: "response exceeds 1048576 bytes"}
