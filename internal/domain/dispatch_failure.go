@@ -243,8 +243,10 @@ const (
 	// CreateOutcomeCampaignNameTaken: the budget was created and a campaign of the composed
 	// name already exists from an earlier attempt.
 	CreateOutcomeCampaignNameTaken = "campaign_name_taken"
-	// CreateOutcomeCampaignCreatedSetupIncomplete: the campaign itself exists; the cascade
-	// failed in a later step (ad group, ad, targeting), so it is live-but-unfinished.
+	// CreateOutcomeCampaignCreatedSetupIncomplete: the campaign itself exists; a later step of
+	// the cascade (ad group, ad, targeting, assets) did not report success, so whether its
+	// setup finished is unknown — the last mutate can also answer 2xx unreadably, past which
+	// the step DID commit. The campaign's existence is proven by its id; its setup is not.
 	CreateOutcomeCampaignCreatedSetupIncomplete = "campaign_created_setup_incomplete"
 	// CreateOutcomeUnconfirmed: the first create may or may not have committed and nothing
 	// downstream was reached. The least that can be said, and the pre-existing wording.

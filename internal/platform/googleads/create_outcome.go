@@ -29,15 +29,14 @@ import (
 // caller already reports as a pre-create failure, claim released).
 //
 // Each duplicate-name check is GATED BY THE ID STATE OF ITS OWN STEP, and that gate is
-// load-bearing rather than defensive. parseErrorCodes keeps the bare enum VALUE and discards the
-// error family, so hasErrorCode matches "DUPLICATE_NAME" raised by ANY mutate in the cascade,
-// not only the budget's — and Performance Max keeps mutating long after the campaign exists
-// (createPerformanceMaxAssetGroup, which calls assetGroups:mutate). Ungated, a duplicate name
-// from one of those later steps would be reported as "nothing new was created" while a billable
-// campaign was live. The ids are the
-// better evidence everywhere except at the budget step itself, which is the one place they
-// cannot distinguish a DUPLICATE_NAME refusal from an unconfirmed budget create — both leave the
-// same id-less partial and mean opposite things.
+// load-bearing rather than defensive. parseErrorCodes keeps the bare enum VALUE and discards
+// the error family, so hasErrorCode matches "DUPLICATE_NAME" raised by ANY mutate in the
+// cascade, not only the budget's — and Performance Max keeps mutating long after the campaign
+// exists (createPerformanceMaxAssetGroup, which calls assetGroups:mutate). Ungated, a duplicate
+// name from one of those later steps would be reported as "nothing new was created" while a
+// billable campaign was live. The ids are the better evidence everywhere except at the budget
+// step itself, which is the one place they cannot distinguish a DUPLICATE_NAME refusal from an
+// unconfirmed budget create — both leave the same id-less partial and mean opposite things.
 func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 	if err == nil || result == nil {
 		return "", false
@@ -66,8 +65,22 @@ func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 		// where no campaign request was ever sent. Reading those as "refused" would tell the
 		// operator to delete a budget whose campaign is live and billable, which is a worse
 		// answer than the generic sentence this classifier replaced.
+		//
+		// The error codes must have PARSED for the same reason. This token's sentence says no
+		// campaign of the composed name exists, and the arm above is what rules out the one
+		// refusal that would make that false — DUPLICATE_CAMPAIGN_NAME, which means an earlier
+		// attempt's campaign is still there. That arm can only rule it out from codes it could
+		// read, and ErrorCodes is nil whenever parseErrorCodes (campaign.go) finds no
+		// GoogleAdsFailure detail at all: a body that was unreadable or over maxResponseBytes
+		// (client.go), and equally a perfectly readable envelope that simply carries no such
+		// detail — the ordinary shape of an expired-token 401, a permission 403 or a frontend
+		// INVALID_ARGUMENT. A duplicate-name refusal arriving any of those ways would fall
+		// straight through to here. Requiring codes keeps the claim resting on what was read
+		// rather than on what could not be, and the cost is deliberate: every codeless 4xx,
+		// common ones included, now weakens to "unconfirmed" and costs the operator one
+		// verification.
 		var ae *apiError
-		if errors.As(err, &ae) && isDefiniteClientError(ae) {
+		if errors.As(err, &ae) && isDefiniteClientError(ae) && len(ae.ErrorCodes) > 0 {
 			return domain.CreateOutcomeBudgetCreatedCampaignRefused, true
 		}
 		return domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true

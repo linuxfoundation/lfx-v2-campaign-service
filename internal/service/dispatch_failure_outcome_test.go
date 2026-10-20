@@ -68,9 +68,18 @@ func TestDispatchFailureMessage_OutcomeArms(t *testing.T) {
 			wantNone: []string{"no campaign exists", "nothing new was created"},
 		},
 		{
-			outcome:  domain.CreateOutcomeCampaignCreatedSetupIncomplete,
-			wantAll:  []string{"did not finish setting it up", "not ready to run"},
-			wantNone: []string{"nothing new was created"},
+			outcome: domain.CreateOutcomeCampaignCreatedSetupIncomplete,
+			// "created the campaign but", not "created the campaign": the latter is a
+			// substring of the budget arm's "created the campaign budget", so it would stay
+			// green if this arm ever regressed to budget-only wording. Now that both
+			// sentences share the "could not confirm" hedge, the campaign's existence is the
+			// ONLY thing separating them, and it is what has to be pinned.
+			wantAll: []string{"created the campaign but", "could not confirm its setup finished"},
+			// The campaign's EXISTENCE is proven by its id; the state of its setup is not.
+			// The cascade's last mutate can answer 2xx with a response this client cannot
+			// read, past which that step did commit — so asserting the setup is unfinished
+			// would be this token overclaiming exactly as the two the review round caught.
+			wantNone: []string{"nothing new was created", "did not finish setting it up", "created the campaign budget"},
 		},
 	}
 

@@ -28,6 +28,9 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 	campaignDup := &apiError{StatusCode: 400, Method: http.MethodPost, ErrorCodes: []string{"DUPLICATE_CAMPAIGN_NAME"}}
 	definite4xx := &apiError{StatusCode: 400, Method: http.MethodPost}
 	ambiguous5xx := &apiError{StatusCode: 503, Method: http.MethodPost}
+	// A refusal whose body PARSED: the codes are what rules out a duplicate-name refusal, and
+	// so what lets the budget arm claim no campaign of the composed name exists.
+	refused4xx := &apiError{StatusCode: 400, Method: http.MethodPost, ErrorCodes: []string{"REQUIRED_FIELD_MISSING"}}
 
 	cases := []struct {
 		name   string
@@ -42,7 +45,7 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 		{"budget name taken", namePartial, budgetDup, domain.CreateOutcomeBudgetNameTaken, true},
 		{"campaign name taken", budgetPartial, campaignDup, domain.CreateOutcomeCampaignNameTaken, true},
 
-		{"budget created, campaign refused", budgetPartial, definite4xx, domain.CreateOutcomeBudgetCreatedCampaignRefused, true},
+		{"budget created, campaign refused", budgetPartial, refused4xx, domain.CreateOutcomeBudgetCreatedCampaignRefused, true},
 		{"budget created, campaign unconfirmed", budgetPartial, ambiguous5xx, domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
 		{"budget created, transport failure is unconfirmed", budgetPartial, &transportError{Method: http.MethodPost, Err: io.ErrUnexpectedEOF}, domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
 
@@ -69,6 +72,27 @@ func TestCreateOutcome_ClassifiesEveryPartialShape(t *testing.T) {
 			domain.CreateOutcomeCampaignCreatedSetupIncomplete, true},
 		{"duplicate campaign name with no budget id claims no budget", namePartial, campaignDup,
 			domain.CreateOutcomeUnconfirmed, true},
+
+		// A definite 4xx whose codes did not parse. doRequest builds exactly this apiError —
+		// status known, ErrorCodes nil — whenever parseErrorCodes finds no GoogleAdsFailure
+		// detail: an unreadable or over-maxResponseBytes body (client.go), and equally a
+		// readable envelope that carries no such detail, which is what a 401, a 403 or a
+		// frontend INVALID_ARGUMENT looks like. The duplicate-campaign-name arm above cannot
+		// fire on any of them, so an earlier attempt's campaign could be standing while this one reports
+		// "no campaign exists" and sends the operator to delete the budget. The claim needs
+		// codes it could read, not merely a status it could see.
+		{"definite 4xx whose codes did not parse is unconfirmed, not refused", budgetPartial, definite4xx,
+			domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true},
+
+		// The cascade's LAST mutate answering 2xx with a response this client cannot read:
+		// pmax_creative.go's assetGroupAssets:mutate and demandgen_creative.go's
+		// adGroupAds:mutate both return a campaign partial with a plain fmt.Errorf whose own
+		// text says the resources MAY exist. The token is right — the campaign exists — but
+		// it is the reason DispatchFailureMessage says the setup could not be CONFIRMED
+		// rather than that it is unfinished: past that line the step DID commit.
+		{"malformed 2xx on the final mutate still classifies by the campaign id", campaignPartial,
+			errors.New("google-ads Performance Max asset group link creation UNCONFIRMED (asset group 333 created; 2xx with a malformed/short mutate response for 4 link(s) — some may exist — verify in Google Ads before retrying)"),
+			domain.CreateOutcomeCampaignCreatedSetupIncomplete, true},
 	}
 
 	for _, tc := range cases {
@@ -100,7 +124,8 @@ func TestCreateOutcome_ReadsThroughTheWrappedChain(t *testing.T) {
 			name:   "budget created, campaign refused",
 			result: &CampaignResult{CampaignBudgetID: "111"},
 			err: fmt.Errorf("google-ads performance max campaign creation failed (budget 111 created): %w",
-				fmt.Errorf("campaigns:mutate: %w", &apiError{StatusCode: 400, Method: http.MethodPost})),
+				fmt.Errorf("campaigns:mutate: %w",
+					&apiError{StatusCode: 400, Method: http.MethodPost, ErrorCodes: []string{"REQUIRED_FIELD_MISSING"}})),
 			want: domain.CreateOutcomeBudgetCreatedCampaignRefused,
 		},
 		{
@@ -135,12 +160,16 @@ func TestCreateOutcome_ReadsThroughTheWrappedChain(t *testing.T) {
 	}
 }
 
-// TestCreateOutcome_OversizeErrorBodyDegradesToATrueClaim pins the one production path that
-// reaches the classifier with NO error codes: doRequest builds an apiError without them when the
-// response exceeds maxResponseBytes (client.go), because there is no body to parse. The arm must
-// degrade to a weaker claim that is still true, never to a confident wrong one — here the budget
-// create was sent and its outcome is unknown, which is exactly what CreateOutcomeUnconfirmed
+// TestCreateOutcome_OversizeErrorBodyDegradesToATrueClaim pins the ID-LESS arm's handling of a
+// codeless apiError — doRequest builds one whenever parseErrorCodes finds no GoogleAdsFailure
+// detail, of which an over-maxResponseBytes response (client.go) is only the clearest case. The
+// arm must degrade to a weaker claim that is still true, never to a confident wrong one — here the
+// budget create was sent and its outcome is unknown, which is exactly what CreateOutcomeUnconfirmed
 // says.
+//
+// It pins THIS arm and no other. The budget arm's handling of the same shape is pinned by
+// TestCreateOutcome_ClassifiesEveryPartialShape's own codeless-4xx row, because one call site's
+// test does not pin another's — which is how the budget arm shipped unguarded in the first place.
 func TestCreateOutcome_OversizeErrorBodyDegradesToATrueClaim(t *testing.T) {
 	namePartial := &CampaignResult{CampaignName: "c", CampaignBudgetName: "b"}
 	noCodes := &apiError{StatusCode: 400, Method: http.MethodPost, Body: "response exceeds 1048576 bytes"}
