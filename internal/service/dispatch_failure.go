@@ -47,6 +47,33 @@ const genericDispatchFailure = "platform campaign creation failed"
 // precedes the broad not-usable arm because systemScoped wraps rather than replaces.
 func DispatchFailureMessage(p model.Provider, derr error, preCreate bool) string {
 	if !preCreate {
+		// A retained failure is still UNCONFIRMED by default, but "something may have been
+		// created" is the least that can be said and is wrong for most of the outcomes that
+		// reach here: a budget-name collision created nothing at all, and a refused campaign
+		// after a created budget is not an unknown state but a known, specific one. Where
+		// the dispatcher classified the outcome, say which it was.
+		//
+		// Each arm is a FIXED sentence chosen by the token, never built from it, so the
+		// message still cannot carry upstream text (#208) whatever the carrier holds. An
+		// unrecognised token falls through to the status/unconfirmed wording below.
+		if outcome, ok := domain.UpstreamCreateOutcome(derr); ok {
+			switch outcome {
+			case domain.CreateOutcomeBudgetNameTaken:
+				return fmt.Sprintf("%s campaign creation was refused because a budget of the name this service composes for this event already exists; nothing new was created, and the retry stays blocked until that budget is removed or renamed — it was left unattached by an earlier attempt, so find it in the platform's change history rather than the shared budget library", p)
+			case domain.CreateOutcomeCampaignNameTaken:
+				return fmt.Sprintf("%s campaign creation was refused because a campaign of the name this service composes for this event already exists; the budget for this attempt WAS created — verify both on the platform before retrying", p)
+			case domain.CreateOutcomeBudgetCreatedCampaignRefused:
+				return fmt.Sprintf("%s created the campaign budget and then refused the campaign itself; no campaign exists and the budget is unattached, so it accrues no spend — remove it on the platform before retrying, or the retry will be refused for reusing its name", p)
+			case domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed:
+				return fmt.Sprintf("%s created the campaign budget; whether the campaign was created could not be confirmed — verify on the platform before retrying", p)
+			case domain.CreateOutcomeCampaignCreatedSetupIncomplete:
+				return fmt.Sprintf("%s created the campaign but did not finish setting it up; it exists in a partly-configured state and is not ready to run — verify on the platform before retrying", p)
+			case domain.CreateOutcomeUnconfirmed:
+				// Deliberately no sentence of its own: this token means exactly what the
+				// status/unconfirmed wording below already says, and a second copy here
+				// would be one more sentence to keep in step with it.
+			}
+		}
 		// Status only, never the body, method or path.
 		if status, ok := domain.UpstreamStatus(derr); ok {
 			return fmt.Sprintf("%s campaign creation could not be confirmed (the platform answered HTTP %d); something may have been created — verify on the platform before retrying", p, status)

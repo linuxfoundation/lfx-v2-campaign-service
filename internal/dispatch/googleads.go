@@ -796,7 +796,15 @@ func (d *GoogleAdsDispatcher) Dispatch(ctx context.Context, brief *model.Campaig
 		// (budget created)" for a definite 4xx — so a blanket prefix would overwrite that
 		// distinction and route an operator to reconcile an ambiguous outcome for what is
 		// actually a definite failure. Wrap with a neutral, provider-tagged prefix instead.
-		return campaignFromGoogleAds(ctx, result, cfg), fmt.Errorf("google-ads dispatch: %w", cerr)
+		//
+		// The classification is attached HERE, on the one wrap every channel's partial
+		// failure passes through, rather than at each of the create paths' partial-returning
+		// arms: googleads.CreateOutcome reads the state off the partial's ids, so one call
+		// covers all five channels and cannot drift arm by arm. It adds a token to the
+		// chain and changes nothing in it — service.DispatchFailureMessage switches on the
+		// token and emits its own sentence, so no upstream text reaches the operator.
+		outcome, _ := googleads.CreateOutcome(result, cerr)
+		return campaignFromGoogleAds(ctx, result, cfg), withCreateOutcome(fmt.Errorf("google-ads dispatch: %w", cerr), outcome)
 	}
 	return campaignFromGoogleAds(ctx, result, cfg), nil
 }
