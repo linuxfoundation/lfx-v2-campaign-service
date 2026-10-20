@@ -33,8 +33,10 @@ migration `000030_brief_delivery_stage_key.up.sql` said its safety rested on `Re
 hazard that does not exist: `Recreate` scales the old ReplicaSet to zero and waits for
 termination before scaling up the new one, so the ordering guarantee is replica-count
 independent and only restoring `RollingUpdate` reopens the overlap. The same correction applies
-to `docs/knowledge/code/internal-infrastructure-postgres.md` and to the two chart comments on
-`Replace=true` and the rollout strategy. One real consequence of three replicas had never been
+to `docs/knowledge/code/internal-infrastructure-postgres.md`, to `000018_audience_build_lease`
+(whose own "revisit" condition was already correctly qualified as "above 1 WITH overlap", but
+whose deploy-shape paragraph still rested the guarantee on `Recreate` AND one replica), and to
+the two chart comments on `Replace=true` and the rollout strategy. One real consequence of three replicas had never been
 written down and now is: `Recreate` makes every rollout a full outage, and the
 `podDisruptionBudget` does not soften it because the Deployment controller deletes pods rather
 than evicting them.
