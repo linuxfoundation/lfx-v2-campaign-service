@@ -68,9 +68,13 @@ func TestDispatchFailureMessage_OutcomeArms(t *testing.T) {
 			wantNone: []string{"no campaign exists", "nothing new was created"},
 		},
 		{
-			outcome:  domain.CreateOutcomeCampaignCreatedSetupIncomplete,
-			wantAll:  []string{"did not finish setting it up", "not ready to run"},
-			wantNone: []string{"nothing new was created"},
+			outcome: domain.CreateOutcomeCampaignCreatedSetupIncomplete,
+			wantAll: []string{"created the campaign", "could not confirm its setup finished"},
+			// The campaign's EXISTENCE is proven by its id; the state of its setup is not.
+			// The cascade's last mutate can answer 2xx with a response this client cannot
+			// read, past which that step did commit — so asserting the setup is unfinished
+			// would be this token overclaiming exactly as the two the review round caught.
+			wantNone: []string{"nothing new was created", "did not finish setting it up"},
 		},
 	}
 

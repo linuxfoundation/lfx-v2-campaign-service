@@ -2371,7 +2371,11 @@ calls `DispatchFailureMessage(p, derr, preCreate)`, which says WHY without quoti
   sentences — it never formats the token into a message, so #208's rule holds whatever the
   carrier holds, and an unrecognised token can only fall through to the status/unconfirmed
   wording. `create_unconfirmed` deliberately has no sentence of its own: it means exactly what
-  that fallback already says. Only `internal/dispatch`'s google-ads adapter tags today
+  that fallback already says. Each sentence claims only what its token's evidence supports:
+  `campaign_created_setup_incomplete` says the setup could not be CONFIRMED rather than that it
+  is unfinished, because the cascade's last mutate can answer 2xx with a body this client
+  cannot read (`pmax_creative.go`, `demandgen_creative.go`) and the step did commit — the id
+  proves the campaign exists, not that its setup stopped short. Only `internal/dispatch`'s google-ads adapter tags today
   (`withCreateOutcome`, classified by `googleads.CreateOutcome`); every other provider reaches
   the unchanged wording, pinned by
   `TestDispatchFailureMessage_UnclassifiedOutcomeIsUnchanged`.
