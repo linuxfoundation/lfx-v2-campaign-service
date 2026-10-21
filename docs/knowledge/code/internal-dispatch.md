@@ -4466,10 +4466,14 @@ short-circuits to `IncompleteSizePreviewCount`: an under-counted sum over the li
 report a size, which is a different, less trustworthy caveat than `DegradedPreviewCount`'s ("we
 know the sum, the live sweep just failed") — here even the sum is known to be short.
 
-`ComposeMaster` creates the combined suppression list FIRST and the master second, because that
-ordering is what makes a partial failure describable: the suppression list exists and the master
-does not, which is exactly what `ComposePartialError` carries up so the handler can report the
-created list instead of inviting a blind retry that would duplicate it.
+`ComposeMaster` creates no suppression list of its own. Its exclusions go through
+`resolveSuppressions` (`audience_suppression.go`) BEFORE the master exists, and the master excludes
+the resulting STANDING lists directly (`audience.MasterListWithSuppressionsFilter`: one
+`NOT_IN_LIST` per excluded list on every inclusion path). Those standing lists are found by name and
+reused, so the only create that can leave state to reconcile is the master's own, and
+`ComposePartialError` now only ever carries `MasterName`. The outcome reports the standard list as
+`Suppression` and every other excluded list as `AttachedSuppressionIDs`; the master name is
+fingerprinted over the includes, the requested excludes and the registrants edition.
 
 When `ComposeInput.RecordUnderBriefID` is set, `ComposeMaster` resolves the portal right after
 `cachedClient` and BEFORE that first create, returning it on `ComposeOutcome.PortalID`. Both halves
@@ -4480,8 +4484,8 @@ service layer cannot obtain anywhere else honestly. With no brief id the path is
 is why the lookup is conditional: it is a live round trip the exploratory caller should not pay
 for.
 
-`AttachExisting(ctx, projectID, includeIDs, suppressionIDs)` verifies lists that ALREADY exist
-instead of creating any, so it is the one write-adjacent path here that creates nothing upstream.
+`AttachExisting(ctx, projectID, includeIDs, suppressionIDs, registrantsEvent)` verifies lists that ALREADY exist
+instead of composing a master.
 The include ids are trimmed and de-duplicated (`audience.UniqueIDs`; none left is
 `ErrNoInclusionLists`), suppressions that repeat an include id are dropped
 (`audience.ExclusionIDs` — the service refuses an explicit overlap with a 400 before this runs),
@@ -4490,6 +4494,28 @@ includes, then the suppressions, so a mistyped id (or one that is not a contact 
 rather than an audience that silently reaches fewer people. `SourceListIDs` reports the master
 followed by the other include ids. The portal is resolved only after every read succeeds, and a
 blank one is `ErrComposePortalUnconfirmed` rather than an unstamped row.
+
+The suppressions then go through `resolveSuppressions`, shared with `ComposeMaster`:
+
+- **Standard suppressions reuse ONE standing list per project.** `standardRows` resolves every
+  `StandardSuppressionTerms` entry (the same lookup `SuppressionLists` serves). When the selection
+  holds EVERY resolved standard list, they are replaced by `ensureStandardList`: the list named
+  `audience.StandardSuppressionName(projectID)` (`LFX Standard Suppressions - <project>`, no date or
+  fingerprint), found with `exactList`, created on first use as their union, and refreshed in place
+  with `UpdateListFilters` only when its `CoveredListIDs` differ from the resolved set. It is the
+  outcome's `Suppression`. A PARTIAL standard selection is attached list by list instead, because
+  the union would exclude a list the operator unticked.
+- **Everything else stays its own entry** in `AttachedSuppressionIDs`: brand, event-specific and
+  Exclude-marked lists.
+- **Current registrants.** With a registrants edition (event name with year), `ensureRegistrantsList`
+  finds or creates `audience.CurrentRegistrantsName(edition)` from
+  `audience.CurrentRegistrantsFilter` (the registration custom event, `event_name` IS_EQUAL_TO the
+  edition) and appends it as its own entry.
+
+Both standing lists are found by exact name before any create, so a repeat or retry reuses them and
+an unconfirmed create is safe to retry; a create failure is an error and nothing is recorded.
+`SuppressionLists` adds a `current_registrants` row (with `WillCreate` when the list does not exist
+yet: a read never creates) and reports the standing standard list when it already exists.
 
 `LastSent` is ONE portal sweep, ranked by when each email WENT OUT. Every part of that sentence was
 once otherwise, and the endpoint returned no recent sends at all. The event name was searched as a
@@ -4639,7 +4665,11 @@ count. `ErrNoSentEmailInWindow` is counted
 optional `completer` (`ErrCustomInterpretUnavailable` when none is configured — the criteria form
 still works without it) and then resolves what the model cannot know: the brand master gate via
 `bestMatch` over `BrandMasterProbes`, and an existing `<Label> Speakers` list. Both are filled into
-the draft as suggestions the operator can change.
+the draft as suggestions the operator can change. When the named brand has no master list (a hosted
+project such as "gRPC"), `listBrand` searches the portal's lists for it and takes the brand they
+are filed under (`DominantBrand`, e.g. CNCF), and that brand's master becomes the gate, with a draft
+note saying so. This runs for a typed description as well as an event URL; a tie between brands
+leaves the gate empty.
 
 Preview and Create share `previewCustom`: every contact property the criteria read is fetched with
 `GetContactProperty` (all missing names are reported together as `UnknownPropertiesError`), each

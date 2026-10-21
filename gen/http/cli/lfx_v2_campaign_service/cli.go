@@ -124,11 +124,12 @@ func ParseEndpoint(
 		lfxV2CampaignServiceAudienceBuilderSearchAudienceListsQFlag           = new(cliStringFlag)
 		lfxV2CampaignServiceAudienceBuilderSearchAudienceListsBearerTokenFlag = new(cliStringFlag)
 
-		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags           = flag.NewFlagSet("get-audience-suppression-lists", flag.ExitOnError)
-		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectIDFlag   = new(cliStringFlag)
-		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShortFlag  = new(cliStringFlag)
-		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventNameFlag   = new(cliStringFlag)
-		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerTokenFlag = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags                = flag.NewFlagSet("get-audience-suppression-lists", flag.ExitOnError)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectIDFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShortFlag       = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventNameFlag        = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEventFlag = new(cliStringFlag)
+		lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerTokenFlag      = new(cliStringFlag)
 
 		lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags           = flag.NewFlagSet("get-audience-last-sent", flag.ExitOnError)
 		lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentProjectIDFlag   = new(cliStringFlag)
@@ -836,6 +837,7 @@ func ParseEndpoint(
 	lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShortFlag, "brand-short", "")
 	lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventNameFlag, "event-name", "")
+	lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEventFlag, "registrants-event", "")
 	lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerTokenFlag, "bearer-token", "")
 	lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentProjectIDFlag, "project-id", "Project UUID or slug that scopes the connection")
 	lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentFlags.Var(lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentEventNameFlag, "event-name", "")
@@ -1919,7 +1921,7 @@ func ParseEndpoint(
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildSearchAudienceListsPayload(lfxV2CampaignServiceAudienceBuilderSearchAudienceListsProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderSearchAudienceListsQFlag.value, lfxV2CampaignServiceAudienceBuilderSearchAudienceListsBearerTokenFlag.value)
 			case "get-audience-suppression-lists":
 				endpoint = c.GetAudienceSuppressionLists()
-				data, err = lfxv2campaignserviceaudiencebuilderc.BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShortFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventNameFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerTokenFlag.value)
+				data, err = lfxv2campaignserviceaudiencebuilderc.BuildGetAudienceSuppressionListsPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBrandShortFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsEventNameFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsRegistrantsEventFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsBearerTokenFlag.value)
 			case "get-audience-last-sent":
 				endpoint = c.GetAudienceLastSent()
 				data, err = lfxv2campaignserviceaudiencebuilderc.BuildGetAudienceLastSentPayload(lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentProjectIDFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentEventNameFlag.value, lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentBrandShortFlag.value, *lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentLimitFlag, lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentBearerTokenFlag.value)
@@ -2468,7 +2470,7 @@ func lfxV2CampaignServiceAudienceBuilderUsage() {
 	fmt.Fprintln(os.Stderr, `    get-existing-audience-master-lists: Find master lists already composed for this event family, newest quarter first.`)
 	fmt.Fprintln(os.Stderr, `    preview-audience-count: Count the union of the selected lists' memberships — exactly when that is within bounds, as an UPPER-bound estimate (the sum of list sizes, which double-counts overlap) when it is not, and as no number at all when any selected list did not report a size. Creates nothing.`)
 	fmt.Fprintln(os.Stderr, `    compose-audience-master: Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.`)
-	fmt.Fprintln(os.Stderr, `    attach-existing-audience: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.`)
+	fmt.Fprintln(os.Stderr, `    attach-existing-audience: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When several suppression lists are supplied they are combined into one suppression list (created once per selection, reused on repeat), which is the only list HubSpot creates here.`)
 	fmt.Fprintln(os.Stderr, `    run-audience-qa: Audit a composed master list's filters: signal mapping, regulatory suppression, exclusion completeness, and whether this edition's own registrants are included. Creates nothing.`)
 	fmt.Fprintln(os.Stderr, `    interpret-custom-audience: Interpret a free-text audience request into draft criteria and blocking questions. Uses a model; creates nothing.`)
 	fmt.Fprintln(os.Stderr, `    preview-custom-audience: Validate custom criteria against the portal and return the list that would be created. Creates nothing.`)
@@ -2547,6 +2549,7 @@ func lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsUsage() {
 	fmt.Fprint(os.Stderr, " -project-id STRING")
 	fmt.Fprint(os.Stderr, " -brand-short STRING")
 	fmt.Fprint(os.Stderr, " -event-name STRING")
+	fmt.Fprint(os.Stderr, " -registrants-event STRING")
 	fmt.Fprint(os.Stderr, " -bearer-token STRING")
 	fmt.Fprintln(os.Stderr)
 
@@ -2558,11 +2561,12 @@ func lfxV2CampaignServiceAudienceBuilderGetAudienceSuppressionListsUsage() {
 	fmt.Fprintln(os.Stderr, `    -project-id STRING: Project UUID or slug that scopes the connection`)
 	fmt.Fprintln(os.Stderr, `    -brand-short STRING: `)
 	fmt.Fprintln(os.Stderr, `    -event-name STRING: `)
+	fmt.Fprintln(os.Stderr, `    -registrants-event STRING: `)
 	fmt.Fprintln(os.Stderr, `    -bearer-token STRING: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-suppression-lists --project-id \"cncf\" --brand-short \"Placeat minus in.\" --event-name \"Cupiditate consectetur accusamus autem voluptate nostrum.\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder get-audience-suppression-lists --project-id \"cncf\" --brand-short \"Placeat minus in.\" --event-name \"Cupiditate consectetur accusamus autem voluptate nostrum.\" --registrants-event \"xuz\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderGetAudienceLastSentUsage() {
@@ -2656,7 +2660,7 @@ func lfxV2CampaignServiceAudienceBuilderComposeAudienceMasterUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder compose-audience-master --body '{\n      \"compose\": {\n         \"brand_short\": \"Qui voluptatem dolore.\",\n         \"brief_id\": \"c32fcca9-7994-4925-b99f-3faa2c231afe\",\n         \"event_dates\": [\n            \"Temporibus nobis minus neque.\",\n            \"Hic aut.\"\n         ],\n         \"event_name\": \"Et et dolor recusandae unde similique at.\",\n         \"exclude_list_ids\": [\n            \"Repudiandae ut.\",\n            \"Minima sit voluptatem labore nihil quo.\",\n            \"Molestiae at nesciunt.\"\n         ],\n         \"inclusion_summary\": \"Odit qui voluptas illo dolore quisquam.\",\n         \"list_ids\": [\n            \"Nam architecto.\"\n         ],\n         \"name\": \"Qui placeat aut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "lfx-v2-campaign-service-audience-builder compose-audience-master --body '{\n      \"compose\": {\n         \"brand_short\": \"Qui voluptatem dolore.\",\n         \"brief_id\": \"c32fcca9-7994-4925-b99f-3faa2c231afe\",\n         \"current_registrants_event\": \"0tk\",\n         \"event_dates\": [\n            \"Temporibus nobis minus neque.\",\n            \"Hic aut.\"\n         ],\n         \"event_name\": \"Et et dolor recusandae unde similique at.\",\n         \"exclude_list_ids\": [\n            \"Repudiandae ut.\",\n            \"Minima sit voluptatem labore nihil quo.\",\n            \"Molestiae at nesciunt.\"\n         ],\n         \"inclusion_summary\": \"Odit qui voluptas illo dolore quisquam.\",\n         \"list_ids\": [\n            \"Nam architecto.\"\n         ],\n         \"name\": \"Qui placeat aut.\"\n      }\n   }' --project-id \"cncf\" --bearer-token \"eyJhbGci...\"")
 }
 
 func lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceUsage() {
@@ -2669,7 +2673,7 @@ func lfxV2CampaignServiceAudienceBuilderAttachExistingAudienceUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. Creates nothing in HubSpot.`)
+	fmt.Fprintln(os.Stderr, `Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When several suppression lists are supplied they are combined into one suppression list (created once per selection, reused on repeat), which is the only list HubSpot creates here.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)

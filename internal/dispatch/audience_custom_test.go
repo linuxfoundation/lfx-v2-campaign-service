@@ -180,6 +180,70 @@ func TestInterpretCustom_ResolvesTheGateTheModelCannotKnow(t *testing.T) {
 	assert.Empty(t, portal.creates, "interpretation never writes")
 }
 
+// grpcDraft is the model naming a hosted project, not its foundation, as the brand.
+const grpcDraft = `{"criteria":{"cities":["Bengaluru"],"countries":[],"contact_location":true,"event_registered":false,"education_enrolled":false,"gate_event_history":false,"brand_short":"gRPC","property_filters":[],"speakers":null,"ambassadors":false,"label":"gRPC India 2026"},"questions":[],"notes":[]}`
+
+func TestInterpretCustom_InfersTheFoundationWhenTheProjectHasNoMasterList(t *testing.T) {
+	portal := &fakePortal{lists: map[string]string{
+		"26Q2 - CNCF - Foundation - Master-list":      "26724",
+		"25Q2 - CNCF - Events - gRPConf - AOI":        "20643",
+		"25Q2 - CNCF - Events - gRPConf - Web Visits": "17133",
+		"gRPConf India — Master (11df46d4)":           "31136",
+	}}
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, &stubLLM{reply: grpcDraft}).InterpretCustom(context.Background(), "proj-1", "gRPC India 2026: contacts in Bengaluru", "", nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, out.Gate, "a project with no master list is gated by its foundation's")
+	assert.Equal(t, "26724", out.Gate.ListID)
+	assert.Equal(t, "26724", out.Draft.Criteria.GateListID)
+	assert.Equal(t, "CNCF", out.Draft.BrandShort)
+	notes := strings.Join(out.Draft.Notes, "\n")
+	assert.Contains(t, notes, "Suggested CNCF's master list (26Q2 - CNCF - Foundation - Master-list)", "an inferred gate is said, not silently applied")
+	assert.NotContains(t, notes, "No brand master list was found")
+	assert.Empty(t, portal.creates, "interpretation never writes")
+}
+
+func TestInterpretCustom_NeverGuessesBetweenTwoBrands(t *testing.T) {
+	portal := &fakePortal{lists: map[string]string{
+		"26Q2 - CNCF - Foundation - Master-list":           "26724",
+		"26Q2 - The Linux Foundation - Master-list":        "26716",
+		"25Q2 - CNCF - Events - gRPConf - AOI":             "20643",
+		"25Q2 - CNCF - Events - gRPConf - Web Visits":      "17133",
+		"25Q2 - The Linux Foundation - gRPConf - Speakers": "1",
+		"25Q2 - The Linux Foundation - gRPConf - Sponsors": "2",
+	}}
+	srv := portal.serve(t)
+	defer srv.Close()
+
+	out, err := explorerOver(srv, &stubLLM{reply: grpcDraft}).InterpretCustom(context.Background(), "proj-1", "gRPC India 2026: contacts in Bengaluru", "", nil)
+	require.NoError(t, err)
+
+	assert.Nil(t, out.Gate, "a tie between brands is no brand: a guessed gate is the wrong audience")
+	assert.Empty(t, out.Draft.Criteria.GateListID)
+	assert.Equal(t, "gRPC", out.Draft.BrandShort)
+	assert.Contains(t, strings.Join(out.Draft.Notes, "\n"), "No brand master list was found")
+}
+
+// A name HubSpot's list search cannot take (over 200 characters) is cut to fit, so the
+// taken-name check is a search HubSpot answers rather than a 500.
+func TestPreviewCustom_CutsANameHubSpotCannotSearch(t *testing.T) {
+	portal := seoulPortal()
+	srv := portal.serve(t)
+	defer srv.Close()
+	x := explorerOver(srv, nil)
+
+	cut, err := x.PreviewCustom(context.Background(), "proj-1", seoulCriteria(), strings.Repeat("n", audience.MaxListNameLength+1))
+	require.NoError(t, err)
+	assert.Len(t, cut.Name, audience.MaxListNameLength)
+
+	preview, err := x.PreviewCustom(context.Background(), "proj-1", seoulCriteria(), strings.Repeat("n", audience.MaxListNameLength))
+	require.NoError(t, err)
+	assert.Len(t, preview.Name, audience.MaxListNameLength)
+}
+
 func TestPreviewCustom_NamesEveryUnknownPropertyAndWritesNothing(t *testing.T) {
 	portal := seoulPortal()
 	srv := portal.serve(t)
@@ -669,7 +733,7 @@ func TestPreviewCustom_ANonStringTopicPropertyIsRefusedForItsType(t *testing.T) 
 // A taken name at the input limit previews as a version create accepts back.
 func TestPreviewCustom_AVersionedNameFitsTheCreateLimit(t *testing.T) {
 	portal := seoulPortal()
-	long := strings.Repeat("n", audience.CustomNameMaxLen)
+	long := strings.Repeat("n", audience.MaxListNameLength)
 	portal.lists[long] = "990"
 	srv := portal.serve(t)
 	defer srv.Close()

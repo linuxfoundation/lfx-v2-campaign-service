@@ -440,6 +440,10 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
   and requires equality, not containment. A raw comparison missed every portal whose hygiene lists
   are named `"Unsubscribed - Lists"` or `"GDPR_Suppression 26Q1"`, so the standard suppressions
   resolved as "not found in this portal" while existing.
+  `StandardSuppressionTerms` also carries the three Linux kernel contact lists
+  (`Kernel Domain Contacts`, `Persona Linux Kernel`, `LF kernel.org Contacts`), matched the same
+  way, so `26Q2-Kernel-Domain-Contacts` and `Q1 2026 - LF - kernel.org Contacts` resolve and next
+  quarter's rebuilds do too.
   `MatchLastSent` also refuses ANOTHER EDITION of the same series: `editionRegions` reads the
   region an event or email names (`editionRegionAliases`, token → edition region — not
   `region.go`'s `countryToRegion`, which maps MARKETING regions and would fold Japan into APAC), and
@@ -462,8 +466,14 @@ the orchestration that calls HubSpot lives in [internal/dispatch](internal-dispa
 - **`builder_errors.go`** — the failure vocabulary, living beside the results rather than in the
   orchestration, because importing the orchestration package would close a cycle through its
   tests. `ComposePartialError` unwraps to BOTH `ErrComposePartial` and the underlying cause: the
-  combined suppression list was created and the master list was not, which is a state an operator
-  must be shown rather than a failure to retry blindly.
+  master create is unconfirmed (compose creates no suppression list of its own any more), which is
+  a state an operator must be shown rather than a failure to retry blindly.
+- **`builder_standard.go`** — the standing suppression lists: `StandardSuppressionName` (one per
+  project, no date or fingerprint, so every audience reuses it), `CurrentRegistrantsName` and
+  `CurrentRegistrantsFilter` (the edition's registrants via the registration custom event),
+  `SplitStandardSuppressions` (substitute the standing list only for a COMPLETE standard
+  selection), `SameIDSet`, and `MasterListWithSuppressionsFilter` (one `NOT_IN_LIST` per excluded
+  list on every inclusion path).
 
 See [internal/audience](../../../internal/audience).
 
@@ -511,7 +521,9 @@ AND wrote the HubSpot filter JSON AND called the create. Here the model does onl
   `<YYQN> - <Event> - Event Registration`). A taken name is versioned `(v2)`, `(v3)` and never
   reused: a matching name does not prove a matching audience. Every derived or versioned name is
   cut (on a rune boundary) to `CustomNameMaxLen`, the input's 250-rune limit, so the name preview
-  returns is one create accepts back.
+  returns is one create accepts back. More than three places are named as
+  `A, B, C and N more`, and any name over `MaxListNameLength` (200, HubSpot's list-search limit) is
+  refused as `ErrInvalidRequest` before the taken-name search, which would otherwise fail as a 500.
 - **Speakers-list auto-pick fails closed.** `SpeakerListFits` decides whether an existing list
   may stand in for a speaker restriction; a filled `ListID` REPLACES the scope and event-name
   filters, so it accepts a list only when its name provably fits: a speakers list discovery would

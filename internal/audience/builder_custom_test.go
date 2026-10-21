@@ -235,6 +235,12 @@ func TestCustomListName(t *testing.T) {
 	broad.Countries = []string{"South Korea"}
 	assert.Equal(t, "26Q3 - Seoul and South Korea - Mailable Contacts - OSS Korea + MCP Dev Summit Seoul", CustomListName(broad, now))
 
+	metro := seoul()
+	metro.Cities = []string{"Bengaluru", "Bangalore", "Hosur", "Anekal", "Mysuru"}
+	metro.Countries = []string{"India"}
+	assert.Equal(t, "26Q3 - Bengaluru, Bangalore, Hosur and 3 more - Mailable Contacts - OSS Korea + MCP Dev Summit Seoul", CustomListName(metro, now),
+		"every spelling of a metro area spelled out overran HubSpot's 200-character name limit")
+
 	speakers := CustomCriteria{Speakers: &CustomSpeakers{Scope: SpeakerScopeCurrentPast, ListID: "1"}, Label: "KubeCon Japan"}
 	assert.Equal(t, "KubeCon Japan Speakers - Current + Past", CustomListName(speakers, now))
 
@@ -536,17 +542,18 @@ func TestReusableCandidate_HidesWhatDiscoveryHides(t *testing.T) {
 	}
 }
 
-// Create takes back the name preview returned, so a versioned or derived name must
-// fit the input's 250-rune limit.
+// Create takes back the name preview returned, and the taken-name check searches for
+// it, so a versioned or derived name must fit HubSpot's 200-rune list-search limit
+// (below the input's 250).
 func TestVersionedName_StaysWithinTheNameLimit(t *testing.T) {
 	long := strings.Repeat("é", CustomNameMaxLen)
 	v := VersionedName(long, 2)
-	assert.Equal(t, CustomNameMaxLen, utf8.RuneCountInString(v))
+	assert.Equal(t, MaxListNameLength, utf8.RuneCountInString(v))
 	assert.True(t, strings.HasSuffix(v, " (v2)"))
 	assert.True(t, utf8.ValidString(v), "cut on a rune boundary")
 	assert.Equal(t, "KubeCon (v3)", VersionedName("KubeCon", 3))
 
-	assert.Equal(t, CustomNameMaxLen, utf8.RuneCountInString(FitListName(long+"x")))
+	assert.Equal(t, MaxListNameLength, utf8.RuneCountInString(FitListName(long+"x")))
 	assert.Equal(t, "short", FitListName("short"))
 }
 
