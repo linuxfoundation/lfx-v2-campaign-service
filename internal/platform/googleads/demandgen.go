@@ -179,7 +179,14 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	case isDuplicateBudgetNameErr(err):
 		resource, id, reuseSteps, reuseErr := c.reuseBudgetAfterDuplicateName(ctx, budgetName, amountMicros, in.Budget)
 		if reuseErr != nil {
-			return namePartial(), fmt.Errorf("google-ads demand gen budget %q already exists (DUPLICATE_NAME) and could not be safely reused (%v) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, reuseErr, err)
+			// BOTH errors are wrapped, and the DUPLICATE_NAME refusal goes FIRST
+			// because that order is load-bearing: isDuplicateBudgetNameErr (and every
+			// other errors.As predicate) stops at the FIRST *apiError in the chain, so
+			// wrapping the reuse failure ahead of it would let an apiError from the
+			// lookup READ shadow the duplicate code and cost this failure its precise
+			// create-outcome token. carriesUnconfirmedWrite searches the whole chain,
+			// so the reuse side is still read for a write that may have landed.
+			return namePartial(), fmt.Errorf("google-ads demand gen budget %q already exists (DUPLICATE_NAME): %w — and could not be safely reused: %w — a prior attempt likely created it; verify in Google Ads before retrying", budgetName, err, reuseErr)
 		}
 		budgetResource, budgetID = resource, id
 		steps = append(steps, reuseSteps...)
@@ -198,7 +205,7 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	// The budget is committed. A dead context here must surface it as reconcilable
 	// rather than firing the campaign mutate blind.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return budgetPartial(), fmt.Errorf("google-ads demand gen creation aborted after budget %s created (context done before campaign create; the budget may need reconciling): %w", budgetID, ctxErr)
+		return budgetPartial(), fmt.Errorf("google-ads demand gen creation aborted after budget %s was created or reused (context done before campaign create; the budget may need reconciling): %w", budgetID, ctxErr)
 	}
 
 	// Step 2: the campaign. PAUSED on create, like the Search path and the legacy
@@ -234,19 +241,19 @@ func (c *Client) CreateDemandGenCampaign(ctx context.Context, in CampaignInput) 
 	if err != nil {
 		switch {
 		case isDuplicateCampaignNameErr(err):
-			return budgetPartial(), fmt.Errorf("google-ads demand gen campaign %q already exists (DUPLICATE_CAMPAIGN_NAME; budget %s created) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
+			return budgetPartial(), fmt.Errorf("google-ads demand gen campaign %q already exists (DUPLICATE_CAMPAIGN_NAME; budget %s in place) — a prior attempt likely created it; verify in Google Ads before retrying: %w", campaignName, budgetID, err)
 		case createOutcomeAmbiguous(err):
-			return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s created; campaign %q may exist — verify in Google Ads before retrying): %w", budgetID, campaignName, err)
+			return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s in place; campaign %q may exist — verify in Google Ads before retrying): %w", budgetID, campaignName, err)
 		default:
-			return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation failed (budget %s created): %w", budgetID, err)
+			return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation failed (budget %s in place): %w", budgetID, err)
 		}
 	}
 	campaignResource, campaignID, err := firstResourceName(campaignResp)
 	if err != nil {
-		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s created; 2xx with no/malformed resource name — verify in Google Ads before retrying): %w", budgetID, err)
+		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s in place; 2xx with no/malformed resource name — verify in Google Ads before retrying): %w", budgetID, err)
 	}
 	if err := c.validateCampaignResource(campaignResource); err != nil {
-		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s created; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
+		return budgetPartial(), fmt.Errorf("google-ads demand gen campaign creation UNCONFIRMED (budget %s in place; malformed campaign resource name %q — verify in Google Ads before retrying): %w", budgetID, campaignResource, err)
 	}
 	steps = append(steps, fmt.Sprintf("Campaign created: %s (PAUSED, DEMAND_GEN, target spend, %s)", campaignID, flightWindowStep(pf.startDateTime, pf.endDateTime)))
 

@@ -424,7 +424,10 @@ func TestReuseBudgetAfterDuplicateName_AlignsAmountToTheBrief(t *testing.T) {
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate") {
-			updateBody = decode(t, r)
+			body := decode(t, r)
+			mu.Lock()
+			updateBody = body
+			mu.Unlock()
 			_, _ = w.Write([]byte(`{"results":[{"resourceName":"customers/1234567890/campaignBudgets/777"}]}`))
 			return
 		}
@@ -451,6 +454,8 @@ func TestReuseBudgetAfterDuplicateName_AlignsAmountToTheBrief(t *testing.T) {
 	if id != "777" || resource != "customers/1234567890/campaignBudgets/777" {
 		t.Errorf("resource/id = %q / %q, want the canonical pair for 777", resource, id)
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	ops, _ := updateBody["operations"].([]any)
 	if len(ops) != 1 {
 		t.Fatalf("the amount must be aligned with exactly one update operation, got body %v", updateBody)
@@ -493,7 +498,10 @@ func TestCreateCampaign_DuplicateBudgetNameReusesTheOrphan(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "campaignBudgets:mutate"):
 			gaqlError(http.StatusBadRequest, "campaignBudgetError", "DUPLICATE_NAME")(w, r)
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
-			campaignBody = decode(t, r)
+			body := decode(t, r)
+			mu.Lock()
+			campaignBody = body
+			mu.Unlock()
 			okCampaign(w, r)
 		case strings.HasSuffix(r.URL.Path, "adGroups:mutate"):
 			okAdGroup(w, r)
@@ -535,6 +543,8 @@ func TestCreateCampaign_DuplicateBudgetNameReusesTheOrphan(t *testing.T) {
 		t.Errorf("CampaignID = %q, want 222 — the campaign step must now be reached", res.CampaignID)
 	}
 	// The campaign must attach to the REUSED budget, not to a resource name from nowhere.
+	mu.Lock()
+	defer mu.Unlock()
 	ops, _ := campaignBody["operations"].([]any)
 	if len(ops) != 1 {
 		t.Fatalf("campaign body = %v", campaignBody)

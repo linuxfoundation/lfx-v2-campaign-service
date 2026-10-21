@@ -43,10 +43,22 @@ func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 	}
 
 	switch {
-	case result.CampaignBudgetID == "" && isDuplicateBudgetNameErr(err):
+	case result.CampaignBudgetID == "" && isDuplicateBudgetNameErr(err) && !carriesUnconfirmedWrite(err):
 		// A definite 4xx (429 excluded) naming the budget-name code, and no budget id came
 		// back: this attempt created nothing, and the name is held by a budget an earlier
 		// attempt left behind.
+		//
+		// THE UNCONFIRMED-WRITE GUARD IS WHAT KEEPS "nothing new was created" TRUE. A
+		// declined reuse (budget_lookup.go) reaches this arm carrying BOTH the original
+		// DUPLICATE_NAME refusal and the reason the reuse was declined, and one of those
+		// reasons is an amount alignment that Google ACCEPTED but did not acknowledge
+		// usably — an *unconfirmedBudgetMutateError. The budget create did fail, but the
+		// EXISTING budget's amount may have changed, so this token's sentence would be
+		// false. Only the explicit marker is consulted, not IsOutcomeUnconfirmed: that
+		// helper also shape-infers from a 5xx or transport error, which on this path is
+		// usually the lookup READ failing — nothing was written then, and weakening a
+		// clean budget_name_taken to "verify everything" would cost the operator the one
+		// token that tells them exactly what to look for.
 		return domain.CreateOutcomeBudgetNameTaken, true
 	case result.CampaignID == "" && result.CampaignBudgetID != "" && isDuplicateCampaignNameErr(err):
 		// The budget id gate is what makes this token's sentence true: it promises a budget
@@ -87,8 +99,22 @@ func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 		return domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed, true
 	}
 
-	// A partial with no ids at all: the budget create was sent and its outcome is unknown
+	// A partial with no ids at all: a write was sent and its outcome is unknown
 	// (ambiguous failure, or a 2xx whose resource name would not parse). Nothing downstream
 	// was reached.
 	return domain.CreateOutcomeUnconfirmed, true
+}
+
+// carriesUnconfirmedWrite reports whether err's chain carries an EXPLICIT unconfirmed-write
+// marker — a type whose Unconfirmed() says a mutate was accepted but not usably acknowledged,
+// so the account may have changed.
+//
+// Deliberately narrower than IsOutcomeUnconfirmed: that helper falls back to
+// createOutcomeAmbiguous, which infers ambiguity from the SHAPE of a 5xx/429/transport error
+// regardless of whether the failing call wrote anything. Classification here needs the
+// stronger question — did a write possibly land? — because the only thing it changes is
+// whether a token may say "nothing new was created".
+func carriesUnconfirmedWrite(err error) bool {
+	var u interface{ Unconfirmed() bool }
+	return errors.As(err, &u) && u.Unconfirmed()
 }

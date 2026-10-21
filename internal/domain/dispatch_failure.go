@@ -230,8 +230,10 @@ type UpstreamCreateOutcomeCarrier interface {
 // not get to pick.
 const (
 	// CreateOutcomeBudgetNameTaken: nothing new was created. A budget of the name this
-	// service composes already exists from an earlier attempt and is holding the
-	// idempotency key, so the retry cannot get past the budget step until it is dealt with.
+	// service composes already exists from an earlier attempt, and this attempt tried to
+	// adopt it and did not get far enough to use it — the lookup failed, or what it read
+	// back did not satisfy the reuse gates. A later retry may still succeed: the decline can
+	// be transient (the lookup read failing) as well as a standing property of that budget.
 	CreateOutcomeBudgetNameTaken = "budget_name_taken"
 	// CreateOutcomeBudgetCreatedCampaignRefused: the budget for this brief exists — created
 	// by this attempt, or an earlier attempt's budget of the same name adopted by it — and

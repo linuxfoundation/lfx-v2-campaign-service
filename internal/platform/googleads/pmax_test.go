@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -755,7 +756,10 @@ func TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan(t *testing.T) 
 	in := demandGenInput()
 	budgetName := ComposeName(budgetKindFor(campaignKindPerformanceMax), in)
 
+	// mu guards the captures below: httptest serves each request on its own goroutine,
+	// matching newBudgetLookupServer's own pattern.
 	var (
+		mu           sync.Mutex
 		searches     int
 		campaignBody map[string]any
 	)
@@ -769,15 +773,21 @@ func TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan(t *testing.T) 
 			// First the budget lookup, then the attachment check. The orphan already
 			// carries this brief's amount, so no alignment mutate is expected — and the
 			// budget handler above would fail the test if one were attempted.
+			mu.Lock()
 			searches++
-			if searches == 1 {
+			n := searches
+			mu.Unlock()
+			if n == 1 {
 				_, _ = w.Write([]byte(`{"results":[` +
 					string(budgetRow(budgetRowOpts{name: budgetName, amountMicros: "500000000"})) + `]}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"results":[]}`))
 		case strings.HasSuffix(r.URL.Path, "campaigns:mutate"):
-			campaignBody = decode(t, r)
+			body := decode(t, r)
+			mu.Lock()
+			campaignBody = body
+			mu.Unlock()
 			okCampaign(w, r)
 		default:
 			cascade(w, r)
@@ -797,6 +807,8 @@ func TestCreatePerformanceMaxCampaign_DuplicateBudgetReusesOrphan(t *testing.T) 
 		t.Errorf("the whole cascade must run: campaign %q, asset group %q", res.CampaignID, res.AssetGroupID)
 	}
 	// The campaign has to attach to the budget that was actually adopted.
+	mu.Lock()
+	defer mu.Unlock()
 	ops, _ := campaignBody["operations"].([]any)
 	if len(ops) != 1 {
 		t.Fatalf("campaign body = %v", campaignBody)

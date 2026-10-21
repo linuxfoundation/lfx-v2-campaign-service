@@ -450,11 +450,29 @@ attaching a campaign to an amount nobody asked for. Refusing on a mismatch inste
 re-impose the dead end, and the end state after adoption equals a clean first-time create:
 one non-shared daily budget at the brief's amount, one PAUSED campaign on it.
 
-A DECLINED reuse changes nothing: the original already-exists error is returned (wrapping
-the reuse verdict so the operator knows what to look for), the partial result still carries
-the names, and Performance Max still appends `expansionActionRequiredIfExists`. That hedge
-is deliberately absent on the ACCEPTED path — a successful reuse has just proved from the
-campaign side that no campaign references the budget, so there is nothing to warn about.
+A DECLINED reuse changes nothing: the original already-exists error is returned, the
+partial result still carries the names, and Performance Max still appends
+`expansionActionRequiredIfExists`. That hedge is deliberately absent on the ACCEPTED path —
+a successful reuse has just proved from the campaign side that no campaign references the
+budget, so there is nothing to warn about.
+
+Two details of that declined-reuse error are load-bearing for `CreateOutcome`, which reads
+it to classify what the account now holds:
+
+- **Both errors are wrapped with `%w`, the DUPLICATE_NAME refusal FIRST.** Every predicate
+  in `create_outcome.go` reaches its target with `errors.As`, which stops at the FIRST
+  `*apiError` in the chain — so wrapping the reuse verdict ahead of the refusal would let
+  an `apiError` from the lookup READ shadow the duplicate code, and the failure would lose
+  `budget_name_taken` for the generic `create_unconfirmed`.
+- **The `budget_name_taken` arm is additionally gated on `!carriesUnconfirmedWrite(err)`.**
+  That token's operator sentence says nothing new was created, and one reason a reuse
+  declines is an amount alignment Google ACCEPTED without a usable acknowledgement
+  (`*unconfirmedBudgetMutateError`): the budget create did fail, but the EXISTING budget's
+  amount may have moved. The guard consults only that explicit marker and deliberately not
+  `IsOutcomeUnconfirmed`, which also shape-infers ambiguity from a 5xx or transport error —
+  on this path usually the lookup read failing, which wrote nothing, and weakening a clean
+  `budget_name_taken` would cost the operator the one token that says exactly what to
+  look for.
 
 ## Responsive Search Ad copy + final URL (GA-3a)
 
