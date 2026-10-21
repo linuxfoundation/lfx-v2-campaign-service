@@ -59,13 +59,13 @@ func DispatchFailureMessage(p model.Provider, derr error, preCreate bool) string
 		if outcome, ok := domain.UpstreamCreateOutcome(derr); ok {
 			switch outcome {
 			case domain.CreateOutcomeBudgetNameTaken:
-				return fmt.Sprintf("%s campaign creation was refused because a budget of the name this service composes for this event already exists; nothing new was created, and the retry stays blocked until that budget is removed or renamed — it was left unattached by an earlier attempt, so find it in the platform's change history rather than the shared budget library", p)
+				return fmt.Sprintf("%s campaign creation was refused because a budget of the name this service composes for this event already exists; nothing new was created. This service tried to reuse that budget and could not confirm it is safe to — it may be shared, already carry a campaign, or hold a different amount — so the retry stays blocked until someone resolves it on the platform; an unattached non-shared budget is not listed in the shared budget library, so find it through the campaign it carries or the platform's change history", p)
 			case domain.CreateOutcomeCampaignNameTaken:
-				return fmt.Sprintf("%s campaign creation was refused because a campaign of the name this service composes for this event already exists; the budget for this attempt WAS created — verify both on the platform before retrying", p)
+				return fmt.Sprintf("%s campaign creation was refused because a campaign of the name this service composes for this event already exists; a budget for this attempt EXISTS, either created by it or reused from an earlier attempt — verify both on the platform before retrying", p)
 			case domain.CreateOutcomeBudgetCreatedCampaignRefused:
-				return fmt.Sprintf("%s created the campaign budget and then refused the campaign itself; no campaign exists and the budget is unattached, so it accrues no spend — remove it on the platform before retrying, or the retry will be refused for reusing its name", p)
+				return fmt.Sprintf("%s created or reused the campaign budget and then refused the campaign itself; no campaign exists and the budget is unattached, so it accrues no spend — a retry of this same brief will reuse that budget rather than be blocked by its name, provided it is still unattached, non-shared and otherwise unchanged", p)
 			case domain.CreateOutcomeBudgetCreatedCampaignUnconfirmed:
-				return fmt.Sprintf("%s created the campaign budget; whether the campaign was created could not be confirmed — verify on the platform before retrying", p)
+				return fmt.Sprintf("%s created or reused the campaign budget; whether the campaign was created could not be confirmed — verify on the platform before retrying", p)
 			case domain.CreateOutcomeCampaignCreatedSetupIncomplete:
 				// "could not be confirmed", not "did not finish": the last mutate of the
 				// cascade can answer 2xx with a response this client cannot read

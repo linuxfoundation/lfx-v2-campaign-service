@@ -49,8 +49,9 @@ func CreateOutcome(result *CampaignResult, err error) (string, bool) {
 		// attempt left behind.
 		return domain.CreateOutcomeBudgetNameTaken, true
 	case result.CampaignID == "" && result.CampaignBudgetID != "" && isDuplicateCampaignNameErr(err):
-		// The budget id gate is what makes this token's sentence true: it promises the
-		// budget for THIS attempt was created, which only a returned budget id establishes.
+		// The budget id gate is what makes this token's sentence true: it promises a budget
+		// for this brief exists, which only a budget id establishes — one returned by this
+		// attempt's create, or one this attempt adopted after a DUPLICATE_NAME.
 		return domain.CreateOutcomeCampaignNameTaken, true
 	case result.CampaignID != "":
 		// The campaign resource name came back, so the campaign exists whatever failed
