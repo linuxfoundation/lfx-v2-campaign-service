@@ -47,7 +47,7 @@ type AudienceExplorer interface {
 	Capabilities(ctx context.Context, projectID string) audience.ExploreCapabilities
 	Discover(ctx context.Context, projectID, eventURL string) (*audience.DiscoveryOutcome, error)
 	SearchLists(ctx context.Context, projectID, query string) ([]audience.ListRow, error)
-	SuppressionLists(ctx context.Context, projectID, brandShort, eventName string) ([]audience.SuppressionRow, error)
+	SuppressionLists(ctx context.Context, projectID, brandShort, eventName, registrantsEvent string) ([]audience.SuppressionRow, *audience.ListRow, error)
 	LastSent(ctx context.Context, projectID, eventName, brandShort string, limit int) ([]audience.LastSentEmail, error)
 	ExistingMasterLists(ctx context.Context, projectID, eventName, brandShort string) ([]audience.ListRow, error)
 	PreviewCount(ctx context.Context, projectID string, listIDs []string) (audience.PreviewCount, error)
@@ -57,9 +57,10 @@ type AudienceExplorer interface {
 	// flatten — see composeErr.
 	ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error)
 	// AttachExisting reads existing lists back from the portal and returns them as an
-	// outcome to record. It creates nothing in HubSpot. includeIDs are the lists the send
+	// outcome to record. Its only create is the combined list for two or more suppressions,
+	// reused on repeat. includeIDs are the lists the send
 	// goes to; the first is reported as the outcome's Master, and every one is verified.
-	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string) (*audience.ComposeOutcome, error)
+	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string, registrantsEvent string) (*audience.ComposeOutcome, error)
 	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (*audience.QaOutcome, error)
 	// InterpretCustom asks the model for draft criteria; it creates nothing.
 	InterpretCustom(ctx context.Context, projectID, request, eventURL string, answers []audience.CustomAnswer) (*audience.CustomInterpretOutcome, error)
@@ -269,13 +270,13 @@ func (s *AudienceExploreService) GetAudienceSuppressionLists(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	rows, serr := explorer.SuppressionLists(ctx, p.ProjectID, derefStr(p.BrandShort), derefStr(p.EventName))
+	rows, standing, serr := explorer.SuppressionLists(ctx, p.ProjectID, derefStr(p.BrandShort), derefStr(p.EventName), derefStr(p.RegistrantsEvent))
 	if serr != nil {
 		return nil, audienceExploreErr(ctx, "resolve suppression lists", p.ProjectID, serr)
 	}
 	res := &explore.GetAudienceSuppressionListsResult{Lists: make([]*explore.AudienceSuppressionList, 0, len(rows))}
 	for _, r := range rows {
-		res.Lists = append(res.Lists, &explore.AudienceSuppressionList{
+		row := &explore.AudienceSuppressionList{
 			Key:        r.Key,
 			Label:      r.Label,
 			ListID:     r.ListID,
@@ -283,7 +284,14 @@ func (s *AudienceExploreService) GetAudienceSuppressionLists(ctx context.Context
 			Size:       r.Size,
 			Category:   r.Category,
 			HubspotURL: r.HubSpotURL,
-		})
+		}
+		if r.WillCreate {
+			row.WillCreate = &r.WillCreate
+		}
+		res.Lists = append(res.Lists, row)
+	}
+	if standing != nil {
+		res.StandardList = composedListResult(&audience.ComposedList{ListRow: *standing})
 	}
 	return res, nil
 }
@@ -410,6 +418,8 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 		EventName:          derefStr(p.Compose.EventName),
 		EventDates:         p.Compose.EventDates,
 		RecordUnderBriefID: briefID,
+
+		CurrentRegistrantsEvent: strings.TrimSpace(derefStr(p.Compose.CurrentRegistrantsEvent)),
 	}
 	outcome, cerr := explorer.ComposeMaster(ctx, p.ProjectID, in)
 	if cerr != nil {
@@ -450,8 +460,10 @@ func (s *AudienceExploreService) ComposeAudienceMaster(ctx context.Context, p *e
 
 // AttachExistingAudience records lists that already exist as the brief's built audience.
 //
-// Nothing is created in HubSpot, so unlike compose there is no partial state: every failure
-// here, including the record itself, is safe to retry.
+// The only lists it may create are the project's standing standard suppression list and the
+// edition's current-registrants list, both found by name and reused on repeat, so unlike
+// compose there is no partial state: every failure here, including the record itself, is safe
+// to retry.
 func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *explore.AttachExistingAudiencePayload) (*explore.AudienceAttachExistingResult, error) {
 	explorer, err := s.ready()
 	if err != nil {
@@ -476,7 +488,8 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 		return nil, composeBriefErr(ctx, p.ProjectID, briefID, berr)
 	}
 
-	outcome, aerr := explorer.AttachExisting(ctx, p.ProjectID, includeIDs, p.Attach.SuppressionListIds)
+	outcome, aerr := explorer.AttachExisting(ctx, p.ProjectID, includeIDs, p.Attach.SuppressionListIds,
+		strings.TrimSpace(derefStr(p.Attach.CurrentRegistrantsEvent)))
 	if aerr != nil {
 		return nil, composeErr(ctx, p.ProjectID, aerr)
 	}
@@ -495,13 +508,14 @@ func (s *AudienceExploreService) AttachExistingAudience(ctx context.Context, p *
 			"project_id", p.ProjectID, "brief_id", briefID, "error", rerr)
 		return nil, &explore.ConnServiceUnavailableError{
 			Code:    "503",
-			Message: "the lists were verified but the audience could not be saved; nothing was created in HubSpot, so it is safe to retry",
+			Message: "the lists were verified but the audience could not be saved; it is safe to retry, and a standing suppression list already created is reused rather than duplicated",
 		}
 	}
 	recordedIDs := unmarshalStrings(recorded.IncludeListIDs)
 	return &explore.AudienceAttachExistingResult{
 		Master:             composedListResult(&outcome.Master),
 		SuppressionListIds: unmarshalStrings(recorded.SuppressionListIDs),
+		Suppression:        composedListResult(outcome.Suppression),
 		IncludeListIds:     recordedIDs,
 		Audience: &explore.AudienceComposeRecordedAudience{
 			ID:                   recorded.ID,

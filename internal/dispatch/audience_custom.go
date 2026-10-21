@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/audience"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
@@ -130,9 +131,7 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
 	if brand := strings.TrimSpace(draft.BrandShort); brand != "" {
-		gate, gerr := x.bestMatch(ctx, client, audience.BrandMasterProbes(brand), func(name string) bool {
-			return audience.MatchesBrandMaster(name, brand)
-		})
+		gate, gerr := x.brandMaster(ctx, client, brand)
 		if gerr != nil {
 			return nil, gerr
 		}
@@ -161,21 +160,35 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		// No brand from the page or the model: take the one this event's lists use.
 		// A brand the model named already resolved its own gate above, and is never
 		// overridden by whichever segment the event's lists happen to be filed under.
-		if hits, serr := client.SearchLists(ctx, event.Name); serr == nil {
-			names := make([]string, 0, len(hits))
-			for _, h := range hits {
-				names = append(names, h.Name)
+		if brand := x.listBrand(ctx, client, event.Name, event.Name); brand != "" {
+			out.Draft.BrandShort = brand
+			out.Event.BrandShort = brand
+			if gate, gerr := x.brandMaster(ctx, client, brand); gerr == nil && gate != nil {
+				row := listRow(gate)
+				out.Gate = &row
+				out.Draft.Criteria.GateListID = row.ListID
 			}
-			if brand := audience.DominantBrand(names, event.Name); brand != "" {
+		}
+	}
+	if out.Gate == nil {
+		// A project or event series ("gRPC") has no master list of its own: its lists
+		// are filed under the foundation that owns it, whose master is the gate.
+		named := strings.TrimSpace(out.Draft.BrandShort)
+		query := named
+		if query == "" {
+			query = strings.TrimSpace(out.Draft.Criteria.Label)
+		}
+		// Unscoped: the project's lists are named for its events ("gRPConf"), not for the
+		// project ("gRPC"), so a scoped vote would discard every one of them.
+		if brand := x.listBrand(ctx, client, query, ""); brand != "" && !strings.EqualFold(brand, named) {
+			if gate, gerr := x.brandMaster(ctx, client, brand); gerr == nil && gate != nil {
+				row := listRow(gate)
+				out.Gate = &row
+				out.Draft.Criteria.GateListID = row.ListID
 				out.Draft.BrandShort = brand
-				out.Event.BrandShort = brand
-				if gate, gerr := x.bestMatch(ctx, client, audience.BrandMasterProbes(brand), func(name string) bool {
-					return audience.MatchesBrandMaster(name, brand)
-				}); gerr == nil && gate != nil {
-					row := listRow(gate)
-					out.Gate = &row
-					out.Draft.Criteria.GateListID = row.ListID
-				}
+				out.Draft.Notes = append(out.Draft.Notes, fmt.Sprintf(
+					"Suggested %s's master list (%s): %q has none of its own, and its HubSpot lists are filed under %s. Change it if that is wrong.",
+					brand, row.Name, query, brand))
 			}
 		}
 	}
@@ -183,6 +196,32 @@ func (x *AudienceExplorer) InterpretCustom(ctx context.Context, projectID, reque
 		out.Draft.Notes = append(out.Draft.Notes, "No brand master list was found to gate the location branches. Pick one before previewing.")
 	}
 	return out, nil
+}
+
+// brandMaster is the brand's standing master list, or nil.
+func (x *AudienceExplorer) brandMaster(ctx context.Context, client *hubspot.Client, brand string) (*hubspot.List, error) {
+	return x.bestMatch(ctx, client, audience.BrandMasterProbes(brand), func(name string) bool {
+		return audience.MatchesBrandMaster(name, brand)
+	})
+}
+
+// listBrand is the brand the portal's lists matching query are filed under, or "".
+// eventName, when set, keeps only that event's own lists in the vote (see
+// audience.DominantBrand). A failed search is no brand: the caller then reports the
+// gate as missing.
+func (x *AudienceExplorer) listBrand(ctx context.Context, client *hubspot.Client, query, eventName string) string {
+	if query == "" {
+		return ""
+	}
+	hits, err := client.SearchLists(ctx, query)
+	if err != nil {
+		return ""
+	}
+	names := make([]string, 0, len(hits))
+	for _, h := range hits {
+		names = append(names, h.Name)
+	}
+	return audience.DominantBrand(names, eventName)
 }
 
 // PreviewCustom validates criteria against the portal and returns what Create
@@ -390,6 +429,10 @@ func (x *AudienceExplorer) CreateCustom(ctx context.Context, projectID string, c
 func (x *AudienceExplorer) freeCustomName(ctx context.Context, client *hubspot.Client, name string) (string, error) {
 	candidate := name
 	for n := 2; n <= customVersionLimit+1; n++ {
+		if size := utf8.RuneCountInString(candidate); size > audience.MaxListNameLength {
+			return "", fmt.Errorf("%w: the list name is %d characters and HubSpot allows at most %d; choose a shorter name",
+				audience.ErrInvalidRequest, size, audience.MaxListNameLength)
+		}
 		taken, err := exactList(ctx, client, candidate)
 		if err != nil {
 			return "", fmt.Errorf("audience custom: check list name: %w", err)

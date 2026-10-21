@@ -43,7 +43,9 @@ type Service interface {
 	ComposeAudienceMaster(context.Context, *ComposeAudienceMasterPayload) (res *AudienceComposeMasterResult, err error)
 	// Record lists that already exist in the project's HubSpot portal as a brief's
 	// built audience, without composing a new master. Every id is read back from
-	// the portal first. Creates nothing in HubSpot.
+	// the portal first. When several suppression lists are supplied they are
+	// combined into one suppression list (created once per selection, reused on
+	// repeat), which is the only list HubSpot creates here.
 	AttachExistingAudience(context.Context, *AttachExistingAudiencePayload) (res *AudienceAttachExistingResult, err error)
 	// Audit a composed master list's filters: signal mapping, regulatory
 	// suppression, exclusion completeness, and whether this edition's own
@@ -106,6 +108,9 @@ type AudienceAttachExistingInput struct {
 	IncludeListIds []string
 	// Existing lists the send suppresses
 	SuppressionListIds []string
+	// Edition (event name with year) whose current registrants the send also
+	// suppresses, through a list found or created by name
+	CurrentRegistrantsEvent *string
 	// Operator-visible provenance for the recorded audience; derived from the
 	// master list when omitted
 	InclusionSummary *string
@@ -119,6 +124,10 @@ type AudienceAttachExistingResult struct {
 	Master *AudienceComposedList
 	// The suppression list ids recorded beside it
 	SuppressionListIds []string
+	// The project's standing standard suppression list, reused across audiences,
+	// recorded in place of the standard lists; absent unless every resolved
+	// standard list was selected
+	Suppression *AudienceComposedList
 	// Every include list the send goes to, when include_list_ids was supplied;
 	// absent for a single master_list_id
 	IncludeListIds []string
@@ -149,6 +158,9 @@ type AudienceComposeMasterInput struct {
 	EventName *string
 	// Event dates; drive the derived name's quarter segment
 	EventDates []string
+	// Edition (event name with year) whose current registrants the master also
+	// excludes, through a list found or created by name
+	CurrentRegistrantsEvent *string
 	// Record the composed master as this brief's built audience, stamped with the
 	// portal it was composed in
 	BriefID *string
@@ -163,7 +175,8 @@ type AudienceComposeMasterInput struct {
 type AudienceComposeMasterResult struct {
 	// The created master list
 	Master *AudienceComposedList
-	// The combined suppression list, when exclusions were requested
+	// The project's standing standard suppression list the master excludes, reused
+	// across composes; absent unless every resolved standard list was selected
 	Suppression *AudienceComposedList
 	// The inclusion lists the master unions
 	SourceListIds []string
@@ -574,6 +587,9 @@ type AudienceSuppressionList struct {
 	Category string
 	// Deep link to the list in the HubSpot UI
 	HubspotURL string
+	// The list does not exist yet; an attach or compose that applies this row
+	// creates it by name (current_registrants only)
+	WillCreate *bool
 }
 
 type BadRequestError struct {
@@ -682,6 +698,8 @@ type GetAudienceSuppressionListsPayload struct {
 	BrandShort *string
 	// Event name to match event-specific suppression lists
 	EventName *string
+	// Edition (event name with year) whose current-registrants row to add
+	RegistrantsEvent *string
 }
 
 // GetAudienceSuppressionListsResult is the result type of the
@@ -690,6 +708,8 @@ type GetAudienceSuppressionListsPayload struct {
 type GetAudienceSuppressionListsResult struct {
 	// Suppression rows, standard first
 	Lists []*AudienceSuppressionList
+	// The project's standing standard suppression list, when it already exists
+	StandardList *AudienceComposedList
 }
 
 // GetExistingAudienceMasterListsPayload is the payload type of the

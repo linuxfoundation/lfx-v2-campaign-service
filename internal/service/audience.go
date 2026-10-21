@@ -410,16 +410,23 @@ func composedInclusionSummary(outcome *audience.ComposeOutcome) string {
 		if n := len(outcome.SourceListIDs); n > 1 {
 			summary = fmt.Sprintf("Reused %d existing lists (first: %s)", n, outcome.Master.Name)
 		}
-		if n := len(outcome.AttachedSuppressionIDs); n > 0 {
-			summary += fmt.Sprintf(" with %d suppression list(s)", n)
-		}
-		return summary
+		return summary + suppressionSummary(outcome)
 	}
-	summary := fmt.Sprintf("Composed from %d source list(s)", len(outcome.SourceListIDs))
-	if outcome.Suppression != nil {
-		summary += " with a combined suppression list"
+	return fmt.Sprintf("Composed from %d source list(s)", len(outcome.SourceListIDs)) + suppressionSummary(outcome)
+}
+
+// suppressionSummary describes the suppressions an outcome records, or "" when none.
+func suppressionSummary(outcome *audience.ComposeOutcome) string {
+	n := len(outcome.AttachedSuppressionIDs)
+	switch {
+	case outcome.Suppression != nil && n > 0:
+		return fmt.Sprintf(" with the standard suppression list and %d more suppression list(s)", n)
+	case outcome.Suppression != nil:
+		return " with the standard suppression list"
+	case n > 0:
+		return fmt.Sprintf(" with %d suppression list(s)", n)
 	}
-	return summary
+	return ""
 }
 
 // audienceResult maps the domain model to the API response view (ETag mirrors version).

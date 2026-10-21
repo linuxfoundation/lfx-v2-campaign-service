@@ -134,6 +134,8 @@ type SearchAudienceListsResponseBody struct {
 type GetAudienceSuppressionListsResponseBody struct {
 	// Suppression rows, standard first
 	Lists []*AudienceSuppressionListResponseBody `form:"lists" json:"lists" xml:"lists"`
+	// The project's standing standard suppression list, when it already exists
+	StandardList *AudienceComposedListResponseBody `form:"standard_list,omitempty" json:"standard_list,omitempty" xml:"standard_list,omitempty"`
 }
 
 // GetAudienceLastSentResponseBody is the type of the
@@ -175,7 +177,8 @@ type PreviewAudienceCountResponseBody struct {
 type ComposeAudienceMasterResponseBody struct {
 	// The created master list
 	Master *AudienceComposedListResponseBody `form:"master" json:"master" xml:"master"`
-	// The combined suppression list, when exclusions were requested
+	// The project's standing standard suppression list the master excludes, reused
+	// across composes; absent unless every resolved standard list was selected
 	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// The inclusion lists the master unions
 	SourceListIds []string `form:"source_list_ids" json:"source_list_ids" xml:"source_list_ids"`
@@ -194,6 +197,10 @@ type AttachExistingAudienceResponseBody struct {
 	Master *AudienceComposedListResponseBody `form:"master" json:"master" xml:"master"`
 	// The suppression list ids recorded beside it
 	SuppressionListIds []string `form:"suppression_list_ids" json:"suppression_list_ids" xml:"suppression_list_ids"`
+	// The project's standing standard suppression list, reused across audiences,
+	// recorded in place of the standard lists; absent unless every resolved
+	// standard list was selected
+	Suppression *AudienceComposedListResponseBody `form:"suppression,omitempty" json:"suppression,omitempty" xml:"suppression,omitempty"`
 	// Every include list the send goes to, when include_list_ids was supplied;
 	// absent for a single master_list_id
 	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
@@ -1373,6 +1380,22 @@ type AudienceSuppressionListResponseBody struct {
 	Category string `form:"category" json:"category" xml:"category"`
 	// Deep link to the list in the HubSpot UI
 	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
+	// The list does not exist yet; an attach or compose that applies this row
+	// creates it by name (current_registrants only)
+	WillCreate *bool `form:"will_create,omitempty" json:"will_create,omitempty" xml:"will_create,omitempty"`
+}
+
+// AudienceComposedListResponseBody is used to define fields on response body
+// types.
+type AudienceComposedListResponseBody struct {
+	// HubSpot list id
+	ListID string `form:"list_id" json:"list_id" xml:"list_id"`
+	// HubSpot list name
+	Name string `form:"name" json:"name" xml:"name"`
+	// Deep link to the list in the HubSpot UI
+	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
+	// Membership size, when HubSpot reported one
+	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 }
 
 // AudienceLastSentEmailResponseBody is used to define fields on response body
@@ -1428,19 +1451,6 @@ type AudienceMasterListBriefResponseBody struct {
 	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 	// Deep link to the list in the HubSpot UI
 	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
-}
-
-// AudienceComposedListResponseBody is used to define fields on response body
-// types.
-type AudienceComposedListResponseBody struct {
-	// HubSpot list id
-	ListID string `form:"list_id" json:"list_id" xml:"list_id"`
-	// HubSpot list name
-	Name string `form:"name" json:"name" xml:"name"`
-	// Deep link to the list in the HubSpot UI
-	HubspotURL string `form:"hubspot_url" json:"hubspot_url" xml:"hubspot_url"`
-	// Membership size, when HubSpot reported one
-	Size *int64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 }
 
 // AudienceComposeRecordedAudienceResponseBody is used to define fields on
@@ -1627,6 +1637,9 @@ type AudienceComposeMasterInputRequestBody struct {
 	EventName *string `form:"event_name,omitempty" json:"event_name,omitempty" xml:"event_name,omitempty"`
 	// Event dates; drive the derived name's quarter segment
 	EventDates []string `form:"event_dates,omitempty" json:"event_dates,omitempty" xml:"event_dates,omitempty"`
+	// Edition (event name with year) whose current registrants the master also
+	// excludes, through a list found or created by name
+	CurrentRegistrantsEvent *string `form:"current_registrants_event,omitempty" json:"current_registrants_event,omitempty" xml:"current_registrants_event,omitempty"`
 	// Record the composed master as this brief's built audience, stamped with the
 	// portal it was composed in
 	BriefID *string `form:"brief_id,omitempty" json:"brief_id,omitempty" xml:"brief_id,omitempty"`
@@ -1649,6 +1662,9 @@ type AudienceAttachExistingInputRequestBody struct {
 	IncludeListIds []string `form:"include_list_ids,omitempty" json:"include_list_ids,omitempty" xml:"include_list_ids,omitempty"`
 	// Existing lists the send suppresses
 	SuppressionListIds []string `form:"suppression_list_ids,omitempty" json:"suppression_list_ids,omitempty" xml:"suppression_list_ids,omitempty"`
+	// Edition (event name with year) whose current registrants the send also
+	// suppresses, through a list found or created by name
+	CurrentRegistrantsEvent *string `form:"current_registrants_event,omitempty" json:"current_registrants_event,omitempty" xml:"current_registrants_event,omitempty"`
 	// Operator-visible provenance for the recorded audience; derived from the
 	// master list when omitted
 	InclusionSummary *string `form:"inclusion_summary,omitempty" json:"inclusion_summary,omitempty" xml:"inclusion_summary,omitempty"`
@@ -1816,6 +1832,9 @@ func NewGetAudienceSuppressionListsResponseBody(res *lfxv2campaignserviceaudienc
 	} else {
 		body.Lists = []*AudienceSuppressionListResponseBody{}
 	}
+	if res.StandardList != nil {
+		body.StandardList = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.StandardList)
+	}
 	return body
 }
 
@@ -1914,6 +1933,9 @@ func NewAttachExistingAudienceResponseBody(res *lfxv2campaignserviceaudiencebuil
 		}
 	} else {
 		body.SuppressionListIds = []string{}
+	}
+	if res.Suppression != nil {
+		body.Suppression = marshalLfxv2campaignserviceaudiencebuilderAudienceComposedListToAudienceComposedListResponseBody(res.Suppression)
 	}
 	if res.IncludeListIds != nil {
 		body.IncludeListIds = make([]string, len(res.IncludeListIds))
@@ -3158,11 +3180,12 @@ func NewSearchAudienceListsPayload(projectID string, q string, bearerToken *stri
 // NewGetAudienceSuppressionListsPayload builds a
 // lfx-v2-campaign-service-audience-builder service
 // get-audience-suppression-lists endpoint payload.
-func NewGetAudienceSuppressionListsPayload(projectID string, brandShort *string, eventName *string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload {
+func NewGetAudienceSuppressionListsPayload(projectID string, brandShort *string, eventName *string, registrantsEvent *string, bearerToken *string) *lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload {
 	v := &lfxv2campaignserviceaudiencebuilder.GetAudienceSuppressionListsPayload{}
 	v.ProjectID = projectID
 	v.BrandShort = brandShort
 	v.EventName = eventName
+	v.RegistrantsEvent = registrantsEvent
 	v.BearerToken = bearerToken
 
 	return v
@@ -3452,6 +3475,11 @@ func ValidateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	if len(body.ExcludeListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
 	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
+	}
 	if body.BriefID != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.brief_id", *body.BriefID, goa.FormatUUID))
 	}
@@ -3473,6 +3501,11 @@ func validateAudienceComposeMasterInputRequestBody(body *AudienceComposeMasterIn
 	}
 	if len(body.ExcludeListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".exclude_list_ids", body.ExcludeListIds, len(body.ExcludeListIds), 200, false))
+	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
 	}
 	if body.BriefID != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat(path+".brief_id", *body.BriefID, goa.FormatUUID))
@@ -3500,6 +3533,11 @@ func ValidateAudienceAttachExistingInputRequestBody(body *AudienceAttachExisting
 	if len(body.SuppressionListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))
 	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
+	}
 	return
 }
 
@@ -3523,6 +3561,11 @@ func validateAudienceAttachExistingInputRequestBody(body *AudienceAttachExisting
 	}
 	if len(body.SuppressionListIds) > 200 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".suppression_list_ids", body.SuppressionListIds, len(body.SuppressionListIds), 200, false))
+	}
+	if body.CurrentRegistrantsEvent != nil {
+		if utf8.RuneCountInString(*body.CurrentRegistrantsEvent) > 200 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".current_registrants_event", *body.CurrentRegistrantsEvent, utf8.RuneCountInString(*body.CurrentRegistrantsEvent), 200, false))
+		}
 	}
 	return
 }

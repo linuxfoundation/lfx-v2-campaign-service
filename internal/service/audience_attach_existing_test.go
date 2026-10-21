@@ -27,7 +27,7 @@ type attachExplorer struct {
 	err        error
 }
 
-func (f *attachExplorer) AttachExisting(_ context.Context, _ string, includeIDs, _ []string) (*audience.ComposeOutcome, error) {
+func (f *attachExplorer) AttachExisting(_ context.Context, _ string, includeIDs, _ []string, _ string) (*audience.ComposeOutcome, error) {
 	f.calls++
 	f.includeIDs = includeIDs
 	if f.err != nil {
@@ -69,6 +69,37 @@ func TestAttachExistingAudienceRecordsTheReusedListsWithTheirPortal(t *testing.T
 	assert.Equal(t, "8112310", rows[0].BuiltInPortalID)
 	assert.Equal(t, model.AudienceBuilt, rows[0].Status)
 	assert.Equal(t, "Reused existing list 26Q3 - CNCF - AGNTCon - Master with 2 suppression list(s)", rows[0].InclusionSummary)
+}
+
+// Several suppressions come back combined into one list: the row records that single id, and
+// the response names the list so the operator can open it.
+func TestAttachExistingAudienceRecordsTheStandingStandardListBesideTheRest(t *testing.T) {
+	standing := audience.ComposedList{ListRow: audience.ListRow{ListID: "40000", Name: "LFX Standard Suppressions - proj-1", HubSpotURL: "https://app.hubspot.com/x"}}
+	explorer := &attachExplorer{outcome: &audience.ComposeOutcome{
+		Master:        audience.ComposedList{ListRow: audience.ListRow{ListID: "31027", Name: "Master"}},
+		SourceListIDs: []string{"31027"},
+		PortalID:      "8112310",
+		Suppression:   &standing,
+		Attached:      true,
+
+		AttachedSuppressionIDs: []string{"b1"},
+	}}
+	repo := newCountingAudienceRepo()
+	briefs := newFakeBriefRepo()
+	seedBrief(t, briefs, "proj-1", "brief-1")
+	svc := NewAudienceExploreService(explorer)
+	svc.SetAudienceRepo(repo)
+	svc.SetBriefRepo(briefs)
+
+	res, err := svc.AttachExistingAudience(context.Background(), attachPayload("brief-1"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"40000", "b1"}, res.SuppressionListIds)
+	require.NotNil(t, res.Suppression)
+	assert.Equal(t, "40000", res.Suppression.ListID)
+
+	rows := repo.rows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Reused existing list Master with the standard suppression list and 1 more suppression list(s)", rows[0].InclusionSummary)
 }
 
 // An unknown brief is refused before any portal read.

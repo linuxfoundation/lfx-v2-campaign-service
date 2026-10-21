@@ -40,7 +40,7 @@ Rules:
 - cities: the city or cities named. Default to city-only scope.
 - countries: ONLY when the request clearly asks for broader reach ("...and South Korea", a country named alongside the city). When unsure, leave empty and ask.
 - Named events are CONTEXT: put them in "label" (e.g. "OSS Korea + MCP Dev Summit Seoul"). Do not restrict to past registrants of those events unless the request says so.
-- brand_short: the foundation/brand owning the named events, as a short token ("LF", "CNCF", "PyTorch", "OpenSearch"). Empty if unclear.
+- brand_short: the foundation/brand owning the named events, as a short token ("LF", "CNCF", "PyTorch", "OpenSearch"). Never a hosted project or event series: gRPC, gRPConf and KubeCon events are "CNCF". Empty if unclear.
 - For a location audience set contact_location, event_registered and education_enrolled to true unless the request excludes one.
 - gate_event_history: whether event-history branches must also be in the brand master list. Unless an answer settles it, set false AND ask the mailability question (id "mailability") with options "Match the reference pattern (event history ungated)" and "Stricter: gate event history by the brand master list".
 - property_filters: only for conditions the request explicitly states on a contact property (e.g. job title contains "director"). operator is one of is_equal_to, contains, is_any_of, is_not_any_of, is_known, is_unknown. Use HubSpot internal property names you are confident of (jobtitle, company, industry, hs_language); if unsure of the name, do not add the filter — ask instead.
