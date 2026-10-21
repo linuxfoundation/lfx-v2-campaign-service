@@ -1426,26 +1426,38 @@ func (c *Client) CreateCampaign(ctx context.Context, in CampaignInput) (*Campaig
 	}}}}
 	budgetPath := c.customerPath("campaignBudgets:mutate")
 	budgetResp, err := c.doRequest(ctx, http.MethodPost, budgetPath, budgetReq, false)
-	if err != nil {
-		switch {
-		case isDuplicateBudgetNameErr(err):
-			// A retry with a stable NameSuffix hit a name that already exists: the
-			// budget was (almost certainly) created by a prior attempt. Not created
-			// here, but NOT a clean failure either — reconcile by name.
-			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget %q already exists (DUPLICATE_NAME) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, err)
-		case createOutcomeAmbiguous(err):
+	// The arms are a single switch rather than `if err != nil { switch }` so the
+	// DUPLICATE_NAME arm can resolve to a usable budget instead of only to an error; see
+	// reuseBudgetAfterDuplicateName.
+	var budgetResource, budgetID string
+	switch {
+	case err == nil:
+		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		if err != nil {
+			// A 2xx with no/malformed resourceName is a malformed success: the budget MAY
+			// have been created. UNCONFIRMED, not a clean failure.
 			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
-		default:
-			return nil, fmt.Errorf("google-ads campaign budget creation failed: %w", err)
 		}
-	}
-	budgetResource, budgetID, err := firstResourceName(budgetResp)
-	if err != nil {
-		// A 2xx with no/malformed resourceName is a malformed success: the budget MAY
-		// have been created. UNCONFIRMED, not a clean failure.
+		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency, STANDARD delivery, non-shared)", budgetID, in.Budget))
+	case isDuplicateBudgetNameErr(err):
+		// A retry with a stable NameSuffix hit a name that already exists: the budget was
+		// (almost certainly) created by a prior attempt whose campaign step failed. If it
+		// can be PROVED to be that orphan — ours, non-shared, unattached, same shape — the
+		// campaign attaches to it, which is the only way a brief in this state can ever be
+		// dispatched again: a non-shared budget with no campaign on it has no Google Ads UI
+		// surface the operator could delete it from. Anything short of proof keeps the
+		// original refusal, with the reason the reuse was declined carried in it.
+		resource, id, reuseSteps, reuseErr := c.reuseBudgetAfterDuplicateName(ctx, budgetName, amountMicros, in.Budget)
+		if reuseErr != nil {
+			return campaignNamePartial(), fmt.Errorf("google-ads campaign budget %q already exists (DUPLICATE_NAME) and could not be safely reused (%v) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, reuseErr, err)
+		}
+		budgetResource, budgetID = resource, id
+		steps = append(steps, reuseSteps...)
+	case createOutcomeAmbiguous(err):
 		return campaignNamePartial(), fmt.Errorf("google-ads campaign budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+	default:
+		return nil, fmt.Errorf("google-ads campaign budget creation failed: %w", err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency, STANDARD delivery, non-shared)", budgetID, in.Budget))
 
 	// budgetPartial carries the created budget id (plus the campaign name) so an
 	// ambiguous/failed CAMPAIGN create leaves the budget reconcilable, not orphaned

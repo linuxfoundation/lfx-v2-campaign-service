@@ -235,51 +235,70 @@ func (c *Client) CreatePerformanceMaxCampaign(ctx context.Context, in CampaignIn
 		ExplicitlyShared: &shared,
 	}}}}
 	budgetResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignBudgets:mutate"), budgetReq, false)
-	if err != nil {
-		switch {
-		case isDuplicateBudgetNameErr(err):
-			// Hedged, one mutate earlier than the campaign arms below, and hedged on a
-			// NARROW premise — narrow enough to be worth stating, because the obvious
-			// reading of it is wrong twice over.
-			//
-			// The budget name is this client's idempotency key, so a re-dispatch of the
-			// same brief on this channel fails HERE, before campaigns:mutate is attempted.
-			// The tempting conclusion — "so the attempt that created this budget may have
-			// got past Step 2, leaving a campaign" — does not follow: this budget is
-			// created non-shared (`shared := false` above), and a non-shared budget's name
-			// SYNCHRONIZES to the campaign name once a campaign attaches to it
-			// (campaign.go's `campaignNamePartial` contract, which `internal/dispatch/
-			// googleads.go` reconciles by id for exactly this reason). An attempt that got
-			// past Step 2 therefore FREED `budgetName`, and this arm would not have been
-			// reached at all. Reaching it means an UNATTACHED budget — the orphan shape,
-			// which is what the two 2026-10-16 prod dispatches actually left.
-			//
-			// Nor would the campaign be "a campaign with expansion on": this file now opts
-			// out at create (the `AssetAutomationSettings` literal in Step 2), so anything
-			// the CURRENT code leaves behind has expansion OFF.
-			//
-			// What survives both corrections, and is the only reason the step is still
-			// appended: the sync is Google's behaviour as this package documents it, not
-			// something this service verified, and nothing here has established what
-			// happens to a non-shared budget's name if its campaign is later removed. A
-			// campaign predating this file's opt-out could also still be sitting under a
-			// re-created budget of the original name. Both are narrow, neither is disproved,
-			// and the cost of the hedge is one UI check the operator is already being sent
-			// to make. The two arms below stay silent because there the budget itself is
-			// the open question and the campaign create provably was never reached.
-			steps = append(steps, expansionActionRequiredIfExists)
-			return namePartial(), fmt.Errorf("google-ads performance max budget %q already exists (DUPLICATE_NAME) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, err)
-		case createOutcomeAmbiguous(err):
+	// The arms are a single switch rather than `if err != nil { switch }` so the
+	// DUPLICATE_NAME arm can resolve to a usable budget instead of only to an error; see
+	// reuseBudgetAfterDuplicateName.
+	var budgetResource, budgetID string
+	switch {
+	case err == nil:
+		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		if err != nil {
 			return namePartial(), fmt.Errorf("google-ads performance max budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
-		default:
-			return nil, fmt.Errorf("google-ads performance max budget creation failed: %w", err)
 		}
-	}
-	budgetResource, budgetID, err := firstResourceName(budgetResp)
-	if err != nil {
+		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency)", budgetID, in.Budget))
+	case isDuplicateBudgetNameErr(err):
+		// FIRST, try to ADOPT the budget holding the name. The reasoning below says this
+		// arm is reached only on an UNATTACHED budget; reuseBudgetAfterDuplicateName
+		// proves it instead of assuming it, and on proof the dispatch continues onto that
+		// budget rather than dead-ending. It matters most on exactly this channel: both
+		// 2026-10-16 prod dispatches and the 2026-10-20 retry died at campaigns:mutate
+		// here, and each one orphaned a budget whose name then blocked the next attempt.
+		resource, id, reuseSteps, reuseErr := c.reuseBudgetAfterDuplicateName(ctx, budgetName, pf.amountMicros, in.Budget)
+		if reuseErr == nil {
+			budgetResource, budgetID = resource, id
+			steps = append(steps, reuseSteps...)
+			// No expansion hedge on this path. The hedge below exists because an
+			// unprovable campaign MIGHT be sitting under this name; a successful reuse has
+			// just proved no campaign references this budget, so there is nothing to warn
+			// about.
+			break
+		}
+		// Hedged, one mutate earlier than the campaign arms below, and hedged on a
+		// NARROW premise — narrow enough to be worth stating, because the obvious
+		// reading of it is wrong twice over.
+		//
+		// The budget name is this client's idempotency key, so a re-dispatch of the
+		// same brief on this channel fails HERE, before campaigns:mutate is attempted.
+		// The tempting conclusion — "so the attempt that created this budget may have
+		// got past Step 2, leaving a campaign" — does not follow: this budget is
+		// created non-shared (`shared := false` above), and a non-shared budget's name
+		// SYNCHRONIZES to the campaign name once a campaign attaches to it
+		// (campaign.go's `campaignNamePartial` contract, which `internal/dispatch/
+		// googleads.go` reconciles by id for exactly this reason). An attempt that got
+		// past Step 2 therefore FREED `budgetName`, and this arm would not have been
+		// reached at all. Reaching it means an UNATTACHED budget — the orphan shape,
+		// which is what the two 2026-10-16 prod dispatches actually left.
+		//
+		// Nor would the campaign be "a campaign with expansion on": this file now opts
+		// out at create (the `AssetAutomationSettings` literal in Step 2), so anything
+		// the CURRENT code leaves behind has expansion OFF.
+		//
+		// What survives both corrections, and is the only reason the step is still
+		// appended: the sync is Google's behaviour as this package documents it, not
+		// something this service verified, and nothing here has established what
+		// happens to a non-shared budget's name if its campaign is later removed. A
+		// campaign predating this file's opt-out could also still be sitting under a
+		// re-created budget of the original name. Both are narrow, neither is disproved,
+		// and the cost of the hedge is one UI check the operator is already being sent
+		// to make. The two arms below stay silent because there the budget itself is
+		// the open question and the campaign create provably was never reached.
+		steps = append(steps, expansionActionRequiredIfExists)
+		return namePartial(), fmt.Errorf("google-ads performance max budget %q already exists (DUPLICATE_NAME) and could not be safely reused (%v) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, reuseErr, err)
+	case createOutcomeAmbiguous(err):
 		return namePartial(), fmt.Errorf("google-ads performance max budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+	default:
+		return nil, fmt.Errorf("google-ads performance max budget creation failed: %w", err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency)", budgetID, in.Budget))
 
 	budgetPartial := func() *CampaignResult {
 		r := namePartial()

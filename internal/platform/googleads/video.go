@@ -199,21 +199,29 @@ func (c *Client) createVideoCampaignCascade(ctx context.Context, in CampaignInpu
 		ExplicitlyShared: &shared,
 	}}}}
 	budgetResp, err := c.doRequest(ctx, http.MethodPost, c.customerPath("campaignBudgets:mutate"), budgetReq, false)
-	if err != nil {
-		switch {
-		case isDuplicateBudgetNameErr(err):
-			return namePartial(), fmt.Errorf("google-ads video budget %q already exists (DUPLICATE_NAME) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, err)
-		case createOutcomeAmbiguous(err):
+	// The arms are a single switch rather than `if err != nil { switch }` so the
+	// DUPLICATE_NAME arm can resolve to a usable budget instead of only to an error; see
+	// reuseBudgetAfterDuplicateName.
+	var budgetResource, budgetID string
+	switch {
+	case err == nil:
+		budgetResource, budgetID, err = firstResourceName(budgetResp)
+		if err != nil {
 			return namePartial(), fmt.Errorf("google-ads video budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
-		default:
-			return nil, fmt.Errorf("google-ads video budget creation failed: %w", err)
 		}
-	}
-	budgetResource, budgetID, err := firstResourceName(budgetResp)
-	if err != nil {
+		steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency)", budgetID, in.Budget))
+	case isDuplicateBudgetNameErr(err):
+		resource, id, reuseSteps, reuseErr := c.reuseBudgetAfterDuplicateName(ctx, budgetName, pf.amountMicros, in.Budget)
+		if reuseErr != nil {
+			return namePartial(), fmt.Errorf("google-ads video budget %q already exists (DUPLICATE_NAME) and could not be safely reused (%v) — a prior attempt likely created it; verify in Google Ads before retrying: %w", budgetName, reuseErr, err)
+		}
+		budgetResource, budgetID = resource, id
+		steps = append(steps, reuseSteps...)
+	case createOutcomeAmbiguous(err):
 		return namePartial(), fmt.Errorf("google-ads video budget creation UNCONFIRMED (%q may exist — verify in Google Ads before retrying): %w", budgetName, err)
+	default:
+		return nil, fmt.Errorf("google-ads video budget creation failed: %w", err)
 	}
-	steps = append(steps, fmt.Sprintf("Campaign budget created: %s (%.2f/day in account currency)", budgetID, in.Budget))
 
 	budgetPartial := func() *CampaignResult {
 		r := namePartial()
