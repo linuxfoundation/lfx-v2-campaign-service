@@ -11,6 +11,7 @@ import (
 	"time"
 
 	briefs "github.com/linuxfoundation/lfx-v2-campaign-service/gen/lfx_v2_campaign_service_briefs"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
 )
@@ -89,10 +90,11 @@ func sendWorkflowHarness(t *testing.T) (*BriefService, *fakeCampaignRepo, *fakeF
 }
 
 func sendWorkflowPayload(briefIDs []string, dates []string) *briefs.CreateSendWorkflowPayload {
+	sourceURL := "https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit"
 	return &briefs.CreateSendWorkflowPayload{
 		ProjectID: "tlf",
 		Input: &briefs.SendWorkflowInput{
-			SourceWorkflowURL: "https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit",
+			SourceWorkflowURL: &sourceURL,
 			Name:              "2026 Cloud Native Survey - Workflow",
 			BriefIds:          briefIDs,
 			SendDates:         dates,
@@ -130,6 +132,89 @@ func TestCreateSendWorkflow_MapsStagedDraftsInSendOrder(t *testing.T) {
 	}
 	if res.IsEnabled {
 		t.Error("the created workflow must be reported disabled")
+	}
+}
+
+// fakeSeriesAudienceRepo answers ListAudiences PER BRIEF.
+//
+// A separate fake from audience_test.go's, which returns every stored row whatever brief is
+// asked for -- that is harmless where it is used, but here it would make two sends appear to
+// share an audience no matter what, turning the rule under test into a tautology.
+type fakeSeriesAudienceRepo struct {
+	domain.AudienceRepository // every other method panics if this path ever calls one
+
+	byBrief map[string]string
+}
+
+func (r *fakeSeriesAudienceRepo) ListAudiences(_ context.Context, _, briefID string) ([]*model.CampaignAudience, error) {
+	listID, ok := r.byBrief[briefID]
+	if !ok {
+		return nil, nil
+	}
+	return []*model.CampaignAudience{{
+		BriefID:              briefID,
+		Platform:             model.ProviderHubSpot,
+		Status:               model.AudienceBuilt,
+		PlatformMasterListID: listID,
+		CreatedAt:            time.Now(),
+	}}, nil
+}
+
+func TestCreateSendWorkflow_UsesTheConfiguredWorkflowWhenNoneIsNamed(t *testing.T) {
+	// The ordinary case. Making an operator paste a workflow URL to do the usual thing would be a
+	// step with no decision in it, so an absent source falls back to the deployment's own.
+	s, _, hs := sendWorkflowHarness(t)
+	p := sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)
+	p.Input.SourceWorkflowURL = nil
+
+	if _, err := s.CreateSendWorkflow(context.Background(), p); err != nil {
+		t.Fatalf("CreateSendWorkflow: %v", err)
+	}
+	if hs.flowID != defaultSurveySequenceWorkflowID {
+		t.Errorf("flow id = %q, want the configured default %q", hs.flowID, defaultSurveySequenceWorkflowID)
+	}
+}
+
+func TestCreateSendWorkflow_RefusesSendsBuiltAgainstDifferentAudiences(t *testing.T) {
+	// A workflow enrolls contacts ONCE and sends every step to them. If the sends were built
+	// against different audiences, any single choice sends two of the three emails to people the
+	// operator never selected for them -- and the enrollment step looks correct either way.
+	s, _, hs := sendWorkflowHarness(t)
+	audiences := &fakeSeriesAudienceRepo{byBrief: map[string]string{
+		"b-promo":    "list-1",
+		"b-reminder": "list-2",
+	}}
+	s.SetWizardBackend(newFakeWizardSessionRepo(), fakeFlowResolver{client: hs}, audiences)
+
+	_, err := s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil))
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	var conflict *briefs.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("error = %T (%v), want a 409", err, err)
+	}
+	if !strings.Contains(conflict.Message, "send 2") {
+		t.Errorf("message = %q, want it to name which send disagrees", conflict.Message)
+	}
+	if hs.calls != 0 {
+		t.Error("a workflow was created despite the sends disagreeing about their audience")
+	}
+}
+
+func TestCreateSendWorkflow_EnrollsTheAudienceTheSendsShare(t *testing.T) {
+	s, _, hs := sendWorkflowHarness(t)
+	audiences := &fakeSeriesAudienceRepo{byBrief: map[string]string{
+		"b-promo":    "list-9",
+		"b-reminder": "list-9",
+	}}
+	s.SetWizardBackend(newFakeWizardSessionRepo(), fakeFlowResolver{client: hs}, audiences)
+
+	if _, err := s.CreateSendWorkflow(context.Background(), sendWorkflowPayload([]string{"b-promo", "b-reminder"}, nil)); err != nil {
+		t.Fatalf("CreateSendWorkflow: %v", err)
+	}
+	if hs.opts.EnrollmentListID != "list-9" {
+		t.Errorf("enrollment list = %q, want the audience the sends share", hs.opts.EnrollmentListID)
 	}
 }
 
@@ -175,7 +260,7 @@ func TestCreateSendWorkflow_RefusesBeforeTouchingHubSpot(t *testing.T) {
 			s, _, hs := sendWorkflowHarness(t)
 			p := sendWorkflowPayload(tc.briefIDs, tc.dates)
 			if tc.url != "" {
-				p.Input.SourceWorkflowURL = tc.url
+				p.Input.SourceWorkflowURL = &tc.url
 			}
 
 			_, err := s.CreateSendWorkflow(context.Background(), p)

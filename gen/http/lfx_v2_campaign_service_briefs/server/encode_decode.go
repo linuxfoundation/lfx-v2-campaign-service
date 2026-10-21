@@ -6732,7 +6732,7 @@ func unmarshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaign
 // value of type *SendWorkflowInputRequestBody.
 func unmarshalSendWorkflowInputRequestBodyToLfxv2campaignservicebriefsSendWorkflowInput(v *SendWorkflowInputRequestBody) *lfxv2campaignservicebriefs.SendWorkflowInput {
 	res := &lfxv2campaignservicebriefs.SendWorkflowInput{
-		SourceWorkflowURL: *v.SourceWorkflowURL,
+		SourceWorkflowURL: v.SourceWorkflowURL,
 		Name:              *v.Name,
 	}
 	res.BriefIds = make([]string, len(v.BriefIds))

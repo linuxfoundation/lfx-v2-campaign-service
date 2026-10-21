@@ -15867,6 +15867,7 @@ paths:
                             example:
                                 dated_steps: 8476403701307200312
                                 edit_url: Qui est necessitatibus voluptas maxime.
+                                enrollment_list_id: Accusamus quia ea voluptatem veniam.
                                 flow_id: Dolor aut aut quia tempora tempora.
                                 is_enabled: true
                                 name: Quo accusamus aut.
@@ -23957,7 +23958,7 @@ components:
                     maxItems: 10
                 source_workflow_url:
                     type: string
-                    description: The HubSpot workflow to copy the schedule and enrollment from. Its editor URL, or its bare numeric id. It is only ever READ.
+                    description: 'The HubSpot workflow to copy the schedule, enrollment and suppression from. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment''s configured survey-sequence workflow is used, which is the ordinary case. It is only ever READ.'
                     example: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
                     minLength: 1
                     maxLength: 500
@@ -23972,7 +23973,6 @@ components:
                     - "2026-10-23"
                 source_workflow_url: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
             required:
-                - source_workflow_url
                 - name
                 - brief_ids
         SendWorkflowResult:
@@ -23987,6 +23987,10 @@ components:
                     type: string
                     description: Where to review and enable it
                     example: Qui est necessitatibus voluptas maxime.
+                enrollment_list_id:
+                    type: string
+                    description: The audience the new workflow enrolls, or empty when the source workflow's own enrollment was kept
+                    example: Accusamus quia ea voluptatem veniam.
                 flow_id:
                     type: string
                     description: HubSpot's id for the new workflow
@@ -24015,6 +24019,7 @@ components:
             example:
                 dated_steps: 8476403701307200312
                 edit_url: Qui est necessitatibus voluptas maxime.
+                enrollment_list_id: Accusamus quia ea voluptatem veniam.
                 flow_id: Dolor aut aut quia tempora tempora.
                 is_enabled: true
                 name: Quo accusamus aut.

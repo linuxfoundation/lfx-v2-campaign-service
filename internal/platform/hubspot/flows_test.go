@@ -153,6 +153,63 @@ func TestCloneFlowWithEmails_MapsEmailsAndDatesInFlowOrder(t *testing.T) {
 	}
 }
 
+func TestCloneFlowWithEmails_EnrollsThisCampaignsAudience(t *testing.T) {
+	// Left alone, the clone would send this campaign's emails to the SOURCE campaign's audience.
+	// That is invisible in the editor, where the enrollment step looks correctly filled in.
+	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
+
+	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
+		Name:             "Survey 2026",
+		EmailIDs:         []string{"a", "b", "c"},
+		EnrollmentListID: "list-77",
+	})
+	if err != nil {
+		t.Fatalf("CloneFlowWithEmails: %v", err)
+	}
+
+	enrollment := (*posted)["enrollmentCriteria"].(map[string]any)
+	branch := enrollment["listFilterBranch"].(map[string]any)
+	inner := branch["filterBranches"].([]any)
+	if len(inner) != 1 {
+		t.Fatalf("expected exactly one enrollment branch, got %d -- the source's own list must be replaced, not joined", len(inner))
+	}
+	filters := inner[0].(map[string]any)["filters"].([]any)
+	if len(filters) != 1 {
+		t.Fatalf("expected one membership filter, got %d", len(filters))
+	}
+	filter := filters[0].(map[string]any)
+	if filter["listId"] != "list-77" || filter["operator"] != "IN_LIST" || filter["filterType"] != "IN_LIST" {
+		t.Errorf("enrollment filter = %v, want an IN_LIST on list-77", filter)
+	}
+	if ref.EnrollmentListID != "list-77" {
+		t.Errorf("EnrollmentListID = %q, want it reported so the operator can see who is enrolled", ref.EnrollmentListID)
+	}
+}
+
+func TestCloneFlowWithEmails_KeepsTheSourceEnrollmentWhenNoListIsGiven(t *testing.T) {
+	// No list means "this service could not tell who to enrol". Keeping the source's criteria is
+	// the honest outcome; writing an empty filter would enroll everyone or no one.
+	c, posted, _ := flowServer(t, map[string]any{"id": "99"})
+
+	ref, err := c.CloneFlowWithEmails(context.Background(), "1841232183", CloneFlowOptions{
+		Name:     "Survey 2026",
+		EmailIDs: []string{"a", "b", "c"},
+	})
+	if err != nil {
+		t.Fatalf("CloneFlowWithEmails: %v", err)
+	}
+	enrollment := (*posted)["enrollmentCriteria"].(map[string]any)
+	if _, rewritten := enrollment["listFilterBranch"]; rewritten {
+		t.Error("the source's enrollment was rewritten although no audience was given")
+	}
+	if enrollment["shouldReEnroll"] != false {
+		t.Errorf("the source's own enrollment fields were not preserved: %v", enrollment)
+	}
+	if ref.EnrollmentListID != "" {
+		t.Errorf("EnrollmentListID = %q, want empty to say the source's audience was kept", ref.EnrollmentListID)
+	}
+}
+
 func TestCloneFlowWithEmails_IsAlwaysCreatedDisabled(t *testing.T) {
 	// The source is enabled, and HubSpot is made to answer with isEnabled true, which is
 	// the shape that would matter most: a clone that inherited "on" would start enrolling

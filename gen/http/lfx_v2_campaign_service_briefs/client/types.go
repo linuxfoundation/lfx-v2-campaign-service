@@ -526,6 +526,9 @@ type CreateSendWorkflowResponseBody struct {
 	SendEmailSteps *int `form:"send_email_steps,omitempty" json:"send_email_steps,omitempty" xml:"send_email_steps,omitempty"`
 	// How many wait-until-date steps had their date replaced
 	DatedSteps *int `form:"dated_steps,omitempty" json:"dated_steps,omitempty" xml:"dated_steps,omitempty"`
+	// The audience the new workflow enrolls, or empty when the source workflow's
+	// own enrollment was kept
+	EnrollmentListID *string `form:"enrollment_list_id,omitempty" json:"enrollment_list_id,omitempty" xml:"enrollment_list_id,omitempty"`
 }
 
 // AdoptCampaignResponseBody is the type of the
@@ -4558,9 +4561,11 @@ type CampaignCreateInputRequestBody struct {
 
 // SendWorkflowInputRequestBody is used to define fields on request body types.
 type SendWorkflowInputRequestBody struct {
-	// The HubSpot workflow to copy the schedule and enrollment from. Its editor
-	// URL, or its bare numeric id. It is only ever READ.
-	SourceWorkflowURL string `form:"source_workflow_url" json:"source_workflow_url" xml:"source_workflow_url"`
+	// The HubSpot workflow to copy the schedule, enrollment and suppression from.
+	// Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's
+	// configured survey-sequence workflow is used, which is the ordinary case. It
+	// is only ever READ.
+	SourceWorkflowURL *string `form:"source_workflow_url,omitempty" json:"source_workflow_url,omitempty" xml:"source_workflow_url,omitempty"`
 	// Name for the new workflow
 	Name string `form:"name" json:"name" xml:"name"`
 	// The briefs whose staged drafts this workflow sends, in SEND ORDER. One per
@@ -5894,14 +5899,15 @@ func NewCreateCampaignsUnauthorized(body *CreateCampaignsUnauthorizedResponseBod
 // response.
 func NewCreateSendWorkflowResultCreated(body *CreateSendWorkflowResponseBody) *lfxv2campaignservicebriefs.SendWorkflowResult {
 	v := &lfxv2campaignservicebriefs.SendWorkflowResult{
-		FlowID:         *body.FlowID,
-		Name:           *body.Name,
-		EditURL:        *body.EditURL,
-		SourceFlowID:   *body.SourceFlowID,
-		SourceFlowName: body.SourceFlowName,
-		IsEnabled:      *body.IsEnabled,
-		SendEmailSteps: *body.SendEmailSteps,
-		DatedSteps:     *body.DatedSteps,
+		FlowID:           *body.FlowID,
+		Name:             *body.Name,
+		EditURL:          *body.EditURL,
+		SourceFlowID:     *body.SourceFlowID,
+		SourceFlowName:   body.SourceFlowName,
+		IsEnabled:        *body.IsEnabled,
+		SendEmailSteps:   *body.SendEmailSteps,
+		DatedSteps:       *body.DatedSteps,
+		EnrollmentListID: body.EnrollmentListID,
 	}
 
 	return v
@@ -14405,11 +14411,13 @@ func ValidateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody) (e
 	if body.BriefIds == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("brief_ids", "body"))
 	}
-	if utf8.RuneCountInString(body.SourceWorkflowURL) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 1, true))
-	}
-	if utf8.RuneCountInString(body.SourceWorkflowURL) > 500 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 500, false))
+	if body.SourceWorkflowURL != nil {
+		if utf8.RuneCountInString(*body.SourceWorkflowURL) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.source_workflow_url", *body.SourceWorkflowURL, utf8.RuneCountInString(*body.SourceWorkflowURL), 1, true))
+		}
+		if utf8.RuneCountInString(*body.SourceWorkflowURL) > 500 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.source_workflow_url", *body.SourceWorkflowURL, utf8.RuneCountInString(*body.SourceWorkflowURL), 500, false))
+		}
 	}
 	if utf8.RuneCountInString(body.Name) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", body.Name, utf8.RuneCountInString(body.Name), 1, true))
@@ -14435,11 +14443,13 @@ func validateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody, pa
 	if body.BriefIds == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("brief_ids", path))
 	}
-	if utf8.RuneCountInString(body.SourceWorkflowURL) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 1, true))
-	}
-	if utf8.RuneCountInString(body.SourceWorkflowURL) > 500 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 500, false))
+	if body.SourceWorkflowURL != nil {
+		if utf8.RuneCountInString(*body.SourceWorkflowURL) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".source_workflow_url", *body.SourceWorkflowURL, utf8.RuneCountInString(*body.SourceWorkflowURL), 1, true))
+		}
+		if utf8.RuneCountInString(*body.SourceWorkflowURL) > 500 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError(path+".source_workflow_url", *body.SourceWorkflowURL, utf8.RuneCountInString(*body.SourceWorkflowURL), 500, false))
+		}
 	}
 	if utf8.RuneCountInString(body.Name) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", body.Name, utf8.RuneCountInString(body.Name), 1, true))

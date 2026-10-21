@@ -228,7 +228,7 @@ var JobCreateResponse = Type("job-create-response", func() {
 // service's own record (the campaign row's platform id), and a client that had to look that
 // up could pair a brief with somebody else's email.
 var SendWorkflowInput = Type("send-workflow-input", func() {
-	Attribute("source_workflow_url", String, "The HubSpot workflow to copy the schedule and enrollment from. Its editor URL, or its bare numeric id. It is only ever READ.", func() {
+	Attribute("source_workflow_url", String, "The HubSpot workflow to copy the schedule, enrollment and suppression from. Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's configured survey-sequence workflow is used, which is the ordinary case. It is only ever READ.", func() {
 		MinLength(1)
 		MaxLength(500)
 		Example("https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit")
@@ -249,7 +249,10 @@ var SendWorkflowInput = Type("send-workflow-input", func() {
 		MaxLength(10)
 		Example([]string{"2026-10-09", "2026-10-19", "2026-10-23"})
 	})
-	Required("source_workflow_url", "name", "brief_ids")
+	// source_workflow_url is NOT required: a survey series is normally built from the
+	// deployment's configured workflow, and making an operator find that URL in HubSpot to do
+	// the ordinary thing would be a step with no decision in it.
+	Required("name", "brief_ids")
 })
 
 // SendWorkflowResult is the created workflow, for the human who has to review and enable it.
@@ -262,6 +265,7 @@ var SendWorkflowResult = Type("send-workflow-result", func() {
 	Attribute("is_enabled", Boolean, "Always false on create: the workflow sends nothing until a human enables it in HubSpot")
 	Attribute("send_email_steps", Int, "How many send steps were pointed at this campaign's drafts")
 	Attribute("dated_steps", Int, "How many wait-until-date steps had their date replaced")
+	Attribute("enrollment_list_id", String, "The audience the new workflow enrolls, or empty when the source workflow's own enrollment was kept")
 	Required("flow_id", "name", "edit_url", "source_flow_id", "is_enabled", "send_email_steps", "dated_steps")
 })
 

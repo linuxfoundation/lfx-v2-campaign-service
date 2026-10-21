@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -14,12 +15,23 @@ import (
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/domain/model"
 	"github.com/linuxfoundation/lfx-v2-campaign-service/internal/platform/hubspot"
+	"github.com/linuxfoundation/lfx-v2-campaign-service/pkg/constants"
 )
 
 // sendDateLayout is the calendar-date form the API takes. Date-only on purpose: a workflow
 // step's SEND HOUR belongs to the source workflow, which is where an operator set their
 // sending-hours policy, and accepting a time here would quietly override it.
 const sendDateLayout = "2006-01-02"
+
+// defaultSurveySequenceWorkflowID is the workflow a survey series is cloned from when the
+// deployment names no other: "26Q2 - LF Research - FINOS 2026: Workflow (Survey Promo)", which is
+// the workflow the standalone survey tool this replaces cloned for every sequence it built.
+//
+// Carried as a DEFAULT rather than a hard requirement on the request, because an operator should
+// not have to find a workflow URL in HubSpot to do the ordinary thing. A request may still name a
+// different workflow, and a deployment on another portal must, since this id exists in one portal
+// only.
+const defaultSurveySequenceWorkflowID = "1841232183"
 
 // maxSendWorkflowBriefs bounds one workflow's sends, matching the design's MaxLength.
 // Restated here because the design's bound is the published contract and this is the one
@@ -60,11 +72,20 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 		return nil, &briefs.BadRequestError{Code: "400", Message: "input is required"}
 	}
 
-	flowID := hubspot.ParseFlowID(p.Input.SourceWorkflowURL)
-	if flowID == "" {
-		return nil, &briefs.BadRequestError{
-			Code:    "400",
-			Message: "source_workflow_url names no workflow; paste the workflow's URL from HubSpot, which ends /flow/{id}/edit",
+	// An unnamed source is the ordinary case: the deployment's configured sequence workflow is
+	// what a survey series is normally built from. Only a request that NAMES something unusable
+	// is refused, so a blank field falls back rather than failing.
+	flowID := defaultSurveySequenceWorkflowID
+	if configured := strings.TrimSpace(os.Getenv(constants.EnvSurveySequenceWorkflowID)); configured != "" {
+		flowID = configured
+	}
+	if named := strings.TrimSpace(derefString(p.Input.SourceWorkflowURL)); named != "" {
+		flowID = hubspot.ParseFlowID(named)
+		if flowID == "" {
+			return nil, &briefs.BadRequestError{
+				Code:    "400",
+				Message: "source_workflow_url names no workflow; paste the workflow's URL from HubSpot, which ends /flow/{id}/edit",
+			}
 		}
 	}
 
@@ -100,6 +121,11 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 		return nil, eerr
 	}
 
+	enrollmentListID, aerr := s.seriesAudienceListID(ctx, p.ProjectID, p.Input.BriefIds)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	client, _, rerr := resolver.ResolveHubSpotClient(ctx, p.ProjectID)
 	if rerr != nil {
 		if errors.Is(rerr, domain.ErrNotFound) {
@@ -113,9 +139,10 @@ func (s *BriefService) CreateSendWorkflow(ctx context.Context, p *briefs.CreateS
 	// another project's email. This path names no stranger's asset: every email id came from
 	// this project's own campaign rows, and the workflow it copies is one the operator pasted.
 	ref, cerr := client.CloneFlowWithEmails(ctx, flowID, hubspot.CloneFlowOptions{
-		Name:      name,
-		EmailIDs:  emailIDs,
-		SendDates: sendDates,
+		Name:             name,
+		EmailIDs:         emailIDs,
+		SendDates:        sendDates,
+		EnrollmentListID: enrollmentListID,
 	})
 	if cerr != nil {
 		return nil, mapFlowCloneErr(cerr)
@@ -202,6 +229,89 @@ func (s *BriefService) stagedEmailIDs(
 		emailIDs = append(emailIDs, emailID)
 	}
 	return emailIDs, nil
+}
+
+// seriesAudienceListID is the HubSpot list the workflow enrolls: the audience the series shares.
+//
+// ONE list, because a workflow enrolls contacts once and then sends every step to them. The sends
+// are separate briefs with separate audiences in this service, so this is where that modelling
+// meets HubSpot's -- and the two only agree when the sends were built against the same audience.
+//
+// A disagreement is REFUSED rather than resolved by picking one. Either choice would send two of
+// the three emails to people the operator never selected for them, and nothing downstream would
+// show it: the workflow's enrollment step looks correctly filled in whichever list it names.
+//
+// An absent audience is not refused here. Staging already requires one, so a brief with a staged
+// draft has an audience; a brief without a draft is refused earlier, with a message that says to
+// stage it. Falling back to the source workflow's own enrollment keeps this from inventing a
+// second reason to fail for a state the earlier check already covers.
+func (s *BriefService) seriesAudienceListID(ctx context.Context, projectID string, briefIDs []string) (string, error) {
+	_, _, audiences := s.wizardDeps()
+	if audiences == nil {
+		// The audience repository is an OPTIONAL capability (it binds with the wizard's
+		// collaborators). Without it the workflow still builds, enrolling the source's own
+		// audience, which the result reports -- better than refusing a build for a read that
+		// only narrows who it enrolls.
+		return "", nil
+	}
+
+	listID := ""
+	for i, briefID := range briefIDs {
+		built, err := latestBuiltAudience(ctx, audiences, projectID, briefID)
+		if err != nil || built == nil {
+			// Unreadable is treated as absent, deliberately: the workflow still builds, enrolling
+			// the source's own audience, and the result says which list it used. Failing the whole
+			// build on a read this path can do without would be worse than saying what happened.
+			continue
+		}
+		masterListID := strings.TrimSpace(built.PlatformMasterListID)
+		if masterListID == "" {
+			continue
+		}
+		if listID == "" {
+			listID = masterListID
+			continue
+		}
+		if masterListID != listID {
+			return "", &briefs.ConflictError{
+				Code: "409",
+				Message: fmt.Sprintf(
+					"send %d is built against a different audience than the earlier sends; a workflow enrolls one audience for the whole series",
+					i+1),
+			}
+		}
+	}
+	return listID, nil
+}
+
+// latestBuiltAudience is the newest BUILT HubSpot audience under a brief, or nil.
+//
+// Newest, because composing again mints a second list and the latest one is what staging attached
+// to the draft -- enrolling an earlier one would send to an audience the drafts themselves do not
+// use. Only `built` counts: a building or failed audience has no usable list behind it.
+func latestBuiltAudience(ctx context.Context, audiences domain.AudienceRepository, projectID, briefID string) (*model.CampaignAudience, error) {
+	rows, err := audiences.ListAudiences(ctx, projectID, briefID)
+	if err != nil {
+		return nil, err
+	}
+	var newest *model.CampaignAudience
+	for _, row := range rows {
+		if row == nil || row.Platform != model.ProviderHubSpot || row.Status != model.AudienceBuilt {
+			continue
+		}
+		if newest == nil || row.CreatedAt.After(newest.CreatedAt) {
+			newest = row
+		}
+	}
+	return newest, nil
+}
+
+// derefString reads an optional request attribute, which Goa models as a pointer.
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 // parseSendDates turns the request's calendar dates into times, preserving order.

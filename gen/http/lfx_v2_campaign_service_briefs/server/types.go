@@ -526,6 +526,9 @@ type CreateSendWorkflowResponseBody struct {
 	SendEmailSteps int `form:"send_email_steps" json:"send_email_steps" xml:"send_email_steps"`
 	// How many wait-until-date steps had their date replaced
 	DatedSteps int `form:"dated_steps" json:"dated_steps" xml:"dated_steps"`
+	// The audience the new workflow enrolls, or empty when the source workflow's
+	// own enrollment was kept
+	EnrollmentListID *string `form:"enrollment_list_id,omitempty" json:"enrollment_list_id,omitempty" xml:"enrollment_list_id,omitempty"`
 }
 
 // AdoptCampaignResponseBody is the type of the
@@ -4558,8 +4561,10 @@ type CampaignCreateInputRequestBody struct {
 
 // SendWorkflowInputRequestBody is used to define fields on request body types.
 type SendWorkflowInputRequestBody struct {
-	// The HubSpot workflow to copy the schedule and enrollment from. Its editor
-	// URL, or its bare numeric id. It is only ever READ.
+	// The HubSpot workflow to copy the schedule, enrollment and suppression from.
+	// Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's
+	// configured survey-sequence workflow is used, which is the ordinary case. It
+	// is only ever READ.
 	SourceWorkflowURL *string `form:"source_workflow_url,omitempty" json:"source_workflow_url,omitempty" xml:"source_workflow_url,omitempty"`
 	// Name for the new workflow
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
@@ -4829,14 +4834,15 @@ func NewCreateCampaignsResponseBody(res *lfxv2campaignservicebriefs.JobCreateRes
 // "lfx-v2-campaign-service-briefs" service.
 func NewCreateSendWorkflowResponseBody(res *lfxv2campaignservicebriefs.SendWorkflowResult) *CreateSendWorkflowResponseBody {
 	body := &CreateSendWorkflowResponseBody{
-		FlowID:         res.FlowID,
-		Name:           res.Name,
-		EditURL:        res.EditURL,
-		SourceFlowID:   res.SourceFlowID,
-		SourceFlowName: res.SourceFlowName,
-		IsEnabled:      res.IsEnabled,
-		SendEmailSteps: res.SendEmailSteps,
-		DatedSteps:     res.DatedSteps,
+		FlowID:           res.FlowID,
+		Name:             res.Name,
+		EditURL:          res.EditURL,
+		SourceFlowID:     res.SourceFlowID,
+		SourceFlowName:   res.SourceFlowName,
+		IsEnabled:        res.IsEnabled,
+		SendEmailSteps:   res.SendEmailSteps,
+		DatedSteps:       res.DatedSteps,
+		EnrollmentListID: res.EnrollmentListID,
 	}
 	return body
 }
@@ -9456,9 +9462,6 @@ func validateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 // ValidateSendWorkflowInputRequestBody runs the validations defined on
 // send-workflow-input
 func ValidateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody) (err error) {
-	if body.SourceWorkflowURL == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("source_workflow_url", "body"))
-	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
@@ -9496,9 +9499,6 @@ func ValidateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody) (e
 // validateSendWorkflowInputRequestBody checks send-workflow-input and reports
 // errors using the path supplied by its caller
 func validateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody, path string) (err error) {
-	if body.SourceWorkflowURL == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("source_workflow_url", path))
-	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}

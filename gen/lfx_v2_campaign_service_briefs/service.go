@@ -2014,9 +2014,11 @@ type RemoveKeywordTargetingPayload struct {
 }
 
 type SendWorkflowInput struct {
-	// The HubSpot workflow to copy the schedule and enrollment from. Its editor
-	// URL, or its bare numeric id. It is only ever READ.
-	SourceWorkflowURL string
+	// The HubSpot workflow to copy the schedule, enrollment and suppression from.
+	// Its editor URL, or its bare numeric id. OPTIONAL: omitted, the deployment's
+	// configured survey-sequence workflow is used, which is the ordinary case. It
+	// is only ever READ.
+	SourceWorkflowURL *string
 	// Name for the new workflow
 	Name string
 	// The briefs whose staged drafts this workflow sends, in SEND ORDER. One per
@@ -2048,6 +2050,9 @@ type SendWorkflowResult struct {
 	SendEmailSteps int
 	// How many wait-until-date steps had their date replaced
 	DatedSteps int
+	// The audience the new workflow enrolls, or empty when the source workflow's
+	// own enrollment was kept
+	EnrollmentListID *string
 }
 
 // SetWizardSendListPayload is the payload type of the

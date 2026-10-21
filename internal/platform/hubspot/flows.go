@@ -77,6 +77,10 @@ type FlowRef struct {
 	// what tells an operator whether the clone matched the shape they expected.
 	SendEmailSteps int `json:"send_email_steps"`
 	DatedSteps     int `json:"dated_steps"`
+	// EnrollmentListID is the audience the new workflow enrolls, or "" when the source's own
+	// enrollment was kept. Reported because it decides WHO receives the series, and an operator
+	// reading a success message has no other way to tell which of the two happened.
+	EnrollmentListID string `json:"enrollment_list_id"`
 }
 
 // FlowEditURL is where a human reviews and enables a workflow.
@@ -118,6 +122,15 @@ type CloneFlowOptions struct {
 	// step. Only the DATE is replaced -- the step's time of day stays the source's,
 	// because that is a sending-hours decision its author made and a date carries no time.
 	SendDates []time.Time
+	// EnrollmentListID replaces WHO the workflow enrolls: the campaign's own audience, rather
+	// than whichever list the source workflow was built around. Empty keeps the source's
+	// enrollment criteria untouched.
+	//
+	// This is the difference between a clone that is a template and a clone that is a campaign.
+	// Left alone, the new workflow would send this campaign's emails to the SOURCE campaign's
+	// audience -- a mistake that is invisible in the editor, because the enrollment step looks
+	// correctly filled in.
+	EnrollmentListID string
 }
 
 // CloneFlowWithEmails recreates a workflow with this campaign's emails in its send
@@ -180,6 +193,35 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 		}
 	}
 
+	if strings.TrimSpace(opts.EnrollmentListID) != "" {
+		enrollment, ok := flow["enrollmentCriteria"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("hubspot: workflow %s has no enrollment criteria to re-point", flowID)
+		}
+		// REPLACES the list branch rather than merging into it. The source's own membership
+		// filters name the source campaign's audience, and keeping them alongside this one would
+		// enroll both -- so the operator's list would be a widening of somebody else's, not the
+		// audience they built.
+		//
+		// The shape is HubSpot's: an OR branch holding one AND branch holding one IN_LIST filter.
+		// A flatter form is accepted by the create call and then read back by the editor as no
+		// enrollment at all.
+		enrollment["listFilterBranch"] = map[string]any{
+			"filterBranches": []any{
+				map[string]any{
+					"filterBranches":       []any{},
+					"filters":              []any{map[string]any{"listId": opts.EnrollmentListID, "operator": "IN_LIST", "filterType": "IN_LIST"}},
+					"filterBranchType":     "AND",
+					"filterBranchOperator": "AND",
+				},
+			},
+			"filters":              []any{},
+			"filterBranchType":     "OR",
+			"filterBranchOperator": "OR",
+		}
+		flow["enrollmentCriteria"] = enrollment
+	}
+
 	// Rebuilt field by field rather than posted back wholesale: the GET response carries
 	// server-owned fields (id, revision ids, timestamps, counters) that the create
 	// endpoint either rejects or reinterprets as a claim about the NEW flow. A field
@@ -218,14 +260,15 @@ func (c *Client) CloneFlowWithEmails(ctx context.Context, flowID string, opts Cl
 	}
 
 	return &FlowRef{
-		FlowID:         created.ID,
-		Name:           orDefaultString(created.Name, name),
-		EditURL:        c.FlowEditURL(created.ID),
-		SourceFlowID:   flowID,
-		SourceFlowName: stringField(flow, "name"),
-		IsEnabled:      created.IsEnabled,
-		SendEmailSteps: len(sendSteps),
-		DatedSteps:     len(opts.SendDates),
+		FlowID:           created.ID,
+		Name:             orDefaultString(created.Name, name),
+		EditURL:          c.FlowEditURL(created.ID),
+		SourceFlowID:     flowID,
+		SourceFlowName:   stringField(flow, "name"),
+		IsEnabled:        created.IsEnabled,
+		SendEmailSteps:   len(sendSteps),
+		DatedSteps:       len(opts.SendDates),
+		EnrollmentListID: strings.TrimSpace(opts.EnrollmentListID),
 	}, nil
 }
 
