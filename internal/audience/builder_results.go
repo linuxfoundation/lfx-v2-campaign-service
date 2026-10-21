@@ -173,7 +173,7 @@ type ComposedList struct {
 // requested — ExclusionIDs resolves an id selected both ways in favour of inclusion,
 // and an operator reading the result needs to see which ids the master really unions.
 type ComposeOutcome struct {
-	Master        ComposedList
+	Master ComposedList
 	// Suppression is the project's standing standard suppression list (StandardSuppressionName),
 	// found or created and REUSED across audiences; nil when the selection did not include every
 	// resolved standard list.
