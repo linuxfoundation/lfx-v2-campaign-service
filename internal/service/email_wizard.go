@@ -53,6 +53,12 @@ type HubSpotWizardClient interface {
 	GetEmailHTMLWidgets(ctx context.Context, id string) ([]hubspot.EmailHTMLBlock, error)
 	SetEmailHTMLWidgets(ctx context.Context, id string, widgets map[string]string) (*hubspot.Email, error)
 	AuthenticatedPortalID(ctx context.Context) (string, error)
+	// CloneFlowWithEmails belongs to the SEND-WORKFLOW path (CreateSendWorkflow), not the
+	// wizard. It is declared here because both reach HubSpot through the same per-request
+	// resolver, and a second resolver would let the two paths authenticate as different
+	// credentials for the same project -- the exact drift this interface's per-request
+	// resolution exists to prevent.
+	CloneFlowWithEmails(ctx context.Context, flowID string, opts hubspot.CloneFlowOptions) (*hubspot.FlowRef, error)
 }
 
 // HubSpotClientResolver hands the wizard a HubSpot client for one project.

@@ -2082,6 +2082,224 @@ func DecodeCreateCampaignsResponse(decoder func(*http.Response) goahttp.Decoder,
 	}
 }
 
+// BuildCreateSendWorkflowRequest instantiates a HTTP request object with
+// method and path set to call the "lfx-v2-campaign-service-briefs" service
+// "create-send-workflow" endpoint
+func (c *Client) BuildCreateSendWorkflowRequest(ctx context.Context, v any) (*http.Request, error) {
+	var (
+		projectID string
+	)
+	{
+		p, ok := v.(*lfxv2campaignservicebriefs.CreateSendWorkflowPayload)
+		if !ok {
+			return nil, goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "create-send-workflow", "*lfxv2campaignservicebriefs.CreateSendWorkflowPayload", v)
+		}
+		projectID = p.ProjectID
+	}
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: CreateSendWorkflowLfxV2CampaignServiceBriefsPath(projectID)}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("lfx-v2-campaign-service-briefs", "create-send-workflow", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeCreateSendWorkflowRequest returns an encoder for requests sent to the
+// lfx-v2-campaign-service-briefs create-send-workflow server.
+func EncodeCreateSendWorkflowRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*lfxv2campaignservicebriefs.CreateSendWorkflowPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("lfx-v2-campaign-service-briefs", "create-send-workflow", "*lfxv2campaignservicebriefs.CreateSendWorkflowPayload", v)
+		}
+		if p.BearerToken != nil {
+			head := *p.BearerToken
+			if !strings.Contains(head, " ") {
+				req.Header.Set("Authorization", "Bearer "+head)
+			} else {
+				req.Header.Set("Authorization", head)
+			}
+		}
+		body := NewCreateSendWorkflowRequestBody(p)
+		if err := encoder(req).Encode(&body); err != nil {
+			return goahttp.ErrEncodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+		}
+		return nil
+	}
+}
+
+// DecodeCreateSendWorkflowResponse returns a decoder for responses returned by
+// the lfx-v2-campaign-service-briefs create-send-workflow endpoint.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+// DecodeCreateSendWorkflowResponse may return the following errors:
+//   - "BadRequest" (type *lfxv2campaignservicebriefs.BadRequestError): http.StatusBadRequest
+//   - "Conflict" (type *lfxv2campaignservicebriefs.ConflictError): http.StatusConflict
+//   - "ServiceUnavailable" (type *lfxv2campaignservicebriefs.ConnServiceUnavailableError): http.StatusServiceUnavailable
+//   - "InternalServerError" (type *lfxv2campaignservicebriefs.InternalServerError): http.StatusInternalServerError
+//   - "NotFound" (type *lfxv2campaignservicebriefs.NotFoundError): http.StatusNotFound
+//   - "PayloadTooLarge" (type *lfxv2campaignservicebriefs.PayloadTooLargeError): http.StatusRequestEntityTooLarge
+//   - "Unauthorized" (type *lfxv2campaignservicebriefs.UnauthorizedError): http.StatusUnauthorized
+//   - error: internal error
+func DecodeCreateSendWorkflowResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusCreated:
+			var (
+				body CreateSendWorkflowResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			res := NewCreateSendWorkflowResultCreated(&body)
+			return res, nil
+		case http.StatusBadRequest:
+			var (
+				body CreateSendWorkflowBadRequestResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowBadRequestResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, NewCreateSendWorkflowBadRequest(&body)
+		case http.StatusConflict:
+			var (
+				body CreateSendWorkflowConflictResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowConflictResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, NewCreateSendWorkflowConflict(&body)
+		case http.StatusServiceUnavailable:
+			var (
+				body CreateSendWorkflowServiceUnavailableResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowServiceUnavailableResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, NewCreateSendWorkflowServiceUnavailable(&body)
+		case http.StatusInternalServerError:
+			var (
+				body CreateSendWorkflowInternalServerErrorResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowInternalServerErrorResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, NewCreateSendWorkflowInternalServerError(&body)
+		case http.StatusNotFound:
+			var (
+				body CreateSendWorkflowNotFoundResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowNotFoundResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, NewCreateSendWorkflowNotFound(&body)
+		case http.StatusRequestEntityTooLarge:
+			var (
+				body CreateSendWorkflowPayloadTooLargeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowPayloadTooLargeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, NewCreateSendWorkflowPayloadTooLarge(&body)
+		case http.StatusUnauthorized:
+			var (
+				body CreateSendWorkflowUnauthorizedResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			err = ValidateCreateSendWorkflowUnauthorizedResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			var (
+				wwwAuthenticate string
+			)
+			wwwAuthenticateRaw := resp.Header.Get("Www-Authenticate")
+			if wwwAuthenticateRaw == "" {
+				err = goa.MergeErrors(err, goa.MissingFieldError("www_authenticate", "header"))
+			}
+			wwwAuthenticate = wwwAuthenticateRaw
+			if err != nil {
+				return nil, goahttp.ErrValidationError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, NewCreateSendWorkflowUnauthorized(&body, wwwAuthenticate)
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("lfx-v2-campaign-service-briefs", "create-send-workflow", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildAdoptCampaignRequest instantiates a HTTP request object with method and
 // path set to call the "lfx-v2-campaign-service-briefs" service
 // "adopt-campaign" endpoint
@@ -8366,6 +8584,58 @@ func marshalCampaignCreateInputRequestBodyToLfxv2campaignservicebriefsCampaignCr
 		var zero bool
 		if res.NewVersion == zero {
 			res.NewVersion = false
+		}
+	}
+
+	return res
+}
+
+// marshalLfxv2campaignservicebriefsSendWorkflowInputToSendWorkflowInputRequestBody
+// builds a value of type *SendWorkflowInputRequestBody from a value of type
+// *lfxv2campaignservicebriefs.SendWorkflowInput.
+func marshalLfxv2campaignservicebriefsSendWorkflowInputToSendWorkflowInputRequestBody(v *lfxv2campaignservicebriefs.SendWorkflowInput) *SendWorkflowInputRequestBody {
+	res := &SendWorkflowInputRequestBody{
+		SourceWorkflowURL: v.SourceWorkflowURL,
+		Name:              v.Name,
+	}
+	if v.BriefIds != nil {
+		res.BriefIds = make([]string, len(v.BriefIds))
+		for i, val := range v.BriefIds {
+			res.BriefIds[i] = val
+		}
+	} else {
+		res.BriefIds = []string{}
+	}
+	if v.SendDates != nil {
+		res.SendDates = make([]string, len(v.SendDates))
+		for i, val := range v.SendDates {
+			res.SendDates[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalSendWorkflowInputRequestBodyToLfxv2campaignservicebriefsSendWorkflowInput
+// builds a value of type *lfxv2campaignservicebriefs.SendWorkflowInput from a
+// value of type *SendWorkflowInputRequestBody.
+func marshalSendWorkflowInputRequestBodyToLfxv2campaignservicebriefsSendWorkflowInput(v *SendWorkflowInputRequestBody) *lfxv2campaignservicebriefs.SendWorkflowInput {
+	res := &lfxv2campaignservicebriefs.SendWorkflowInput{
+		SourceWorkflowURL: v.SourceWorkflowURL,
+		Name:              v.Name,
+	}
+	if v.BriefIds != nil {
+		res.BriefIds = make([]string, len(v.BriefIds))
+		for i, val := range v.BriefIds {
+			res.BriefIds[i] = val
+		}
+	} else {
+		res.BriefIds = []string{}
+	}
+	if v.SendDates != nil {
+		res.SendDates = make([]string, len(v.SendDates))
+		for i, val := range v.SendDates {
+			res.SendDates[i] = val
 		}
 	}
 

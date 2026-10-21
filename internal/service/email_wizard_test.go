@@ -238,6 +238,13 @@ func (f *fakeWizardHubSpot) GetEmailHTMLWidgets(context.Context, string) ([]hubs
 	return f.blocks, nil
 }
 
+// CloneFlowWithEmails is on this fake only because the resolver's client interface carries
+// it for the send-workflow path; the wizard never calls it. CreateSendWorkflow's own tests
+// use their own double, so a call arriving here means a wizard turn reached the workflow API.
+func (f *fakeWizardHubSpot) CloneFlowWithEmails(context.Context, string, hubspot.CloneFlowOptions) (*hubspot.FlowRef, error) {
+	return nil, errors.New("the wizard must not create workflows")
+}
+
 func (f *fakeWizardHubSpot) SetEmailHTMLWidgets(_ context.Context, id string, widgets map[string]string) (*hubspot.Email, error) {
 	f.wroteWidgets = widgets
 	return &hubspot.Email{ID: id}, nil

@@ -24,6 +24,7 @@ type Client struct {
 	FetchEventURLEndpoint          goa.Endpoint
 	UploadCreativeAssetEndpoint    goa.Endpoint
 	CreateCampaignsEndpoint        goa.Endpoint
+	CreateSendWorkflowEndpoint     goa.Endpoint
 	AdoptCampaignEndpoint          goa.Endpoint
 	GetCampaignEndpoint            goa.Endpoint
 	GetCampaignMetricsEndpoint     goa.Endpoint
@@ -55,7 +56,7 @@ type Client struct {
 
 // NewClient initializes a "lfx-v2-campaign-service-briefs" service client
 // given the endpoints.
-func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
+func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, deleteBrief, fetchEventURL, uploadCreativeAsset, createCampaigns, createSendWorkflow, adoptCampaign, getCampaign, getCampaignMetrics, getCampaignSettings, getBriefMetrics, generateEmailCopy, updateCampaign, toggleCampaignStatus, updateCampaignBudget, updateCampaignBid, applyKeywordActions, addNegativeKeywords, getKeywordTargeting, removeKeywordTargeting, listMetaAdSets, listMetaAds, toggleMetaAdSetStatus, deleteCampaign, getJob, startEmailWizardPlan, planEmailWizard, generateWizardContent, updateWizardSections, cloneWizardEmail, setWizardSendList, chatWizardTurn, getWizardSession goa.Endpoint) *Client {
 	return &Client{
 		CreateBriefEndpoint:            createBrief,
 		FindBriefEndpoint:              findBrief,
@@ -66,6 +67,7 @@ func NewClient(createBrief, findBrief, getBrief, updateBrief, approveBrief, dele
 		FetchEventURLEndpoint:          fetchEventURL,
 		UploadCreativeAssetEndpoint:    uploadCreativeAsset,
 		CreateCampaignsEndpoint:        createCampaigns,
+		CreateSendWorkflowEndpoint:     createSendWorkflow,
 		AdoptCampaignEndpoint:          adoptCampaign,
 		GetCampaignEndpoint:            getCampaign,
 		GetCampaignMetricsEndpoint:     getCampaignMetrics,
@@ -274,6 +276,26 @@ func (c *Client) CreateCampaigns(ctx context.Context, p *CreateCampaignsPayload)
 		return
 	}
 	return ires.(*JobCreateResponse), nil
+}
+
+// CreateSendWorkflow calls the "create-send-workflow" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+// CreateSendWorkflow may return the following errors:
+//   - "BadRequest" (type *BadRequestError): Bad request
+//   - "Unauthorized" (type *UnauthorizedError): Unauthorized
+//   - "NotFound" (type *NotFoundError): Resource not found
+//   - "Conflict" (type *ConflictError): Conflict
+//   - "InternalServerError" (type *InternalServerError): Internal server error
+//   - "ServiceUnavailable" (type *ConnServiceUnavailableError): Service unavailable
+//   - "PayloadTooLarge" (type *PayloadTooLargeError): Payload too large
+//   - error: internal error
+func (c *Client) CreateSendWorkflow(ctx context.Context, p *CreateSendWorkflowPayload) (res *SendWorkflowResult, err error) {
+	var ires any
+	ires, err = c.CreateSendWorkflowEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*SendWorkflowResult), nil
 }
 
 // AdoptCampaign calls the "adopt-campaign" endpoint of the

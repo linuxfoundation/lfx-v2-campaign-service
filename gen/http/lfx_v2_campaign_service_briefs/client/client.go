@@ -54,6 +54,10 @@ type Client struct {
 	// create-campaigns endpoint.
 	CreateCampaignsDoer goahttp.Doer
 
+	// CreateSendWorkflow Doer is the HTTP client used to make requests to the
+	// create-send-workflow endpoint.
+	CreateSendWorkflowDoer goahttp.Doer
+
 	// AdoptCampaign Doer is the HTTP client used to make requests to the
 	// adopt-campaign endpoint.
 	AdoptCampaignDoer goahttp.Doer
@@ -191,6 +195,7 @@ func NewClient(
 		FetchEventURLDoer:          doer,
 		UploadCreativeAssetDoer:    doer,
 		CreateCampaignsDoer:        doer,
+		CreateSendWorkflowDoer:     doer,
 		AdoptCampaignDoer:          doer,
 		GetCampaignDoer:            doer,
 		GetCampaignMetricsDoer:     doer,
@@ -437,6 +442,30 @@ func (c *Client) CreateCampaigns() goa.Endpoint {
 		resp, err := c.CreateCampaignsDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "create-campaigns", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// CreateSendWorkflow returns an endpoint that makes HTTP requests to the
+// lfx-v2-campaign-service-briefs service create-send-workflow server.
+func (c *Client) CreateSendWorkflow() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeCreateSendWorkflowRequest(c.encoder)
+		decodeResponse = DecodeCreateSendWorkflowResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildCreateSendWorkflowRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.CreateSendWorkflowDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("lfx-v2-campaign-service-briefs", "create-send-workflow", err)
 		}
 		return decodeResponse(resp)
 	}

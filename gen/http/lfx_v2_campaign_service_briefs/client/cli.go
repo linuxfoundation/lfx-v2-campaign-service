@@ -484,6 +484,61 @@ func BuildCreateCampaignsPayload(lfxV2CampaignServiceBriefsCreateCampaignsBody *
 	return v, nil
 }
 
+// BuildCreateSendWorkflowPayload builds the payload for the
+// lfx-v2-campaign-service-briefs create-send-workflow endpoint from CLI flags.
+func BuildCreateSendWorkflowPayload(lfxV2CampaignServiceBriefsCreateSendWorkflowBody *string, lfxV2CampaignServiceBriefsCreateSendWorkflowProjectID *string, lfxV2CampaignServiceBriefsCreateSendWorkflowBearerToken *string) (*lfxv2campaignservicebriefs.CreateSendWorkflowPayload, error) {
+	var err error
+	var body CreateSendWorkflowRequestBody
+	{
+		if lfxV2CampaignServiceBriefsCreateSendWorkflowBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*lfxV2CampaignServiceBriefsCreateSendWorkflowBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"input\": {\n         \"brief_ids\": [\n            \"Quod iure vero eum et ea magnam.\",\n            \"Quo velit eos praesentium enim.\"\n         ],\n         \"name\": \"2026 Cloud Native Annual Survey - Workflow\",\n         \"send_dates\": [\n            \"2026-10-09\",\n            \"2026-10-19\",\n            \"2026-10-23\"\n         ],\n         \"source_workflow_url\": \"https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit\"\n      }\n   }'")
+		}
+		if body.Input == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("input", "body"))
+		}
+		if body.Input != nil {
+			if err2 := validateSendWorkflowInputRequestBody(body.Input, "body.input"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var projectID string
+	{
+		if lfxV2CampaignServiceBriefsCreateSendWorkflowProjectID == nil {
+			return nil, fmt.Errorf("missing required flag --project-id")
+		}
+		projectID = *lfxV2CampaignServiceBriefsCreateSendWorkflowProjectID
+		err = goa.MergeErrors(err, goa.ValidatePattern("project_id", projectID, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+		if utf8.RuneCountInString(projectID) > 35 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("project_id", projectID, utf8.RuneCountInString(projectID), 35, false))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var bearerToken *string
+	{
+		if lfxV2CampaignServiceBriefsCreateSendWorkflowBearerToken != nil {
+			bearerToken = lfxV2CampaignServiceBriefsCreateSendWorkflowBearerToken
+		}
+	}
+	v := &lfxv2campaignservicebriefs.CreateSendWorkflowPayload{}
+	if body.Input != nil {
+		v.Input = marshalSendWorkflowInputRequestBodyToLfxv2campaignservicebriefsSendWorkflowInput(body.Input)
+	}
+	v.ProjectID = projectID
+	v.BearerToken = bearerToken
+
+	return v, nil
+}
+
 // BuildAdoptCampaignPayload builds the payload for the
 // lfx-v2-campaign-service-briefs adopt-campaign endpoint from CLI flags.
 func BuildAdoptCampaignPayload(lfxV2CampaignServiceBriefsAdoptCampaignBody *string, lfxV2CampaignServiceBriefsAdoptCampaignProjectID *string, lfxV2CampaignServiceBriefsAdoptCampaignBriefID *string, lfxV2CampaignServiceBriefsAdoptCampaignBearerToken *string) (*lfxv2campaignservicebriefs.AdoptCampaignPayload, error) {

@@ -52,6 +52,13 @@ type CreateCampaignsRequestBody struct {
 	Input *CampaignCreateInputRequestBody `form:"input" json:"input" xml:"input"`
 }
 
+// CreateSendWorkflowRequestBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP request body.
+type CreateSendWorkflowRequestBody struct {
+	Input *SendWorkflowInputRequestBody `form:"input" json:"input" xml:"input"`
+}
+
 // AdoptCampaignRequestBody is the type of the "lfx-v2-campaign-service-briefs"
 // service "adopt-campaign" endpoint HTTP request body.
 type AdoptCampaignRequestBody struct {
@@ -496,6 +503,29 @@ type CreateCampaignsResponseBody struct {
 	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
 	// Platforms this job will create on
 	Platforms []string `form:"platforms,omitempty" json:"platforms,omitempty" xml:"platforms,omitempty"`
+}
+
+// CreateSendWorkflowResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body.
+type CreateSendWorkflowResponseBody struct {
+	// HubSpot's id for the new workflow
+	FlowID *string `form:"flow_id,omitempty" json:"flow_id,omitempty" xml:"flow_id,omitempty"`
+	// Name HubSpot recorded
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Where to review and enable it
+	EditURL *string `form:"edit_url,omitempty" json:"edit_url,omitempty" xml:"edit_url,omitempty"`
+	// The workflow it was copied from
+	SourceFlowID *string `form:"source_flow_id,omitempty" json:"source_flow_id,omitempty" xml:"source_flow_id,omitempty"`
+	// That workflow's name
+	SourceFlowName *string `form:"source_flow_name,omitempty" json:"source_flow_name,omitempty" xml:"source_flow_name,omitempty"`
+	// Always false on create: the workflow sends nothing until a human enables it
+	// in HubSpot
+	IsEnabled *bool `form:"is_enabled,omitempty" json:"is_enabled,omitempty" xml:"is_enabled,omitempty"`
+	// How many send steps were pointed at this campaign's drafts
+	SendEmailSteps *int `form:"send_email_steps,omitempty" json:"send_email_steps,omitempty" xml:"send_email_steps,omitempty"`
+	// How many wait-until-date steps had their date replaced
+	DatedSteps *int `form:"dated_steps,omitempty" json:"dated_steps,omitempty" xml:"dated_steps,omitempty"`
 }
 
 // AdoptCampaignResponseBody is the type of the
@@ -1831,6 +1861,79 @@ type CreateCampaignsPayloadTooLargeResponseBody struct {
 // "lfx-v2-campaign-service-briefs" service "create-campaigns" endpoint HTTP
 // response body for the "Unauthorized" error.
 type CreateCampaignsUnauthorizedResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateSendWorkflowBadRequestResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body for the "BadRequest" error.
+type CreateSendWorkflowBadRequestResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateSendWorkflowConflictResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body for the "Conflict" error.
+type CreateSendWorkflowConflictResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Stable machine-readable discriminator, present only where an endpoint
+	// returns more than one kind of conflict. Absent means unspecified.
+	Reason *string `form:"reason,omitempty" json:"reason,omitempty" xml:"reason,omitempty"`
+}
+
+// CreateSendWorkflowServiceUnavailableResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body for the "ServiceUnavailable" error.
+type CreateSendWorkflowServiceUnavailableResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateSendWorkflowInternalServerErrorResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body for the "InternalServerError" error.
+type CreateSendWorkflowInternalServerErrorResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateSendWorkflowNotFoundResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body for the "NotFound" error.
+type CreateSendWorkflowNotFoundResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateSendWorkflowPayloadTooLargeResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body for the "PayloadTooLarge" error.
+type CreateSendWorkflowPayloadTooLargeResponseBody struct {
+	// HTTP status code
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Error message
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+}
+
+// CreateSendWorkflowUnauthorizedResponseBody is the type of the
+// "lfx-v2-campaign-service-briefs" service "create-send-workflow" endpoint
+// HTTP response body for the "Unauthorized" error.
+type CreateSendWorkflowUnauthorizedResponseBody struct {
 	// HTTP status code
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
 	// Error message
@@ -4453,6 +4556,22 @@ type CampaignCreateInputRequestBody struct {
 	NewVersion bool `form:"new_version" json:"new_version" xml:"new_version"`
 }
 
+// SendWorkflowInputRequestBody is used to define fields on request body types.
+type SendWorkflowInputRequestBody struct {
+	// The HubSpot workflow to copy the schedule and enrollment from. Its editor
+	// URL, or its bare numeric id. It is only ever READ.
+	SourceWorkflowURL string `form:"source_workflow_url" json:"source_workflow_url" xml:"source_workflow_url"`
+	// Name for the new workflow
+	Name string `form:"name" json:"name" xml:"name"`
+	// The briefs whose staged drafts this workflow sends, in SEND ORDER. One per
+	// send step in the source workflow.
+	BriefIds []string `form:"brief_ids" json:"brief_ids" xml:"brief_ids"`
+	// Calendar dates (YYYY-MM-DD) for the source workflow's wait-until-date steps,
+	// in flow order. Omit to keep the source's own dates. Each step's time of day
+	// is always the source's.
+	SendDates []string `form:"send_dates,omitempty" json:"send_dates,omitempty" xml:"send_dates,omitempty"`
+}
+
 // CampaignUpdateInputRequestBody is used to define fields on request body
 // types.
 type CampaignUpdateInputRequestBody struct {
@@ -4550,6 +4669,17 @@ func NewCreateCampaignsRequestBody(p *lfxv2campaignservicebriefs.CreateCampaigns
 	body := &CreateCampaignsRequestBody{}
 	if p.Input != nil {
 		body.Input = marshalLfxv2campaignservicebriefsCampaignCreateInputToCampaignCreateInputRequestBody(p.Input)
+	}
+	return body
+}
+
+// NewCreateSendWorkflowRequestBody builds the HTTP request body from the
+// payload of the "create-send-workflow" endpoint of the
+// "lfx-v2-campaign-service-briefs" service.
+func NewCreateSendWorkflowRequestBody(p *lfxv2campaignservicebriefs.CreateSendWorkflowPayload) *CreateSendWorkflowRequestBody {
+	body := &CreateSendWorkflowRequestBody{}
+	if p.Input != nil {
+		body.Input = marshalLfxv2campaignservicebriefsSendWorkflowInputToSendWorkflowInputRequestBody(p.Input)
 	}
 	return body
 }
@@ -5750,6 +5880,105 @@ func NewCreateCampaignsPayloadTooLarge(body *CreateCampaignsPayloadTooLargeRespo
 // NewCreateCampaignsUnauthorized builds a lfx-v2-campaign-service-briefs
 // service create-campaigns endpoint Unauthorized error.
 func NewCreateCampaignsUnauthorized(body *CreateCampaignsUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
+	v := &lfxv2campaignservicebriefs.UnauthorizedError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+	v.WwwAuthenticate = wwwAuthenticate
+
+	return v
+}
+
+// NewCreateSendWorkflowResultCreated builds a "lfx-v2-campaign-service-briefs"
+// service "create-send-workflow" endpoint result from a HTTP "Created"
+// response.
+func NewCreateSendWorkflowResultCreated(body *CreateSendWorkflowResponseBody) *lfxv2campaignservicebriefs.SendWorkflowResult {
+	v := &lfxv2campaignservicebriefs.SendWorkflowResult{
+		FlowID:         *body.FlowID,
+		Name:           *body.Name,
+		EditURL:        *body.EditURL,
+		SourceFlowID:   *body.SourceFlowID,
+		SourceFlowName: body.SourceFlowName,
+		IsEnabled:      *body.IsEnabled,
+		SendEmailSteps: *body.SendEmailSteps,
+		DatedSteps:     *body.DatedSteps,
+	}
+
+	return v
+}
+
+// NewCreateSendWorkflowBadRequest builds a lfx-v2-campaign-service-briefs
+// service create-send-workflow endpoint BadRequest error.
+func NewCreateSendWorkflowBadRequest(body *CreateSendWorkflowBadRequestResponseBody) *lfxv2campaignservicebriefs.BadRequestError {
+	v := &lfxv2campaignservicebriefs.BadRequestError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateSendWorkflowConflict builds a lfx-v2-campaign-service-briefs
+// service create-send-workflow endpoint Conflict error.
+func NewCreateSendWorkflowConflict(body *CreateSendWorkflowConflictResponseBody) *lfxv2campaignservicebriefs.ConflictError {
+	v := &lfxv2campaignservicebriefs.ConflictError{
+		Code:    *body.Code,
+		Message: *body.Message,
+		Reason:  body.Reason,
+	}
+
+	return v
+}
+
+// NewCreateSendWorkflowServiceUnavailable builds a
+// lfx-v2-campaign-service-briefs service create-send-workflow endpoint
+// ServiceUnavailable error.
+func NewCreateSendWorkflowServiceUnavailable(body *CreateSendWorkflowServiceUnavailableResponseBody) *lfxv2campaignservicebriefs.ConnServiceUnavailableError {
+	v := &lfxv2campaignservicebriefs.ConnServiceUnavailableError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateSendWorkflowInternalServerError builds a
+// lfx-v2-campaign-service-briefs service create-send-workflow endpoint
+// InternalServerError error.
+func NewCreateSendWorkflowInternalServerError(body *CreateSendWorkflowInternalServerErrorResponseBody) *lfxv2campaignservicebriefs.InternalServerError {
+	v := &lfxv2campaignservicebriefs.InternalServerError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateSendWorkflowNotFound builds a lfx-v2-campaign-service-briefs
+// service create-send-workflow endpoint NotFound error.
+func NewCreateSendWorkflowNotFound(body *CreateSendWorkflowNotFoundResponseBody) *lfxv2campaignservicebriefs.NotFoundError {
+	v := &lfxv2campaignservicebriefs.NotFoundError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateSendWorkflowPayloadTooLarge builds a lfx-v2-campaign-service-briefs
+// service create-send-workflow endpoint PayloadTooLarge error.
+func NewCreateSendWorkflowPayloadTooLarge(body *CreateSendWorkflowPayloadTooLargeResponseBody) *lfxv2campaignservicebriefs.PayloadTooLargeError {
+	v := &lfxv2campaignservicebriefs.PayloadTooLargeError{
+		Code:    *body.Code,
+		Message: *body.Message,
+	}
+
+	return v
+}
+
+// NewCreateSendWorkflowUnauthorized builds a lfx-v2-campaign-service-briefs
+// service create-send-workflow endpoint Unauthorized error.
+func NewCreateSendWorkflowUnauthorized(body *CreateSendWorkflowUnauthorizedResponseBody, wwwAuthenticate string) *lfxv2campaignservicebriefs.UnauthorizedError {
 	v := &lfxv2campaignservicebriefs.UnauthorizedError{
 		Code:    *body.Code,
 		Message: *body.Message,
@@ -8972,6 +9201,33 @@ func ValidateCreateCampaignsResponseBody(body *CreateCampaignsResponseBody) (err
 	return
 }
 
+// ValidateCreateSendWorkflowResponseBody runs the validations defined on
+// CreateSendWorkflowResponseBody
+func ValidateCreateSendWorkflowResponseBody(body *CreateSendWorkflowResponseBody) (err error) {
+	if body.FlowID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("flow_id", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.EditURL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("edit_url", "body"))
+	}
+	if body.SourceFlowID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("source_flow_id", "body"))
+	}
+	if body.IsEnabled == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("is_enabled", "body"))
+	}
+	if body.SendEmailSteps == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("send_email_steps", "body"))
+	}
+	if body.DatedSteps == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("dated_steps", "body"))
+	}
+	return
+}
+
 // ValidateAdoptCampaignResponseBody runs the validations defined on
 // AdoptCampaignResponseBody
 func ValidateAdoptCampaignResponseBody(body *AdoptCampaignResponseBody) (err error) {
@@ -10610,6 +10866,95 @@ func ValidateCreateCampaignsPayloadTooLargeResponseBody(body *CreateCampaignsPay
 // ValidateCreateCampaignsUnauthorizedResponseBody runs the validations defined
 // on CreateCampaignsUnauthorizedResponseBody
 func ValidateCreateCampaignsUnauthorizedResponseBody(body *CreateCampaignsUnauthorizedResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateSendWorkflowBadRequestResponseBody runs the validations
+// defined on CreateSendWorkflowBadRequestResponseBody
+func ValidateCreateSendWorkflowBadRequestResponseBody(body *CreateSendWorkflowBadRequestResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateSendWorkflowConflictResponseBody runs the validations defined
+// on CreateSendWorkflowConflictResponseBody
+func ValidateCreateSendWorkflowConflictResponseBody(body *CreateSendWorkflowConflictResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Reason != nil {
+		if !(*body.Reason == "stale_approval" || *body.Reason == "audience_build_in_flight" || *body.Reason == "already_exists" || *body.Reason == "audience_provenance_immutable" || *body.Reason == "ab_test_unsupported_send_type" || *body.Reason == "campaign_adopted") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.reason", *body.Reason, []any{"stale_approval", "audience_build_in_flight", "already_exists", "audience_provenance_immutable", "ab_test_unsupported_send_type", "campaign_adopted"}))
+		}
+	}
+	return
+}
+
+// ValidateCreateSendWorkflowServiceUnavailableResponseBody runs the
+// validations defined on CreateSendWorkflowServiceUnavailableResponseBody
+func ValidateCreateSendWorkflowServiceUnavailableResponseBody(body *CreateSendWorkflowServiceUnavailableResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateSendWorkflowInternalServerErrorResponseBody runs the
+// validations defined on CreateSendWorkflowInternalServerErrorResponseBody
+func ValidateCreateSendWorkflowInternalServerErrorResponseBody(body *CreateSendWorkflowInternalServerErrorResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateSendWorkflowNotFoundResponseBody runs the validations defined
+// on CreateSendWorkflowNotFoundResponseBody
+func ValidateCreateSendWorkflowNotFoundResponseBody(body *CreateSendWorkflowNotFoundResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateSendWorkflowPayloadTooLargeResponseBody runs the validations
+// defined on CreateSendWorkflowPayloadTooLargeResponseBody
+func ValidateCreateSendWorkflowPayloadTooLargeResponseBody(body *CreateSendWorkflowPayloadTooLargeResponseBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	return
+}
+
+// ValidateCreateSendWorkflowUnauthorizedResponseBody runs the validations
+// defined on CreateSendWorkflowUnauthorizedResponseBody
+func ValidateCreateSendWorkflowUnauthorizedResponseBody(body *CreateSendWorkflowUnauthorizedResponseBody) (err error) {
 	if body.Code == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
 	}
@@ -14050,6 +14395,66 @@ func validateCampaignCreateInputRequestBody(body *CampaignCreateInputRequestBody
 		if !(e == "google-ads" || e == "linkedin-ads" || e == "meta-ads" || e == "reddit-ads" || e == "twitter-ads" || e == "microsoft-ads" || e == "hubspot") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".platforms[*]", e, []any{"google-ads", "linkedin-ads", "meta-ads", "reddit-ads", "twitter-ads", "microsoft-ads", "hubspot"}))
 		}
+	}
+	return
+}
+
+// ValidateSendWorkflowInputRequestBody runs the validations defined on
+// send-workflow-input
+func ValidateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody) (err error) {
+	if body.BriefIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_ids", "body"))
+	}
+	if utf8.RuneCountInString(body.SourceWorkflowURL) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 1, true))
+	}
+	if utf8.RuneCountInString(body.SourceWorkflowURL) > 500 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 500, false))
+	}
+	if utf8.RuneCountInString(body.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", body.Name, utf8.RuneCountInString(body.Name), 1, true))
+	}
+	if utf8.RuneCountInString(body.Name) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", body.Name, utf8.RuneCountInString(body.Name), 200, false))
+	}
+	if len(body.BriefIds) < 2 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.brief_ids", body.BriefIds, len(body.BriefIds), 2, true))
+	}
+	if len(body.BriefIds) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.brief_ids", body.BriefIds, len(body.BriefIds), 10, false))
+	}
+	if len(body.SendDates) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.send_dates", body.SendDates, len(body.SendDates), 10, false))
+	}
+	return
+}
+
+// validateSendWorkflowInputRequestBody checks send-workflow-input and reports
+// errors using the path supplied by its caller
+func validateSendWorkflowInputRequestBody(body *SendWorkflowInputRequestBody, path string) (err error) {
+	if body.BriefIds == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("brief_ids", path))
+	}
+	if utf8.RuneCountInString(body.SourceWorkflowURL) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 1, true))
+	}
+	if utf8.RuneCountInString(body.SourceWorkflowURL) > 500 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".source_workflow_url", body.SourceWorkflowURL, utf8.RuneCountInString(body.SourceWorkflowURL), 500, false))
+	}
+	if utf8.RuneCountInString(body.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", body.Name, utf8.RuneCountInString(body.Name), 1, true))
+	}
+	if utf8.RuneCountInString(body.Name) > 200 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".name", body.Name, utf8.RuneCountInString(body.Name), 200, false))
+	}
+	if len(body.BriefIds) < 2 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".brief_ids", body.BriefIds, len(body.BriefIds), 2, true))
+	}
+	if len(body.BriefIds) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".brief_ids", body.BriefIds, len(body.BriefIds), 10, false))
+	}
+	if len(body.SendDates) > 10 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".send_dates", body.SendDates, len(body.SendDates), 10, false))
 	}
 	return
 }

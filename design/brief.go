@@ -222,6 +222,49 @@ var JobCreateResponse = Type("job-create-response", func() {
 // ReconcileIdentifier is one identifying field of what a dispatch created, carried on a
 // PlatformResult when its claim was lost and the campaign row that would have recorded it was
 // never written. Only identifiers (ids, names, urns) are carried — never platform text or URLs.
+// SendWorkflowInput asks for ONE HubSpot workflow that sends an already-staged series.
+//
+// It carries brief ids rather than HubSpot email ids: which draft a brief produced is this
+// service's own record (the campaign row's platform id), and a client that had to look that
+// up could pair a brief with somebody else's email.
+var SendWorkflowInput = Type("send-workflow-input", func() {
+	Attribute("source_workflow_url", String, "The HubSpot workflow to copy the schedule and enrollment from. Its editor URL, or its bare numeric id. It is only ever READ.", func() {
+		MinLength(1)
+		MaxLength(500)
+		Example("https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit")
+	})
+	Attribute("name", String, "Name for the new workflow", func() {
+		MinLength(1)
+		MaxLength(200)
+		Example("2026 Cloud Native Annual Survey - Workflow")
+	})
+	Attribute("brief_ids", ArrayOf(String), "The briefs whose staged drafts this workflow sends, in SEND ORDER. One per send step in the source workflow.", func() {
+		// Two, not one: a single email needs no workflow -- it is staged, scheduled and sent
+		// on its own -- so a one-brief request is asking for machinery that would only add a
+		// place for the send to go wrong.
+		MinLength(2)
+		MaxLength(10)
+	})
+	Attribute("send_dates", ArrayOf(String), "Calendar dates (YYYY-MM-DD) for the source workflow's wait-until-date steps, in flow order. Omit to keep the source's own dates. Each step's time of day is always the source's.", func() {
+		MaxLength(10)
+		Example([]string{"2026-10-09", "2026-10-19", "2026-10-23"})
+	})
+	Required("source_workflow_url", "name", "brief_ids")
+})
+
+// SendWorkflowResult is the created workflow, for the human who has to review and enable it.
+var SendWorkflowResult = Type("send-workflow-result", func() {
+	Attribute("flow_id", String, "HubSpot's id for the new workflow")
+	Attribute("name", String, "Name HubSpot recorded")
+	Attribute("edit_url", String, "Where to review and enable it")
+	Attribute("source_flow_id", String, "The workflow it was copied from")
+	Attribute("source_flow_name", String, "That workflow's name")
+	Attribute("is_enabled", Boolean, "Always false on create: the workflow sends nothing until a human enables it in HubSpot")
+	Attribute("send_email_steps", Int, "How many send steps were pointed at this campaign's drafts")
+	Attribute("dated_steps", Int, "How many wait-until-date steps had their date replaced")
+	Required("flow_id", "name", "edit_url", "source_flow_id", "is_enabled", "send_email_steps", "dated_steps")
+})
+
 var ReconcileIdentifier = Type("reconcile-identifier", func() {
 	Attribute("key", String, "Field name in the platform's result, e.g. campaignGroupId, creativeAssetIds, imageUrns; a dotted path for one found in a nested object or list, e.g. abTestVariant.id, adGroups[0].adIds")
 	Attribute("values", ArrayOf(String), "The identifier(s): one element for a single id or name, several for a list such as creativeAssetIds. Absent when entries is set.")
@@ -1856,6 +1899,26 @@ var _ = Service("lfx-v2-campaign-service-briefs", func() {
 			POST("/projects/{project_id}/briefs/{brief_id}/campaigns")
 			Header("bearer_token:Authorization")
 			Response(StatusAccepted)
+			briefErrorResponses()
+		})
+	})
+
+	Method("create-send-workflow", func() {
+		Description("Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a staged HubSpot draft (its campaign row's platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow is only ever read: its definition is fetched, each of its send steps is pointed at this campaign's drafts in the order brief_ids gives, each wait-until-date step is optionally re-dated, and the result is created as a NEW workflow. 400 when the source URL names no workflow, when a brief has no staged draft yet, when a brief is on the paid surface, or when a date is not YYYY-MM-DD; 409 when the source workflow's send-step count does not equal the number of briefs, or its dated-step count does not equal the number of send_dates, since a partial mapping would leave a send pointing at the SOURCE campaign's email; 404 when a brief does not exist in this project. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.")
+		Payload(func() {
+			bearerToken()
+			// Slug-only, matching create-campaigns: project_id is the exact-match key for the
+			// HubSpot connection lookup, and a UUID finds no connection.
+			projectSlugAttr()
+			Attribute("input", SendWorkflowInput)
+			Required("project_id", "input")
+		})
+		Result(SendWorkflowResult)
+		commonBriefErrors()
+		HTTP(func() {
+			POST("/projects/{project_id}/send-workflows")
+			Header("bearer_token:Authorization")
+			Response(StatusCreated)
 			briefErrorResponses()
 		})
 	})

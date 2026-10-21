@@ -70,6 +70,23 @@ type Service interface {
 	// including an imageAssetId that does not exist for this brief, still arrives
 	// later, as the job's own result.
 	CreateCampaigns(context.Context, *CreateCampaignsPayload) (res *JobCreateResponse, err error)
+	// Create ONE HubSpot workflow that sends an already-staged series of emails,
+	// and return it DISABLED. Each brief named in brief_ids must already have a
+	// staged HubSpot draft (its campaign row's platform id is the email the
+	// workflow will send) and must belong to a send surface; a paid brief is
+	// refused. The source workflow is only ever read: its definition is fetched,
+	// each of its send steps is pointed at this campaign's drafts in the order
+	// brief_ids gives, each wait-until-date step is optionally re-dated, and the
+	// result is created as a NEW workflow. 400 when the source URL names no
+	// workflow, when a brief has no staged draft yet, when a brief is on the paid
+	// surface, or when a date is not YYYY-MM-DD; 409 when the source workflow's
+	// send-step count does not equal the number of briefs, or its dated-step count
+	// does not equal the number of send_dates, since a partial mapping would leave
+	// a send pointing at the SOURCE campaign's email; 404 when a brief does not
+	// exist in this project. The workflow is always created disabled -- enabling
+	// it is left to the human who reviews the drafts, and is the only irreversible
+	// step on this path.
+	CreateSendWorkflow(context.Context, *CreateSendWorkflowPayload) (res *SendWorkflowResult, err error)
 	// Bind a campaign that ALREADY exists on the ad platform to this brief. The
 	// platform is read, never written: the campaign must already exist under the
 	// project's connection, and nothing is created upstream. Supported platforms:
@@ -658,7 +675,7 @@ const ServiceName = "lfx-v2-campaign-service-briefs"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [36]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
+var MethodNames = [37]string{"create-brief", "find-brief", "get-brief", "update-brief", "approve-brief", "delete-brief", "fetch-event-url", "upload-creative-asset", "create-campaigns", "create-send-workflow", "adopt-campaign", "get-campaign", "get-campaign-metrics", "get-campaign-settings", "get-brief-metrics", "generate-email-copy", "update-campaign", "toggle-campaign-status", "update-campaign-budget", "update-campaign-bid", "apply-keyword-actions", "add-negative-keywords", "get-keyword-targeting", "remove-keyword-targeting", "list-meta-ad-sets", "list-meta-ads", "toggle-meta-ad-set-status", "delete-campaign", "get-job", "start-email-wizard-plan", "plan-email-wizard", "generate-wizard-content", "update-wizard-sections", "clone-wizard-email", "set-wizard-send-list", "chat-wizard-turn", "get-wizard-session"}
 
 // AddNegativeKeywordsPayload is the payload type of the
 // lfx-v2-campaign-service-briefs service add-negative-keywords method.
@@ -1161,6 +1178,16 @@ type CreateCampaignsPayload struct {
 	// Brief UUID
 	BriefID string
 	Input   *CampaignCreateInput
+}
+
+// CreateSendWorkflowPayload is the payload type of the
+// lfx-v2-campaign-service-briefs service create-send-workflow method.
+type CreateSendWorkflowPayload struct {
+	// JWT token issued by Heimdall
+	BearerToken *string
+	// Canonical LFX project slug (NOT a UUID) that scopes the resource
+	ProjectID string
+	Input     *SendWorkflowInput
 }
 
 // CreativeAsset is the result type of the lfx-v2-campaign-service-briefs
@@ -1984,6 +2011,43 @@ type RemoveKeywordTargetingPayload struct {
 	// Reddit: the revision get-keyword-targeting returned. Required on Reddit;
 	// must be absent on X.
 	Revision *string
+}
+
+type SendWorkflowInput struct {
+	// The HubSpot workflow to copy the schedule and enrollment from. Its editor
+	// URL, or its bare numeric id. It is only ever READ.
+	SourceWorkflowURL string
+	// Name for the new workflow
+	Name string
+	// The briefs whose staged drafts this workflow sends, in SEND ORDER. One per
+	// send step in the source workflow.
+	BriefIds []string
+	// Calendar dates (YYYY-MM-DD) for the source workflow's wait-until-date steps,
+	// in flow order. Omit to keep the source's own dates. Each step's time of day
+	// is always the source's.
+	SendDates []string
+}
+
+// SendWorkflowResult is the result type of the lfx-v2-campaign-service-briefs
+// service create-send-workflow method.
+type SendWorkflowResult struct {
+	// HubSpot's id for the new workflow
+	FlowID string
+	// Name HubSpot recorded
+	Name string
+	// Where to review and enable it
+	EditURL string
+	// The workflow it was copied from
+	SourceFlowID string
+	// That workflow's name
+	SourceFlowName *string
+	// Always false on create: the workflow sends nothing until a human enables it
+	// in HubSpot
+	IsEnabled bool
+	// How many send steps were pointed at this campaign's drafts
+	SendEmailSteps int
+	// How many wait-until-date steps had their date replaced
+	DatedSteps int
 }
 
 // SetWizardSendListPayload is the payload type of the

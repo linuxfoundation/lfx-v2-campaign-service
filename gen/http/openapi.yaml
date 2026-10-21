@@ -10811,6 +10811,98 @@ paths:
                 - http
             security:
                 - jwt_header_Authorization: []
+    /projects/{project_id}/send-workflows:
+        post:
+            tags:
+                - lfx-v2-campaign-service-briefs
+            summary: create-send-workflow lfx-v2-campaign-service-briefs
+            description: 'Create ONE HubSpot workflow that sends an already-staged series of emails, and return it DISABLED. Each brief named in brief_ids must already have a staged HubSpot draft (its campaign row''s platform id is the email the workflow will send) and must belong to a send surface; a paid brief is refused. The source workflow is only ever read: its definition is fetched, each of its send steps is pointed at this campaign''s drafts in the order brief_ids gives, each wait-until-date step is optionally re-dated, and the result is created as a NEW workflow. 400 when the source URL names no workflow, when a brief has no staged draft yet, when a brief is on the paid surface, or when a date is not YYYY-MM-DD; 409 when the source workflow''s send-step count does not equal the number of briefs, or its dated-step count does not equal the number of send_dates, since a partial mapping would leave a send pointing at the SOURCE campaign''s email; 404 when a brief does not exist in this project. The workflow is always created disabled -- enabling it is left to the human who reviews the drafts, and is the only irreversible step on this path.'
+            operationId: lfx-v2-campaign-service-briefs#create-send-workflow
+            parameters:
+                - name: project_id
+                  in: path
+                  description: Canonical LFX project slug (NOT a UUID) that scopes the resource
+                  required: true
+                  type: string
+                  maxLength: 35
+                  pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+                - name: Create-Send-WorkflowRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/LfxV2CampaignServiceBriefsCreateSendWorkflowRequestBody'
+                    required:
+                        - input
+            responses:
+                "201":
+                    description: Created response.
+                    schema:
+                        $ref: '#/definitions/SendWorkflowResult'
+                        required:
+                            - flow_id
+                            - name
+                            - edit_url
+                            - source_flow_id
+                            - is_enabled
+                            - send_email_steps
+                            - dated_steps
+                "400":
+                    description: 'BadRequest: Bad request'
+                    schema:
+                        $ref: '#/definitions/BadRequestError'
+                        required:
+                            - code
+                            - message
+                "401":
+                    description: 'Unauthorized: Unauthorized'
+                    schema:
+                        $ref: '#/definitions/UnauthorizedError'
+                        required:
+                            - code
+                            - message
+                    headers:
+                        WWW-Authenticate:
+                            description: Authentication challenge (RFC 9110 §15.5.2)
+                            type: string
+                "404":
+                    description: 'NotFound: Resource not found'
+                    schema:
+                        $ref: '#/definitions/NotFoundError'
+                        required:
+                            - code
+                            - message
+                "409":
+                    description: 'Conflict: Conflict'
+                    schema:
+                        $ref: '#/definitions/ConflictError'
+                        required:
+                            - code
+                            - message
+                "413":
+                    description: 'PayloadTooLarge: Payload too large'
+                    schema:
+                        $ref: '#/definitions/PayloadTooLargeError'
+                        required:
+                            - code
+                            - message
+                "500":
+                    description: 'InternalServerError: Internal server error'
+                    schema:
+                        $ref: '#/definitions/InternalServerError'
+                        required:
+                            - code
+                            - message
+                "503":
+                    description: 'ServiceUnavailable: Service unavailable'
+                    schema:
+                        $ref: '#/definitions/ConnServiceUnavailableError'
+                        required:
+                            - code
+                            - message
+            schemes:
+                - http
+            security:
+                - jwt_header_Authorization: []
     /projects/{project_id}/twitter-ads/audience:
         get:
             tags:
@@ -16207,6 +16299,25 @@ definitions:
                     - meta-ads
         required:
             - input
+    LfxV2CampaignServiceBriefsCreateSendWorkflowRequestBody:
+        title: LfxV2CampaignServiceBriefsCreateSendWorkflowRequestBody
+        type: object
+        properties:
+            input:
+                $ref: '#/definitions/SendWorkflowInput'
+        example:
+            input:
+                brief_ids:
+                    - Quod iure vero eum et ea magnam.
+                    - Quo velit eos praesentium enim.
+                name: 2026 Cloud Native Annual Survey - Workflow
+                send_dates:
+                    - "2026-10-09"
+                    - "2026-10-19"
+                    - "2026-10-23"
+                source_workflow_url: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
+        required:
+            - input
     LfxV2CampaignServiceBriefsFetchEventURLRequestBody:
         title: LfxV2CampaignServiceBriefsFetchEventURLRequestBody
         type: object
@@ -19354,6 +19465,113 @@ definitions:
             - rows
             - row_count
             - truncated
+    SendWorkflowInput:
+        title: SendWorkflowInput
+        type: object
+        properties:
+            brief_ids:
+                type: array
+                items:
+                    type: string
+                    example: Quod iure vero eum et ea magnam.
+                description: The briefs whose staged drafts this workflow sends, in SEND ORDER. One per send step in the source workflow.
+                example:
+                    - Quod iure vero eum et ea magnam.
+                    - Quo velit eos praesentium enim.
+                minItems: 2
+                maxItems: 10
+            name:
+                type: string
+                description: Name for the new workflow
+                example: 2026 Cloud Native Annual Survey - Workflow
+                minLength: 1
+                maxLength: 200
+            send_dates:
+                type: array
+                items:
+                    type: string
+                    example: Rerum in corrupti voluptatem dolores et reprehenderit.
+                description: Calendar dates (YYYY-MM-DD) for the source workflow's wait-until-date steps, in flow order. Omit to keep the source's own dates. Each step's time of day is always the source's.
+                example:
+                    - "2026-10-09"
+                    - "2026-10-19"
+                    - "2026-10-23"
+                maxItems: 10
+            source_workflow_url:
+                type: string
+                description: The HubSpot workflow to copy the schedule and enrollment from. Its editor URL, or its bare numeric id. It is only ever READ.
+                example: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
+                minLength: 1
+                maxLength: 500
+        example:
+            brief_ids:
+                - Quod iure vero eum et ea magnam.
+                - Quo velit eos praesentium enim.
+            name: 2026 Cloud Native Annual Survey - Workflow
+            send_dates:
+                - "2026-10-09"
+                - "2026-10-19"
+                - "2026-10-23"
+            source_workflow_url: https://app.hubspot.com/workflows/8112310/platform/flow/1841232183/edit
+        required:
+            - source_workflow_url
+            - name
+            - brief_ids
+    SendWorkflowResult:
+        title: SendWorkflowResult
+        type: object
+        properties:
+            dated_steps:
+                type: integer
+                description: How many wait-until-date steps had their date replaced
+                example: 8476403701307200312
+                format: int64
+            edit_url:
+                type: string
+                description: Where to review and enable it
+                example: Qui est necessitatibus voluptas maxime.
+            flow_id:
+                type: string
+                description: HubSpot's id for the new workflow
+                example: Dolor aut aut quia tempora tempora.
+            is_enabled:
+                type: boolean
+                description: 'Always false on create: the workflow sends nothing until a human enables it in HubSpot'
+                example: true
+            name:
+                type: string
+                description: Name HubSpot recorded
+                example: Quo accusamus aut.
+            send_email_steps:
+                type: integer
+                description: How many send steps were pointed at this campaign's drafts
+                example: 1275313078849356657
+                format: int64
+            source_flow_id:
+                type: string
+                description: The workflow it was copied from
+                example: Unde eos facilis sit tempore perspiciatis voluptas.
+            source_flow_name:
+                type: string
+                description: That workflow's name
+                example: Quo tenetur voluptate hic molestiae sequi.
+        example:
+            dated_steps: 8476403701307200312
+            edit_url: Qui est necessitatibus voluptas maxime.
+            flow_id: Dolor aut aut quia tempora tempora.
+            is_enabled: true
+            name: Quo accusamus aut.
+            send_email_steps: 1275313078849356657
+            source_flow_id: Unde eos facilis sit tempore perspiciatis voluptas.
+            source_flow_name: Quo tenetur voluptate hic molestiae sequi.
+        required:
+            - flow_id
+            - name
+            - edit_url
+            - source_flow_id
+            - is_enabled
+            - send_email_steps
+            - dated_steps
     TwitterAdsAccountMonitor:
         title: TwitterAdsAccountMonitor
         type: object
