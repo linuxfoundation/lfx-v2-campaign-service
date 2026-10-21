@@ -37,15 +37,19 @@ type Service interface {
 	// double-counts overlap) when it is not, and as no number at all when any
 	// selected list did not report a size. Creates nothing.
 	PreviewAudienceCount(context.Context, *PreviewAudienceCountPayload) (res *AudiencePreviewCount, err error)
-	// Create the combined suppression list and then the master list in the
-	// project's HubSpot portal, and when brief_id is supplied record the master as
-	// that brief's built audience. NOT idempotent.
+	// Create the master list in the project's HubSpot portal, excluding the
+	// requested suppressions directly through the project's standing standard
+	// suppression list and, when asked, the edition's current-registrants list
+	// (both found by name and reused), and when brief_id is supplied record the
+	// master as that brief's built audience. NOT idempotent.
 	ComposeAudienceMaster(context.Context, *ComposeAudienceMasterPayload) (res *AudienceComposeMasterResult, err error)
 	// Record lists that already exist in the project's HubSpot portal as a brief's
 	// built audience, without composing a new master. Every id is read back from
-	// the portal first. When several suppression lists are supplied they are
-	// combined into one suppression list (created once per selection, reused on
-	// repeat), which is the only list HubSpot creates here.
+	// the portal first. When every resolved standard suppression list is supplied
+	// they are recorded as the project's standing standard suppression list, and
+	// with current_registrants_event the edition's current-registrants list is
+	// recorded too; those two lists, found by name and reused, are the only lists
+	// HubSpot may create here.
 	AttachExistingAudience(context.Context, *AttachExistingAudiencePayload) (res *AudienceAttachExistingResult, err error)
 	// Audit a composed master list's filters: signal mapping, regulatory
 	// suppression, exclusion completeness, and whether this edition's own

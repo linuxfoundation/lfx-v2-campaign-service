@@ -71,8 +71,8 @@ func TestAttachExistingAudienceRecordsTheReusedListsWithTheirPortal(t *testing.T
 	assert.Equal(t, "Reused existing list 26Q3 - CNCF - AGNTCon - Master with 2 suppression list(s)", rows[0].InclusionSummary)
 }
 
-// Several suppressions come back combined into one list: the row records that single id, and
-// the response names the list so the operator can open it.
+// The standing standard list is recorded in place of the standard lists, beside every other
+// suppression, and the response names it so the operator can open it.
 func TestAttachExistingAudienceRecordsTheStandingStandardListBesideTheRest(t *testing.T) {
 	standing := audience.ComposedList{ListRow: audience.ListRow{ListID: "40000", Name: "LFX Standard Suppressions - proj-1", HubSpotURL: "https://app.hubspot.com/x"}}
 	explorer := &attachExplorer{outcome: &audience.ComposeOutcome{

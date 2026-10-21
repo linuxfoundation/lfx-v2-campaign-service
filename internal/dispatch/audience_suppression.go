@@ -5,6 +5,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,11 +17,20 @@ import (
 // standardRows resolves every StandardSuppressionTerms entry to its newest matching list. A
 // term that does not resolve is returned with an empty ListID rather than dropped: an operator
 // who cannot see that the GDPR row is unavailable will assume it was applied.
-func (x *AudienceExplorer) standardRows(ctx context.Context, client *hubspot.Client) ([]audience.SuppressionRow, error) {
+//
+// strict makes a failed search an error instead of an unresolved row. The read path (the
+// picker) stays lenient; the write path must be strict, because resolveSuppressions writes the
+// resolved set into the shared standing list, and a 429 on one term would otherwise remove that
+// hygiene list from every audience that excludes it.
+func (x *AudienceExplorer) standardRows(ctx context.Context, client *hubspot.Client, strict bool) ([]audience.SuppressionRow, error) {
+	match := x.bestMatch
+	if strict {
+		match = x.bestMatchStrict
+	}
 	out := make([]audience.SuppressionRow, 0, len(audience.StandardSuppressionTerms))
 	for _, term := range audience.StandardSuppressionTerms {
 		row := audience.SuppressionRow{Key: term.Key, Label: term.Label, Category: audience.SuppressionCategoryStandard}
-		hit, err := x.bestMatch(ctx, client, []string{term.SearchTerm}, func(name string) bool {
+		hit, err := match(ctx, client, []string{term.SearchTerm}, func(name string) bool {
 			return audience.MatchesStandardSuppression(name, term.SearchTerm)
 		})
 		if err != nil {
@@ -55,10 +65,20 @@ func resolvedIDs(rows []audience.SuppressionRow) []string {
 // list, the retry finds it by name, and if search has not indexed it yet, HubSpot refuses the
 // duplicate name -- it never builds two.
 func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubspot.Client, projectID string, suppress []string, registrantsEvent string) (*audience.ComposedList, []string, error) {
+	// The registrants filter depends only on the input, so it is built BEFORE the first write: a
+	// year-less edition must be a 400 with nothing created or rewritten in the portal.
+	var registrantsFilter json.RawMessage
+	if edition := strings.TrimSpace(registrantsEvent); edition != "" {
+		filter, err := audience.CurrentRegistrantsFilter(edition)
+		if err != nil {
+			return nil, nil, err
+		}
+		registrantsFilter = filter
+	}
 	var standard *audience.ComposedList
 	rest := audience.UniqueIDs(suppress)
 	if len(rest) > 0 {
-		rows, err := x.standardRows(ctx, client)
+		rows, err := x.standardRows(ctx, client, true)
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve standard suppressions: %w", err)
 		}
@@ -72,7 +92,7 @@ func (x *AudienceExplorer) resolveSuppressions(ctx context.Context, client *hubs
 		}
 	}
 	if strings.TrimSpace(registrantsEvent) != "" {
-		registrants, err := x.ensureRegistrantsList(ctx, client, projectID, registrantsEvent)
+		registrants, err := x.ensureRegistrantsList(ctx, client, projectID, registrantsEvent, registrantsFilter)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -116,12 +136,9 @@ func (x *AudienceExplorer) ensureStandardList(ctx context.Context, client *hubsp
 	return &audience.ComposedList{ListRow: listRow(current)}, nil
 }
 
-// ensureRegistrantsList finds or creates the list of the edition's current registrants.
-func (x *AudienceExplorer) ensureRegistrantsList(ctx context.Context, client *hubspot.Client, projectID, edition string) (*audience.ComposedList, error) {
-	filter, err := audience.CurrentRegistrantsFilter(edition)
-	if err != nil {
-		return nil, err
-	}
+// ensureRegistrantsList finds or creates the list of the edition's current registrants, from
+// the filter resolveSuppressions already built and validated.
+func (x *AudienceExplorer) ensureRegistrantsList(ctx context.Context, client *hubspot.Client, projectID, edition string, filter json.RawMessage) (*audience.ComposedList, error) {
 	name := audience.CurrentRegistrantsName(edition)
 	existing, err := exactList(ctx, client, name)
 	if err != nil {

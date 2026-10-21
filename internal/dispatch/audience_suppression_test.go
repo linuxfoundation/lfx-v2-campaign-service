@@ -28,6 +28,9 @@ type suppressionPortal struct {
 	filters map[string]json.RawMessage
 	created []map[string]any
 	updated []string
+	// failSearch answers a search for this query with a 500, as a rate-limited or flaky
+	// HubSpot would.
+	failSearch string
 }
 
 // standardPortal holds every standard term's list (7001 onward, named by its search term)
@@ -66,6 +69,11 @@ func (p *suppressionPortal) serve(t *testing.T) *httptest.Server {
 				Query string `json:"query"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Query == p.failSearch {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"status":"error","message":"upstream"}`)
+				return
+			}
 			lists := []map[string]any{}
 			if id, ok := p.byName[body.Query]; ok {
 				lists = append(lists, map[string]any{"listId": id, "name": body.Query, "objectTypeId": "0-1"})
@@ -256,4 +264,67 @@ func TestComposeMaster_ExcludesTheStandingListsDirectly(t *testing.T) {
 	require.NotNil(t, outcome.Suppression)
 	assert.Equal(t, "9001", outcome.Suppression.ListID)
 	assert.Equal(t, []string{"6001"}, outcome.AttachedSuppressionIDs)
+}
+
+// A failed search on one standard term must never shrink the shared standing list: every audience
+// that excludes it would lose that hygiene list. The attach fails instead, and writes nothing.
+func TestAttachExisting_StandardSearchFails_NeverShrinksTheStandingList(t *testing.T) {
+	portal, std := standardPortal()
+	full, err := audience.MasterListFilter(std)
+	require.NoError(t, err)
+	portal.byName[audience.StandardSuppressionName("proj-1")] = "77"
+	portal.filters["77"] = full
+	portal.failSearch = audience.StandardSuppressionTerms[0].SearchTerm
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err = x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "")
+	require.Error(t, err)
+	created, updated := portal.writes()
+	assert.Empty(t, created)
+	assert.Empty(t, updated, "a partial resolve must not rewrite the standing list")
+	assert.ElementsMatch(t, std, audience.CoveredListIDs(portal.filters["77"]))
+
+	// The picker is a read, and stays lenient: the failed term is shown as unresolved.
+	rows, _, err := x.SuppressionLists(context.Background(), "proj-1", "", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, rows[0].ListID)
+}
+
+// Compose with a registrants edition excludes that list too, and the edition is part of the
+// selection fingerprint, so the same lists with and without it are different masters.
+func TestComposeMaster_CurrentRegistrants_ExcludedAndFingerprinted(t *testing.T) {
+	portal, _ := standardPortal()
+	portal.byName["AGNTCon Japan - Master"] = "31349"
+	x := composeExplorer(portal.serve(t).URL)
+	const edition = "AGNTCon + MCPCon Japan 2026"
+
+	outcome, err := x.ComposeMaster(context.Background(), "proj-1", audience.ComposeInput{
+		ListIDs:                 []string{"111"},
+		ExcludeListIDs:          []string{"6001"},
+		Name:                    "AGNTCon Japan - Master",
+		CurrentRegistrantsEvent: edition,
+	})
+	require.NoError(t, err)
+	created, _ := portal.writes()
+	require.Len(t, created, 2, "the registrants list, then the master")
+	assert.Equal(t, audience.CurrentRegistrantsName(edition), created[0]["name"])
+	withRegistrants := audience.SelectionFingerprint([]string{"111"}, []string{"6001", "registrants:" + edition})
+	assert.Equal(t, audience.WithFingerprint("AGNTCon Japan - Master", withRegistrants), created[1]["name"])
+	assert.NotEqual(t, audience.SelectionFingerprint([]string{"111"}, []string{"6001"}), withRegistrants)
+	master, _ := json.Marshal(created[1]["filterBranch"])
+	assert.Contains(t, string(master), `"listId":"9001"`, "the registrants list is excluded on every path")
+	assert.Equal(t, []string{"6001", "9001"}, outcome.AttachedSuppressionIDs)
+}
+
+// A year-less edition is known to be invalid from the request alone, so it is refused before the
+// standing list is created or rewritten: a 400 must leave the portal untouched.
+func TestAttachExisting_YearlessEdition_RefusedBeforeAnyWrite(t *testing.T) {
+	portal, std := standardPortal()
+	x := composeExplorer(portal.serve(t).URL)
+
+	_, err := x.AttachExisting(context.Background(), "proj-1", []string{"31027"}, std, "KubeCon India")
+	require.ErrorIs(t, err, audience.ErrInvalidRequest)
+	created, updated := portal.writes()
+	assert.Empty(t, created, "the standing list must not be created by a request that is then refused")
+	assert.Empty(t, updated)
 }
