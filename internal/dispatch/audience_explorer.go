@@ -546,7 +546,7 @@ func (x *AudienceExplorer) SuppressionLists(ctx context.Context, projectID, bran
 	defer func() { err = systemScopedHubSpot(err, fromSystem) }()
 
 	keywords := audience.EventKeywords(eventName)
-	out, err := x.standardRows(ctx, client)
+	out, err := x.standardRows(ctx, client, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1272,6 +1272,17 @@ func newerSuppression(a, b *hubspot.List) bool {
 // "unavailable": an authentication outage rendered as "this portal has no GDPR lists", which is
 // the one answer that must never be guessed.
 func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) (*hubspot.List, error) {
+	return x.bestMatchWith(ctx, client, probes, accept, false)
+}
+
+// bestMatchStrict is bestMatch for a caller that WRITES from the answer: any failed search is
+// returned rather than read as "no such list", because a missed list would then be written out
+// of a shared list (see resolveSuppressions).
+func (x *AudienceExplorer) bestMatchStrict(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool) (*hubspot.List, error) {
+	return x.bestMatchWith(ctx, client, probes, accept, true)
+}
+
+func (x *AudienceExplorer) bestMatchWith(ctx context.Context, client *hubspot.Client, probes []string, accept func(name string) bool, strict bool) (*hubspot.List, error) {
 	var best *hubspot.List
 	for _, probe := range probes {
 		hits, err := client.SearchLists(ctx, probe)
@@ -1279,7 +1290,7 @@ func (x *AudienceExplorer) bestMatch(ctx context.Context, client *hubspot.Client
 			// A revoked token fails EVERY probe, so absorbing them all reported an empty
 			// hygiene set for what is really a credential problem — and bypassed the
 			// deferred systemScopedHubSpot classifier that turns it into a typed 503.
-			if hubspot.IsPermissionRejection(err) {
+			if strict || hubspot.IsPermissionRejection(err) {
 				return nil, err
 			}
 			slog.WarnContext(ctx, "suppression list search failed", "error", err)
@@ -2047,10 +2058,10 @@ func (x *AudienceExplorer) RunQA(ctx context.Context, projectID, listRef, eventN
 // exclusionNames collects the names of everything the list excludes, following ONE
 // hop into each excluded list's own inclusions.
 //
-// The hop is required, not defensive: ComposeMaster wraps every exclusion in a single
-// "… - Combined Suppression" list, so a master composed by this service excludes ONE
-// list whose name says nothing about GDPR or opt-outs. Without the hop, every list
-// this service creates would fail its own suppression check.
+// The hop is required, not defensive: a master composed by this service excludes the
+// project's standing "LFX Standard Suppressions - <project>" list (and older ones a
+// "… - Combined Suppression" list), whose name says nothing about GDPR or opt-outs.
+// Without the hop, every list this service creates would fail its own suppression check.
 //
 // Exactly one hop. Suppression lists reference each other, and an unbounded walk
 // across a portal's exclusion graph would spend the request's deadline reading lists

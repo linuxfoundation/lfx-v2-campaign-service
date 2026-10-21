@@ -830,7 +830,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("compose-audience-master", func() {
-		Description("Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.")
+		Description("Create the master list in the project's HubSpot portal, excluding the requested suppressions directly through the project's standing standard suppression list and, when asked, the edition's current-registrants list (both found by name and reused), and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()
@@ -840,8 +840,10 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 		Result(AudienceComposeMasterResult)
 		commonBriefErrors()
 		// ComposePartial is separate from InternalServerError because the caller must NOT
-		// retry it: the suppression list already exists upstream, and a retry would create a
-		// second one. It carries that list so the UI can show what to reconcile.
+		// retry it: the master create is unconfirmed upstream, and a retry could create a second
+		// one. It carries the master's name so the UI can show what to reconcile. (Compose no
+		// longer creates a suppression list of its own; the suppression fields stay in the
+		// contract for older deployments.)
 		Error("ComposePartial", AudienceComposePartialError, "Platform state was partially created; do not retry")
 		HTTP(func() {
 			POST("/projects/{project_id}/audience-builder/compose-master")
@@ -855,7 +857,7 @@ var _ = Service("lfx-v2-campaign-service-audience-builder", func() {
 	})
 
 	Method("attach-existing-audience", func() {
-		Description("Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When several suppression lists are supplied they are combined into one suppression list (created once per selection, reused on repeat), which is the only list HubSpot creates here.")
+		Description("Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project's standing standard suppression list, and with current_registrants_event the edition's current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here.")
 		Payload(func() {
 			bearerToken()
 			projectIDAttr()

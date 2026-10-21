@@ -57,8 +57,8 @@ type AudienceExplorer interface {
 	// flatten — see composeErr.
 	ComposeMaster(ctx context.Context, projectID string, in audience.ComposeInput) (*audience.ComposeOutcome, error)
 	// AttachExisting reads existing lists back from the portal and returns them as an
-	// outcome to record. Its only create is the combined list for two or more suppressions,
-	// reused on repeat. includeIDs are the lists the send
+	// outcome to record. Its only creates are the project's standing standard suppression
+	// list and the edition's current-registrants list, both reused by name. includeIDs are the lists the send
 	// goes to; the first is reported as the outcome's Master, and every one is verified.
 	AttachExisting(ctx context.Context, projectID string, includeIDs, suppressionIDs []string, registrantsEvent string) (*audience.ComposeOutcome, error)
 	RunQA(ctx context.Context, projectID, listRef, eventName string, targetsEU, targetsCA bool, sendSuppressionIDs []string) (*audience.QaOutcome, error)

@@ -12,7 +12,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: attach-existing-audience lfx-v2-campaign-service-audience-builder
-            description: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When several suppression lists are supplied they are combined into one suppression list (created once per selection, reused on repeat), which is the only list HubSpot creates here.
+            description: Record lists that already exist in the project's HubSpot portal as a brief's built audience, without composing a new master. Every id is read back from the portal first. When every resolved standard suppression list is supplied they are recorded as the project's standing standard suppression list, and with current_registrants_event the edition's current-registrants list is recorded too; those two lists, found by name and reused, are the only lists HubSpot may create here.
             operationId: lfx-v2-campaign-service-audience-builder#attach-existing-audience
             parameters:
                 - name: project_id
@@ -255,7 +255,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-audience-builder
             summary: compose-audience-master lfx-v2-campaign-service-audience-builder
-            description: Create the combined suppression list and then the master list in the project's HubSpot portal, and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.
+            description: Create the master list in the project's HubSpot portal, excluding the requested suppressions directly through the project's standing standard suppression list and, when asked, the edition's current-registrants list (both found by name and reused), and when brief_id is supplied record the master as that brief's built audience. NOT idempotent.
             operationId: lfx-v2-campaign-service-audience-builder#compose-audience-master
             parameters:
                 - name: project_id
