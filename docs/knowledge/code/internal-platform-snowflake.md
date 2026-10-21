@@ -77,10 +77,57 @@ secret).
 
 ## Dependency
 
-This package adds `github.com/snowflakedb/gosnowflake` — the only official Go
+This package adds `github.com/snowflakedb/gosnowflake/v2` — the only official Go
 Snowflake driver. No shared Go Snowflake service exists in the platform (the LFX One
 UI backend has a TypeScript Snowflake service, not reusable from Go), so the broker
 owns its own connection, consistent with every other platform port owning its client.
+
+**The `/v2` suffix is load-bearing, not cosmetic.** GHSA-qqj6-54q6-cxv6 — the driver
+writing auth tokens, query-result encryption keys, pre-signed storage URLs and SAML
+assertions into its own diagnostic logs — is fixed only on the v2 module path, at
+`v2.2.0`. Go treats a major version as a separate module, so the v1 path will never
+show a patched release: `v1.19.1` is its last, and Dependabot reports
+`first_patched_version: null` against it even though a published fix exists. Reading
+that null as "no fix available" is the trap; the remedy is the path change, not a
+dismissal. Do not move back to the unsuffixed path to quiet a build error.
+
+**A compatible API is not a compatible default.** v2 changed one behaviour silently:
+OCSP certificate-revocation checking. v1 *promoted* an unset `OCSPFailOpen` to
+`OCSPFailOpenTrue` in `fillMissingConfigParameters`, and skipped OCSP only when
+`DisableOCSPChecks` or `InsecureMode` was set — this package sets neither, so it had
+revocation checking ON, fail-open. v2 gates the same code on `OCSPEnabled(cfg)`, which
+is **false** for `OCSPFailOpenNotSet` — the field's zero value. Carrying
+the config across unchanged therefore compiled, passed every test, connected fine, and
+stopped checking revocation. `NewClient` now sets `OCSPFailOpen: sf.OCSPFailOpenTrue`
+explicitly, which is exactly the value v1 filled in for itself (revocation checked, an
+unreachable responder does not break the connection), and `TestDSNEnablesOCSPRevocationChecking`
+pins it so the default cannot flip back unnoticed. It asserts over the DSN, not the
+config literal, because the DSN is what `sql.Open` hands the driver to re-parse. v2's
+`doc.go` prescribes this directly — OCSP is off by default and production wanting
+revocation checking must opt in via `ocspFailOpen`.
+
+Neither alternative was taken. Fail-*closed* (`OCSPFailOpenFalse`) would let a Snowflake
+OCSP-responder outage stop event resolution, which v1 never did. `CertRevocationCheckMode`
+— v2's CRL checking — is a mutually exclusive replacement (the driver refuses to run both)
+with download/cache behaviour this service has never exercised, so it is a change of
+mechanism rather than the restoration of a lost default. Keeping it at its `Disabled`
+zero value is also what stops the OCSP setting from tripping that conflict check.
+
+Two things make the swap small. The surface this package touches is three symbols —
+`sf.Config`, `sf.AuthTypeJwt`, `sf.DSN` — and in v2 all three are aliases onto
+`internal/config`, unchanged in shape; and v2 still registers under the driver name
+`snowflake`, so the `sql.Open("snowflake", dsn)` string needs no edit. That string is
+the one thing a compiler cannot check here: it would build either way and fail at the
+first query, in production. `TestDefaultOpenerDriverNameIsRegistered` pins it by
+asserting `"snowflake"` is in `sql.Drivers()` — every other test in this package
+injects a fake opener, so the real name is exercised nowhere else.
+
+`golang-migrate` keeps `gosnowflake@v1.6.19` in the module *graph* for a Snowflake
+migration driver this service does not use. It contributes no package to the binary
+and appears in neither `go.mod` nor `go.sum`, so it is not a second copy of the
+vulnerable code and cannot double-register the driver name (which would panic at
+`init`). Check that with `go list -deps ./cmd/...`, not `go list -m all` — the latter
+prints the graph, which includes modules nothing imports.
 
 The driver's Arrow dependency brings in Apache Thrift. `go.mod` pins Thrift to
 `v0.24.0` to fix the infinite-loop vulnerability GHSA-8wv5-x4w7-5gww.
