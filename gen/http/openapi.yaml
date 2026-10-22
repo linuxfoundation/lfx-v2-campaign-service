@@ -4182,7 +4182,7 @@ paths:
             tags:
                 - lfx-v2-campaign-service-briefs
             summary: upload-creative-asset lfx-v2-campaign-service-briefs
-            description: 'Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn''s Images API (an organization-owned image URN) and used as that dark post''s article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels.'
+            description: 'Upload an image asset for a brief so a Meta ad creative can reference it by id. Synchronous: the image is validated (PNG/JPEG, size limit) and stored, then the asset id is returned. Re-uploading identical bytes to the same brief returns the existing asset (idempotent). This does not touch any ad platform; the account-scoped Meta image_hash is resolved later, at campaign dispatch. Meta and Microsoft Advertising consume stored assets: a Microsoft Advertising campaign names one by microsoftConfig.imageAssetId, and at dispatch it is uploaded to the ad account''s media library (an account-scoped MediaId) and attached to the campaign as an image ad extension; Microsoft accepts at most 76,800 bytes and 40x20 to 2592x2048 pixels. A Reddit campaign can also reference the asset (redditConfig.imageAssetId), served to Reddit at a short-lived signed URL when that feature is configured. An X (Twitter) campaign may also reference the asset as the image of its authored tweet (twitterConfig.imageAssetId, at most 5 MiB for X); its X media key is likewise resolved at dispatch. LinkedIn consumes them too: a linkedInConfig variant names one by imageAssetId, and at dispatch it is uploaded once through LinkedIn''s Images API (an organization-owned image URN) and used as that dark post''s article thumbnail; LinkedIn accepts at most 5,000,000 bytes and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or 360x640 to 2430x4320 (vertical) pixels. A brief''s library is bounded by a per-brief quota on both count and total stored bytes; an upload that would exceed either is refused with 409 and reason creative_asset_quota_exceeded, and list-creative-assets publishes the ceilings and the current totals so a client can see the headroom before it uploads. A re-upload of identical bytes is idempotent and is NOT judged against the quota, since it stores nothing. An archived brief returns 404, matching every other access to a brief''s children.'
             operationId: lfx-v2-campaign-service-briefs#upload-creative-asset
             parameters:
                 - name: project_id
@@ -14824,6 +14824,8 @@ definitions:
                     - audience_provenance_immutable
                     - ab_test_unsupported_send_type
                     - campaign_adopted
+                    - creative_asset_quota_exceeded
+                    - creative_asset_in_use
         example:
             code: "409"
             message: A connection for this provider already exists on the project.
@@ -15162,7 +15164,7 @@ definitions:
                     type: string
                     example: 5a77fdfe-3618-4678-87e2-3a5ab7ff64fc
                     format: uuid
-                description: 'Assets whose dimensions are known and which no requested slot would accept. The mirror of gaps: not only "what am I missing" but "which of the files I just dropped is doing nothing".'
+                description: 'Assets whose dimensions are known and which this plan did not place in any slot. Wider than "nothing would accept them": an asset also appears here when every slot that would take it was already filled to its minimum, or when a sibling slot had already spent a shared group ceiling. The mirror of gaps: not only "what am I missing" but "which of the files I just dropped is this plan not using" — with no gaps reported, what is listed here is surplus rather than unusable.'
                 example:
                     - 5a77fdfe-3618-4678-87e2-3a5ab7ff64fc
                     - b7bd4089-d7f5-4d42-bc88-862b53f53b55

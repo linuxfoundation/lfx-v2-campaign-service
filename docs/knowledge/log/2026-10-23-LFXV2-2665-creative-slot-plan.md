@@ -8,8 +8,9 @@ if not, what exactly is missing?* Three new pieces answer it.
 place a platform will accept an image — platform, channel, wire field name, operator label, a
 list of acceptable `ShapeRule` geometries, a byte cap, and `MinCount`/`MaxCount` — and
 `Classify` runs a library against a `Catalog`, returning assignments, gaps, the assets whose
-dimensions are unknown, and the assets nothing will take. It imports no platform package; each
-platform publishes its own rows.
+dimensions are unknown, and the assets it did not place — which is wider than the assets nothing
+would take, since a slot is filled to its minimum and a group ceiling is shared. It imports no
+platform package; each platform publishes its own rows.
 
 Three decisions worth recording:
 

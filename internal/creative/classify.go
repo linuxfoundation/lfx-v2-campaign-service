@@ -49,10 +49,14 @@ type Plan struct {
 	// failing one: their shape is unknown, which is a different answer from "wrong shape",
 	// and a backfill makes them classifiable without the operator doing anything.
 	Unclassified []string
-	// Unused names assets whose dimensions ARE known and which no requested slot would
-	// accept. This is the mirror of Gaps and answers the other half of the operator's
-	// question after a folder upload: not only "what am I missing" but "which of the files
-	// I just dropped is doing nothing".
+	// Unused names assets whose dimensions ARE known and which this plan did not PLACE in
+	// any slot. Not placed is wider than not eligible, deliberately: an asset also lands
+	// here when every slot that would accept it was already filled to its minimum, or when
+	// a sibling slot had already spent the shared group ceiling. The question it answers is
+	// the mirror of Gaps — after a folder upload, not only "what am I missing" but "which
+	// of the files I just dropped is this plan not using". Whether an unused asset is
+	// unusable or merely surplus is read off Gaps: a plan with no gaps has nothing missing,
+	// so what is here is surplus.
 	Unused []string
 }
 
@@ -195,6 +199,11 @@ func anyOfGaps(catalog Catalog, specByKey map[string]SlotSpec, placedBySlot map[
 // a place in the shared ceiling first.
 func slotGapReason(slot SlotSpec, eligible, placed, short int, groupExhausted bool) string {
 	switch {
+	case groupExhausted && eligible == 0:
+		// Both blockers are real and freeing a place would not fix this slot, so naming only
+		// the ceiling would send the operator to delete an image and leave the gap standing.
+		return fmt.Sprintf("%s — nothing in this brief's library qualifies, and the combined ceiling of %d images across the %s slots is already filled; both have to be dealt with",
+			slot.Describe(), slot.GroupMax, slot.Group)
 	case groupExhausted:
 		return fmt.Sprintf("%s — %d more needed, but the combined ceiling of %d images across the %s slots is already filled; free a place there first",
 			slot.Describe(), short, slot.GroupMax, slot.Group)

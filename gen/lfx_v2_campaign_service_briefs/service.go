@@ -52,7 +52,14 @@ type Service interface {
 	// through LinkedIn's Images API (an organization-owned image URN) and used as
 	// that dark post's article thumbnail; LinkedIn accepts at most 5,000,000 bytes
 	// and 640x360 to 7680x4320 (horizontal), 360x360 to 4320x4320 (square) or
-	// 360x640 to 2430x4320 (vertical) pixels.
+	// 360x640 to 2430x4320 (vertical) pixels. A brief's library is bounded by a
+	// per-brief quota on both count and total stored bytes; an upload that would
+	// exceed either is refused with 409 and reason creative_asset_quota_exceeded,
+	// and list-creative-assets publishes the ceilings and the current totals so a
+	// client can see the headroom before it uploads. A re-upload of identical
+	// bytes is idempotent and is NOT judged against the quota, since it stores
+	// nothing. An archived brief returns 404, matching every other access to a
+	// brief's children.
 	UploadCreativeAsset(context.Context, *UploadCreativeAssetPayload) (res *CreativeAsset, err error)
 	// List the creative assets stored for a brief, with the per-brief quota the
 	// next upload will be judged against. Metadata only: the image bytes are never
@@ -1269,9 +1276,13 @@ type CreativeAssetPlan struct {
 	// a different answer from wrong, and a dimension backfill makes them
 	// classifiable without the operator doing anything.
 	Unclassified []string
-	// Assets whose dimensions are known and which no requested slot would accept.
-	// The mirror of gaps: not only "what am I missing" but "which of the files I
-	// just dropped is doing nothing".
+	// Assets whose dimensions are known and which this plan did not place in any
+	// slot. Wider than "nothing would accept them": an asset also appears here
+	// when every slot that would take it was already filled to its minimum, or
+	// when a sibling slot had already spent a shared group ceiling. The mirror of
+	// gaps: not only "what am I missing" but "which of the files I just dropped is
+	// this plan not using" — with no gaps reported, what is listed here is surplus
+	// rather than unusable.
 	Unused []string
 }
 

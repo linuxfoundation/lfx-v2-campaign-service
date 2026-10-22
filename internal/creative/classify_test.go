@@ -330,6 +330,31 @@ func TestClassify_OptionalSlotsProduceNoGap(t *testing.T) {
 	}
 }
 
+// A slot can be blocked BOTH ways at once, and the gap has to say so. Naming only the
+// spent ceiling would send the operator to free a place that still leaves the slot empty,
+// because nothing in the library is that shape either.
+func TestClassify_GapNamesBothBlockersWhenBothApply(t *testing.T) {
+	landscape := landscapeSlot()
+	landscape.Group, landscape.GroupMax, landscape.MinCount, landscape.MaxCount = "marketing image", 1, 1, 1
+	square := squareSlot()
+	square.Group, square.GroupMax, square.MinCount = "marketing image", 1, 1
+
+	// Only a landscape image exists, so it takes the group's single place AND leaves the
+	// square slot with nothing eligible.
+	plan := Classify(Catalog{Slots: []SlotSpec{landscape, square}}, []Asset{asset("wide", 1910, 1000, 0)})
+
+	gap := gapFor(plan, square.Label)
+	if gap == nil {
+		t.Fatalf("the square slot is required and empty, so it must report a gap: %+v", plan.Gaps)
+	}
+	if !strings.Contains(gap.Reason, "nothing in this brief's library qualifies") {
+		t.Errorf("the gap must say nothing qualifies, since freeing a place would not fill it: %q", gap.Reason)
+	}
+	if !strings.Contains(gap.Reason, "combined ceiling") {
+		t.Errorf("the gap must still name the spent ceiling, which is a second real blocker: %q", gap.Reason)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // either-or requirements
 // ---------------------------------------------------------------------------

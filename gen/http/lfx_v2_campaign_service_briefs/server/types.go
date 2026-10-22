@@ -550,9 +550,13 @@ type GetAssetPlanResponseBody struct {
 	// a different answer from wrong, and a dimension backfill makes them
 	// classifiable without the operator doing anything.
 	Unclassified []string `form:"unclassified" json:"unclassified" xml:"unclassified"`
-	// Assets whose dimensions are known and which no requested slot would accept.
-	// The mirror of gaps: not only "what am I missing" but "which of the files I
-	// just dropped is doing nothing".
+	// Assets whose dimensions are known and which this plan did not place in any
+	// slot. Wider than "nothing would accept them": an asset also appears here
+	// when every slot that would take it was already filled to its minimum, or
+	// when a sibling slot had already spent a shared group ceiling. The mirror of
+	// gaps: not only "what am I missing" but "which of the files I just dropped is
+	// this plan not using" — with no gaps reported, what is listed here is surplus
+	// rather than unusable.
 	Unused []string `form:"unused" json:"unused" xml:"unused"`
 }
 

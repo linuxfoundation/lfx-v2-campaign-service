@@ -82,10 +82,13 @@ multi-platform request's shared-ceiling allocation reproducible.
 - **`Assignments`** — which asset ids fill which slot, one row per slot that got anything.
 - **`Gaps`** — what is still missing, each with `Need` and a `Reason`.
 - **`Unclassified`** — assets whose dimensions are unknown.
-- **`Unused`** — assets with known dimensions that no requested slot will take.
+- **`Unused`** — assets with known dimensions that the plan did not place in any slot.
 
 `Unused` is the mirror of a gap, and without it the plan answers only half the question after a
-folder upload.
+folder upload. It is **not placed**, which is wider than *not eligible*: a slot is filled to its
+minimum and a group ceiling is shared, so a perfectly acceptable image lands here once the places
+it qualified for are taken. The two readings are told apart by `Gaps` — nothing missing means what
+is listed is surplus, not unusable.
 
 **Ranking is closest-ratio, then larger, then stable.** The last tie-break is the asset's
 `Ordinal`, which the service fills from the repository's oldest-first list index rather than a

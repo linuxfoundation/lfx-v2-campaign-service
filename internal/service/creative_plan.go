@@ -47,6 +47,10 @@ func (s *BriefService) GetAssetPlan(ctx context.Context, p *briefs.GetAssetPlanP
 	// ListAssets, not a bytes-bearing read: classifying needs an id and a shape, both of which
 	// are columns on the row. Loading up to 30 MiB of BYTEA per asset to compare two integers
 	// would be the whole cost of the endpoint and buy nothing.
+	// The two discarded returns are the brief's count and stored bytes. They are deliberately
+	// not echoed here: list-creative-assets is where a client reads its quota headroom, and
+	// publishing the same two figures from a second endpoint gives a UI two sources for one
+	// number that can disagree by a request. This endpoint answers a different question.
 	assets, _, _, err := repo.ListAssets(ctx, p.ProjectID, p.BriefID)
 	if err != nil {
 		return nil, mapBriefErr(err)
