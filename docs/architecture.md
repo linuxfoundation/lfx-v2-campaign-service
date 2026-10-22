@@ -565,8 +565,8 @@ The data pipeline parses campaign names to attribute them to the correct foundat
 This service's own reads do not parse names. The project-scoped reads — the keyword and audience
 insights and the Google Ads, Meta, Reddit and X account monitors — attribute an upstream campaign to
 a project by `campaigns.project_id`, the row this service wrote when it created or adopted the
-campaign. A campaign created outside this service is therefore not in any project's monitor, however
-it is named.
+campaign. A campaign this service neither created nor adopted is therefore not in any project's
+monitor, however it is named.
 
 ## Migration Path
 

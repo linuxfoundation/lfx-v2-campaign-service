@@ -234,7 +234,7 @@ var ConflictError = Type("conflict-error", func() {
 // answers sets one, so a client never has to fall back to the message.
 var AccountMonitorConflictError = Type("account-monitor-conflict-error", func() {
 	errorAttrs("409", "the account has more campaigns active in the window than the account monitor can report on (at most 200 campaigns active in the window for x/twitter ads)")
-	Attribute("reason", String, "Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers), account_timezone_unsupported (the account's timezone does not start its days on a whole UTC hour), campaign_account_mismatch (a campaign recorded for this project was created under a different account, or records none) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).", func() {
+	Attribute("reason", String, "Why the account cannot be monitored as it stands: account_too_many_active_campaigns (more campaigns active in the window than one report covers), account_timezone_unsupported (the account's timezone does not start its days on a whole UTC hour), campaign_account_mismatch (a campaign recorded for this project was created under a different account) or campaign_scope_invalid (a campaign recorded for this project has an id the platform cannot read).", func() {
 		Enum("account_too_many_active_campaigns", "account_timezone_unsupported", "campaign_account_mismatch", "campaign_scope_invalid")
 		Example("account_too_many_active_campaigns")
 	})
@@ -2591,7 +2591,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", ConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read")
+		Error("Conflict", ConflictError, "A campaign recorded for this project was created under a different customer than account_id")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2674,7 +2674,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 		})
 		Result(AccountMonitor)
 		Error("NotFound", NotFoundError, "Resource not found")
-		Error("Conflict", ConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account, recording none, or carrying an id the platform cannot read")
+		Error("Conflict", ConflictError, "A campaign recorded for this project does not fit the monitored account: created under a different account, or carrying an id the platform cannot read")
 		authErrors()
 		Error("InternalServerError", InternalServerError, "Internal server error")
 		Error("ServiceUnavailable", ConnServiceUnavailableError, "Service unavailable")
@@ -2799,7 +2799,7 @@ var _ = Service("lfx-v2-campaign-service-connections", func() {
 			"Conversions are never reported for X. Saved reports are cached platform data, not a record " +
 			"of anything this service did; the saved report covers the whole account, and only the response " +
 			"is scoped. The scope refusals carry reason campaign_account_mismatch (a recorded campaign " +
-			"belongs to another account, or records none) or campaign_scope_invalid (a recorded campaign " +
+			"belongs to another account) or campaign_scope_invalid (a recorded campaign " +
 			"id the platform cannot read). Two account states are also refused with 409 rather than served " +
 			"metrics that would be wrong: more than 200 campaigns active in the window (reason " +
 			"account_too_many_active_campaigns — one report covers at most ten X stats jobs of 20 " +

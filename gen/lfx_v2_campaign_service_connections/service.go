@@ -610,17 +610,17 @@ type Service interface {
 	// for X. Saved reports are cached platform data, not a record of anything this
 	// service did; the saved report covers the whole account, and only the
 	// response is scoped. The scope refusals carry reason
-	// campaign_account_mismatch (a recorded campaign belongs to another account,
-	// or records none) or campaign_scope_invalid (a recorded campaign id the
-	// platform cannot read). Two account states are also refused with 409 rather
-	// than served metrics that would be wrong: more than 200 campaigns active in
-	// the window (reason account_too_many_active_campaigns — one report covers at
-	// most ten X stats jobs of 20 campaigns), and an account timezone whose local
-	// midnight is not a whole UTC hour, such as Asia/Kolkata (reason
-	// account_timezone_unsupported — X accepts whole-hour window bounds only, so
-	// the account's own days cannot be queried exactly). A 90-day window that
-	// crosses a DST fall-back covers the trailing 89 whole local days, because 90
-	// such days are 90 days and an hour, over X's 90-day limit.
+	// campaign_account_mismatch (a recorded campaign belongs to another account)
+	// or campaign_scope_invalid (a recorded campaign id the platform cannot read).
+	// Two account states are also refused with 409 rather than served metrics that
+	// would be wrong: more than 200 campaigns active in the window (reason
+	// account_too_many_active_campaigns — one report covers at most ten X stats
+	// jobs of 20 campaigns), and an account timezone whose local midnight is not a
+	// whole UTC hour, such as Asia/Kolkata (reason account_timezone_unsupported —
+	// X accepts whole-hour window bounds only, so the account's own days cannot be
+	// queried exactly). A 90-day window that crosses a DST fall-back covers the
+	// trailing 89 whole local days, because 90 such days are 90 days and an hour,
+	// over X's 90-day limit.
 	MonitorTwitterAdsAccount(context.Context, *MonitorTwitterAdsAccountPayload) (res *AccountMonitor, err error)
 	// Read the statistics of the HubSpot marketing emails THIS SERVICE created for
 	// the project and sent within the trailing `days` (today inclusive, UTC), with
@@ -825,9 +825,9 @@ type AccountMonitorConflictError struct {
 	// account_too_many_active_campaigns (more campaigns active in the window than
 	// one report covers), account_timezone_unsupported (the account's timezone
 	// does not start its days on a whole UTC hour), campaign_account_mismatch (a
-	// campaign recorded for this project was created under a different account, or
-	// records none) or campaign_scope_invalid (a campaign recorded for this
-	// project has an id the platform cannot read).
+	// campaign recorded for this project was created under a different account) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
 	Reason string
 }
 

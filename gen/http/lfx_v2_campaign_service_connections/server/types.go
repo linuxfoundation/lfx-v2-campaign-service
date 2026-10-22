@@ -5877,9 +5877,9 @@ type MonitorTwitterAdsAccountConflictResponseBody struct {
 	// account_too_many_active_campaigns (more campaigns active in the window than
 	// one report covers), account_timezone_unsupported (the account's timezone
 	// does not start its days on a whole UTC hour), campaign_account_mismatch (a
-	// campaign recorded for this project was created under a different account, or
-	// records none) or campaign_scope_invalid (a campaign recorded for this
-	// project has an id the platform cannot read).
+	// campaign recorded for this project was created under a different account) or
+	// campaign_scope_invalid (a campaign recorded for this project has an id the
+	// platform cannot read).
 	Reason string `form:"reason" json:"reason" xml:"reason"`
 }
 
