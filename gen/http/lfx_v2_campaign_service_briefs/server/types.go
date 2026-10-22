@@ -470,6 +470,12 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
@@ -3934,6 +3940,12 @@ type CreativeAssetResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string `form:"checksum" json:"checksum" xml:"checksum"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
@@ -4659,6 +4671,8 @@ func NewUploadCreativeAssetCreatedResponseBody(res *lfxv2campaignservicebriefs.C
 		MimeType:  res.MimeType,
 		ByteSize:  res.ByteSize,
 		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
 		Created:   res.Created,
 	}
 	return body
@@ -4675,6 +4689,8 @@ func NewUploadCreativeAssetOKResponseBody(res *lfxv2campaignservicebriefs.Creati
 		MimeType:  res.MimeType,
 		ByteSize:  res.ByteSize,
 		Checksum:  res.Checksum,
+		Width:     res.Width,
+		Height:    res.Height,
 		Created:   res.Created,
 	}
 	return body

@@ -6281,9 +6281,11 @@ paths:
                                 byte_size: 1375386599720306412
                                 checksum: Animi at et.
                                 created: "true"
+                                height: 7578664414102152656
                                 id: 189a1a88-0b9d-4a2c-ab34-a8f1d7e17509
                                 mime_type: image/jpeg
                                 project_id: Quo ut.
+                                width: 7227398246152017746
                 "201":
                     description: Created response.
                     content:
@@ -6295,9 +6297,11 @@ paths:
                                 byte_size: 4945546068272182131
                                 checksum: Id hic rerum iure odio.
                                 created: "true"
+                                height: 6089835885683914289
                                 id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
                                 mime_type: image/jpeg
                                 project_id: Qui aliquam ea quam dolore est.
+                                width: 1297412450570756896
                 "400":
                     description: 'BadRequest: Bad request'
                     content:
@@ -20275,6 +20279,12 @@ components:
                     enum:
                         - "true"
                         - "false"
+                height:
+                    type: integer
+                    description: Pixel height, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.
+                    example: 6089835885683914289
+                    format: int64
+                    minimum: 1
                 id:
                     type: string
                     description: Creative asset UUID
@@ -20291,14 +20301,22 @@ components:
                     type: string
                     description: Owning project
                     example: Qui aliquam ea quam dolore est.
+                width:
+                    type: integer
+                    description: Pixel width, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.
+                    example: 1297412450570756896
+                    format: int64
+                    minimum: 1
             example:
                 brief_id: Praesentium dolore aut labore qui debitis.
                 byte_size: 4945546068272182131
                 checksum: Id hic rerum iure odio.
                 created: "true"
+                height: 6089835885683914289
                 id: f4be199f-8e1d-4ae4-ad92-b2b9d5f6c118
                 mime_type: image/jpeg
                 project_id: Qui aliquam ea quam dolore est.
+                width: 1297412450570756896
             required:
                 - id
                 - project_id

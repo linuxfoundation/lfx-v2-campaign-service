@@ -414,7 +414,8 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   for tenant scoping, a `mime_type` CHECK constrained to `image/png`/`image/jpeg`, `byte_size`
   (bounded above at 30 MiB by `000029`, see below),
   a `checksum` (lowercase-hex SHA-256 of the bytes), the `bytes` themselves as `BYTEA`, and
-  `created_by` JSONB. `UNIQUE (brief_id, checksum)` is the content-addressed dedupe key. The
+  `created_by` JSONB. `000047` later added nullable `width`/`height` to this same table (see
+  below). `UNIQUE (brief_id, checksum)` is the content-addressed dedupe key. The
   table is INSERT-ONLY: no `updated_at`, no `version` — an asset is created once and read back,
   never edited, so there is no optimistic-concurrency handle. The bytes are stored plaintext,
   NOT encrypted: an ad image is not a secret, unlike the credential blobs. It stores the SOURCE
@@ -433,6 +434,29 @@ leaving headroom over reusing a number a sibling branch might renumber into.
   when the project has none. `NULL` means provenance was not recorded, which is a
   statement about knowledge rather than about the row's age. See *System-account
   provenance* below for why the column is three-state and never recomputed.
+
+- `000047` — `width`/`height` INTEGER on `creative_assets`, both NULLABLE with NO default
+  (LFXV2-2665). They persist the pixel dimensions the upload handler ALREADY computes via
+  `image.DecodeConfig` — for the decompression-bomb gate and the decode budget — and then
+  discarded, so that the per-platform slot classifier can ask an image's shape without
+  detoasting and re-decoding a blob of up to 30 MiB. Nullable is what makes this an EXPAND
+  step: an N-1 binary's `createCreativeAssetQuery` names neither column, and `NOT NULL` with
+  no correct default would make that insert fail. So `NULL` MEANS "stored before the service
+  recorded dimensions" and readers must treat it as UNKNOWN, not as zero — a classifier that
+  coerced `NULL` to `0` would report every pre-existing asset as failing every slot's minimum.
+  `CHECK ((width IS NULL AND height IS NULL) OR (width > 0 AND height > 0))` enforces the pair
+  at the table, the way `byte_size`'s equality CHECK does: `NULL > 0` is `NULL` and a CHECK
+  admits anything not false, so pre-release rows pass, while zero, negative, and half-known
+  shapes are refused. The CHECK is a NARROWING and owes `000029`'s N-1 argument, which is
+  trivial here — an N-1 INSERT lands `(NULL, NULL)` and every existing row is already
+  `(NULL, NULL)` — so it is a plain CHECK rather than `NOT VALID` + `VALIDATE`, for `000029`'s
+  reason. **The backfill is deliberately a SEPARATE step**: the values must come from the same
+  `image/png` and `image/jpeg` decoders the upload path uses, and Postgres has no image
+  decoder, so there is nothing a SQL-side migration could run. NO INDEX is added — `000028`'s
+  indexing note already covers list-by-brief via `UNIQUE (brief_id, checksum)`, and neither
+  dimension is ever a search predicate: a slot rule is a ratio with a tolerance plus two
+  minimums, decided in Go over assets already loaded. Pinned by
+  `TestMigration000047_IsExpandOnly`.
 
 ## Terminal-job retention (`JobRepo.PruneTerminalJobs`)
 
@@ -1938,8 +1962,9 @@ write is — see `enqueueCampaignIndex`.
 
 ## `CreativeAssetRepo` (creative-asset storage, LFXV2-3295)
 
-`CreativeAssetRepo` backs `000028`'s `creative_assets` table with two methods, and both are
-built around the parent-brief gate and the content-addressed dedupe key.
+`CreativeAssetRepo` backs `000028`'s `creative_assets` table with three methods — `CreateAsset`,
+`GetAsset` and `GetAssetSize` — all built around the parent-brief gate and the content-addressed
+dedupe key.
 
 `CreateAsset`'s caller is `BriefService.UploadCreativeAsset`, backing
 `POST .../briefs/{brief_id}/creative-assets` (see [internal/service](internal-service.md)),
@@ -1955,7 +1980,7 @@ non-nil interface.
 campaign_briefs WHERE id = $1 AND project_id = $2 FOR UPDATE`, checks the status, then runs
 `INSERT ... SELECT ... WHERE EXISTS (an active same-project brief) ON CONFLICT (brief_id,
 checksum) DO UPDATE SET byte_size = creative_assets.byte_size RETURNING <cols>` on that same
-transaction. Six things are doing work here and each has a failure mode if changed:
+transaction. Seven things are doing work here and each has a failure mode if changed:
 
 - **The parent brief is LOCKED before the insert, and that lock is what orders this against
   archival.** An earlier revision ran the insert as a single unlocked autocommit statement and
@@ -2049,6 +2074,18 @@ transaction. Six things are doing work here and each has a failure mode if chang
   against 179 ms for `md5()` on the same rows). There is deliberately no UPPER bound: it would have to equal the upload endpoint's
   request limit, and that endpoint lands in a later PR, so guessing it here would mean two
   limits that silently disagree.
+- **`width`/`height` cross the NULL↔zero boundary in BOTH directions, once per direction.** The
+  model's pair is `int`, where zero means UNKNOWN; the column's spelling of unknown is `NULL`
+  (`000047`). So the insert binds `NULLIF($6::int, 0), NULLIF($7::int, 0)` — a bare `$n` would
+  write a literal `0`, which `000047`'s CHECK refuses outright, turning a legitimate
+  dimensionless write into an insert failure — and `creativeAssetCols` reads back
+  `COALESCE(width, 0), COALESCE(height, 0)`, so both scanners can bind plain `int` fields
+  rather than `*int`. The columns sit between `checksum` and `created_by` in `creativeAssetCols`
+  and the scanners bind POSITIONALLY, so a column added anywhere but the matching scanner slot
+  assigns the wrong value to the wrong field. `TestCreativeAssetColumnsCarryDimensions` pins
+  both the `NULLIF` and the ordering. The `ON CONFLICT` arm deliberately does NOT backfill
+  dimensions on a re-upload: that would contradict the stated insert-only immutability and
+  would backfill only the arbitrary subset of rows somebody happened to re-send.
 - **The returned column set OMITS `bytes`.** `creativeAssetCols` (used by the write and the
   metadata result) does not select the potentially-multi-megabyte blob; only `GetAsset`'s
   `creativeAssetColsWithBytes` appends it. A create returns metadata, so a `stored.Bytes` read
@@ -2073,9 +2110,13 @@ with the suite still green. `TestCreativeAssets_MimeTypeCheckRejectsUnsupported`
 for the `mime_type` allow-list, asserting both that `image/gif` is refused and that `image/jpeg`
 is accepted — so narrowing the CHECK to PNG alone fails too.
 
-The repository has no source-text SQL assertion (unlike the campaign/connection repos); its
-behaviour — the parent-brief gate's three rejection shapes, the `ON CONFLICT` idempotency, the
-`byte_size` binding, and `GetAsset`'s scoping — is pinned by `creative_asset_repo_live_test.go`.
+The repository has no BEHAVIOURAL source-text SQL assertion (unlike the campaign/connection
+repos); its behaviour — the parent-brief gate's three rejection shapes, the `ON CONFLICT`
+idempotency, the `byte_size` binding, and `GetAsset`'s scoping — is pinned by
+`creative_asset_repo_live_test.go`. The one source-text file that does exist,
+`creative_asset_migration_test.go`, asserts only what a live database cannot show: that `000047`
+is expand-only, and that the `COALESCE`/`NULLIF` pair and the positional column order agree —
+drifts that fail SILENTLY rather than loudly.
 That test is IN-PACKAGE (`package postgres`, alongside `audience_reconcile_live_test.go`)
 rather than under `dbtest/`, because `NewCreativeAssetRepo` needs the instrumented `*Pool`
 wrapper that `dbtest.Pool` does not expose; it follows the same `TEST_DATABASE_URL`-gated

@@ -198,7 +198,15 @@ func (s *BriefService) UploadCreativeAsset(ctx context.Context, p *briefs.Upload
 		// The dedupe/idempotency key. Content-derived, so a repeat upload of the same image
 		// collides on (brief_id, checksum) and returns the existing asset.
 		Checksum: sha256Hex(decoded),
-		Bytes:    decoded,
+		// The header dimensions from stage 1, persisted rather than discarded. They are the
+		// classifier's entire input — which platform slot an image can fill is a question about
+		// its shape — and recovering them later would mean detoasting a blob of up to 30 MiB to
+		// re-read a header this request already parsed. They are the same values stage 2 bounded
+		// and stage 3 then decoded successfully against, so nothing is stored that was not
+		// already validated; the decoded image is discarded, so cfg is the only source left.
+		Width:  cfg.Width,
+		Height: cfg.Height,
+		Bytes:  decoded,
 		// Same nil handling as CreateBrief: a request with no decodable actor stores NULL rather
 		// than refusing the write. On an idempotent re-upload the repo preserves the FIRST
 		// uploader, so this attributes creation, not re-sending.
@@ -394,8 +402,15 @@ func sha256Hex(b []byte) string {
 // creativeAssetResult maps a stored asset to the Goa result type. The bytes are deliberately not
 // echoed back: the response is metadata (the caller already has the bytes it sent), and a
 // multi-megabyte base64 body on every upload would be pure overhead.
+//
+// Width/Height are mapped through a nil for the zero pair rather than as plain values. The model
+// uses 0 for "dimensions not recorded" (an asset stored before migration 000047) and the contract
+// uses an ABSENT field for the same thing; publishing a literal 0 would turn "unknown" into a
+// claim of a 0x0 image, which a client matching assets to platform slots would read as failing
+// every minimum. The pair is whole or empty — 000047's CHECK guarantees it — so one test covers
+// both fields.
 func creativeAssetResult(a *model.CreativeAsset) *briefs.CreativeAsset {
-	return &briefs.CreativeAsset{
+	res := &briefs.CreativeAsset{
 		ID:        a.ID,
 		ProjectID: a.ProjectID,
 		BriefID:   a.BriefID,
@@ -403,6 +418,13 @@ func creativeAssetResult(a *model.CreativeAsset) *briefs.CreativeAsset {
 		ByteSize:  a.ByteSize,
 		Checksum:  a.Checksum,
 	}
+	if a.Width > 0 && a.Height > 0 {
+		// Copies, not &a.Width: pointing into the caller's model would let a later mutation of
+		// the stored asset change a result already handed to the transport.
+		w, h := a.Width, a.Height
+		res.Width, res.Height = &w, &h
+	}
+	return res
 }
 
 // decodeCreativeBytes turns the upload payload's base64 string into the image bytes every stage

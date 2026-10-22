@@ -268,6 +268,107 @@ func TestBriefService_UploadCreativeAsset_StoresSniffedTypeAndChecksum(t *testin
 	}
 }
 
+// TestBriefService_UploadCreativeAsset_PersistsHeaderDimensions binds the two columns
+// migration 000047 added, at both ends: the model handed to CreateAsset and the wire result
+// handed back.
+//
+// The image is deliberately NON-SQUARE and its sides are different primes, unlike every other
+// fixture in this file, which is 2x2. A square fixture cannot tell width from height: swapping
+// the two assignments in either the handler or creativeAssetResult passes a 2x2 test, and a
+// transposed dimension is precisely the defect that makes a slot classifier confidently assign a
+// portrait image to a landscape slot.
+//
+// Both PNG and JPEG are exercised because the dimensions come from image.DecodeConfig, whose
+// per-format decoders are what actually read the header — the handler only passes along what they
+// report.
+func TestBriefService_UploadCreativeAsset_PersistsHeaderDimensions(t *testing.T) {
+	const wantW, wantH = 3, 7
+
+	for _, tc := range []struct {
+		name string
+		mime string
+		enc  func(*bytes.Buffer, image.Image) error
+	}{
+		{"png", "image/png", func(b *bytes.Buffer, m image.Image) error { return png.Encode(b, m) }},
+		{"jpeg", "image/jpeg", func(b *bytes.Buffer, m image.Image) error { return jpeg.Encode(b, m, nil) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := tc.enc(&buf, image.NewRGBA(image.Rect(0, 0, wantW, wantH))); err != nil {
+				t.Fatalf("encode %s: %v", tc.name, err)
+			}
+
+			repo := &fakeCreativeAssetRepo{}
+			s := NewBriefService(nil, nil, nil, nil)
+			s.SetCreativeAssetRepo(repo)
+
+			out, err := s.UploadCreativeAsset(context.Background(), &briefs.UploadCreativeAssetPayload{
+				ProjectID: "cncf", BriefID: "b1", ContentType: tc.mime, Bytes: b64(buf.Bytes()),
+			})
+			if err != nil {
+				t.Fatalf("UploadCreativeAsset: %v", err)
+			}
+
+			if repo.stored.Width != wantW || repo.stored.Height != wantH {
+				t.Errorf("stored dimensions = %dx%d, want %dx%d — the header values must be persisted, not discarded",
+					repo.stored.Width, repo.stored.Height, wantW, wantH)
+			}
+			if out.Width == nil || out.Height == nil {
+				t.Fatalf("result dimensions = (%v, %v), want both present for an asset stored with dimensions", out.Width, out.Height)
+			}
+			if *out.Width != wantW || *out.Height != wantH {
+				t.Errorf("result dimensions = %dx%d, want %dx%d", *out.Width, *out.Height, wantW, wantH)
+			}
+		})
+	}
+}
+
+// TestCreativeAssetResult_UnknownDimensionsAreAbsentNotZero pins the one case the upload path
+// cannot produce and therefore cannot cover: a row stored BEFORE migration 000047, which reads
+// back with the zero pair.
+//
+// The contract spells "unknown" as an absent field and the model spells it as 0, so this mapping
+// is where the two meet. Publishing a literal 0 would be worse than useless — it is a shape no
+// image has, and a client matching assets to platform slots reads it as failing every minimum,
+// so a pre-000047 asset would be reported as unusable everywhere rather than as unclassified.
+//
+// The half-set cases are asserted too. 000047's CHECK makes them unreachable from the database,
+// but creativeAssetResult is also called on models built in memory, and a mapping that published
+// a lone width would hand a client a ratio it could compute from one number.
+func TestCreativeAssetResult_UnknownDimensionsAreAbsentNotZero(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		width, height int
+		wantPresent   bool
+	}{
+		{"both unknown (pre-000047 row)", 0, 0, false},
+		{"width only", 5, 0, false},
+		{"height only", 0, 5, false},
+		{"both known", 4, 5, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := creativeAssetResult(&model.CreativeAsset{
+				ID: "a1", ProjectID: "cncf", BriefID: "b1",
+				MimeType: model.MimeTypePNG, ByteSize: 1, Checksum: "abc",
+				Width: tc.width, Height: tc.height,
+			})
+			if tc.wantPresent {
+				if res.Width == nil || res.Height == nil {
+					t.Fatalf("dimensions = (%v, %v), want both present", res.Width, res.Height)
+				}
+				if *res.Width != tc.width || *res.Height != tc.height {
+					t.Errorf("dimensions = %dx%d, want %dx%d", *res.Width, *res.Height, tc.width, tc.height)
+				}
+				return
+			}
+			if res.Width != nil || res.Height != nil {
+				t.Errorf("dimensions = (%v, %v), want both absent — an incomplete pair is not a shape",
+					res.Width, res.Height)
+			}
+		})
+	}
+}
+
 // TestBriefService_UploadCreativeAsset_RefusesDecodableFormatOutsideAllowList binds the
 // authority mimeForImageFormat CLAIMS but, before this test, did not have.
 //

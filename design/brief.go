@@ -1486,6 +1486,19 @@ var CreativeAsset = Type("creative-asset", func() {
 	})
 	Attribute("byte_size", Int64, "Size of the stored image in bytes")
 	Attribute("checksum", String, "Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a brief")
+	// width/height are OPTIONAL — not in Required below — and the reason is a fact about the
+	// data, not a hedge. They were added in the release that began recording them (migration
+	// 000047), so an asset uploaded before it has no dimensions and never will until a backfill
+	// runs. Absent therefore means UNKNOWN, which is a different answer from any number this
+	// field could carry, and marking them Required would force the transport to publish a
+	// fabricated 0 for those rows — a shape no image has, and one a client matching assets to
+	// platform slots would read as "fails every minimum".
+	Attribute("width", Int, "Pixel width, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.", func() {
+		Minimum(1)
+	})
+	Attribute("height", Int, "Pixel height, as read from the image header at upload. Absent for an asset stored before the service recorded dimensions.", func() {
+		Minimum(1)
+	})
 	// created SELECTS the upload response status and is deliberately NOT Required, so it stays
 	// out of every other representation of this type (get/list responses never set it).
 	//

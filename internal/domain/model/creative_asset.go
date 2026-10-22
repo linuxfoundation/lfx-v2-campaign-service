@@ -42,6 +42,18 @@ type CreativeAsset struct {
 	// Checksum is the lowercase-hex SHA-256 of Bytes: the dedupe key within a brief and the
 	// idempotency key the Meta client uses to avoid re-uploading the same image to an account.
 	Checksum string
+	// Width and Height are the image's pixel dimensions, read from its header by the upload
+	// handler (image.DecodeConfig) and persisted alongside the bytes so that every later
+	// reader — the per-platform slot classifier above all — gets an image's shape without
+	// detoasting and re-decoding a blob of up to 30 MiB.
+	//
+	// They are a PAIR and are either both set or both zero. Zero means UNKNOWN, not 0x0: it is
+	// what an asset stored before this service recorded dimensions reads back as (migration
+	// 000047 added the columns nullable precisely so those rows stay valid). A reader must
+	// treat the zero pair as "cannot be classified" rather than as a tiny image, which would
+	// report every pre-existing asset as failing every slot minimum.
+	Width  int
+	Height int
 	// Bytes is the raw image. It is not a secret (unlike connection credentials) and is
 	// stored in Postgres as BYTEA in plaintext.
 	Bytes []byte

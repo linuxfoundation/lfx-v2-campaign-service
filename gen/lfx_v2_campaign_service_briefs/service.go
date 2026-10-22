@@ -1184,6 +1184,12 @@ type CreativeAsset struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum string
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.

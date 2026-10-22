@@ -151,7 +151,12 @@ are selected by the `created` attribute via `Response(StatusCreated, Tag("create
 a default `Response(StatusOK)`; both share one body shape. The 201 arm also declares
 `Body(CreativeAsset)` explicitly: since goa v3.31 an implicit response body drops the attribute its
 `Tag` tests, which would silently remove `created` from the 201 body; an explicit `Body` is used as
-declared. Neither carries an ETag: creative
+declared. The `CreativeAsset` result type carries OPTIONAL `width`/`height` attributes, each
+`Minimum(1)` and deliberately absent from `Required` (LFXV2-2665): an asset stored before the
+service recorded dimensions has none, and `Required` would make those rows unserializable.
+Absent means "dimensions unknown" — a published `0` would be read as a real measurement failing
+every slot minimum, which is why `Minimum(1)` refuses it at the schema too. Neither carries an
+ETag: creative
 assets are insert-only and carry no version, so there is no optimistic-concurrency
 handle to return (contrast the campaign/audience updates that require `If-Match`). `project_id`
 uses the permissive UUID-or-slug attribute, not the slug-only one `create-campaigns` needs,

@@ -470,6 +470,12 @@ type UploadCreativeAssetOKResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum *string `form:"checksum,omitempty" json:"checksum,omitempty" xml:"checksum,omitempty"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
@@ -3934,6 +3940,12 @@ type CreativeAssetResponseBody struct {
 	// Lowercase-hex SHA-256 digest of the stored bytes; the dedupe key within a
 	// brief
 	Checksum *string `form:"checksum,omitempty" json:"checksum,omitempty" xml:"checksum,omitempty"`
+	// Pixel width, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Width *int `form:"width,omitempty" json:"width,omitempty" xml:"width,omitempty"`
+	// Pixel height, as read from the image header at upload. Absent for an asset
+	// stored before the service recorded dimensions.
+	Height *int `form:"height,omitempty" json:"height,omitempty" xml:"height,omitempty"`
 	// "true" when this request stored the asset; "false" when an identical upload
 	// already existed. Set only on the upload response, where it selects 201 vs
 	// 200.
@@ -5552,6 +5564,8 @@ func NewUploadCreativeAssetCreativeAssetCreated(body *UploadCreativeAssetCreated
 		MimeType:  *body.MimeType,
 		ByteSize:  *body.ByteSize,
 		Checksum:  *body.Checksum,
+		Width:     body.Width,
+		Height:    body.Height,
 		Created:   body.Created,
 	}
 
@@ -5569,6 +5583,8 @@ func NewUploadCreativeAssetCreativeAssetOK(body *UploadCreativeAssetOKResponseBo
 		MimeType:  *body.MimeType,
 		ByteSize:  *body.ByteSize,
 		Checksum:  *body.Checksum,
+		Width:     body.Width,
+		Height:    body.Height,
 		Created:   body.Created,
 	}
 
@@ -8901,6 +8917,16 @@ func ValidateUploadCreativeAssetCreatedResponseBody(body *UploadCreativeAssetCre
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
 		}
 	}
+	if body.Width != nil {
+		if *body.Width < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.width", *body.Width, 1, true))
+		}
+	}
+	if body.Height != nil {
+		if *body.Height < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.height", *body.Height, 1, true))
+		}
+	}
 	if body.Created != nil {
 		if !(*body.Created == "true" || *body.Created == "false") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.created", *body.Created, []any{"true", "false"}))
@@ -8936,6 +8962,16 @@ func ValidateUploadCreativeAssetOKResponseBody(body *UploadCreativeAssetOKRespon
 	if body.MimeType != nil {
 		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	if body.Width != nil {
+		if *body.Width < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.width", *body.Width, 1, true))
+		}
+	}
+	if body.Height != nil {
+		if *body.Height < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.height", *body.Height, 1, true))
 		}
 	}
 	if body.Created != nil {
@@ -13189,6 +13225,16 @@ func ValidateCreativeAssetResponseBody(body *CreativeAssetResponseBody) (err err
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
 		}
 	}
+	if body.Width != nil {
+		if *body.Width < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.width", *body.Width, 1, true))
+		}
+	}
+	if body.Height != nil {
+		if *body.Height < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.height", *body.Height, 1, true))
+		}
+	}
 	if body.Created != nil {
 		if !(*body.Created == "true" || *body.Created == "false") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.created", *body.Created, []any{"true", "false"}))
@@ -13224,6 +13270,16 @@ func validateCreativeAssetResponseBody(body *CreativeAssetResponseBody, path str
 	if body.MimeType != nil {
 		if !(*body.MimeType == "image/png" || *body.MimeType == "image/jpeg") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".mime_type", *body.MimeType, []any{"image/png", "image/jpeg"}))
+		}
+	}
+	if body.Width != nil {
+		if *body.Width < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".width", *body.Width, 1, true))
+		}
+	}
+	if body.Height != nil {
+		if *body.Height < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".height", *body.Height, 1, true))
 		}
 	}
 	if body.Created != nil {

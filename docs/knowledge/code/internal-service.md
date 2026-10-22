@@ -285,6 +285,25 @@ holding it across the checksum and the insert would shed concurrent uploads for 
 free. Stage 2b is not redundant with the wire admission — they bound different quantities with
 different worst cases, and neither subsumes the other.
 
+**Stage 1's dimensions are PERSISTED, not discarded** (LFXV2-2665, migration `000047`). The
+handler writes `cfg.Width`/`cfg.Height` onto the stored `model.CreativeAsset` alongside the
+checksum. They are the per-platform slot classifier's entire input — which slot an image can
+fill is a question about its shape — and recovering them later would mean detoasting a blob of
+up to 30 MiB to re-read a header this request already parsed; stage 3 discards the decoded
+image, so `cfg` is the only source left. Nothing unvalidated is stored: these are the same two
+numbers stage 2 bounded and stage 3 then decoded successfully against.
+
+On the way OUT the pair is optional, and that is the contract the rest of the stack depends on.
+`creativeAssetResult` sets the response's `width`/`height` only when BOTH are `> 0`, copying to
+locals first so a later mutation of the stored model cannot reach a result already handed to the
+transport. A zero pair means UNKNOWN — what an asset stored before `000047` reads back as — so
+publishing a literal `0` would be read downstream as "fails every slot minimum" rather than "not
+classifiable". A half-known pair publishes as absent too; the table refuses to store one, and
+the result would be unusable anyway. Pinned by
+`TestBriefService_UploadCreativeAsset_PersistsHeaderDimensions` (a deliberately non-square
+3x7 fixture, because every other fixture here is 2x2 and cannot detect a width/height
+transposition) and `TestCreativeAssetResult_UnknownDimensionsAreAbsentNotZero`.
+
 The set of registered decoders (`image/png`,
 `image/jpeg`, blank-imported) is only the UPPER bound; `mimeForImageFormat` is the authoritative
 allow-list, so another package importing `image/gif` cannot widen what this endpoint accepts.

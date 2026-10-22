@@ -31,8 +31,15 @@ var _ domain.CreativeAssetRepository = (*CreativeAssetRepo)(nil)
 //
 // One read does need the image — GetAsset, called at Meta dispatch to upload the creative — and
 // it appends the column through creativeAssetColsWithBytes below rather than widening this list.
+//
+// width and height are NULLABLE in the table (migration 000047), so they are read through
+// COALESCE(..., 0) rather than scanned into pointers: the model carries them as a plain int pair
+// whose zero value already MEANS "unknown", so the two representations agree and no scanner has to
+// invent a nil case. 000047's CHECK keeps the pair whole — both set or both NULL — so the
+// coalesced zero can never be a half-known shape.
 const creativeAssetCols = `id::text, project_id::text, brief_id::text,
-	mime_type, byte_size, checksum, created_by, created_at`
+	mime_type, byte_size, checksum, COALESCE(width, 0), COALESCE(height, 0),
+	created_by, created_at`
 
 // createCreativeAssetQuery inserts an uploaded image under an ACTIVE parent brief and returns
 // the stored row, resolving a duplicate upload to the existing row.
@@ -123,9 +130,21 @@ const creativeAssetCols = `id::text, project_id::text, brief_id::text,
 // duplicating it — so the transaction is here for ORDERING, not for the reconcile reason
 // CreateAudience has one (that insert holds a (brief,platform) build lease whose row a lost ack
 // would strand).
+//
+// width/height go in through NULLIF(..., 0). The model's zero pair means "dimensions unknown"
+// (see model.CreativeAsset), and the column's meaning for that is NULL — writing a literal 0 would
+// both lie and be refused by 000047's CHECK (width > 0 AND height > 0). Every upload through
+// internal/service supplies a real pair, so the NULLIF is for a repository caller or a backfill
+// that legitimately has none.
+//
+// The ON CONFLICT arm deliberately does NOT fill in dimensions on a re-upload of an asset stored
+// before 000047. That would make the table insert-only EXCEPT for these two columns, contradicting
+// the immutability the model and 000028 both state, and it would backfill only the assets someone
+// happened to re-upload — an arbitrary subset. The backfill is a separate step by design; see
+// 000047's comment.
 const createCreativeAssetQuery = `INSERT INTO creative_assets
-		(project_id, brief_id, mime_type, byte_size, checksum, bytes, created_by)
-		SELECT $1, $2, $3, $4, $5, $6, $7
+		(project_id, brief_id, mime_type, byte_size, checksum, width, height, bytes, created_by)
+		SELECT $1, $2, $3, $4, $5, NULLIF($6::int, 0), NULLIF($7::int, 0), $8, $9
 		WHERE EXISTS (
 			SELECT 1 FROM campaign_briefs
 			WHERE id = $2 AND project_id = $1 AND status <> 'archived'
@@ -168,7 +187,8 @@ func (r *CreativeAssetRepo) CreateAsset(ctx context.Context, a *model.CreativeAs
 	}
 
 	stored, inserted, err := scanCreativeAssetWithInserted(tx.QueryRow(ctx, createCreativeAssetQuery,
-		a.ProjectID, a.BriefID, a.MimeType, a.ByteSize, a.Checksum, a.Bytes, nullJSON(a.CreatedBy)))
+		a.ProjectID, a.BriefID, a.MimeType, a.ByteSize, a.Checksum,
+		a.Width, a.Height, a.Bytes, nullJSON(a.CreatedBy)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Reachable only if the brief stopped qualifying between the lock and this insert,
@@ -278,7 +298,7 @@ func scanCreativeAssetWithBytes(row pgx.Row) (*model.CreativeAsset, error) {
 	)
 	if err := row.Scan(
 		&a.ID, &a.ProjectID, &a.BriefID, &a.MimeType, &a.ByteSize, &a.Checksum,
-		&createdBy, &a.CreatedAt, &a.Bytes,
+		&a.Width, &a.Height, &createdBy, &a.CreatedAt, &a.Bytes,
 	); err != nil {
 		return nil, err
 	}
@@ -301,7 +321,7 @@ func scanCreativeAssetWithInserted(row pgx.Row) (*model.CreativeAsset, bool, err
 	)
 	if err := row.Scan(
 		&a.ID, &a.ProjectID, &a.BriefID, &a.MimeType, &a.ByteSize, &a.Checksum,
-		&createdBy, &a.CreatedAt, &inserted,
+		&a.Width, &a.Height, &createdBy, &a.CreatedAt, &inserted,
 	); err != nil {
 		return nil, false, err
 	}
